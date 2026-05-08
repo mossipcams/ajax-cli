@@ -7,15 +7,26 @@ from dataclasses import dataclass
 COMPACT_WIDTH = 80
 COMPACT_HEIGHT = 24
 MIN_WRAP_WIDTH = 20
-COMPACT_ROW_CHROME_WIDTH = 4
+COMPACT_ROW_CHROME_WIDTH = 6
 
 
 @dataclass(frozen=True)
 class SelectionRow:
     kind: str
+    label: str
     title: str
     subtitle: str
+    meta: str
     detail: str
+    tone: str
+    status: str = ""
+    actions: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class DashboardSection:
+    title: str
+    rows: list[SelectionRow]
 
 
 @dataclass(frozen=True)
@@ -41,6 +52,12 @@ class SummaryCounts:
 
 def is_compact_viewport(width: int, height: int) -> bool:
     return width < COMPACT_WIDTH or height < COMPACT_HEIGHT
+
+
+def viewport_layout(width: int, height: int) -> str:
+    if is_compact_viewport(width, height) or width < 100:
+        return "stacked"
+    return "split"
 
 
 def layout_metrics(*, compact: bool) -> LayoutMetrics:
@@ -70,8 +87,8 @@ def full_summary(
     inbox_count: int,
 ) -> str:
     return (
-        f"Ajax | repos {repo_count} | tasks {task_count} | "
-        f"review {review_count} | inbox {inbox_count}"
+        f"Ajax | attention {inbox_count} | review {review_count} | "
+        f"tasks {task_count} | repos {repo_count}"
     )
 
 
@@ -82,7 +99,7 @@ def compact_summary(
     review_count: int,
     inbox_count: int,
 ) -> str:
-    return f"Ajax  R{repo_count} T{task_count} V{review_count} I{inbox_count}"
+    return f"Ajax  attention {inbox_count}  review {review_count}  tasks {task_count}  repos {repo_count}"
 
 
 def render_summary(
@@ -103,19 +120,21 @@ def render_summary(
 
 
 def render_row(row: SelectionRow, *, compact: bool = False, width: int | None = None) -> str:
-    if not row.subtitle:
-        return fit_line(row.title, width)
+    heading = "  ".join(part for part in [row.label, row.title] if part)
+    meta_line = "  ".join(part for part in [row.meta, row.subtitle] if part)
 
     if compact:
         content_width = usable_compact_row_width(width)
         return "\n".join(
             [
-                fit_line(row.title, content_width),
-                fit_line(row.subtitle, content_width),
+                fit_line(heading, content_width),
+                fit_line(meta_line, content_width),
             ]
         )
 
-    return f"{row.title}\n{row.subtitle}"
+    if meta_line:
+        return f"{heading}\n{meta_line}"
+    return heading
 
 
 def usable_compact_row_width(width: int | None) -> int | None:
@@ -125,16 +144,31 @@ def usable_compact_row_width(width: int | None) -> int | None:
 
 
 def render_detail(row: SelectionRow, *, compact: bool = False, width: int | None = None) -> str:
+    detail = structured_detail(row)
     if not compact:
-        return row.detail
+        return detail
 
     detail_width = max(width or COMPACT_WIDTH, MIN_WRAP_WIDTH)
     wrapped_blocks = [
         wrap_preserving_commands(block, detail_width)
-        for block in row.detail.split("\n\n")
+        for block in detail.split("\n\n")
         if block.strip()
     ]
     return "\n\n".join(wrapped_blocks)
+
+
+def structured_detail(row: SelectionRow) -> str:
+    parts = [f"Context\n{row.title}"]
+    if row.status or row.meta:
+        parts.append(f"Status\n{row.status or row.meta}")
+    if row.subtitle:
+        parts.append(f"Notes\n{row.subtitle}")
+    actions = row.actions or []
+    if actions:
+        parts.append("Actions\n" + "\n".join(actions))
+    elif row.detail:
+        parts.append(row.detail)
+    return "\n\n".join(parts)
 
 
 def startup_error_rows(error: Exception) -> list[SelectionRow]:
@@ -142,11 +176,180 @@ def startup_error_rows(error: Exception) -> list[SelectionRow]:
     return [
         SelectionRow(
             kind="error",
+            label="error",
             title="Ajax data failed to load",
             subtitle="Press r to retry after fixing the backend issue.",
+            meta="startup",
             detail=f"Ajax data failed to load.\n\n{message}\n\nPress r to retry.",
+            tone="danger",
+            status="startup failed",
+            actions=["Press r to retry"],
         )
     ]
+
+
+def build_dashboard_sections(
+    repos: list[dict],
+    tasks: list[dict],
+    inbox: list[dict],
+    review: list[dict],
+) -> list[DashboardSection]:
+    sections: list[DashboardSection] = []
+
+    attention = attention_rows(inbox)
+    if attention:
+        sections.append(DashboardSection("Attention", attention))
+
+    reviewable = review_task_rows(review)
+    if reviewable:
+        sections.append(DashboardSection("Review", reviewable))
+
+    active = active_task_rows(tasks)
+    if active:
+        sections.append(DashboardSection("Active", active))
+
+    repo_section = repo_dashboard_rows(repos)
+    if repo_section:
+        sections.append(DashboardSection("Repos", repo_section))
+
+    if not sections:
+        sections.append(
+            DashboardSection(
+                "Start",
+                [
+                    SelectionRow(
+                        kind="empty",
+                        label="ready",
+                        title="No Ajax activity yet",
+                        subtitle="Create a task from a configured repo when you are ready.",
+                        meta="idle",
+                        detail='Create task:\najax new --repo <repo> --title "task title" --agent codex --execute',
+                        tone="muted",
+                        status="idle",
+                        actions=[
+                            'ajax new --repo <repo> --title "task title" --agent codex --execute'
+                        ],
+                    )
+                ],
+            )
+        )
+
+    return sections
+
+
+def attention_rows(inbox: list[dict]) -> list[SelectionRow]:
+    rows = []
+    for item in inbox:
+        task = str(item.get("task_handle", ""))
+        reason = str(item.get("reason", ""))
+        action = str(item.get("recommended_action", ""))
+        rows.append(
+            SelectionRow(
+                kind="inbox",
+                label="attention",
+                title=task,
+                subtitle=reason,
+                meta="needs input",
+                detail=f"Reason:\n{reason}",
+                tone="urgent",
+                status=reason,
+                actions=[action] if action else [],
+            )
+        )
+    return rows
+
+
+def review_task_rows(review: list[dict]) -> list[SelectionRow]:
+    rows = []
+    for task in review:
+        handle = str(task.get("qualified_handle", ""))
+        title = str(task.get("title", ""))
+        rows.append(
+            SelectionRow(
+                kind="review",
+                label="review",
+                title=handle,
+                subtitle=title,
+                meta="ready",
+                detail=title,
+                tone="review",
+                status="ready for review",
+                actions=[
+                    f"ajax diff {handle} --execute",
+                    f"ajax merge {handle} --execute --yes",
+                ],
+            )
+        )
+    return rows
+
+
+def active_task_rows(tasks: list[dict]) -> list[SelectionRow]:
+    rows = []
+    for task in tasks:
+        handle = str(task.get("qualified_handle", ""))
+        status = str(task.get("lifecycle_status", ""))
+        title = str(task.get("title", ""))
+        if status in {"reviewable", "mergeable"}:
+            continue
+        rows.append(
+            SelectionRow(
+                kind="task",
+                label="task",
+                title=handle,
+                subtitle=title,
+                meta=status,
+                detail=title,
+                tone="neutral",
+                status=status,
+                actions=[
+                    f"ajax open {handle} --execute",
+                    f"ajax inspect {handle}",
+                ],
+            )
+        )
+    return rows
+
+
+def repo_dashboard_rows(repos: list[dict]) -> list[SelectionRow]:
+    if not repos:
+        return [
+            SelectionRow(
+                kind="empty",
+                label="setup",
+                title="No repos configured",
+                subtitle="Ajax needs repos before it can create task environments.",
+                meta="config",
+                detail="Edit ~/.config/ajax/config.toml and add [[repos]] entries.",
+                tone="muted",
+                status="not configured",
+                actions=["Edit ~/.config/ajax/config.toml"],
+            )
+        ]
+
+    rows = []
+    for repo in repos:
+        name = str(repo.get("name", ""))
+        active = repo.get("active_tasks", 0)
+        reviewable = repo.get("reviewable_tasks", 0)
+        cleanable = repo.get("cleanable_tasks", 0)
+        broken = repo.get("broken_tasks", 0)
+        rows.append(
+            SelectionRow(
+                kind="repo",
+                label="repo",
+                title=name,
+                subtitle=f"review {reviewable}  clean {cleanable}  broken {broken}",
+                meta=f"active {active}",
+                detail=f"Repo: {name}",
+                tone="neutral",
+                status=f"active {active}, review {reviewable}, clean {cleanable}, broken {broken}",
+                actions=[
+                    f'ajax new --repo {name} --title "task title" --agent codex --execute',
+                    f"ajax tasks --repo {name}",
+                ],
+            )
+        )
+    return rows
 
 
 def fit_line(value: str, width: int | None) -> str:

@@ -1237,6 +1237,8 @@ mod tests {
     fn textual_frontend_uses_mobile_first_stacked_sections() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let app = std::fs::read_to_string(root.join("frontends/textual/ajax_textual.py")).unwrap();
+        let layout =
+            std::fs::read_to_string(root.join("frontends/textual/ajax_textual_layout.py")).unwrap();
 
         for expected in [
             "ListView",
@@ -1244,17 +1246,32 @@ mod tests {
             "SelectionRow",
             "on_list_view_selected",
             "build_selection_rows",
-            "kind=\"create\"",
-            "Create task",
+            "build_dashboard_sections",
+            "viewport_layout",
+            "Screen.compact #body",
+            "ListItem.urgent",
+            "ListItem.review",
             "#details",
         ] {
             assert!(app.contains(expected), "missing {expected}");
+        }
+        for expected in [
+            "DashboardSection",
+            "\"Attention\"",
+            "\"Review\"",
+            "\"Active\"",
+            "\"Repos\"",
+            "label=\"attention\"",
+            "tone=\"urgent\"",
+        ] {
+            assert!(layout.contains(expected), "missing {expected}");
         }
 
         assert!(!app.contains("DataTable"));
         assert!(!app.contains("Horizontal"));
         assert!(!app.contains("action_new_task_help"));
         assert!(!app.contains("n create task"));
+        assert!(!layout.contains("-- Repos --"));
     }
 
     #[test]
