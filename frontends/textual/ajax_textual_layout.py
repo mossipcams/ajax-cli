@@ -12,6 +12,7 @@ MIN_WRAP_WIDTH = 20
 COMPACT_ROW_CHROME_WIDTH = 6
 
 _TONE_COLOR = {"urgent": "red", "review": "yellow"}
+_KIND_COLOR = {"task": "cyan", "repo": "green"}
 _KIND_LABEL = {
     "inbox": "ATTN",
     "review": "REVIEW",
@@ -20,7 +21,15 @@ _KIND_LABEL = {
     "error": "ERR",
     "empty": "INFO",
 }
-_TONE_ASCII = {"urgent": "(!)", "review": "(R)"}
+_KIND_SYMBOL = {
+    "inbox": "▶",
+    "review": "◆",
+    "task": "◇",
+    "repo": "○",
+    "error": "●",
+    "empty": "·",
+}
+_TONE_ASCII = {"urgent": "[!]", "review": "[*]"}
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,19 @@ def layout_metrics(*, compact: bool) -> LayoutMetrics:
     )
 
 
+def compact_summary(
+    *,
+    repo_count: int,
+    task_count: int,
+    review_count: int,
+    inbox_count: int,
+) -> str:
+    return (
+        f"Ajax  attention {inbox_count}  review {review_count}  "
+        f"tasks {task_count}  repos {repo_count}"
+    )
+
+
 def render_summary(
     *,
     repo_count: int,
@@ -101,23 +123,25 @@ def render_summary(
     compact: bool,
 ) -> str:
     if compact:
-        return (
-            f"Ajax  {inbox_count} attn  {review_count} review  "
-            f"{task_count} tasks  {repo_count} repos"
+        return compact_summary(
+            repo_count=repo_count,
+            task_count=task_count,
+            review_count=review_count,
+            inbox_count=inbox_count,
         )
 
     attn = (
-        f"[bold red]● {inbox_count} attention[/bold red]"
+        f"[bold red]▶ {inbox_count} attention[/bold red]"
         if inbox_count
-        else f"[dim]● 0 attention[/dim]"
+        else f"[dim]▶ 0 attention[/dim]"
     )
     rev = (
-        f"[bold yellow]● {review_count} review[/bold yellow]"
+        f"[bold yellow]◆ {review_count} review[/bold yellow]"
         if review_count
-        else f"[dim]● 0 review[/dim]"
+        else f"[dim]◆ 0 review[/dim]"
     )
-    tasks = f"[dim]●[/dim] {task_count} tasks"
-    repos = f"[dim]●[/dim] {repo_count} repos"
+    tasks = f"[dim]◇[/dim] [cyan]{task_count} tasks[/cyan]" if task_count else f"[dim]◇ 0 tasks[/dim]"
+    repos = f"[dim]○[/dim] {repo_count} repos"
     return f"[bold]Ajax[/bold]  {attn}  {rev}  {tasks}  {repos}"
 
 
@@ -125,14 +149,13 @@ def render_row(row: SelectionRow, *, compact: bool = False, width: int | None = 
     if row.kind == "section":
         name = row.label.upper()
         if compact:
-            return f"─ {name}"
-        return f"[dim]── {name}[/dim]"
+            return f"╴ {name}"
+        return f"[dim]  ╸ {name}[/dim]"
 
     if compact:
-        badge = _TONE_ASCII.get(row.tone, "( )")
-        heading = f"{badge} {row.title}"
-        meta_line = row.meta
         content_width = usable_compact_row_width(width)
+        heading = f"{row.label}  {row.title}"
+        meta_line = f"{row.meta}  {row.subtitle}" if row.subtitle else row.meta
         return "\n".join([
             fit_line(heading, content_width),
             fit_line(meta_line, content_width),
@@ -140,9 +163,8 @@ def render_row(row: SelectionRow, *, compact: bool = False, width: int | None = 
 
     badge = _rich_badge(row.kind, row.tone)
     title = escape(row.title)
-    second = "  ".join(
-        escape(p) for p in [row.meta, row.subtitle] if p
-    )
+    second_parts = [escape(p) for p in [row.meta, row.subtitle] if p]
+    second = f"  [dim]·[/dim]  ".join(second_parts)
     if second:
         return f"{badge}  {title}\n[dim]{second}[/dim]"
     return f"{badge}  {title}"
@@ -157,46 +179,47 @@ def render_detail(row: SelectionRow, *, compact: bool = False, width: int | None
 
 
 def _rich_badge(kind: str, tone: str) -> str:
-    color = _TONE_COLOR.get(tone)
+    color = _TONE_COLOR.get(tone) or _KIND_COLOR.get(kind)
     label = _KIND_LABEL.get(kind, kind.upper())
+    symbol = _KIND_SYMBOL.get(kind, "●")
     if color:
-        return f"[bold {color}]● {label}[/bold {color}]"
-    return f"[dim]●[/dim] [bold]{label}[/bold]"
+        return f"[bold {color}]{symbol} {label}[/bold {color}]"
+    return f"[dim]{symbol}[/dim] [bold]{label}[/bold]"
 
 
 def _rich_detail(row: SelectionRow) -> str:
-    parts: list[str] = []
+    lines: list[str] = []
 
     title = escape(row.title)
-    label = escape(row.label)
-    status = escape(row.status or row.meta)
+    color = _TONE_COLOR.get(row.tone) or _KIND_COLOR.get(row.kind)
+    symbol = _KIND_SYMBOL.get(row.kind, "●")
 
-    color = _TONE_COLOR.get(row.tone)
     if color:
-        parts.append(f"[bold {color}]{title}[/bold {color}]")
+        lines.append(f"[bold {color}]{symbol}  {title}[/bold {color}]")
     else:
-        parts.append(f"[bold]{title}[/bold]")
+        lines.append(f"[bold]{symbol}  {title}[/bold]")
+    lines.append("")
 
-    tag = "  ".join(p for p in [label, status] if p)
-    if tag:
-        parts.append(f"[dim]{tag}[/dim]")
+    lines.append(f"Context\n{escape(row.title)}")
+
+    status = row.status or row.meta
+    if status:
+        lines.append("")
+        lines.append(f"Status\n{escape(status)}")
 
     if row.subtitle:
-        parts.append("")
-        parts.append("[dim]── notes[/dim]")
-        parts.append(escape(row.subtitle))
+        lines.append("")
+        lines.append(f"Notes\n{escape(row.subtitle)}")
 
     actions = row.actions or []
     if actions:
-        parts.append("")
-        parts.append("[dim]── commands[/dim]")
-        for action in actions:
-            parts.append(f"[dim]$[/dim] {escape(action)}")
+        lines.append("")
+        lines.append("Actions\n" + "\n".join(escape(a) for a in actions))
     elif row.detail and row.detail != row.title:
-        parts.append("")
-        parts.append(escape(row.detail))
+        lines.append("")
+        lines.append(escape(row.detail))
 
-    return "\n".join(parts)
+    return "\n".join(lines)
 
 
 def _compact_detail(row: SelectionRow, width: int | None = None) -> str:

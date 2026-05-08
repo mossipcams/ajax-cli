@@ -73,10 +73,12 @@ class AjaxTextualApp(App[None]):
 
     ListItem.urgent {
         border-left: thick $error;
+        background: $error 8%;
     }
 
     ListItem.review {
         border-left: thick $warning;
+        background: $warning 5%;
     }
 
     ListItem.muted {
@@ -96,7 +98,7 @@ class AjaxTextualApp(App[None]):
     }
 
     ListItem.--highlight {
-        background: $accent 20%;
+        background: $accent 30%;
     }
 
     #details {
