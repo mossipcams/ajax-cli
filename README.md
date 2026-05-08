@@ -78,6 +78,13 @@ Render the native Rust cockpit through the `ajax` command:
 ajax cockpit
 ```
 
+The cockpit uses a project-first workflow modeled after the earlier gum flow:
+choose a project, choose an action, then choose the task when that action needs
+one. Project actions include creating a task, opening or reviewing a task,
+running checks, viewing diffs, merging, cleaning, repairing, reconciling, and
+showing project status. The frontend remains a Rust shell over the same
+`ajax-core` command and JSON contracts.
+
 Use watch mode when you want repeated cockpit frames:
 
 ```sh

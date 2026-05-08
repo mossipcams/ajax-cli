@@ -2,7 +2,7 @@
 
 use ajax_core::{
     models::{AttentionItem, TaskId},
-    output::{InboxResponse, ReposResponse, TaskSummary, TasksResponse},
+    output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
 };
 use crossterm::{
     event::{
@@ -78,11 +78,34 @@ pub enum ActionOutcome {
 
 #[derive(Clone)]
 enum SelectableKind {
+    Project(RepoSummary),
+    ProjectAction {
+        repo: String,
+        label: String,
+        recommended_action: String,
+    },
+    TaskAction {
+        task: TaskSummary,
+        recommended_action: String,
+    },
     /// Synthetic top-of-feed entry. Dispatched as a "new task" action.
     NewTask,
     Inbox(AttentionItem),
     Task(TaskSummary),
     Review(TaskSummary),
+}
+
+#[derive(Clone)]
+enum AppView {
+    Projects,
+    Project {
+        repo: String,
+    },
+    TaskPicker {
+        repo: String,
+        label: String,
+        recommended_action: String,
+    },
 }
 
 impl SelectableKind {
@@ -93,6 +116,34 @@ impl SelectableKind {
     /// dispatcher matches on to invoke `commands::new_task_plan`.
     fn as_action(&self) -> AttentionItem {
         match self {
+            SelectableKind::Project(repo) => AttentionItem {
+                task_id: TaskId::new(format!("__project__{}", repo.name)),
+                task_handle: repo.name.clone(),
+                reason: "project".to_string(),
+                priority: 0,
+                recommended_action: "select project".to_string(),
+            },
+            SelectableKind::ProjectAction {
+                repo,
+                label,
+                recommended_action,
+            } => AttentionItem {
+                task_id: TaskId::new(format!("__project_action__{repo}__{recommended_action}")),
+                task_handle: repo.clone(),
+                reason: label.clone(),
+                priority: 0,
+                recommended_action: recommended_action.clone(),
+            },
+            SelectableKind::TaskAction {
+                task,
+                recommended_action,
+            } => AttentionItem {
+                task_id: TaskId::new(task.id.clone()),
+                task_handle: task.qualified_handle.clone(),
+                reason: task.lifecycle_status.clone(),
+                priority: 50,
+                recommended_action: recommended_action.clone(),
+            },
             SelectableKind::NewTask => AttentionItem {
                 task_id: TaskId::new("__new_task__"),
                 task_handle: String::new(),
@@ -120,16 +171,109 @@ impl SelectableKind {
 }
 
 fn build_selectables(
+    view: &AppView,
+    repos: &ReposResponse,
     inbox: &InboxResponse,
     tasks: &TasksResponse,
     review: &TasksResponse,
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
-    out.push(SelectableKind::NewTask);
-    out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
-    out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
-    out.extend(review.tasks.iter().cloned().map(SelectableKind::Review));
+    match view {
+        AppView::Projects => {
+            out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
+            out.push(SelectableKind::NewTask);
+            out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
+            out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
+            out.extend(review.tasks.iter().cloned().map(SelectableKind::Review));
+        }
+        AppView::Project { repo } => {
+            out.extend(project_action_selectables(repo));
+            out.extend(
+                inbox
+                    .items
+                    .iter()
+                    .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()))
+                    .cloned()
+                    .map(SelectableKind::Inbox),
+            );
+            out.extend(
+                tasks
+                    .tasks
+                    .iter()
+                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                    .cloned()
+                    .map(SelectableKind::Task),
+            );
+            out.extend(
+                review
+                    .tasks
+                    .iter()
+                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                    .cloned()
+                    .map(SelectableKind::Review),
+            );
+        }
+        AppView::TaskPicker {
+            repo,
+            recommended_action,
+            ..
+        } => {
+            let source_tasks = if recommended_action == "review branch" {
+                &review.tasks
+            } else {
+                &tasks.tasks
+            };
+            out.extend(
+                source_tasks
+                    .iter()
+                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                    .cloned()
+                    .map(|task| SelectableKind::TaskAction {
+                        task,
+                        recommended_action: recommended_action.clone(),
+                    }),
+            );
+        }
+    }
     out
+}
+
+fn project_action_selectables(repo: &str) -> Vec<SelectableKind> {
+    [
+        ("+ New task", "new task"),
+        ("Open task", "open task"),
+        ("Review branch", "review branch"),
+        ("Check task", "check task"),
+        ("Diff task", "diff task"),
+        ("Merge task", "merge task"),
+        ("Clean task", "clean task"),
+        ("Repair task", "repair task"),
+        ("Reconcile", "reconcile"),
+        ("Status", "status"),
+        ("Back", "back"),
+    ]
+    .into_iter()
+    .map(
+        |(label, recommended_action)| SelectableKind::ProjectAction {
+            repo: repo.to_string(),
+            label: label.to_string(),
+            recommended_action: recommended_action.to_string(),
+        },
+    )
+    .collect()
+}
+
+fn task_scoped_action(action: &str) -> bool {
+    matches!(
+        action,
+        "open task"
+            | "review branch"
+            | "check task"
+            | "diff task"
+            | "merge task"
+            | "clean task"
+            | "repair task"
+    )
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
@@ -139,6 +283,7 @@ pub struct App {
     tasks: TasksResponse,
     review: TasksResponse,
     inbox: InboxResponse,
+    view: AppView,
     selectables: Vec<SelectableKind>,
     selected: usize,
     viewport_scroll: usize,
@@ -154,12 +299,14 @@ impl App {
         review: TasksResponse,
         inbox: InboxResponse,
     ) -> Self {
-        let selectables = build_selectables(&inbox, &tasks, &review);
+        let view = AppView::Projects;
+        let selectables = build_selectables(&view, &repos, &inbox, &tasks, &review);
         Self {
             repos,
             tasks,
             review,
             inbox,
+            view,
             selectables,
             selected: 0,
             viewport_scroll: 0,
@@ -200,6 +347,43 @@ impl App {
         self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
+    pub fn activate_selected(&mut self) -> Option<AttentionItem> {
+        match self.selectables.get(self.selected).cloned()? {
+            SelectableKind::Project(repo) => {
+                self.view = AppView::Project { repo: repo.name };
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.rebuild_selectables();
+                None
+            }
+            SelectableKind::ProjectAction {
+                recommended_action, ..
+            } if recommended_action == "back" => {
+                self.view = AppView::Projects;
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.rebuild_selectables();
+                None
+            }
+            SelectableKind::ProjectAction {
+                repo,
+                label,
+                recommended_action,
+            } if task_scoped_action(&recommended_action) => {
+                self.view = AppView::TaskPicker {
+                    repo,
+                    label,
+                    recommended_action,
+                };
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.rebuild_selectables();
+                None
+            }
+            selectable => Some(selectable.as_action()),
+        }
+    }
+
     fn reload(
         &mut self,
         repos: ReposResponse,
@@ -211,9 +395,19 @@ impl App {
         self.tasks = tasks;
         self.review = review;
         self.inbox = inbox;
-        self.selectables = build_selectables(&self.inbox, &self.tasks, &self.review);
+        self.rebuild_selectables();
         let max = self.selectables.len().saturating_sub(1);
         self.selected = self.selected.min(max);
+    }
+
+    fn rebuild_selectables(&mut self) {
+        self.selectables = build_selectables(
+            &self.view,
+            &self.repos,
+            &self.inbox,
+            &self.tasks,
+            &self.review,
+        );
     }
 
     fn flash(&mut self, msg: String) {
@@ -255,17 +449,43 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut row: usize = 0;
 
-    // Actions (always one synthetic NewTask entry)
+    match &app.view {
+        AppView::Projects => {
+            row += 1; // header
+            for _ in &app.repos.repos {
+                out.push(row..row + 1);
+                row += 1;
+            }
+        }
+        AppView::Project { .. } => {}
+        AppView::TaskPicker { .. } => {
+            row += 1; // header
+            for _ in &app.selectables {
+                out.push(row..row + 1);
+                row += 1;
+            }
+            return out;
+        }
+    }
+
     row += 1; // header
-    out.push(row..row + 1);
-    row += 1;
+    let action_count = match &app.view {
+        AppView::Projects => 1,
+        AppView::Project { repo } => project_action_selectables(repo).len(),
+        AppView::TaskPicker { .. } => 0,
+    };
+    for _ in 0..action_count {
+        out.push(row..row + 1);
+        row += 1;
+    }
 
     // Inbox
     row += 1; // header
-    if app.inbox.items.is_empty() {
+    let inbox_items = visible_inbox_items(app);
+    if inbox_items.is_empty() {
         row += 1; // placeholder
     } else {
-        for _ in &app.inbox.items {
+        for _ in inbox_items {
             out.push(row..row + 2);
             row += 2;
         }
@@ -273,10 +493,11 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
 
     // Tasks
     row += 1;
-    if app.tasks.tasks.is_empty() {
+    let tasks = visible_tasks(app);
+    if tasks.is_empty() {
         row += 1;
     } else {
-        for _ in &app.tasks.tasks {
+        for _ in tasks {
             out.push(row..row + 1);
             row += 1;
         }
@@ -284,7 +505,7 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
 
     // Review
     row += 1;
-    for _ in &app.review.tasks {
+    for _ in visible_review_tasks(app) {
         out.push(row..row + 1);
         row += 1;
     }
@@ -343,7 +564,7 @@ fn run_event_loop<B: Backend>(
                     KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
-                        if let Some(item) = app.selected_action() {
+                        if let Some(item) = app.activate_selected() {
                             match on_action(&item)? {
                                 ActionOutcome::Refresh {
                                     repos,
@@ -368,8 +589,7 @@ fn run_event_loop<B: Backend>(
                         MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
                             let mouse_row = mouse.row as usize;
                             if mouse_row >= feed_top && mouse_row < feed_bottom {
-                                let feed_row =
-                                    mouse_row - feed_top + app.viewport_scroll;
+                                let feed_row = mouse_row - feed_top + app.viewport_scroll;
                                 app.select_at_feed_row(feed_row);
                             }
                         }
@@ -505,7 +725,9 @@ fn item_badge(sel_idx: usize) -> Span<'static> {
     if n <= 9 {
         Span::styled(
             format!("[{n}] "),
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )
     } else {
         Span::raw("    ")
@@ -516,45 +738,195 @@ fn continuation_pad() -> Span<'static> {
     Span::raw("    ")
 }
 
+fn task_handle_repo(handle: &str) -> Option<&str> {
+    handle.split_once('/').map(|(repo, _)| repo)
+}
+
+fn task_summary_repo(task: &TaskSummary) -> Option<&str> {
+    task_handle_repo(&task.qualified_handle)
+}
+
+fn visible_inbox_items(app: &App) -> Vec<&AttentionItem> {
+    app.inbox
+        .items
+        .iter()
+        .filter(|item| match &app.view {
+            AppView::Projects => true,
+            AppView::Project { repo } => task_handle_repo(&item.task_handle) == Some(repo.as_str()),
+            AppView::TaskPicker { .. } => false,
+        })
+        .collect()
+}
+
+fn visible_tasks(app: &App) -> Vec<&TaskSummary> {
+    app.tasks
+        .tasks
+        .iter()
+        .filter(|task| match &app.view {
+            AppView::Projects => true,
+            AppView::Project { repo } => task_summary_repo(task) == Some(repo.as_str()),
+            AppView::TaskPicker { .. } => false,
+        })
+        .collect()
+}
+
+fn visible_review_tasks(app: &App) -> Vec<&TaskSummary> {
+    app.review
+        .tasks
+        .iter()
+        .filter(|task| match &app.view {
+            AppView::Projects => true,
+            AppView::Project { repo } => task_summary_repo(task) == Some(repo.as_str()),
+            AppView::TaskPicker { .. } => false,
+        })
+        .collect()
+}
+
+fn action_row(sel_idx: usize, is_selected: bool, label: &str) -> ListItem<'static> {
+    let label_style = if is_selected {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+            .add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD)
+    };
+    ListItem::new(Line::from(vec![
+        item_badge(sel_idx),
+        selection_gutter(is_selected, Color::Green),
+        Span::styled(label.to_string(), label_style),
+    ]))
+}
+
 fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     let mut sel_idx: usize = 0;
 
-    // ── Actions ──────────────────────────────────────────────────────────────
-    rows.push(section_header("Actions"));
+    if let AppView::TaskPicker {
+        label,
+        recommended_action,
+        ..
+    } = &app.view
     {
-        let is_selected = app.selected == sel_idx;
-        let label_style = if is_selected {
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::BOLD)
-                .add_modifier(Modifier::REVERSED)
+        rows.push(section_header(&format!("Choose task: {label}")));
+        if app.selectables.is_empty() {
+            rows.push(ListItem::new(Line::from(vec![Span::styled(
+                "  no matching tasks",
+                Style::default().fg(Color::DarkGray),
+            )])));
         } else {
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD)
-        };
-        rows.push(ListItem::new(Line::from(vec![
-            item_badge(sel_idx),
-            selection_gutter(is_selected, Color::Green),
-            Span::styled("+ New task", label_style),
-        ])));
-        sel_idx += 1;
+            for selectable in &app.selectables {
+                let SelectableKind::TaskAction { task, .. } = selectable else {
+                    continue;
+                };
+                let is_selected = app.selected == sel_idx;
+                let color = lifecycle_color(&task.lifecycle_status);
+                let handle_style = if is_selected {
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+                rows.push(ListItem::new(Line::from(vec![
+                    item_badge(sel_idx),
+                    selection_gutter(is_selected, color),
+                    Span::styled(format!("{:<28}", task.qualified_handle), handle_style),
+                    Span::styled(recommended_action.clone(), Style::default().fg(Color::Cyan)),
+                ])));
+                sel_idx += 1;
+            }
+        }
+        return rows;
+    }
+
+    // ── Projects ─────────────────────────────────────────────────────────────
+    match &app.view {
+        AppView::Projects => {
+            rows.push(section_header(&format!(
+                "Projects ({})",
+                app.repos.repos.len()
+            )));
+
+            if app.repos.repos.is_empty() {
+                rows.push(ListItem::new(Line::from(vec![Span::styled(
+                    "  no projects configured",
+                    Style::default().fg(Color::DarkGray),
+                )])));
+            } else {
+                for repo in &app.repos.repos {
+                    let is_selected = app.selected == sel_idx;
+                    let accent = if repo.broken_tasks > 0 {
+                        Color::Red
+                    } else if repo.reviewable_tasks > 0 {
+                        Color::Yellow
+                    } else {
+                        Color::Cyan
+                    };
+                    let name_style = if is_selected {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                            .add_modifier(Modifier::REVERSED)
+                    } else {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    rows.push(ListItem::new(Line::from(vec![
+                        item_badge(sel_idx),
+                        selection_gutter(is_selected, accent),
+                        Span::styled(format!("{:<22}", repo.name), name_style),
+                        Span::styled(
+                            format!(
+                                "{} active  {} review  {} broken",
+                                repo.active_tasks, repo.reviewable_tasks, repo.broken_tasks
+                            ),
+                            Style::default().fg(Color::DarkGray),
+                        ),
+                    ])));
+                    sel_idx += 1;
+                }
+            }
+        }
+        AppView::Project { repo } => {
+            rows.push(section_header(&format!("Project: {repo}")));
+        }
+        AppView::TaskPicker { .. } => {}
+    }
+
+    rows.push(section_header("Actions"));
+    match &app.view {
+        AppView::Projects => {
+            rows.push(action_row(sel_idx, app.selected == sel_idx, "+ New task"));
+            sel_idx += 1;
+        }
+        AppView::Project { repo } => {
+            for action in project_action_selectables(repo) {
+                let SelectableKind::ProjectAction { label, .. } = action else {
+                    continue;
+                };
+                rows.push(action_row(sel_idx, app.selected == sel_idx, &label));
+                sel_idx += 1;
+            }
+        }
+        AppView::TaskPicker { .. } => {}
     }
 
     // ── Inbox ────────────────────────────────────────────────────────────────
-    rows.push(section_header(&format!(
-        "Inbox ({})",
-        app.inbox.items.len()
-    )));
+    let inbox_items = visible_inbox_items(app);
+    rows.push(section_header(&format!("Inbox ({})", inbox_items.len())));
 
-    if app.inbox.items.is_empty() {
+    if inbox_items.is_empty() {
         rows.push(ListItem::new(Line::from(vec![Span::styled(
             "  no tasks need attention",
             Style::default().fg(Color::DarkGray),
         )])));
     } else {
-        for item in &app.inbox.items {
+        for item in inbox_items {
             let is_selected = app.selected == sel_idx;
             let accent = priority_color(item.priority);
             let handle_style = if is_selected {
@@ -588,18 +960,16 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     }
 
     // ── Tasks ─────────────────────────────────────────────────────────────────
-    rows.push(section_header(&format!(
-        "Tasks ({})",
-        app.tasks.tasks.len()
-    )));
+    let tasks = visible_tasks(app);
+    rows.push(section_header(&format!("Tasks ({})", tasks.len())));
 
-    if app.tasks.tasks.is_empty() {
+    if tasks.is_empty() {
         rows.push(ListItem::new(Line::from(vec![Span::styled(
             "  no active tasks",
             Style::default().fg(Color::DarkGray),
         )])));
     } else {
-        for t in &app.tasks.tasks {
+        for t in tasks {
             let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
             let flag = if t.needs_attention { " ⚑" } else { "" };
@@ -623,18 +993,16 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     }
 
     // ── Review ────────────────────────────────────────────────────────────────
-    rows.push(section_header(&format!(
-        "Review ({})",
-        app.review.tasks.len()
-    )));
+    let review_tasks = visible_review_tasks(app);
+    rows.push(section_header(&format!("Review ({})", review_tasks.len())));
 
-    if app.review.tasks.is_empty() {
+    if review_tasks.is_empty() {
         rows.push(ListItem::new(Line::from(vec![Span::styled(
             "  no tasks ready for review",
             Style::default().fg(Color::DarkGray),
         )])));
     } else {
-        for t in &app.review.tasks {
+        for t in review_tasks {
             let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
             let handle_style = if is_selected {
@@ -755,6 +1123,182 @@ mod tests {
     }
 
     #[test]
+    fn feed_starts_with_configured_projects() {
+        let repos = ReposResponse {
+            repos: vec![
+                RepoSummary {
+                    name: "autodoctor".to_string(),
+                    path: "/Users/matt/Desktop/Projects/autodoctor".to_string(),
+                    active_tasks: 1,
+                    reviewable_tasks: 0,
+                    cleanable_tasks: 0,
+                    broken_tasks: 0,
+                },
+                RepoSummary {
+                    name: "autosnooze".to_string(),
+                    path: "/Users/matt/Desktop/Projects/autosnooze".to_string(),
+                    active_tasks: 0,
+                    reviewable_tasks: 1,
+                    cleanable_tasks: 0,
+                    broken_tasks: 0,
+                },
+            ],
+        };
+        let app = App::new(repos, sample_tasks(), sample_tasks(), sample_inbox());
+
+        let content = render_to_string(80, 30, &app);
+        let projects_pos = content.find("Projects").unwrap();
+        let inbox_pos = content.find("Inbox").unwrap();
+        let autodoctor_pos = content.find("autodoctor").unwrap();
+        let autosnooze_pos = content.find("autosnooze").unwrap();
+
+        assert!(projects_pos < inbox_pos);
+        assert!(autodoctor_pos < inbox_pos);
+        assert!(autosnooze_pos < inbox_pos);
+        assert_eq!(
+            app.selected_action().unwrap().recommended_action,
+            "select project"
+        );
+    }
+
+    #[test]
+    fn activating_project_opens_project_workflow() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        assert!(app.activate_selected().is_none());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Project: web"));
+        assert!(content.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn project_workflow_shows_gum_style_action_menu() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.activate_selected();
+
+        let content = render_to_string(80, 30, &app);
+        for expected in [
+            "+ New task",
+            "Open task",
+            "Review branch",
+            "Check task",
+            "Diff task",
+            "Merge task",
+            "Clean task",
+            "Repair task",
+            "Reconcile",
+            "Status",
+            "Back",
+        ] {
+            assert!(content.contains(expected), "missing {expected}");
+        }
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web");
+        assert_eq!(item.recommended_action, "new task");
+    }
+
+    #[test]
+    fn selected_project_only_shows_that_projects_tasks() {
+        let repos = ReposResponse {
+            repos: vec![
+                RepoSummary {
+                    name: "web".to_string(),
+                    path: "/Users/matt/Desktop/Projects/web".to_string(),
+                    active_tasks: 1,
+                    reviewable_tasks: 0,
+                    cleanable_tasks: 0,
+                    broken_tasks: 0,
+                },
+                RepoSummary {
+                    name: "api".to_string(),
+                    path: "/Users/matt/Desktop/Projects/api".to_string(),
+                    active_tasks: 1,
+                    reviewable_tasks: 0,
+                    cleanable_tasks: 0,
+                    broken_tasks: 0,
+                },
+            ],
+        };
+        let tasks = TasksResponse {
+            tasks: vec![
+                TaskSummary {
+                    id: "task-1".to_string(),
+                    qualified_handle: "web/fix-login".to_string(),
+                    title: "Fix login".to_string(),
+                    lifecycle_status: "Active".to_string(),
+                    needs_attention: true,
+                },
+                TaskSummary {
+                    id: "task-2".to_string(),
+                    qualified_handle: "api/add-cache".to_string(),
+                    title: "Add cache".to_string(),
+                    lifecycle_status: "Active".to_string(),
+                    needs_attention: false,
+                },
+            ],
+        };
+        let inbox = InboxResponse {
+            items: vec![
+                AttentionItem {
+                    task_id: TaskId::new("task-1"),
+                    task_handle: "web/fix-login".to_string(),
+                    reason: "agent needs input".to_string(),
+                    priority: 10,
+                    recommended_action: "open task".to_string(),
+                },
+                AttentionItem {
+                    task_id: TaskId::new("task-2"),
+                    task_handle: "api/add-cache".to_string(),
+                    reason: "stale task".to_string(),
+                    priority: 60,
+                    recommended_action: "open task".to_string(),
+                },
+            ],
+        };
+        let mut app = App::new(repos, tasks.clone(), tasks, inbox);
+        app.select_next();
+        app.activate_selected();
+
+        let content = render_to_string(100, 50, &app);
+        assert!(content.contains("Project: api"));
+        assert!(content.contains("api/add-cache"));
+        assert!(!content.contains("web/fix-login"));
+        assert!(!content.contains("agent needs input"));
+    }
+
+    #[test]
+    fn project_task_action_opens_scoped_task_picker() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.activate_selected();
+        app.select_next();
+
+        assert!(app.activate_selected().is_none());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Choose task: Open task"));
+        assert!(content.contains("web/fix-login"));
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
     fn feed_inbox_items_rendered_as_two_rows() {
         let app = App::new(
             sample_repos(),
@@ -796,14 +1340,14 @@ mod tests {
     }
 
     #[test]
-    fn select_next_walks_actions_inbox_tasks_review() {
+    fn select_next_walks_projects_actions_inbox_tasks_review() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        // [NewTask, inbox, task, review] = 4 selectables, NewTask at idx 0
+        // [project, NewTask, inbox, task, review] = 5 selectables.
         assert_eq!(app.selected, 0);
         app.select_next();
         assert_eq!(app.selected, 1);
@@ -811,9 +1355,11 @@ mod tests {
         assert_eq!(app.selected, 2);
         app.select_next();
         assert_eq!(app.selected, 3);
+        app.select_next();
+        assert_eq!(app.selected, 4);
         // clamps at last
         app.select_next();
-        assert_eq!(app.selected, 3);
+        assert_eq!(app.selected, 4);
     }
 
     #[test]
@@ -825,36 +1371,39 @@ mod tests {
             sample_inbox(),
         );
         // Layout (rows):
-        //   0 Actions header
-        //   1 + New task          ← selectable 0
-        //   2 Inbox header
-        //   3 inbox line 1        ← selectable 1
-        //   4 inbox line 2          (same selectable 1)
-        //   5 Tasks header
-        //   6 task                ← selectable 2
-        //   7 Review header
-        //   8 review              ← selectable 3
+        //   0 Projects header
+        //   1 project             ← selectable 0
+        //   2 Actions header
+        //   3 + New task          ← selectable 1
+        //   4 Inbox header
+        //   5 inbox line 1        ← selectable 2
+        //   6 inbox line 2          (same selectable 2)
+        //   7 Tasks header
+        //   8 task                ← selectable 3
+        //   9 Review header
+        //   10 review             ← selectable 4
         app.select_at_feed_row(1);
         assert_eq!(app.selected, 0);
-        app.select_at_feed_row(4); // inbox second line
-        assert_eq!(app.selected, 1);
-        app.select_at_feed_row(6);
+        app.select_at_feed_row(6); // inbox second line
         assert_eq!(app.selected, 2);
         app.select_at_feed_row(8);
         assert_eq!(app.selected, 3);
+        app.select_at_feed_row(10);
+        assert_eq!(app.selected, 4);
         // header row → no change
-        app.select_at_feed_row(5);
-        assert_eq!(app.selected, 3);
+        app.select_at_feed_row(7);
+        assert_eq!(app.selected, 4);
     }
 
     #[test]
     fn new_task_is_always_present_even_when_other_sections_empty() {
-        let app = App::new(
+        let mut app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
+        app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.recommended_action, "new task");
     }
@@ -867,7 +1416,8 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // skip the NewTask selectable
+        // skip the project and NewTask selectables
+        app.select_next();
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -882,7 +1432,8 @@ mod tests {
             sample_tasks(),
             InboxResponse { items: vec![] },
         );
-        // selectables: [NewTask, task, review]
+        // selectables: [project, NewTask, task, review]
+        app.select_next();
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -907,8 +1458,8 @@ mod tests {
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        // only NewTask remains → clamped to 0
-        assert_eq!(app.selected, 0);
+        // project and NewTask remain → clamped to NewTask.
+        assert_eq!(app.selected, 1);
         assert_eq!(
             app.selected_action().unwrap().recommended_action,
             "new task"
@@ -923,7 +1474,8 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // walk down past NewTask, inbox, task, onto review
+        // walk down past project, NewTask, inbox, task, onto review
+        app.select_next();
         app.select_next();
         app.select_next();
         app.select_next();
