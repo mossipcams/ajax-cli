@@ -1,18 +1,22 @@
+mod context;
+mod render;
+
 use ajax_core::{
-    adapters::{CommandRunner, ProcessCommandRunner},
+    adapters::{CommandMode, CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    config::{Config, ConfigPaths},
-    output::{
-        DoctorResponse, InboxResponse, InspectResponse, NextResponse, ReconcileResponse,
-        ReposResponse, TaskSummary, TasksResponse,
-    },
+    output::ReconcileResponse,
     registry::InMemoryRegistry,
 };
 use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use serde::Serialize;
+pub use context::CliContextPaths;
+use context::{default_context_paths, load_context, save_context};
+use render::{
+    render_doctor_human, render_execution_outputs, render_inbox_human, render_inspect_human,
+    render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
+    render_tasks_human,
+};
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,21 +100,6 @@ pub fn run_with_context_paths_and_runner(
     }
 
     Ok(rendered.output)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CliContextPaths {
-    pub config_file: PathBuf,
-    pub state_file: PathBuf,
-}
-
-impl CliContextPaths {
-    pub fn new(config_file: impl Into<PathBuf>, state_file: impl Into<PathBuf>) -> Self {
-        Self {
-            config_file: config_file.into(),
-            state_file: state_file.into(),
-        }
-    }
 }
 
 pub fn build_cli() -> Command {
@@ -425,6 +414,7 @@ fn textual_cockpit_plan() -> commands::CommandPlan {
             "ajax".to_string(),
         ],
         cwd: None,
+        mode: CommandMode::Spawn,
     });
     plan
 }
@@ -660,74 +650,6 @@ fn render_matches_mut(
     }
 }
 
-fn default_context_paths() -> Result<CliContextPaths, CliError> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| CliError::ContextLoad("HOME is not set".to_string()))?;
-    let defaults = ConfigPaths::for_home(home);
-    let config_file = std::env::var_os("AJAX_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or(defaults.config_file);
-    let state_file = std::env::var_os("AJAX_STATE")
-        .map(PathBuf::from)
-        .unwrap_or(defaults.state_db);
-
-    Ok(CliContextPaths {
-        config_file,
-        state_file,
-    })
-}
-
-fn load_context(paths: &CliContextPaths) -> Result<CommandContext<InMemoryRegistry>, CliError> {
-    let config = if paths.config_file.exists() {
-        let contents = std::fs::read_to_string(&paths.config_file)
-            .map_err(|error| CliError::ContextLoad(error.to_string()))?;
-        Config::from_toml_str(&contents)
-            .map_err(|error| CliError::ContextLoad(format!("config parse failed: {error:?}")))?
-    } else {
-        Config::default()
-    };
-    let registry = if paths.state_file.exists() {
-        InMemoryRegistry::load_json_snapshot(&paths.state_file)
-            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error:?}")))?
-    } else {
-        InMemoryRegistry::default()
-    };
-
-    Ok(CommandContext::new(config, registry))
-}
-
-fn save_context(
-    paths: &CliContextPaths,
-    context: &CommandContext<InMemoryRegistry>,
-) -> Result<(), CliError> {
-    if let Some(parent) = paths.state_file.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| CliError::ContextSave(error.to_string()))?;
-    }
-    context
-        .registry
-        .save_json_snapshot(&paths.state_file)
-        .map_err(|error| CliError::ContextSave(format!("state save failed: {error:?}")))
-}
-
-fn render_response<T: Serialize>(
-    response: T,
-    json: bool,
-    human: fn(&T) -> String,
-) -> Result<String, CliError> {
-    if json {
-        serde_json::to_string_pretty(&response)
-            .map_err(|error| CliError::JsonSerialization(error.to_string()))
-    } else {
-        Ok(human(&response))
-    }
-}
-
-fn render_plan(plan: commands::CommandPlan, json: bool) -> Result<String, CliError> {
-    render_response(plan, json, render_plan_human)
-}
-
 fn render_or_execute_plan(
     plan: commands::CommandPlan,
     matches: &ArgMatches,
@@ -740,27 +662,6 @@ fn render_or_execute_plan(
     let outputs = commands::execute_plan(&plan, matches.get_flag("yes"), &mut runner)
         .map_err(command_error)?;
     Ok(render_execution_outputs(&outputs, None))
-}
-
-fn render_execution_outputs(
-    outputs: &[ajax_core::adapters::CommandOutput],
-    recorded_task: Option<&str>,
-) -> String {
-    let mut lines = outputs
-        .iter()
-        .map(|output| {
-            format!(
-                "exit:{}\nstdout:{}\nstderr:{}",
-                output.status_code, output.stdout, output.stderr
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if let Some(task) = recorded_task {
-        lines.push(format!("recorded task: {task}"));
-    }
-
-    lines.join("\n")
 }
 
 fn new_task_request(matches: &ArgMatches) -> commands::NewTaskRequest {
@@ -810,120 +711,6 @@ fn command_error(error: CommandError) -> CliError {
     }
 }
 
-fn render_repos_human(response: &ReposResponse) -> String {
-    response
-        .repos
-        .iter()
-        .map(|repo| {
-            format!(
-                "{}\t{}\tactive:{} reviewable:{} cleanable:{} broken:{}",
-                repo.name,
-                repo.path,
-                repo.active_tasks,
-                repo.reviewable_tasks,
-                repo.cleanable_tasks,
-                repo.broken_tasks
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_tasks_human(response: &TasksResponse) -> String {
-    response
-        .tasks
-        .iter()
-        .map(render_task_summary)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_task_summary(task: &TaskSummary) -> String {
-    format!(
-        "{}\t{}\t{}",
-        task.qualified_handle, task.lifecycle_status, task.title
-    )
-}
-
-fn render_inspect_human(response: &InspectResponse) -> String {
-    format!(
-        "{}\nbranch: {}\nworktree: {}\ntmux: {}\nflags: {}",
-        render_task_summary(&response.task),
-        response.branch,
-        response.worktree_path,
-        response.tmux_session,
-        response.flags.join(", ")
-    )
-}
-
-fn render_inbox_human(response: &InboxResponse) -> String {
-    response
-        .items
-        .iter()
-        .map(render_attention_item_human)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_next_human(response: &NextResponse) -> String {
-    response
-        .item
-        .as_ref()
-        .map(render_attention_item_human)
-        .unwrap_or_else(|| "no tasks need attention".to_string())
-}
-
-fn render_attention_item_human(item: &ajax_core::models::AttentionItem) -> String {
-    format!(
-        "{}: {} -> {}",
-        item.task_handle, item.reason, item.recommended_action
-    )
-}
-
-fn render_reconcile_human(response: &ReconcileResponse) -> String {
-    format!(
-        "checked:{} changed:{}",
-        response.tasks_checked, response.tasks_changed
-    )
-}
-
-fn render_doctor_human(response: &DoctorResponse) -> String {
-    response
-        .checks
-        .iter()
-        .map(|check| format!("{}\t{}\t{}", check.name, check.ok, check.message))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_plan_human(plan: &commands::CommandPlan) -> String {
-    let mut lines = vec![plan.title.clone()];
-
-    if plan.requires_confirmation {
-        lines.push("requires confirmation".to_string());
-    }
-
-    lines.extend(
-        plan.blocked_reasons
-            .iter()
-            .map(|reason| format!("blocked: {reason}")),
-    );
-    lines.extend(plan.commands.iter().map(|command| {
-        if let Some(cwd) = &command.cwd {
-            format!(
-                "$ (cd {} && {} {})",
-                cwd,
-                command.program,
-                command.args.join(" ")
-            )
-        } else {
-            format!("$ {} {}", command.program, command.args.join(" "))
-        }
-    }));
-
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -932,12 +719,13 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
-        registry::{InMemoryRegistry, Registry},
+        registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
     use std::path::Path;
 
@@ -1127,6 +915,7 @@ mod tests {
 
         assert_eq!(runner.commands().len(), 1);
         assert_eq!(runner.commands()[0].program, "python3");
+        assert_eq!(runner.commands()[0].mode, CommandMode::Spawn);
         assert!(runner.commands()[0]
             .args
             .iter()
@@ -1144,6 +933,28 @@ mod tests {
 
         assert!(output.contains("Usage: ajax [COMMAND]"));
         assert!(output.contains("Commands:"));
+    }
+
+    #[test]
+    fn cli_context_and_render_logic_live_in_modules() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
+
+        assert!(lib.contains("mod context;"));
+        assert!(lib.contains("mod render;"));
+        assert!(crate_root.join("src/context.rs").exists());
+        assert!(crate_root.join("src/render.rs").exists());
+    }
+
+    #[test]
+    fn architecture_documents_no_legacy_json_state_migration() {
+        let architecture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
+        )
+        .unwrap();
+
+        assert!(architecture.contains("Legacy JSON state is not migrated"));
+        assert!(architecture.contains("full rewrite"));
     }
 
     #[test]
@@ -1245,8 +1056,8 @@ mod tests {
             "ListItem",
             "SelectionRow",
             "on_list_view_selected",
-            "build_selection_rows",
-            "build_dashboard_sections",
+            "build_flat_rows",
+            "build_flat_rows(repos, tasks, inbox, review)",
             "viewport_layout",
             "Screen.compact #body",
             "ListItem.urgent",
@@ -1412,7 +1223,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1423,9 +1234,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        sample_context()
-            .registry
-            .save_json_snapshot(&state_file)
+        SqliteRegistryStore::new(&state_file)
+            .save(&sample_context().registry)
             .unwrap();
 
         let output = run_with_context_paths(
@@ -1446,7 +1256,7 @@ mod tests {
             "missing"
         ));
         let config_file = directory.join("missing-config.toml");
-        let state_file = directory.join("missing-state.json");
+        let state_file = directory.join("missing-state.db");
 
         let output = run_with_context_paths(
             ["ajax", "tasks", "--json"],
@@ -1456,6 +1266,33 @@ mod tests {
 
         assert!(output.contains("\"tasks\": []"));
         assert!(!output.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn cli_rejects_legacy_json_state_without_migration() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-context-{}-{}",
+            std::process::id(),
+            "legacy-json"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        sample_context()
+            .registry
+            .save_json_snapshot(&state_file)
+            .unwrap();
+
+        let error = run_with_context_paths(
+            ["ajax", "tasks", "--json"],
+            &CliContextPaths::new(&config_file, &state_file),
+        )
+        .unwrap_err();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(
+            matches!(error, super::CliError::ContextLoad(message) if message.contains("legacy JSON state is unsupported") && !message.contains("file is not a database"))
+        );
     }
 
     #[test]
@@ -1496,7 +1333,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_saves_registry_snapshot_to_state_file() {
+    fn new_execute_saves_registry_to_sqlite_state_file() {
         let directory = std::env::temp_dir().join(format!(
             "ajax-cli-new-execute-{}-{}",
             std::process::id(),
@@ -1504,7 +1341,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1531,7 +1368,7 @@ mod tests {
             &mut runner,
         )
         .unwrap();
-        let restored = InMemoryRegistry::load_json_snapshot(&state_file).unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(output.contains("recorded task: web/fix-login"));
@@ -1797,7 +1634,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1808,9 +1645,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        sample_context()
-            .registry
-            .save_json_snapshot(&state_file)
+        SqliteRegistryStore::new(&state_file)
+            .save(&sample_context().registry)
             .unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "other-session\n"),
@@ -1823,7 +1659,7 @@ mod tests {
             &mut runner,
         )
         .unwrap();
-        let restored = InMemoryRegistry::load_json_snapshot(&state_file).unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(output.contains("\"tasks_changed\": 1"));

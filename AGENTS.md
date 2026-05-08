@@ -1,5 +1,8 @@
 # Workflow (STRICT)
 
+Before architectural analysis or code changes, read `architecture.md` first and
+keep its boundaries and direction in mind while planning.
+
 For ANY code change, follow this exact sequence:
 
 ## Step 1: Plan

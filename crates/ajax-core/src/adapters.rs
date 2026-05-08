@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::models::{GitStatus, TmuxStatus, WorktrunkStatus};
 
@@ -8,6 +8,7 @@ pub struct CommandSpec {
     pub program: String,
     pub args: Vec<String>,
     pub cwd: Option<String>,
+    pub mode: CommandMode,
 }
 
 impl CommandSpec {
@@ -16,6 +17,7 @@ impl CommandSpec {
             program: program.into(),
             args: args.into_iter().map(str::to_string).collect(),
             cwd: None,
+            mode: CommandMode::Capture,
         }
     }
 
@@ -23,6 +25,18 @@ impl CommandSpec {
         self.cwd = Some(cwd.into());
         self
     }
+
+    pub fn with_mode(mut self, mode: CommandMode) -> Self {
+        self.mode = mode;
+        self
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum CommandMode {
+    Capture,
+    InheritStdio,
+    Spawn,
 }
 
 pub trait CommandRunner {
@@ -80,19 +94,52 @@ impl CommandRunner for ProcessCommandRunner {
         if let Some(cwd) = &command.cwd {
             process.current_dir(cwd);
         }
-        let output = process
-            .output()
-            .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-        let status_code = output
-            .status
-            .code()
-            .ok_or(CommandRunError::MissingStatusCode)?;
+        match command.mode {
+            CommandMode::Capture => {
+                let output = process
+                    .output()
+                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
+                let status_code = output
+                    .status
+                    .code()
+                    .ok_or(CommandRunError::MissingStatusCode)?;
 
-        Ok(CommandOutput {
-            status_code,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+                Ok(CommandOutput {
+                    status_code,
+                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                })
+            }
+            CommandMode::InheritStdio => {
+                let status = process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status()
+                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
+                let status_code = status.code().ok_or(CommandRunError::MissingStatusCode)?;
+
+                Ok(CommandOutput {
+                    status_code,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+            CommandMode::Spawn => {
+                process
+                    .stdin(Stdio::inherit())
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .spawn()
+                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
+
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+        }
     }
 }
 
@@ -128,6 +175,7 @@ impl WorkmuxAdapter {
                 task.agent.clone(),
             ],
             cwd: None,
+            mode: CommandMode::Capture,
         }
     }
 
@@ -158,10 +206,12 @@ impl TmuxAdapter {
 
     pub fn attach_session(&self, session: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["attach-session", "-t", session])
+            .with_mode(CommandMode::InheritStdio)
     }
 
     pub fn switch_client(&self, session: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["switch-client", "-t", session])
+            .with_mode(CommandMode::InheritStdio)
     }
 
     pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
@@ -356,6 +406,7 @@ impl AgentAdapter {
                 launch.prompt.clone(),
             ],
             cwd: None,
+            mode: CommandMode::Capture,
         }
     }
 }
@@ -363,8 +414,8 @@ impl AgentAdapter {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAdapter, AgentLaunch, CommandRunner, CommandSpec, GitAdapter, RecordingCommandRunner,
-        TmuxAdapter, WorkmuxAdapter, WorkmuxNewTask,
+        AgentAdapter, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
+        RecordingCommandRunner, TmuxAdapter, WorkmuxAdapter, WorkmuxNewTask,
     };
     use crate::models::{TmuxStatus, WorktrunkStatus};
 
@@ -413,10 +464,12 @@ mod tests {
         assert_eq!(
             adapter.attach_session("ajax-web-fix-login"),
             CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
             adapter.switch_client("ajax-web-fix-login"),
             CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
             adapter.ensure_worktrunk("ajax-web-fix-login", "worktrunk", "/tmp/worktree"),
@@ -450,6 +503,21 @@ mod tests {
                 ]
             )
         );
+    }
+
+    #[test]
+    fn tmux_interactive_commands_inherit_stdio() {
+        let adapter = TmuxAdapter::new("tmux");
+
+        assert_eq!(
+            adapter.attach_session("ajax-web-fix-login").mode,
+            CommandMode::InheritStdio
+        );
+        assert_eq!(
+            adapter.switch_client("ajax-web-fix-login").mode,
+            CommandMode::InheritStdio
+        );
+        assert_eq!(adapter.list_sessions().mode, CommandMode::Capture);
     }
 
     #[test]

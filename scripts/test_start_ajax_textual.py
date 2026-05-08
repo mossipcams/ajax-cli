@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 LIB = REPO_ROOT / "scripts" / "start-ajax-textual-lib.sh"
+TEXTUAL_TEST_SCRIPT = REPO_ROOT / "scripts" / "test-ajax-textual.sh"
 
 
 class StartupBuildDecisionTests(unittest.TestCase):
@@ -48,6 +49,13 @@ class StartupBuildDecisionTests(unittest.TestCase):
             set_mtime(source, 2_000)
 
             self.assertTrue(needs_build(binary, root))
+
+    def test_textual_test_script_installs_frontend_dependencies_before_unittest(self) -> None:
+        script = TEXTUAL_TEST_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("pip install -e", script)
+        self.assertIn("frontends/textual", script)
+        self.assertIn("unittest discover", script)
 
 
 def needs_build(binary: Path, repo_root: Path) -> bool:

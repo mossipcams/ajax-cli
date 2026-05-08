@@ -722,7 +722,8 @@ mod tests {
     };
     use crate::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
@@ -1204,14 +1205,16 @@ mod tests {
             outside_tmux.commands,
             vec![
                 CommandSpec::new("workmux", ["open", "web/fix-login"]),
-                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
             ]
         );
         assert_eq!(
             inside_tmux.commands,
             vec![
                 CommandSpec::new("workmux", ["open", "web/fix-login"]),
-                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
             ]
         );
     }
