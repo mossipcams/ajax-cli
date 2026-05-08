@@ -8,7 +8,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, Paragraph},
@@ -48,22 +48,12 @@ pub fn render_cockpit(
 
 // ── Interactive TUI ───────────────────────────────────────────────────────────
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Panel {
-    Tasks,
-    Review,
-    Inbox,
-}
-
 pub struct App {
     repos: ReposResponse,
     tasks: TasksResponse,
     review: TasksResponse,
     inbox: InboxResponse,
-    focused: Panel,
-    task_scroll: usize,
-    review_scroll: usize,
-    inbox_scroll: usize,
+    scroll: usize,
 }
 
 impl App {
@@ -78,46 +68,32 @@ impl App {
             tasks,
             review,
             inbox,
-            focused: Panel::Tasks,
-            task_scroll: 0,
-            review_scroll: 0,
-            inbox_scroll: 0,
+            scroll: 0,
         }
-    }
-
-    pub fn cycle_focus(&mut self) {
-        self.focused = match self.focused {
-            Panel::Tasks => Panel::Review,
-            Panel::Review => Panel::Inbox,
-            Panel::Inbox => Panel::Tasks,
-        };
     }
 
     pub fn scroll_up(&mut self) {
-        let scroll = self.focused_scroll_mut();
-        *scroll = scroll.saturating_sub(1);
+        self.scroll = self.scroll.saturating_sub(1);
     }
 
-    pub fn scroll_down(&mut self) {
-        let len = self.focused_len();
-        let scroll = self.focused_scroll_mut();
-        *scroll = (*scroll + 1).min(len.saturating_sub(1));
-    }
-
-    fn focused_scroll_mut(&mut self) -> &mut usize {
-        match self.focused {
-            Panel::Tasks => &mut self.task_scroll,
-            Panel::Review => &mut self.review_scroll,
-            Panel::Inbox => &mut self.inbox_scroll,
+    pub fn scroll_down(&mut self, max_rows: usize) {
+        let total = self.feed_len();
+        if total > max_rows {
+            self.scroll = (self.scroll + 1).min(total - max_rows);
         }
     }
 
-    fn focused_len(&self) -> usize {
-        match self.focused {
-            Panel::Tasks => self.tasks.tasks.len(),
-            Panel::Review => self.review.tasks.len(),
-            Panel::Inbox => self.inbox.items.len(),
-        }
+    // Total number of rows the feed produces (for scroll clamping).
+    fn feed_len(&self) -> usize {
+        // section header + items (inbox items are 2 rows each)
+        let inbox_rows = 1 + if self.inbox.items.is_empty() {
+            1
+        } else {
+            self.inbox.items.len() * 2
+        };
+        let tasks_rows = 1 + self.tasks.tasks.len().max(1);
+        let review_rows = 1 + self.review.tasks.len().max(1);
+        inbox_rows + tasks_rows + review_rows
     }
 }
 
@@ -149,6 +125,10 @@ pub fn run_interactive(
 
 fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
     loop {
+        let height = terminal.size()?.height as usize;
+        // subtract header (1) + status bar (1)
+        let feed_height = height.saturating_sub(2);
+
         terminal.draw(|f| render_ui(f, app))?;
 
         if event::poll(Duration::from_millis(250))? {
@@ -156,9 +136,8 @@ fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::
                 if key.kind == KeyEventKind::Press {
                     match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Tab => app.cycle_focus(),
                         KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
-                        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(),
+                        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(feed_height),
                         _ => {}
                     }
                 }
@@ -168,33 +147,57 @@ fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::
 }
 
 fn render_ui(frame: &mut Frame, app: &App) {
-    let outer = Layout::vertical([
+    let chunks = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(0),
         Constraint::Length(1),
     ])
     .split(frame.area());
 
-    render_title(frame, outer[0]);
-    render_content(frame, app, outer[1]);
-    render_status_bar(frame, outer[2]);
+    render_header(frame, app, chunks[0]);
+    render_feed(frame, app, chunks[1]);
+    render_status_bar(frame, chunks[2]);
 }
 
-fn render_title(frame: &mut Frame, area: Rect) {
-    let title = Paragraph::new(Line::from(vec![Span::styled(
-        " Ajax Cockpit",
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )]));
-    frame.render_widget(title, area);
+fn render_header(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let mut parts = vec![
+        Span::styled(
+            " Ajax",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} repos", app.repos.repos.len()),
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} tasks", app.tasks.tasks.len()),
+            Style::default().fg(Color::White),
+        ),
+    ];
+    if !app.review.tasks.is_empty() {
+        parts.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+        parts.push(Span::styled(
+            format!("{} review", app.review.tasks.len()),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    if !app.inbox.items.is_empty() {
+        parts.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
+        parts.push(Span::styled(
+            format!("{} inbox", app.inbox.items.len()),
+            Style::default().fg(Color::Red),
+        ));
+    }
+    frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn render_status_bar(frame: &mut Frame, area: Rect) {
+fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect) {
     let bar = Paragraph::new(Line::from(vec![
-        Span::styled(" Tab", Style::default().fg(Color::Yellow)),
-        Span::raw(":panel  "),
-        Span::styled("↑↓", Style::default().fg(Color::Yellow)),
+        Span::styled(" j/k", Style::default().fg(Color::Yellow)),
         Span::raw(":scroll  "),
         Span::styled("q", Style::default().fg(Color::Yellow)),
         Span::raw(":quit"),
@@ -202,21 +205,14 @@ fn render_status_bar(frame: &mut Frame, area: Rect) {
     frame.render_widget(bar, area);
 }
 
-fn render_content(frame: &mut Frame, app: &App, area: Rect) {
-    let rows = Layout::vertical([
-        Constraint::Percentage(40),
-        Constraint::Percentage(20),
-        Constraint::Percentage(40),
-    ])
-    .split(area);
-
-    let top_cols =
-        Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).split(rows[0]);
-
-    render_repos(frame, app, top_cols[0]);
-    render_tasks(frame, app, top_cols[1]);
-    render_review(frame, app, rows[1]);
-    render_inbox(frame, app, rows[2]);
+fn section_header(label: &str) -> ListItem<'static> {
+    let label = label.to_owned();
+    ListItem::new(Line::from(vec![Span::styled(
+        format!("── {label} "),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::DIM),
+    )]))
 }
 
 fn lifecycle_color(status: &str) -> Color {
@@ -233,158 +229,23 @@ fn lifecycle_color(status: &str) -> Color {
     }
 }
 
-fn focus_border_style(focused: bool) -> Style {
-    if focused {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    }
-}
+fn build_feed(app: &App) -> Vec<ListItem<'static>> {
+    let mut rows: Vec<ListItem<'static>> = Vec::new();
 
-fn render_repos(frame: &mut Frame, app: &App, area: Rect) {
-    let items: Vec<ListItem> = app
-        .repos
-        .repos
-        .iter()
-        .map(|r| {
-            let mut spans = vec![Span::styled(
-                format!(" {:<14}", r.name),
-                Style::default().fg(Color::White),
-            )];
-            if r.active_tasks > 0 {
-                spans.push(Span::styled(
-                    format!("{} active", r.active_tasks),
-                    Style::default().fg(Color::Green),
-                ));
-            }
-            if r.reviewable_tasks > 0 {
-                spans.push(Span::styled(
-                    format!("  {} review", r.reviewable_tasks),
-                    Style::default().fg(Color::Yellow),
-                ));
-            }
-            if r.broken_tasks > 0 {
-                spans.push(Span::styled(
-                    format!("  {} broken", r.broken_tasks),
-                    Style::default().fg(Color::Red),
-                ));
-            }
-            ListItem::new(Line::from(spans))
-        })
-        .collect();
-
-    let block = Block::bordered()
-        .title(format!(" Repos ({}) ", app.repos.repos.len()))
-        .border_style(Style::default().fg(Color::DarkGray));
-    let list = List::new(items).block(block);
-    frame.render_widget(list, area);
-}
-
-fn render_tasks(frame: &mut Frame, app: &App, area: Rect) {
-    let focused = app.focused == Panel::Tasks;
-    let items: Vec<ListItem> = app
-        .tasks
-        .tasks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let bullet = if i == app.task_scroll && focused {
-                "▶"
-            } else {
-                " "
-            };
-            let flag = if t.needs_attention { " ⚑" } else { "" };
-            let color = lifecycle_color(&t.lifecycle_status);
-            ListItem::new(Line::from(vec![
-                Span::raw(format!("{} ", bullet)),
-                Span::styled(
-                    format!("{:<27}", t.qualified_handle),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!("{:<12}", t.lifecycle_status),
-                    Style::default().fg(color),
-                ),
-                Span::styled(flag.to_string(), Style::default().fg(Color::Red)),
-            ]))
-        })
-        .collect();
-
-    let block = Block::bordered()
-        .title(format!(" Tasks ({}) ", app.tasks.tasks.len()))
-        .border_style(focus_border_style(focused));
-    let list = List::new(items).block(block);
-    frame.render_widget(list, area);
-}
-
-fn render_review(frame: &mut Frame, app: &App, area: Rect) {
-    let focused = app.focused == Panel::Review;
-    let title = format!(" Review Queue ({}) ", app.review.tasks.len());
-    let block = Block::bordered()
-        .title(title)
-        .border_style(focus_border_style(focused));
-
-    if app.review.tasks.is_empty() {
-        let p = Paragraph::new(" no tasks ready for review")
-            .style(Style::default().fg(Color::DarkGray))
-            .block(block);
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let items: Vec<ListItem> = app
-        .review
-        .tasks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let bullet = if i == app.review_scroll && focused {
-                "▶"
-            } else {
-                " "
-            };
-            let color = lifecycle_color(&t.lifecycle_status);
-            ListItem::new(Line::from(vec![
-                Span::raw(format!("{} ", bullet)),
-                Span::styled(
-                    format!("{:<27}", t.qualified_handle),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
-            ]))
-        })
-        .collect();
-
-    let list = List::new(items).block(block);
-    frame.render_widget(list, area);
-}
-
-fn render_inbox(frame: &mut Frame, app: &App, area: Rect) {
-    let focused = app.focused == Panel::Inbox;
-    let title = format!(" Inbox ({}) ", app.inbox.items.len());
-    let block = Block::bordered()
-        .title(title)
-        .border_style(focus_border_style(focused));
+    // ── Inbox ────────────────────────────────────────────────────────────────
+    rows.push(section_header(&format!(
+        "Inbox ({})",
+        app.inbox.items.len()
+    )));
 
     if app.inbox.items.is_empty() {
-        let p = Paragraph::new(" no tasks need attention")
-            .style(Style::default().fg(Color::DarkGray))
-            .block(block);
-        frame.render_widget(p, area);
-        return;
-    }
-
-    let items: Vec<ListItem> = app
-        .inbox
-        .items
-        .iter()
-        .enumerate()
-        .map(|(i, item)| {
-            let bullet = if i == app.inbox_scroll && focused {
-                "●"
-            } else {
-                "○"
-            };
+        rows.push(ListItem::new(Line::from(vec![Span::styled(
+            "  no tasks need attention",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    } else {
+        for (i, item) in app.inbox.items.iter().enumerate() {
+            let bullet = if i == app.scroll { "●" } else { "○" };
             let priority_color = if item.priority < 20 {
                 Color::Red
             } else if item.priority < 50 {
@@ -392,26 +253,87 @@ fn render_inbox(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 Color::White
             };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("{} ", bullet), Style::default().fg(priority_color)),
+            // Line 1: bullet + handle
+            rows.push(ListItem::new(Line::from(vec![
+                Span::styled(format!(" {} ", bullet), Style::default().fg(priority_color)),
                 Span::styled(
-                    format!("{:<24}", item.task_handle),
-                    Style::default().fg(Color::White),
+                    item.task_handle.clone(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("{:<30}", item.reason),
-                    Style::default().fg(priority_color),
-                ),
-                Span::styled(" → ", Style::default().fg(Color::DarkGray)),
+            ])));
+            // Line 2: indented reason → action
+            rows.push(ListItem::new(Line::from(vec![
+                Span::raw("     "),
+                Span::styled(item.reason.clone(), Style::default().fg(priority_color)),
+                Span::styled("  →  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     item.recommended_action.clone(),
                     Style::default().fg(Color::Cyan),
                 ),
-            ]))
-        })
-        .collect();
+            ])));
+        }
+    }
 
-    let list = List::new(items).block(block);
+    // ── Tasks ─────────────────────────────────────────────────────────────────
+    rows.push(section_header(&format!(
+        "Tasks ({})",
+        app.tasks.tasks.len()
+    )));
+
+    if app.tasks.tasks.is_empty() {
+        rows.push(ListItem::new(Line::from(vec![Span::styled(
+            "  no active tasks",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    } else {
+        for t in &app.tasks.tasks {
+            let flag = if t.needs_attention { " ⚑" } else { "" };
+            let color = lifecycle_color(&t.lifecycle_status);
+            rows.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:<28}", t.qualified_handle),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
+                Span::styled(flag.to_string(), Style::default().fg(Color::Red)),
+            ])));
+        }
+    }
+
+    // ── Review ────────────────────────────────────────────────────────────────
+    rows.push(section_header(&format!(
+        "Review ({})",
+        app.review.tasks.len()
+    )));
+
+    if app.review.tasks.is_empty() {
+        rows.push(ListItem::new(Line::from(vec![Span::styled(
+            "  no tasks ready for review",
+            Style::default().fg(Color::DarkGray),
+        )])));
+    } else {
+        for t in &app.review.tasks {
+            let color = lifecycle_color(&t.lifecycle_status);
+            rows.push(ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{:<28}", t.qualified_handle),
+                    Style::default().fg(Color::White),
+                ),
+                Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
+            ])));
+        }
+    }
+
+    rows
+}
+
+fn render_feed(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let visible: Vec<ListItem> = build_feed(app).into_iter().skip(app.scroll).collect();
+    let list = List::new(visible).block(Block::default());
     frame.render_widget(list, area);
 }
 
@@ -477,15 +399,71 @@ mod tests {
         assert!(rendered.contains("web/fix-login: agent needs input -> open task"));
     }
 
+    fn render_to_string(width: u16, height: u16, app: &App) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, app)).unwrap();
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
+    }
+
     #[test]
-    fn interactive_cockpit_renders_title_and_task_to_buffer() {
+    fn feed_inbox_appears_before_tasks() {
         let app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        let backend = TestBackend::new(120, 30);
+        let content = render_to_string(60, 30, &app);
+
+        let inbox_pos = content.find("Inbox").unwrap();
+        let tasks_pos = content.find("Tasks").unwrap();
+        assert!(
+            inbox_pos < tasks_pos,
+            "Inbox section should appear before Tasks section"
+        );
+    }
+
+    #[test]
+    fn feed_inbox_items_rendered_as_two_rows() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        let content = render_to_string(80, 30, &app);
+
+        assert!(
+            content.contains("web/fix-login"),
+            "inbox handle should appear in feed"
+        );
+        assert!(
+            content.contains("agent needs input"),
+            "inbox reason should appear in feed"
+        );
+        assert!(
+            content.contains("open task"),
+            "inbox action should appear in feed"
+        );
+    }
+
+    #[test]
+    fn interactive_cockpit_renders_to_narrow_buffer() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // Simulate a narrow mobile terminal (50 cols)
+        let backend = TestBackend::new(50, 24);
         let mut terminal = Terminal::new(backend).unwrap();
 
         terminal.draw(|f| render_ui(f, &app)).unwrap();
@@ -498,77 +476,48 @@ mod tests {
             .map(|c| c.symbol())
             .collect();
 
-        assert!(content.contains("Ajax Cockpit"));
+        assert!(content.contains("Ajax"));
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("Active"));
         assert!(content.contains("Inbox"));
         assert!(content.contains("agent needs input"));
     }
 
     #[test]
-    fn app_cycle_focus_rotates_through_panels() {
+    fn scroll_up_clamps_at_zero() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        use super::Panel;
-        assert_eq!(app.focused, Panel::Tasks);
-        app.cycle_focus();
-        assert_eq!(app.focused, Panel::Review);
-        app.cycle_focus();
-        assert_eq!(app.focused, Panel::Inbox);
-        app.cycle_focus();
-        assert_eq!(app.focused, Panel::Tasks);
-    }
-
-    #[test]
-    fn app_scroll_bounded_by_item_count() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
-        // tasks panel has 1 item — scroll should not exceed 0
-        app.scroll_down();
-        assert_eq!(app.task_scroll, 0);
         app.scroll_up();
-        assert_eq!(app.task_scroll, 0);
+        assert_eq!(app.scroll, 0);
     }
 
     #[test]
-    fn app_scroll_advances_within_bounds() {
+    fn scroll_down_advances_when_feed_exceeds_viewport() {
         let mut app = App::new(
             sample_repos(),
-            TasksResponse {
-                tasks: vec![
-                    TaskSummary {
-                        id: "t1".to_string(),
-                        qualified_handle: "web/a".to_string(),
-                        title: "A".to_string(),
-                        lifecycle_status: "Active".to_string(),
-                        needs_attention: false,
-                    },
-                    TaskSummary {
-                        id: "t2".to_string(),
-                        qualified_handle: "web/b".to_string(),
-                        title: "B".to_string(),
-                        lifecycle_status: "Active".to_string(),
-                        needs_attention: false,
-                    },
-                ],
-            },
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // feed_len > 3, so scrolling with a 3-row viewport should advance
+        app.scroll_down(3);
+        assert!(app.scroll > 0, "scroll should advance when feed > viewport");
+    }
+
+    #[test]
+    fn scroll_down_does_not_advance_when_feed_fits() {
+        let mut app = App::new(
+            sample_repos(),
+            TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        assert_eq!(app.task_scroll, 0);
-        app.scroll_down();
-        assert_eq!(app.task_scroll, 1);
-        app.scroll_down();
-        assert_eq!(app.task_scroll, 1); // capped at len-1
-        app.scroll_up();
-        assert_eq!(app.task_scroll, 0);
+        let before = app.scroll;
+        // feed is short — scrolling with a large viewport should be a no-op
+        app.scroll_down(100);
+        assert_eq!(app.scroll, before);
     }
 }
