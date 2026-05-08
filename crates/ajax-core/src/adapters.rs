@@ -145,7 +145,8 @@ impl CommandRunner for ProcessCommandRunner {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkmuxNewTask {
-    pub repo: String,
+    pub repo_path: String,
+    pub branch: String,
     pub title: String,
     pub agent: String,
 }
@@ -167,14 +168,13 @@ impl WorkmuxAdapter {
             program: self.program.clone(),
             args: vec![
                 "add".to_string(),
-                "--repo".to_string(),
-                task.repo.clone(),
-                "--title".to_string(),
+                task.branch.clone(),
+                "--prompt".to_string(),
                 task.title.clone(),
                 "--agent".to_string(),
                 task.agent.clone(),
             ],
-            cwd: None,
+            cwd: Some(task.repo_path.clone()),
             mode: CommandMode::Capture,
         }
     }
@@ -423,7 +423,8 @@ mod tests {
     fn workmux_adapter_builds_lifecycle_commands() {
         let adapter = WorkmuxAdapter::new("workmux");
         let new_task = WorkmuxNewTask {
-            repo: "web".to_string(),
+            repo_path: "/Users/matt/projects/web".to_string(),
+            branch: "ajax/fix-login".to_string(),
             title: "fix login".to_string(),
             agent: "codex".to_string(),
         };
@@ -434,14 +435,14 @@ mod tests {
                 "workmux",
                 [
                     "add",
-                    "--repo",
-                    "web",
-                    "--title",
+                    "ajax/fix-login",
+                    "--prompt",
                     "fix login",
                     "--agent",
                     "codex"
                 ]
             )
+            .with_cwd("/Users/matt/projects/web")
         );
         assert_eq!(
             adapter.open_task("web/fix-login"),

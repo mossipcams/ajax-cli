@@ -1189,7 +1189,9 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("create task: fix login"));
-        assert!(output.contains("workmux add --repo web"));
+        assert!(output.contains(
+            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --prompt fix login --agent codex)"
+        ));
     }
 
     #[test]
@@ -1716,7 +1718,14 @@ mod tests {
 
         super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed).unwrap();
 
-        assert_eq!(runner.commands()[0].args[2], "api");
+        let command = &runner.commands()[0];
+        assert_eq!(command.cwd.as_deref(), Some("/Users/matt/projects/api"));
+        assert_eq!(command.args[0], "add");
+        assert!(command.args[1].starts_with("ajax/task-"));
+        assert_eq!(command.args[2], "--prompt");
+        assert!(command.args[3].starts_with("task-"));
+        assert_eq!(command.args[4], "--agent");
+        assert_eq!(command.args[5], "codex");
         assert!(context
             .registry
             .list_tasks()

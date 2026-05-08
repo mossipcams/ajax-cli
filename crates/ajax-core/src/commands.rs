@@ -349,19 +349,21 @@ pub fn new_task_plan<R: Registry>(
     context: &CommandContext<R>,
     request: NewTaskRequest,
 ) -> Result<CommandPlan, CommandError> {
-    if !context
+    let Some(repo) = context
         .config
         .repos
         .iter()
-        .any(|repo| repo.name == request.repo)
-    {
+        .find(|repo| repo.name == request.repo)
+    else {
         return Err(CommandError::RepoNotFound(request.repo));
-    }
+    };
 
     let workmux = WorkmuxAdapter::new("workmux");
+    let branch = format!("ajax/{}", slugify_title(&request.title));
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     plan.commands.push(workmux.add_task(&WorkmuxNewTask {
-        repo: request.repo,
+        repo_path: repo.path.display().to_string(),
+        branch,
         title: request.title,
         agent: request.agent,
     }));
@@ -1108,14 +1110,14 @@ mod tests {
                 "workmux",
                 [
                     "add",
-                    "--repo",
-                    "web",
-                    "--title",
+                    "ajax/fix-login",
+                    "--prompt",
                     "fix login",
                     "--agent",
                     "codex"
                 ]
-            )]
+            )
+            .with_cwd("/Users/matt/projects/web")]
         );
     }
 
