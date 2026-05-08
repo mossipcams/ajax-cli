@@ -13,7 +13,7 @@ try:
     from ajax_textual_layout import (
         SelectionRow,
         SummaryCounts,
-        build_dashboard_sections,
+        build_flat_rows,
         is_compact_viewport,
         layout_metrics,
         render_detail,
@@ -27,7 +27,7 @@ except ModuleNotFoundError:
     from frontends.textual.ajax_textual_layout import (
         SelectionRow,
         SummaryCounts,
-        build_dashboard_sections,
+        build_flat_rows,
         is_compact_viewport,
         layout_metrics,
         render_detail,
@@ -48,9 +48,9 @@ class AjaxTextualApp(App[None]):
     #summary {
         height: auto;
         min-height: 3;
-        padding: 0 1;
-        text-style: bold;
-        background: $boost;
+        padding: 0 2;
+        background: $surface;
+        border-bottom: solid $surface-lighten-2;
     }
 
     #body {
@@ -62,13 +62,13 @@ class AjaxTextualApp(App[None]):
         width: 2fr;
         height: 1fr;
         min-height: 12;
-        border: solid $surface-lighten-2;
+        border-right: solid $surface-lighten-2;
     }
 
     ListItem {
         height: auto;
         min-height: 3;
-        padding: 1;
+        padding: 1 1;
     }
 
     ListItem.urgent {
@@ -83,17 +83,27 @@ class AjaxTextualApp(App[None]):
         color: $text-muted;
     }
 
+    ListItem.section {
+        height: 1;
+        min-height: 1;
+        padding: 0 1;
+        background: $surface;
+    }
+
+    ListItem.section.--highlight {
+        background: $surface;
+        color: $text-muted;
+    }
+
     ListItem.--highlight {
-        background: $accent;
-        color: $text;
+        background: $accent 20%;
     }
 
     #details {
         width: 3fr;
         height: 1fr;
         min-height: 7;
-        padding: 1;
-        border: solid $surface-lighten-2;
+        padding: 1 2;
     }
 
     Screen.compact Header,
@@ -114,6 +124,8 @@ class AjaxTextualApp(App[None]):
         width: 1fr;
         height: 2fr;
         min-height: 5;
+        border-right: none;
+        border-bottom: solid $surface-lighten-2;
     }
 
     Screen.compact ListItem {
@@ -148,7 +160,7 @@ class AjaxTextualApp(App[None]):
         yield Static("Ajax", id="summary")
         with Container(id="body"):
             yield ListView(id="items")
-            yield Static("Select a row.", id="details")
+            yield Static("", id="details")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -198,7 +210,7 @@ class AjaxTextualApp(App[None]):
         tasks = snapshot.tasks
         inbox = snapshot.inbox
         review = snapshot.review
-        self.rows = build_selection_rows(repos, tasks, inbox, review)
+        self.rows = build_flat_rows(repos, tasks, inbox, review)
         self.summary_counts = SummaryCounts(
             repo_count=len(repos),
             task_count=len(tasks),
@@ -210,9 +222,12 @@ class AjaxTextualApp(App[None]):
         self.refresh_rendered_rows()
 
         list_view = self.query_one("#items", ListView)
-        if self.rows:
-            list_view.index = 0
-            self.show_detail(0)
+        first_data = next(
+            (i for i, r in enumerate(self.rows) if r.kind != "section"), None
+        )
+        if first_data is not None:
+            list_view.index = first_data
+            self.show_detail(first_data)
         else:
             self.query_one("#details", Static).update("No Ajax data available.")
 
@@ -229,6 +244,7 @@ class AjaxTextualApp(App[None]):
                     )
                 )
             )
+            item.set_class(row.kind == "section", "section")
             for tone in ("urgent", "review", "muted"):
                 item.set_class(row.tone == tone, tone)
             list_view.append(item)
@@ -266,9 +282,12 @@ class AjaxTextualApp(App[None]):
     def show_detail(self, index: int) -> None:
         if index < 0 or index >= len(self.rows):
             return
+        row = self.rows[index]
+        if row.kind == "section":
+            return
         self.query_one("#details", Static).update(
             render_detail(
-                self.rows[index],
+                row,
                 compact=self.compact,
                 width=self.content_width(),
             )
@@ -281,16 +300,6 @@ class AjaxTextualApp(App[None]):
         if self.layout_mode == "split":
             return max((self.size.width * 2 // 5) - 2, 20)
         return self.content_width()
-
-
-def build_selection_rows(
-    repos: list[dict[str, Any]],
-    tasks: list[dict[str, Any]],
-    inbox: list[dict[str, Any]],
-    review: list[dict[str, Any]],
-) -> list[SelectionRow]:
-    sections = build_dashboard_sections(repos, tasks, inbox, review)
-    return [row for section in sections for row in section.rows]
 
 
 def parse_args() -> argparse.Namespace:

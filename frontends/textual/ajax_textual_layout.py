@@ -3,11 +3,24 @@ from __future__ import annotations
 import textwrap
 from dataclasses import dataclass
 
+from rich.markup import escape
+
 
 COMPACT_WIDTH = 80
 COMPACT_HEIGHT = 24
 MIN_WRAP_WIDTH = 20
 COMPACT_ROW_CHROME_WIDTH = 6
+
+_TONE_COLOR = {"urgent": "red", "review": "yellow"}
+_KIND_LABEL = {
+    "inbox": "ATTN",
+    "review": "REVIEW",
+    "task": "TASK",
+    "repo": "REPO",
+    "error": "ERR",
+    "empty": "INFO",
+}
+_TONE_ASCII = {"urgent": "(!)", "review": "(R)"}
 
 
 @dataclass(frozen=True)
@@ -79,29 +92,6 @@ def layout_metrics(*, compact: bool) -> LayoutMetrics:
     )
 
 
-def full_summary(
-    *,
-    repo_count: int,
-    task_count: int,
-    review_count: int,
-    inbox_count: int,
-) -> str:
-    return (
-        f"Ajax | attention {inbox_count} | review {review_count} | "
-        f"tasks {task_count} | repos {repo_count}"
-    )
-
-
-def compact_summary(
-    *,
-    repo_count: int,
-    task_count: int,
-    review_count: int,
-    inbox_count: int,
-) -> str:
-    return f"Ajax  attention {inbox_count}  review {review_count}  tasks {task_count}  repos {repo_count}"
-
-
 def render_summary(
     *,
     repo_count: int,
@@ -110,44 +100,107 @@ def render_summary(
     inbox_count: int,
     compact: bool,
 ) -> str:
-    renderer = compact_summary if compact else full_summary
-    return renderer(
-        repo_count=repo_count,
-        task_count=task_count,
-        review_count=review_count,
-        inbox_count=inbox_count,
+    if compact:
+        return (
+            f"Ajax  {inbox_count} attn  {review_count} review  "
+            f"{task_count} tasks  {repo_count} repos"
+        )
+
+    attn = (
+        f"[bold red]● {inbox_count} attention[/bold red]"
+        if inbox_count
+        else f"[dim]● 0 attention[/dim]"
     )
+    rev = (
+        f"[bold yellow]● {review_count} review[/bold yellow]"
+        if review_count
+        else f"[dim]● 0 review[/dim]"
+    )
+    tasks = f"[dim]●[/dim] {task_count} tasks"
+    repos = f"[dim]●[/dim] {repo_count} repos"
+    return f"[bold]Ajax[/bold]  {attn}  {rev}  {tasks}  {repos}"
 
 
 def render_row(row: SelectionRow, *, compact: bool = False, width: int | None = None) -> str:
-    heading = "  ".join(part for part in [row.label, row.title] if part)
-    meta_line = "  ".join(part for part in [row.meta, row.subtitle] if part)
+    if row.kind == "section":
+        name = row.label.upper()
+        if compact:
+            return f"─ {name}"
+        return f"[dim]── {name}[/dim]"
 
     if compact:
+        badge = _TONE_ASCII.get(row.tone, "( )")
+        heading = f"{badge} {row.title}"
+        meta_line = row.meta
         content_width = usable_compact_row_width(width)
-        return "\n".join(
-            [
-                fit_line(heading, content_width),
-                fit_line(meta_line, content_width),
-            ]
-        )
+        return "\n".join([
+            fit_line(heading, content_width),
+            fit_line(meta_line, content_width),
+        ])
 
-    if meta_line:
-        return f"{heading}\n{meta_line}"
-    return heading
-
-
-def usable_compact_row_width(width: int | None) -> int | None:
-    if width is None:
-        return None
-    return max(width - COMPACT_ROW_CHROME_WIDTH, MIN_WRAP_WIDTH)
+    badge = _rich_badge(row.kind, row.tone)
+    title = escape(row.title)
+    second = "  ".join(
+        escape(p) for p in [row.meta, row.subtitle] if p
+    )
+    if second:
+        return f"{badge}  {title}\n[dim]{second}[/dim]"
+    return f"{badge}  {title}"
 
 
 def render_detail(row: SelectionRow, *, compact: bool = False, width: int | None = None) -> str:
-    detail = structured_detail(row)
-    if not compact:
-        return detail
+    if row.kind == "section":
+        return ""
+    if compact:
+        return _compact_detail(row, width=width)
+    return _rich_detail(row)
 
+
+def _rich_badge(kind: str, tone: str) -> str:
+    color = _TONE_COLOR.get(tone)
+    label = _KIND_LABEL.get(kind, kind.upper())
+    if color:
+        return f"[bold {color}]● {label}[/bold {color}]"
+    return f"[dim]●[/dim] [bold]{label}[/bold]"
+
+
+def _rich_detail(row: SelectionRow) -> str:
+    parts: list[str] = []
+
+    title = escape(row.title)
+    label = escape(row.label)
+    status = escape(row.status or row.meta)
+
+    color = _TONE_COLOR.get(row.tone)
+    if color:
+        parts.append(f"[bold {color}]{title}[/bold {color}]")
+    else:
+        parts.append(f"[bold]{title}[/bold]")
+
+    tag = "  ".join(p for p in [label, status] if p)
+    if tag:
+        parts.append(f"[dim]{tag}[/dim]")
+
+    if row.subtitle:
+        parts.append("")
+        parts.append("[dim]── notes[/dim]")
+        parts.append(escape(row.subtitle))
+
+    actions = row.actions or []
+    if actions:
+        parts.append("")
+        parts.append("[dim]── commands[/dim]")
+        for action in actions:
+            parts.append(f"[dim]$[/dim] {escape(action)}")
+    elif row.detail and row.detail != row.title:
+        parts.append("")
+        parts.append(escape(row.detail))
+
+    return "\n".join(parts)
+
+
+def _compact_detail(row: SelectionRow, width: int | None = None) -> str:
+    detail = structured_detail(row)
     detail_width = max(width or COMPACT_WIDTH, MIN_WRAP_WIDTH)
     wrapped_blocks = [
         wrap_preserving_commands(block, detail_width)
@@ -171,6 +224,12 @@ def structured_detail(row: SelectionRow) -> str:
     return "\n\n".join(parts)
 
 
+def usable_compact_row_width(width: int | None) -> int | None:
+    if width is None:
+        return None
+    return max(width - COMPACT_ROW_CHROME_WIDTH, MIN_WRAP_WIDTH)
+
+
 def startup_error_rows(error: Exception) -> list[SelectionRow]:
     message = str(error) or error.__class__.__name__
     return [
@@ -181,7 +240,7 @@ def startup_error_rows(error: Exception) -> list[SelectionRow]:
             subtitle="Press r to retry after fixing the backend issue.",
             meta="startup",
             detail=f"Ajax data failed to load.\n\n{message}\n\nPress r to retry.",
-            tone="danger",
+            tone="urgent",
             status="startup failed",
             actions=["Press r to retry"],
         )
@@ -235,6 +294,33 @@ def build_dashboard_sections(
         )
 
     return sections
+
+
+def build_flat_rows(
+    repos: list[dict],
+    tasks: list[dict],
+    inbox: list[dict],
+    review: list[dict],
+) -> list[SelectionRow]:
+    sections = build_dashboard_sections(repos, tasks, inbox, review)
+    rows: list[SelectionRow] = []
+    for section in sections:
+        if len(sections) > 1:
+            rows.append(_section_header_row(section.title))
+        rows.extend(section.rows)
+    return rows
+
+
+def _section_header_row(title: str) -> SelectionRow:
+    return SelectionRow(
+        kind="section",
+        label=title,
+        title=title,
+        subtitle="",
+        meta="",
+        detail="",
+        tone="muted",
+    )
 
 
 def attention_rows(inbox: list[dict]) -> list[SelectionRow]:
