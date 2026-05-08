@@ -78,6 +78,8 @@ pub enum ActionOutcome {
 
 #[derive(Clone)]
 enum SelectableKind {
+    /// Synthetic top-of-feed entry. Dispatched as a "new task" action.
+    NewTask,
     Inbox(AttentionItem),
     Task(TaskSummary),
     Review(TaskSummary),
@@ -87,8 +89,17 @@ impl SelectableKind {
     /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
     /// pass through unchanged; tasks and review entries get default actions
     /// that the CLI dispatcher already handles ("open task", "review branch").
+    /// The synthetic NewTask entry uses the "new task" action, which the CLI
+    /// dispatcher matches on to invoke `commands::new_task_plan`.
     fn as_action(&self) -> AttentionItem {
         match self {
+            SelectableKind::NewTask => AttentionItem {
+                task_id: TaskId::new("__new_task__"),
+                task_handle: String::new(),
+                reason: "create a new task".to_string(),
+                priority: 0,
+                recommended_action: "new task".to_string(),
+            },
             SelectableKind::Inbox(item) => item.clone(),
             SelectableKind::Task(t) => AttentionItem {
                 task_id: TaskId::new(t.id.clone()),
@@ -114,6 +125,7 @@ fn build_selectables(
     review: &TasksResponse,
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
+    out.push(SelectableKind::NewTask);
     out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
     out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
     out.extend(review.tasks.iter().cloned().map(SelectableKind::Review));
@@ -168,14 +180,6 @@ impl App {
         }
         let max = self.selectables.len() - 1;
         self.selected = (self.selected + 1).min(max);
-    }
-
-    pub fn select_index(&mut self, idx: usize) {
-        if self.selectables.is_empty() {
-            return;
-        }
-        let max = self.selectables.len() - 1;
-        self.selected = idx.min(max);
     }
 
     /// Select whichever selectable occupies the given absolute feed row.
@@ -250,6 +254,11 @@ impl App {
 fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut row: usize = 0;
+
+    // Actions (always one synthetic NewTask entry)
+    row += 1; // header
+    out.push(row..row + 1);
+    row += 1;
 
     // Inbox
     row += 1; // header
@@ -331,12 +340,8 @@ fn run_event_loop<B: Backend>(
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Backspace => app.select_prev(),
-                    KeyCode::Down
-                    | KeyCode::Char('j')
-                    | KeyCode::Char(' ')
-                    | KeyCode::Tab => app.select_next(),
-                    KeyCode::Char(c @ '1'..='9') => app.select_index((c as u8 - b'1') as usize),
+                    KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
+                    KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
                         if let Some(item) = app.selected_action() {
                             match on_action(&item)? {
@@ -436,12 +441,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
         )])
     } else {
         Line::from(vec![
-            Span::styled(" 1-9", Style::default().fg(Color::Yellow)),
-            Span::raw(":jump  "),
-            Span::styled("space", Style::default().fg(Color::Yellow)),
-            Span::raw("/"),
-            Span::styled("⌫", Style::default().fg(Color::Yellow)),
-            Span::raw(":next/prev  "),
+            Span::styled(" tap", Style::default().fg(Color::Yellow)),
+            Span::raw(":select  "),
             Span::styled("↵", Style::default().fg(Color::Yellow)),
             Span::raw(":act  "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
@@ -518,6 +519,28 @@ fn continuation_pad() -> Span<'static> {
 fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     let mut sel_idx: usize = 0;
+
+    // ── Actions ──────────────────────────────────────────────────────────────
+    rows.push(section_header("Actions"));
+    {
+        let is_selected = app.selected == sel_idx;
+        let label_style = if is_selected {
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+                .add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
+        };
+        rows.push(ListItem::new(Line::from(vec![
+            item_badge(sel_idx),
+            selection_gutter(is_selected, Color::Green),
+            Span::styled("+ New task", label_style),
+        ])));
+        sel_idx += 1;
+    }
 
     // ── Inbox ────────────────────────────────────────────────────────────────
     rows.push(section_header(&format!(
@@ -773,38 +796,24 @@ mod tests {
     }
 
     #[test]
-    fn select_next_walks_inbox_then_tasks_then_review() {
+    fn select_next_walks_actions_inbox_tasks_review() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        // 1 inbox + 1 task + 1 review = 3 selectables
+        // [NewTask, inbox, task, review] = 4 selectables, NewTask at idx 0
         assert_eq!(app.selected, 0);
         app.select_next();
         assert_eq!(app.selected, 1);
         app.select_next();
         assert_eq!(app.selected, 2);
+        app.select_next();
+        assert_eq!(app.selected, 3);
         // clamps at last
         app.select_next();
-        assert_eq!(app.selected, 2);
-    }
-
-    #[test]
-    fn select_index_jumps_and_clamps() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
-        // 3 selectables: idx 0=inbox, 1=task, 2=review
-        app.select_index(2);
-        assert_eq!(app.selected, 2);
-        // out-of-range clamps to last
-        app.select_index(99);
-        assert_eq!(app.selected, 2);
+        assert_eq!(app.selected, 3);
     }
 
     #[test]
@@ -815,42 +824,51 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // Layout: [header] [inbox-l1] [inbox-l2] [header] [task] [header] [review]
-        // rows:       0        1          2         3       4       5        6
-        // selectables: 0=inbox(rows 1..3), 1=task(row 4), 2=review(row 6)
-        app.select_at_feed_row(2); // inbox second line
+        // Layout (rows):
+        //   0 Actions header
+        //   1 + New task          ← selectable 0
+        //   2 Inbox header
+        //   3 inbox line 1        ← selectable 1
+        //   4 inbox line 2          (same selectable 1)
+        //   5 Tasks header
+        //   6 task                ← selectable 2
+        //   7 Review header
+        //   8 review              ← selectable 3
+        app.select_at_feed_row(1);
         assert_eq!(app.selected, 0);
-        app.select_at_feed_row(4); // task row
+        app.select_at_feed_row(4); // inbox second line
         assert_eq!(app.selected, 1);
-        app.select_at_feed_row(6); // review row
+        app.select_at_feed_row(6);
         assert_eq!(app.selected, 2);
+        app.select_at_feed_row(8);
+        assert_eq!(app.selected, 3);
         // header row → no change
-        app.select_at_feed_row(3);
-        assert_eq!(app.selected, 2);
+        app.select_at_feed_row(5);
+        assert_eq!(app.selected, 3);
     }
 
     #[test]
-    fn select_does_nothing_when_no_selectables() {
-        let mut app = App::new(
+    fn new_task_is_always_present_even_when_other_sections_empty() {
+        let app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        app.select_next();
-        app.select_prev();
-        assert_eq!(app.selected, 0);
-        assert!(app.selected_action().is_none());
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.recommended_action, "new task");
     }
 
     #[test]
     fn selected_action_for_inbox_uses_recommended_action() {
-        let app = App::new(
+        let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
+        // skip the NewTask selectable
+        app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
@@ -864,11 +882,11 @@ mod tests {
             sample_tasks(),
             InboxResponse { items: vec![] },
         );
-        // first selectable is now the task (no inbox items)
+        // selectables: [NewTask, task, review]
+        app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
-        // next selectable is the review entry
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.recommended_action, "review branch");
@@ -889,9 +907,12 @@ mod tests {
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        // no selectables left → clamped to 0
+        // only NewTask remains → clamped to 0
         assert_eq!(app.selected, 0);
-        assert!(app.selected_action().is_none());
+        assert_eq!(
+            app.selected_action().unwrap().recommended_action,
+            "new task"
+        );
     }
 
     #[test]
@@ -902,9 +923,10 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // tiny viewport forces scroll once selection moves down
-        app.select_next(); // task
-        app.select_next(); // review
+        // walk down past NewTask, inbox, task, onto review
+        app.select_next();
+        app.select_next();
+        app.select_next();
         app.ensure_visible(2);
         let layout = selectable_row_layout(&app);
         let range = layout[app.selected].clone();

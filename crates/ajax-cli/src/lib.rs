@@ -653,6 +653,35 @@ fn tui_cockpit_action<R: CommandRunner>(
             task_handle: handle.clone(),
             recommended_action: item.recommended_action.clone(),
         })),
+        "new task" => {
+            let repos = commands::list_repos(context);
+            let Some(repo) = repos.repos.first().map(|r| r.name.clone()) else {
+                return Ok(ajax_tui::ActionOutcome::Message(
+                    "no repos configured — run `ajax repos add` first".to_string(),
+                ));
+            };
+            let title = format!(
+                "task-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or_default()
+            );
+            let request = commands::NewTaskRequest {
+                repo,
+                title,
+                agent: "codex".to_string(),
+            };
+            let plan = commands::new_task_plan(context, request).map_err(to_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
         "clean task" => {
             let plan = commands::clean_task_plan(context, handle).map_err(to_io)?;
             if !plan.blocked_reasons.is_empty() {
