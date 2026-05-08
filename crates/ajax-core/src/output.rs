@@ -83,11 +83,19 @@ pub struct DoctorCheck {
     pub message: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CockpitResponse {
+    pub repos: ReposResponse,
+    pub tasks: TasksResponse,
+    pub review: TasksResponse,
+    pub inbox: InboxResponse,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse, OutputFormat,
-        ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+        CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
+        OutputFormat, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     };
     use crate::models::AttentionItem;
 
@@ -142,6 +150,12 @@ mod tests {
                 message: "available".to_string(),
             }],
         };
+        let cockpit = CockpitResponse {
+            repos: repos.clone(),
+            tasks: tasks.clone(),
+            review: tasks.clone(),
+            inbox: inbox.clone(),
+        };
 
         assert!(serde_json::to_string(&repos).unwrap().contains("\"repos\""));
         assert!(serde_json::to_string(&tasks).unwrap().contains("\"tasks\""));
@@ -156,6 +170,9 @@ mod tests {
         assert!(serde_json::to_string(&doctor)
             .unwrap()
             .contains("\"checks\""));
+        assert!(serde_json::to_string(&cockpit)
+            .unwrap()
+            .contains("\"review\""));
     }
 
     #[test]

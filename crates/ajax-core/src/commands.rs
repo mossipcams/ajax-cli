@@ -7,7 +7,7 @@ use crate::{
     config::Config,
     models::{AgentClient, LifecycleStatus, SafetyClassification, SideFlag, Task, TaskId},
     output::{
-        DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
+        CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
         ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     },
     policy::cleanup_safety,
@@ -199,6 +199,15 @@ pub fn doctor<R: Registry>(context: &CommandContext<R>) -> DoctorResponse {
 
 pub fn status<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
     list_tasks(context, None)
+}
+
+pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
+    CockpitResponse {
+        repos: list_repos(context),
+        tasks: list_tasks(context, None),
+        review: review_queue(context),
+        inbox: inbox(context),
+    }
 }
 
 pub fn reconcile_filesystem<R: Registry>(context: &mut CommandContext<R>) -> ReconcileResponse {
@@ -713,7 +722,8 @@ mod tests {
     };
     use crate::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
@@ -1195,14 +1205,16 @@ mod tests {
             outside_tmux.commands,
             vec![
                 CommandSpec::new("workmux", ["open", "web/fix-login"]),
-                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
             ]
         );
         assert_eq!(
             inside_tmux.commands,
             vec![
                 CommandSpec::new("workmux", ["open", "web/fix-login"]),
-                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
             ]
         );
     }

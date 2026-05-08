@@ -1,18 +1,22 @@
+mod context;
+mod render;
+
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    config::{Config, ConfigPaths},
-    output::{
-        DoctorResponse, InboxResponse, InspectResponse, NextResponse, ReconcileResponse,
-        ReposResponse, TaskSummary, TasksResponse,
-    },
+    output::ReconcileResponse,
     registry::InMemoryRegistry,
 };
 use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use serde::Serialize;
+pub use context::CliContextPaths;
+use context::{default_context_paths, load_context, save_context};
+use render::{
+    render_doctor_human, render_execution_outputs, render_inbox_human, render_inspect_human,
+    render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
+    render_tasks_human,
+};
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -96,21 +100,6 @@ pub fn run_with_context_paths_and_runner(
     }
 
     Ok(rendered.output)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CliContextPaths {
-    pub config_file: PathBuf,
-    pub state_file: PathBuf,
-}
-
-impl CliContextPaths {
-    pub fn new(config_file: impl Into<PathBuf>, state_file: impl Into<PathBuf>) -> Self {
-        Self {
-            config_file: config_file.into(),
-            state_file: state_file.into(),
-        }
-    }
 }
 
 pub fn build_cli() -> Command {
@@ -217,21 +206,15 @@ fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
         .arg(
-            Arg::new("textual")
-                .long("textual")
-                .help("Launch the Textual cockpit frontend")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("execute")
-                .long("execute")
-                .help("Execute the planned Textual frontend launch")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("watch")
                 .long("watch")
                 .help("Keep rendering cockpit frames")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Emit machine-readable JSON")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -381,8 +364,8 @@ fn render_cockpit_command(
     context: &CommandContext<InMemoryRegistry>,
     matches: &ArgMatches,
 ) -> Result<String, CliError> {
-    if matches.get_flag("textual") {
-        return render_plan(textual_cockpit_plan(), false);
+    if matches.get_flag("json") {
+        return render_response(commands::cockpit(context), true, |_| String::new());
     }
 
     let iterations = matches
@@ -402,34 +385,22 @@ fn render_cockpit_command(
         ));
     }
 
-    Ok(render_cockpit_frame(context))
-}
+    // Interactive TUI without mutation support (read-only context path).
+    // Full action support requires the mutable context path (render_matches_mut).
+    ajax_tui::run_interactive(
+        commands::list_repos(context),
+        commands::list_tasks(context, None),
+        commands::review_queue(context),
+        commands::inbox(context),
+        |_item| {
+            Ok(ajax_tui::ActionOutcome::Message(
+                "open in a full terminal for action support".to_string(),
+            ))
+        },
+    )
+    .map_err(|e| CliError::CommandFailed(e.to_string()))?;
 
-fn textual_cockpit_plan() -> commands::CommandPlan {
-    let mut plan = commands::CommandPlan::new("launch Textual cockpit");
-    plan.commands.push(ajax_core::adapters::CommandSpec {
-        program: "python3".to_string(),
-        args: vec![
-            textual_frontend_path(),
-            "--ajax-bin".to_string(),
-            "ajax".to_string(),
-        ],
-        cwd: None,
-    });
-    plan
-}
-
-fn textual_frontend_path() -> String {
-    std::env::var("AJAX_TEXTUAL_APP").unwrap_or_else(|_| {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../frontends/textual/ajax_textual.py")
-            .canonicalize()
-            .unwrap_or_else(|_| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../frontends/textual/ajax_textual.py")
-            });
-        path.display().to_string()
-    })
+    Ok(String::new())
 }
 
 fn render_cockpit_frames(
@@ -629,18 +600,29 @@ fn render_matches_mut(
                 state_changed: false,
             })
         }
-        Some(("cockpit", subcommand)) if subcommand.get_flag("textual") => {
-            let plan = textual_cockpit_plan();
-            if !subcommand.get_flag("execute") {
+        Some(("cockpit", subcommand)) => {
+            if subcommand.get_flag("json") || subcommand.get_flag("watch") {
                 return Ok(RenderedCommand {
-                    output: render_plan(plan, false)?,
+                    output: render_cockpit_command(context, subcommand)?,
                     state_changed: false,
                 });
             }
-            let outputs = commands::execute_plan(&plan, false, runner).map_err(command_error)?;
+            // Interactive TUI with full action support.
+            let mut state_changed = false;
+            let pending = ajax_tui::run_interactive(
+                commands::list_repos(context),
+                commands::list_tasks(context, None),
+                commands::review_queue(context),
+                commands::inbox(context),
+                |item| tui_cockpit_action(item, context, runner, &mut state_changed),
+            )
+            .map_err(|e| CliError::CommandFailed(e.to_string()))?;
+            if let Some(pending) = pending {
+                execute_pending_cockpit_action(&pending, context, runner, &mut state_changed)?;
+            }
             Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
+                output: String::new(),
+                state_changed,
             })
         }
         _ => Ok(RenderedCommand {
@@ -650,72 +632,85 @@ fn render_matches_mut(
     }
 }
 
-fn default_context_paths() -> Result<CliContextPaths, CliError> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or_else(|| CliError::ContextLoad("HOME is not set".to_string()))?;
-    let defaults = ConfigPaths::for_home(home);
-    let config_file = std::env::var_os("AJAX_CONFIG")
-        .map(PathBuf::from)
-        .unwrap_or(defaults.config_file);
-    let state_file = std::env::var_os("AJAX_STATE")
-        .map(PathBuf::from)
-        .unwrap_or(defaults.state_db);
+fn tui_cockpit_action<R: CommandRunner>(
+    item: &ajax_core::models::AttentionItem,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+) -> std::io::Result<ajax_tui::ActionOutcome> {
+    let handle = &item.task_handle;
+    let to_io = |e: CommandError| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}"));
 
-    Ok(CliContextPaths {
-        config_file,
-        state_file,
-    })
+    match item.recommended_action.as_str() {
+        // These require an interactive tmux session — exit TUI and let the CLI attach.
+        "open task"
+        | "inspect agent"
+        | "inspect task"
+        | "inspect test output"
+        | "monitor task"
+        | "review diff"
+        | "review branch" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+            task_handle: handle.clone(),
+            recommended_action: item.recommended_action.clone(),
+        })),
+        "clean task" => {
+            let plan = commands::clean_task_plan(context, handle).map_err(to_io)?;
+            if !plan.blocked_reasons.is_empty() {
+                return Ok(ajax_tui::ActionOutcome::Message(format!(
+                    "blocked: {}",
+                    plan.blocked_reasons.join(", ")
+                )));
+            }
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            commands::mark_task_removed(context, handle).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        "repair task" => {
+            let plan = commands::repair_task_plan(context, handle).map_err(to_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        "repair worktrunk" => {
+            let plan = commands::trunk_task_plan(context, handle).map_err(to_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        _ => Ok(ajax_tui::ActionOutcome::Message(format!(
+            "try: ajax inspect {handle}"
+        ))),
+    }
 }
 
-fn load_context(paths: &CliContextPaths) -> Result<CommandContext<InMemoryRegistry>, CliError> {
-    let config = if paths.config_file.exists() {
-        let contents = std::fs::read_to_string(&paths.config_file)
-            .map_err(|error| CliError::ContextLoad(error.to_string()))?;
-        Config::from_toml_str(&contents)
-            .map_err(|error| CliError::ContextLoad(format!("config parse failed: {error:?}")))?
-    } else {
-        Config::default()
-    };
-    let registry = if paths.state_file.exists() {
-        InMemoryRegistry::load_json_snapshot(&paths.state_file)
-            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error:?}")))?
-    } else {
-        InMemoryRegistry::default()
-    };
-
-    Ok(CommandContext::new(config, registry))
-}
-
-fn save_context(
-    paths: &CliContextPaths,
-    context: &CommandContext<InMemoryRegistry>,
+fn execute_pending_cockpit_action<R: CommandRunner>(
+    pending: &ajax_tui::PendingAction,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
 ) -> Result<(), CliError> {
-    if let Some(parent) = paths.state_file.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| CliError::ContextSave(error.to_string()))?;
-    }
-    context
-        .registry
-        .save_json_snapshot(&paths.state_file)
-        .map_err(|error| CliError::ContextSave(format!("state save failed: {error:?}")))
-}
-
-fn render_response<T: Serialize>(
-    response: T,
-    json: bool,
-    human: fn(&T) -> String,
-) -> Result<String, CliError> {
-    if json {
-        serde_json::to_string_pretty(&response)
-            .map_err(|error| CliError::JsonSerialization(error.to_string()))
-    } else {
-        Ok(human(&response))
-    }
-}
-
-fn render_plan(plan: commands::CommandPlan, json: bool) -> Result<String, CliError> {
-    render_response(plan, json, render_plan_human)
+    let plan = commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach)
+        .map_err(command_error)?;
+    commands::execute_plan(&plan, true, runner).map_err(command_error)?;
+    commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
+    *state_changed = true;
+    Ok(())
 }
 
 fn render_or_execute_plan(
@@ -730,27 +725,6 @@ fn render_or_execute_plan(
     let outputs = commands::execute_plan(&plan, matches.get_flag("yes"), &mut runner)
         .map_err(command_error)?;
     Ok(render_execution_outputs(&outputs, None))
-}
-
-fn render_execution_outputs(
-    outputs: &[ajax_core::adapters::CommandOutput],
-    recorded_task: Option<&str>,
-) -> String {
-    let mut lines = outputs
-        .iter()
-        .map(|output| {
-            format!(
-                "exit:{}\nstdout:{}\nstderr:{}",
-                output.status_code, output.stdout, output.stderr
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if let Some(task) = recorded_task {
-        lines.push(format!("recorded task: {task}"));
-    }
-
-    lines.join("\n")
 }
 
 fn new_task_request(matches: &ArgMatches) -> commands::NewTaskRequest {
@@ -800,120 +774,6 @@ fn command_error(error: CommandError) -> CliError {
     }
 }
 
-fn render_repos_human(response: &ReposResponse) -> String {
-    response
-        .repos
-        .iter()
-        .map(|repo| {
-            format!(
-                "{}\t{}\tactive:{} reviewable:{} cleanable:{} broken:{}",
-                repo.name,
-                repo.path,
-                repo.active_tasks,
-                repo.reviewable_tasks,
-                repo.cleanable_tasks,
-                repo.broken_tasks
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_tasks_human(response: &TasksResponse) -> String {
-    response
-        .tasks
-        .iter()
-        .map(render_task_summary)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_task_summary(task: &TaskSummary) -> String {
-    format!(
-        "{}\t{}\t{}",
-        task.qualified_handle, task.lifecycle_status, task.title
-    )
-}
-
-fn render_inspect_human(response: &InspectResponse) -> String {
-    format!(
-        "{}\nbranch: {}\nworktree: {}\ntmux: {}\nflags: {}",
-        render_task_summary(&response.task),
-        response.branch,
-        response.worktree_path,
-        response.tmux_session,
-        response.flags.join(", ")
-    )
-}
-
-fn render_inbox_human(response: &InboxResponse) -> String {
-    response
-        .items
-        .iter()
-        .map(render_attention_item_human)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_next_human(response: &NextResponse) -> String {
-    response
-        .item
-        .as_ref()
-        .map(render_attention_item_human)
-        .unwrap_or_else(|| "no tasks need attention".to_string())
-}
-
-fn render_attention_item_human(item: &ajax_core::models::AttentionItem) -> String {
-    format!(
-        "{}: {} -> {}",
-        item.task_handle, item.reason, item.recommended_action
-    )
-}
-
-fn render_reconcile_human(response: &ReconcileResponse) -> String {
-    format!(
-        "checked:{} changed:{}",
-        response.tasks_checked, response.tasks_changed
-    )
-}
-
-fn render_doctor_human(response: &DoctorResponse) -> String {
-    response
-        .checks
-        .iter()
-        .map(|check| format!("{}\t{}\t{}", check.name, check.ok, check.message))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn render_plan_human(plan: &commands::CommandPlan) -> String {
-    let mut lines = vec![plan.title.clone()];
-
-    if plan.requires_confirmation {
-        lines.push("requires confirmation".to_string());
-    }
-
-    lines.extend(
-        plan.blocked_reasons
-            .iter()
-            .map(|reason| format!("blocked: {reason}")),
-    );
-    lines.extend(plan.commands.iter().map(|command| {
-        if let Some(cwd) = &command.cwd {
-            format!(
-                "$ (cd {} && {} {})",
-                cwd,
-                command.program,
-                command.args.join(" ")
-            )
-        } else {
-            format!("$ {} {}", command.program, command.args.join(" "))
-        }
-    }));
-
-    lines.join("\n")
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -927,7 +787,7 @@ mod tests {
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
-        registry::{InMemoryRegistry, Registry},
+        registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
     use std::path::Path;
 
@@ -1036,7 +896,6 @@ mod tests {
             vec!["ajax", "doctor"],
             vec!["ajax", "reconcile"],
             vec!["ajax", "cockpit"],
-            vec!["ajax", "cockpit", "--textual"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
             assert!(matches.is_ok(), "{args:?} should parse");
@@ -1044,9 +903,28 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_command_renders_dashboard_from_backend_state() {
+    fn cockpit_no_longer_accepts_textual_frontend_flag() {
+        let matches = build_cli().try_get_matches_from(["ajax", "cockpit", "--textual"]);
+
+        assert!(matches.is_err());
+    }
+
+    #[test]
+    fn cockpit_watch_renders_dashboard_from_backend_state() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "cockpit"], &context).unwrap();
+        let output = run_with_context(
+            [
+                "ajax",
+                "cockpit",
+                "--watch",
+                "--iterations",
+                "1",
+                "--interval-ms",
+                "0",
+            ],
+            &context,
+        )
+        .unwrap();
 
         assert!(output.contains("Ajax Cockpit"));
         assert!(output.contains("Inbox"));
@@ -1075,38 +953,21 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_textual_renders_launch_plan() {
+    fn cockpit_json_returns_single_startup_snapshot() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "cockpit", "--textual"], &context).unwrap();
+        let output = run_with_context(["ajax", "cockpit", "--json"], &context).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-        assert!(output.contains("launch Textual cockpit"));
-        assert!(output.contains("python3"));
-        assert!(output.contains("frontends/textual/ajax_textual.py"));
-        assert!(output.contains("--ajax-bin ajax"));
-    }
-
-    #[test]
-    fn cockpit_textual_execute_uses_injected_runner() {
-        let mut context = sample_context();
-        let mut runner = RecordingCommandRunner::default();
-
-        run_with_context_and_runner(
-            ["ajax", "cockpit", "--textual", "--execute"],
-            &mut context,
-            &mut runner,
-        )
-        .unwrap();
-
-        assert_eq!(runner.commands().len(), 1);
-        assert_eq!(runner.commands()[0].program, "python3");
-        assert!(runner.commands()[0]
-            .args
-            .iter()
-            .any(|arg| arg.ends_with("frontends/textual/ajax_textual.py")));
-        assert!(runner.commands()[0]
-            .args
-            .contains(&"--ajax-bin".to_string()));
-        assert!(runner.commands()[0].args.contains(&"ajax".to_string()));
+        assert_eq!(parsed["repos"]["repos"][0]["name"], "web");
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
+        assert_eq!(
+            parsed["review"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
+        assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
     }
 
     #[test]
@@ -1116,6 +977,28 @@ mod tests {
 
         assert!(output.contains("Usage: ajax [COMMAND]"));
         assert!(output.contains("Commands:"));
+    }
+
+    #[test]
+    fn cli_context_and_render_logic_live_in_modules() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
+
+        assert!(lib.contains("mod context;"));
+        assert!(lib.contains("mod render;"));
+        assert!(crate_root.join("src/context.rs").exists());
+        assert!(crate_root.join("src/render.rs").exists());
+    }
+
+    #[test]
+    fn architecture_documents_no_legacy_json_state_migration() {
+        let architecture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
+        )
+        .unwrap();
+
+        assert!(architecture.contains("Legacy JSON state is not migrated"));
+        assert!(architecture.contains("full rewrite"));
     }
 
     #[test]
@@ -1135,6 +1018,7 @@ mod tests {
             ["ajax", "next", "--json", ""],
             ["ajax", "review", "--json", ""],
             ["ajax", "doctor", "--json", ""],
+            ["ajax", "cockpit", "--json", ""],
         ] {
             let filtered_args = args.into_iter().filter(|arg| !arg.is_empty());
             let matches = build_cli().try_get_matches_from(filtered_args);
@@ -1179,68 +1063,32 @@ mod tests {
     }
 
     #[test]
-    fn textual_frontend_replaces_legacy_shell_example() {
+    fn textual_frontend_files_are_removed() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let textual_app = root.join("frontends/textual/ajax_textual.py");
-        let pyproject = root.join("frontends/textual/pyproject.toml");
+
+        assert!(!root.join("frontends/textual").exists());
+    }
+
+    #[test]
+    fn textual_startup_scripts_are_removed() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        assert!(!root.join("scripts/start-ajax-textual.sh").exists());
+        assert!(!root.join("scripts/start-ajax-textual-lib.sh").exists());
+        assert!(!root.join("scripts/test-ajax-textual.sh").exists());
+    }
+
+    #[test]
+    fn readme_documents_native_rust_cockpit() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
-        let app = std::fs::read_to_string(textual_app).unwrap();
-        let pyproject = std::fs::read_to_string(pyproject).unwrap();
 
-        for command in [
-            "from textual.app import App",
-            "json_command(\"repos\")",
-            "json_command(\"tasks\")",
-            "json_command(\"inbox\")",
-            "json_command(\"review\")",
-        ] {
-            assert!(app.contains(command), "missing {command}");
-        }
-        assert!(pyproject.contains("textual"));
-        assert!(readme.contains("Textual"));
-    }
-
-    #[test]
-    fn textual_frontend_uses_mobile_first_stacked_sections() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let app = std::fs::read_to_string(root.join("frontends/textual/ajax_textual.py")).unwrap();
-
-        for expected in [
-            "ListView",
-            "ListItem",
-            "SelectionRow",
-            "on_list_view_selected",
-            "build_selection_rows",
-            "kind=\"create\"",
-            "Create task",
-            "#details",
-        ] {
-            assert!(app.contains(expected), "missing {expected}");
-        }
-
-        assert!(!app.contains("DataTable"));
-        assert!(!app.contains("Horizontal"));
-        assert!(!app.contains("action_new_task_help"));
-        assert!(!app.contains("n create task"));
-    }
-
-    #[test]
-    fn textual_startup_script_launches_built_ajax_binary() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let script = std::fs::read_to_string(root.join("scripts/start-ajax-textual.sh")).unwrap();
-
-        for expected in [
-            "AJAX_TEXTUAL_VENV",
-            "cargo build",
-            "python3 -m venv",
-            "target/debug/ajax",
-            "frontends/textual/ajax_textual.py",
-            "--ajax-bin",
-        ] {
-            assert!(script.contains(expected), "missing {expected}");
-        }
-
-        assert!(!script.contains("gum"));
+        assert!(readme.contains("native Rust cockpit"));
+        assert!(readme.contains("ajax cockpit"));
+        assert!(!readme.contains("Textual"));
+        assert!(!readme.contains("textual"));
+        assert!(!readme.contains("## Startup Script"));
+        assert!(!readme.contains("./scripts/start-ajax-textual.sh"));
     }
 
     #[test]
@@ -1362,7 +1210,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1373,9 +1221,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        sample_context()
-            .registry
-            .save_json_snapshot(&state_file)
+        SqliteRegistryStore::new(&state_file)
+            .save(&sample_context().registry)
             .unwrap();
 
         let output = run_with_context_paths(
@@ -1396,7 +1243,7 @@ mod tests {
             "missing"
         ));
         let config_file = directory.join("missing-config.toml");
-        let state_file = directory.join("missing-state.json");
+        let state_file = directory.join("missing-state.db");
 
         let output = run_with_context_paths(
             ["ajax", "tasks", "--json"],
@@ -1406,6 +1253,33 @@ mod tests {
 
         assert!(output.contains("\"tasks\": []"));
         assert!(!output.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn cli_rejects_legacy_json_state_without_migration() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-context-{}-{}",
+            std::process::id(),
+            "legacy-json"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        sample_context()
+            .registry
+            .save_json_snapshot(&state_file)
+            .unwrap();
+
+        let error = run_with_context_paths(
+            ["ajax", "tasks", "--json"],
+            &CliContextPaths::new(&config_file, &state_file),
+        )
+        .unwrap_err();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(
+            matches!(error, super::CliError::ContextLoad(message) if message.contains("legacy JSON state is unsupported") && !message.contains("file is not a database"))
+        );
     }
 
     #[test]
@@ -1446,7 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_saves_registry_snapshot_to_state_file() {
+    fn new_execute_saves_registry_to_sqlite_state_file() {
         let directory = std::env::temp_dir().join(format!(
             "ajax-cli-new-execute-{}-{}",
             std::process::id(),
@@ -1454,7 +1328,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1481,7 +1355,7 @@ mod tests {
             &mut runner,
         )
         .unwrap();
-        let restored = InMemoryRegistry::load_json_snapshot(&state_file).unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(output.contains("recorded task: web/fix-login"));
@@ -1747,7 +1621,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
-        let state_file = directory.join("state.json");
+        let state_file = directory.join("state.db");
         std::fs::write(
             &config_file,
             r#"
@@ -1758,9 +1632,8 @@ mod tests {
             "#,
         )
         .unwrap();
-        sample_context()
-            .registry
-            .save_json_snapshot(&state_file)
+        SqliteRegistryStore::new(&state_file)
+            .save(&sample_context().registry)
             .unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "other-session\n"),
@@ -1773,7 +1646,7 @@ mod tests {
             &mut runner,
         )
         .unwrap();
-        let restored = InMemoryRegistry::load_json_snapshot(&state_file).unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(output.contains("\"tasks_changed\": 1"));
