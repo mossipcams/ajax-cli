@@ -1206,18 +1206,22 @@ mod tests {
         let app = std::fs::read_to_string(root.join("frontends/textual/ajax_textual.py")).unwrap();
 
         for expected in [
-            "VerticalScroll",
-            "id=\"repos\"",
-            "id=\"actions\"",
-            "action_new_task_help",
+            "ListView",
+            "ListItem",
+            "SelectionRow",
+            "on_list_view_selected",
+            "build_selection_rows",
+            "kind=\"create\"",
             "Create task",
-            "No tasks yet",
+            "#details",
         ] {
             assert!(app.contains(expected), "missing {expected}");
         }
 
         assert!(!app.contains("DataTable"));
         assert!(!app.contains("Horizontal"));
+        assert!(!app.contains("action_new_task_help"));
+        assert!(!app.contains("n create task"));
     }
 
     #[test]

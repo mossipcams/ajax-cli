@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from textual.app import App, ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import Footer, Header, Static
+from textual.containers import Vertical
+from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,14 @@ class AjaxClient:
         return list(self.json_command("review").get("tasks", []))
 
 
+@dataclass(frozen=True)
+class SelectionRow:
+    kind: str
+    title: str
+    subtitle: str
+    detail: str
+
+
 class AjaxTextualApp(App[None]):
     CSS = """
     Screen {
@@ -50,53 +58,52 @@ class AjaxTextualApp(App[None]):
         text-style: bold;
     }
 
-    #actions {
-        height: auto;
-        padding: 0 1 1 1;
-        color: $text-muted;
-    }
-
-    #content {
+    #body {
         height: 1fr;
-        padding: 0 1;
     }
 
-    .section {
-        height: auto;
-        margin-bottom: 1;
-        padding: 1;
+    #items {
+        height: 2fr;
+        min-height: 12;
         border: round $surface-lighten-2;
     }
 
-    .section-title {
-        text-style: bold;
-        color: $accent;
+    ListItem {
+        height: auto;
+        min-height: 3;
+        padding: 1;
     }
-    
-    .empty {
-        color: $text-muted;
+
+    ListItem.--highlight {
+        background: $accent;
+        color: $text;
+    }
+
+    #details {
+        height: 1fr;
+        min-height: 7;
+        padding: 1;
+        border: round $surface-lighten-2;
     }
     """
 
     BINDINGS = [
         ("r", "refresh", "Refresh"),
-        ("n", "new_task_help", "Create task"),
+        ("enter", "select_cursor", "Select"),
         ("q", "quit", "Quit"),
     ]
 
     def __init__(self, client: AjaxClient) -> None:
         super().__init__()
         self.client = client
+        self.rows: list[SelectionRow] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static("Ajax Cockpit", id="summary")
-        yield Static("r refresh | n create task | q quit", id="actions")
-        with VerticalScroll(id="content"):
-            yield Static("", id="repos", classes="section")
-            yield Static("", id="inbox", classes="section")
-            yield Static("", id="tasks", classes="section")
-            yield Static("", id="review", classes="section")
+        yield Static("Ajax", id="summary")
+        with Vertical(id="body"):
+            yield ListView(id="items")
+            yield Static("Select a row.", id="details")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -105,97 +112,218 @@ class AjaxTextualApp(App[None]):
     def action_refresh(self) -> None:
         self.refresh_data()
 
-    def action_new_task_help(self) -> None:
-        self.query_one("#actions", Static).update(
-            'Create task: ajax new --repo <repo> --title "task title" --agent codex --execute'
-        )
+    def action_select_cursor(self) -> None:
+        list_view = self.query_one("#items", ListView)
+        index = list_view.index
+        if index is not None:
+            self.show_detail(index)
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        if event.list_view.id == "items" and event.item is not None:
+            index = event.list_view.index
+            if index is not None:
+                self.show_detail(index)
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.list_view.id == "items":
+            index = event.list_view.index
+            if index is not None:
+                self.show_detail(index)
 
     def refresh_data(self) -> None:
         repos = self.client.repos()
         tasks = self.client.tasks()
         inbox = self.client.inbox()
         review = self.client.review()
+        self.rows = build_selection_rows(repos, tasks, inbox, review)
 
-        summary = self.query_one("#summary", Static)
-        summary.update(
-            f"Ajax Cockpit | repos: {len(repos)} | tasks: {len(tasks)} | "
-            f"review: {len(review)} | inbox: {len(inbox)}"
+        self.query_one("#summary", Static).update(
+            f"Ajax | repos {len(repos)} | tasks {len(tasks)} | "
+            f"review {len(review)} | inbox {len(inbox)}"
         )
 
-        self.query_one("#actions", Static).update("r refresh | n create task | q quit")
-        self.query_one("#repos", Static).update(render_repos(repos))
-        self.query_one("#inbox", Static).update(render_inbox(inbox))
-        self.query_one("#tasks", Static).update(render_tasks(tasks))
-        self.query_one("#review", Static).update(render_review(review))
+        list_view = self.query_one("#items", ListView)
+        list_view.clear()
+        for row in self.rows:
+            list_view.append(ListItem(Label(render_row(row))))
+
+        if self.rows:
+            list_view.index = 0
+            self.show_detail(0)
+        else:
+            self.query_one("#details", Static).update("No Ajax data available.")
+
+    def show_detail(self, index: int) -> None:
+        if index < 0 or index >= len(self.rows):
+            return
+        self.query_one("#details", Static).update(self.rows[index].detail)
 
 
-def render_repos(repos: list[dict[str, Any]]) -> str:
-    lines = ["[section-title]Repos[/]"]
+def render_row(row: SelectionRow) -> str:
+    if row.subtitle:
+        return f"{row.title}\n{row.subtitle}"
+    return row.title
+
+
+def build_selection_rows(
+    repos: list[dict[str, Any]],
+    tasks: list[dict[str, Any]],
+    inbox: list[dict[str, Any]],
+    review: list[dict[str, Any]],
+) -> list[SelectionRow]:
+    rows = [
+        SelectionRow(
+            kind="create",
+            title="Create task",
+            subtitle="Pick this, then run the command shown below.",
+            detail='ajax new --repo <repo> --title "task title" --agent codex --execute',
+        ),
+        SelectionRow(
+            kind="refresh",
+            title="Refresh",
+            subtitle="Reload repos, tasks, inbox, and review queues.",
+            detail="Press r to refresh the cockpit.",
+        ),
+    ]
+
+    rows.extend(repo_rows(repos))
+    rows.extend(inbox_rows(inbox))
+    rows.extend(task_rows(tasks))
+    rows.extend(review_rows(review))
+    return rows
+
+
+def repo_rows(repos: list[dict[str, Any]]) -> list[SelectionRow]:
     if not repos:
-        lines.append("[empty]No repos configured yet.[/]")
-        lines.append("Add repos in ~/.config/ajax/config.toml")
-        return "\n".join(lines)
+        return [
+            SelectionRow(
+                kind="empty",
+                title="No repos configured",
+                subtitle="Ajax cannot create tasks until repos are configured.",
+                detail="Edit ~/.config/ajax/config.toml and add [[repos]] entries.",
+            )
+        ]
 
+    rows = [section_row("Repos")]
     for repo in repos:
         name = str(repo.get("name", ""))
         active = repo.get("active_tasks", 0)
         reviewable = repo.get("reviewable_tasks", 0)
         cleanable = repo.get("cleanable_tasks", 0)
         broken = repo.get("broken_tasks", 0)
-        lines.append(f"{name}")
-        lines.append(
-            f"  active {active} | review {reviewable} | clean {cleanable} | broken {broken}"
+        rows.append(
+            SelectionRow(
+                kind="repo",
+                title=name,
+                subtitle=f"active {active} | review {reviewable} | clean {cleanable} | broken {broken}",
+                detail=(
+                    f"Repo: {name}\n\n"
+                    f"Create task:\najax new --repo {name} --title \"task title\" --agent codex --execute\n\n"
+                    f"List tasks:\najax tasks --repo {name}"
+                ),
+            )
         )
-    return "\n".join(lines)
+    return rows
 
 
-def render_inbox(inbox: list[dict[str, Any]]) -> str:
-    lines = ["[section-title]Needs Attention[/]"]
+def inbox_rows(inbox: list[dict[str, Any]]) -> list[SelectionRow]:
+    rows = [section_row("Needs attention")]
     if not inbox:
-        lines.append("[empty]Nothing needs attention.[/]")
-        return "\n".join(lines)
+        rows.append(
+            SelectionRow(
+                kind="empty",
+                title="Nothing needs attention",
+                subtitle="No blocked, stale, dirty, or reviewable items.",
+                detail="You are clear right now. Refresh after agents run.",
+            )
+        )
+        return rows
 
     for item in inbox:
         task = str(item.get("task_handle", ""))
         reason = str(item.get("reason", ""))
         action = str(item.get("recommended_action", ""))
-        lines.append(task)
-        lines.append(f"  {reason}")
-        lines.append(f"  next: {action}")
-    return "\n".join(lines)
+        rows.append(
+            SelectionRow(
+                kind="inbox",
+                title=task,
+                subtitle=reason,
+                detail=f"{task}\n\nReason:\n{reason}\n\nRecommended action:\n{action}",
+            )
+        )
+    return rows
 
 
-def render_tasks(tasks: list[dict[str, Any]]) -> str:
-    lines = ["[section-title]Tasks[/]"]
+def task_rows(tasks: list[dict[str, Any]]) -> list[SelectionRow]:
+    rows = [section_row("Tasks")]
     if not tasks:
-        lines.append("[empty]No tasks yet.[/]")
-        lines.append('Create task: ajax new --repo <repo> --title "task title" --agent codex')
-        return "\n".join(lines)
+        rows.append(
+            SelectionRow(
+                kind="empty",
+                title="No tasks yet",
+                subtitle="Select Create task or a repo row to see the command.",
+                detail='Create task:\najax new --repo <repo> --title "task title" --agent codex --execute',
+            )
+        )
+        return rows
 
     for task in tasks:
         handle = str(task.get("qualified_handle", ""))
         status = str(task.get("lifecycle_status", ""))
         title = str(task.get("title", ""))
         flags = task.get("side_flags", [])
-        flag_text = f" | flags: {', '.join(flags)}" if flags else ""
-        lines.append(f"{handle}")
-        lines.append(f"  {status}{flag_text}")
-        lines.append(f"  {title}")
-    return "\n".join(lines)
+        flag_text = f"\nFlags: {', '.join(flags)}" if flags else ""
+        rows.append(
+            SelectionRow(
+                kind="task",
+                title=handle,
+                subtitle=f"{status} | {title}",
+                detail=(
+                    f"{handle}\n\n"
+                    f"Status: {status}{flag_text}\n"
+                    f"Title: {title}\n\n"
+                    f"Open:\najax open {handle} --execute\n\n"
+                    f"Inspect:\najax inspect {handle}"
+                ),
+            )
+        )
+    return rows
 
 
-def render_review(review: list[dict[str, Any]]) -> str:
-    lines = ["[section-title]Review[/]"]
+def review_rows(review: list[dict[str, Any]]) -> list[SelectionRow]:
+    rows = [section_row("Review")]
     if not review:
-        lines.append("[empty]No reviewable tasks.[/]")
-        return "\n".join(lines)
+        rows.append(
+            SelectionRow(
+                kind="empty",
+                title="No reviewable tasks",
+                subtitle="Tasks marked reviewable will appear here.",
+                detail="Review queue is empty.",
+            )
+        )
+        return rows
 
     for task in review:
         handle = str(task.get("qualified_handle", ""))
         title = str(task.get("title", ""))
-        lines.append(handle)
-        lines.append(f"  {title}")
-    return "\n".join(lines)
+        rows.append(
+            SelectionRow(
+                kind="review",
+                title=handle,
+                subtitle=title,
+                detail=(
+                    f"{handle}\n\n"
+                    f"{title}\n\n"
+                    f"Diff:\najax diff {handle} --execute\n\n"
+                    f"Merge:\najax merge {handle} --execute --yes"
+                ),
+            )
+        )
+    return rows
+
+
+def section_row(title: str) -> SelectionRow:
+    return SelectionRow(kind="section", title=f"-- {title} --", subtitle="", detail=title)
 
 
 def parse_args() -> argparse.Namespace:
