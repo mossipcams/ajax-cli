@@ -1,8 +1,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use ajax_core::output::{InboxResponse, ReposResponse, TasksResponse};
+use ajax_core::{
+    models::AttentionItem,
+    output::{InboxResponse, ReposResponse, TasksResponse},
+};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -16,7 +21,7 @@ use ratatui::{
 };
 use std::{io, time::Duration};
 
-// ── Text renderer (watch mode and tests) ─────────────────────────────────────
+// ── Text renderer (watch mode) ────────────────────────────────────────────────
 
 pub fn render_cockpit(
     repos: &ReposResponse,
@@ -46,7 +51,30 @@ pub fn render_cockpit(
     lines.join("\n")
 }
 
-// ── Interactive TUI ───────────────────────────────────────────────────────────
+// ── Public types ──────────────────────────────────────────────────────────────
+
+/// Returned when the TUI exits with a deferred action (e.g. open → tmux attach).
+pub struct PendingAction {
+    pub task_handle: String,
+    pub recommended_action: String,
+}
+
+/// What the `on_action` callback returns to tell the TUI what to do next.
+pub enum ActionOutcome {
+    /// Reload the TUI with fresh data.
+    Refresh {
+        repos: ReposResponse,
+        tasks: TasksResponse,
+        review: TasksResponse,
+        inbox: InboxResponse,
+    },
+    /// Exit the TUI — the CLI will run the deferred action.
+    Defer(PendingAction),
+    /// Show a brief status message then stay in the TUI.
+    Message(String),
+}
+
+// ── App state ─────────────────────────────────────────────────────────────────
 
 pub struct App {
     repos: ReposResponse,
@@ -54,7 +82,10 @@ pub struct App {
     review: TasksResponse,
     inbox: InboxResponse,
     scroll: usize,
+    flash: Option<(String, u8)>, // (message, ticks remaining)
 }
+
+const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
 
 impl App {
     pub fn new(
@@ -69,6 +100,7 @@ impl App {
             review,
             inbox,
             scroll: 0,
+            flash: None,
         }
     }
 
@@ -76,16 +108,55 @@ impl App {
         self.scroll = self.scroll.saturating_sub(1);
     }
 
-    pub fn scroll_down(&mut self, max_rows: usize) {
+    pub fn scroll_down(&mut self, viewport_rows: usize) {
         let total = self.feed_len();
-        if total > max_rows {
-            self.scroll = (self.scroll + 1).min(total - max_rows);
+        if total > viewport_rows {
+            self.scroll = (self.scroll + 1).min(total - viewport_rows);
         }
     }
 
-    // Total number of rows the feed produces (for scroll clamping).
+    /// Which inbox item is "selected" given the current scroll position.
+    /// Inbox item i occupies rows (1 + i*2) and (2 + i*2) in the feed;
+    /// row 0 is the Inbox section header.
+    pub fn selected_inbox(&self) -> Option<usize> {
+        if self.inbox.items.is_empty() {
+            return None;
+        }
+        let idx = self.scroll.saturating_sub(1) / 2;
+        Some(idx.min(self.inbox.items.len() - 1))
+    }
+
+    fn reload(
+        &mut self,
+        repos: ReposResponse,
+        tasks: TasksResponse,
+        review: TasksResponse,
+        inbox: InboxResponse,
+    ) {
+        self.repos = repos;
+        self.tasks = tasks;
+        self.review = review;
+        self.inbox = inbox;
+        // clamp scroll after reload in case data shrank
+        let max = self.feed_len().saturating_sub(1);
+        self.scroll = self.scroll.min(max);
+    }
+
+    fn flash(&mut self, msg: String) {
+        self.flash = Some((msg, FLASH_TICKS));
+    }
+
+    fn tick_flash(&mut self) {
+        if let Some((_, ticks)) = &mut self.flash {
+            if *ticks == 0 {
+                self.flash = None;
+            } else {
+                *ticks -= 1;
+            }
+        }
+    }
+
     fn feed_len(&self) -> usize {
-        // section header + items (inbox items are 2 rows each)
         let inbox_rows = 1 + if self.inbox.items.is_empty() {
             1
         } else {
@@ -97,12 +168,15 @@ impl App {
     }
 }
 
+// ── Entry point ───────────────────────────────────────────────────────────────
+
 pub fn run_interactive(
     repos: ReposResponse,
     tasks: TasksResponse,
     review: TasksResponse,
     inbox: InboxResponse,
-) -> io::Result<()> {
+    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+) -> io::Result<Option<PendingAction>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -110,7 +184,7 @@ pub fn run_interactive(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(repos, tasks, review, inbox);
-    let result = run_event_loop(&mut terminal, &mut app);
+    let result = run_event_loop(&mut terminal, &mut app, on_action);
 
     disable_raw_mode()?;
     execute!(
@@ -123,28 +197,55 @@ pub fn run_interactive(
     result
 }
 
-fn run_event_loop<B: Backend>(terminal: &mut Terminal<B>, app: &mut App) -> io::Result<()> {
+// ── Event loop ────────────────────────────────────────────────────────────────
+
+fn run_event_loop<B: Backend>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    mut on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+) -> io::Result<Option<PendingAction>> {
     loop {
         let height = terminal.size()?.height as usize;
-        // subtract header (1) + status bar (1)
         let feed_height = height.saturating_sub(2);
 
+        app.tick_flash();
         terminal.draw(|f| render_ui(f, app))?;
 
         if event::poll(Duration::from_millis(250))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                        KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
-                        KeyCode::Down | KeyCode::Char('j') => app.scroll_down(feed_height),
-                        _ => {}
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                    KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
+                    KeyCode::Down | KeyCode::Char('j') => app.scroll_down(feed_height),
+                    KeyCode::Enter => {
+                        if let Some(idx) = app.selected_inbox() {
+                            let item = app.inbox.items[idx].clone();
+                            match on_action(&item)? {
+                                ActionOutcome::Refresh {
+                                    repos,
+                                    tasks,
+                                    review,
+                                    inbox,
+                                } => app.reload(repos, tasks, review, inbox),
+                                ActionOutcome::Defer(pending) => return Ok(Some(pending)),
+                                ActionOutcome::Message(msg) => app.flash(msg),
+                            }
+                        }
                     }
-                }
+                    _ => {}
+                },
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => app.scroll_up(),
+                    MouseEventKind::ScrollDown => app.scroll_down(feed_height),
+                    _ => {}
+                },
+                _ => {}
             }
         }
     }
 }
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
 
 fn render_ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
@@ -156,7 +257,7 @@ fn render_ui(frame: &mut Frame, app: &App) {
 
     render_header(frame, app, chunks[0]);
     render_feed(frame, app, chunks[1]);
-    render_status_bar(frame, chunks[2]);
+    render_status_bar(frame, app, chunks[2]);
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
@@ -195,14 +296,23 @@ fn render_header(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn render_status_bar(frame: &mut Frame, area: ratatui::layout::Rect) {
-    let bar = Paragraph::new(Line::from(vec![
-        Span::styled(" j/k", Style::default().fg(Color::Yellow)),
-        Span::raw(":scroll  "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(":quit"),
-    ]));
-    frame.render_widget(bar, area);
+fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    let content = if let Some((msg, _)) = &app.flash {
+        Line::from(vec![Span::styled(
+            format!(" {msg}"),
+            Style::default().fg(Color::Green),
+        )])
+    } else {
+        Line::from(vec![
+            Span::styled(" scroll", Style::default().fg(Color::Yellow)),
+            Span::raw(":navigate  "),
+            Span::styled("↵", Style::default().fg(Color::Yellow)),
+            Span::raw(":act  "),
+            Span::styled("q", Style::default().fg(Color::Yellow)),
+            Span::raw(":quit"),
+        ])
+    };
+    frame.render_widget(Paragraph::new(content), area);
 }
 
 fn section_header(label: &str) -> ListItem<'static> {
@@ -231,6 +341,7 @@ fn lifecycle_color(status: &str) -> Color {
 
 fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     let mut rows: Vec<ListItem<'static>> = Vec::new();
+    let selected = app.selected_inbox();
 
     // ── Inbox ────────────────────────────────────────────────────────────────
     rows.push(section_header(&format!(
@@ -245,7 +356,8 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
         )])));
     } else {
         for (i, item) in app.inbox.items.iter().enumerate() {
-            let bullet = if i == app.scroll { "●" } else { "○" };
+            let is_selected = selected == Some(i);
+            let bullet = if is_selected { "●" } else { "○" };
             let priority_color = if item.priority < 20 {
                 Color::Red
             } else if item.priority < 50 {
@@ -253,15 +365,20 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
             } else {
                 Color::White
             };
-            // Line 1: bullet + handle
+            let handle_style = if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            };
+            // Line 1: bullet + handle (reversed when selected)
             rows.push(ListItem::new(Line::from(vec![
-                Span::styled(format!(" {} ", bullet), Style::default().fg(priority_color)),
-                Span::styled(
-                    item.task_handle.clone(),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!(" {bullet} "), Style::default().fg(priority_color)),
+                Span::styled(item.task_handle.clone(), handle_style),
             ])));
             // Line 2: indented reason → action
             rows.push(ListItem::new(Line::from(vec![
@@ -385,20 +502,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cockpit_renders_backend_snapshot() {
-        let repos = sample_repos();
-        let tasks = sample_tasks();
-        let inbox = sample_inbox();
-
-        let rendered = render_cockpit(&repos, &tasks, &tasks, &inbox);
-
-        assert!(rendered.contains("Ajax Cockpit"));
-        assert!(rendered.contains("Repos: 1"));
-        assert!(rendered.contains("Review: 1"));
-        assert!(rendered.contains("web/fix-login: agent needs input -> open task"));
-    }
-
     fn render_to_string(width: u16, height: u16, app: &App) -> String {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -413,6 +516,18 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_renders_backend_snapshot() {
+        let repos = sample_repos();
+        let tasks = sample_tasks();
+        let inbox = sample_inbox();
+        let rendered = render_cockpit(&repos, &tasks, &tasks, &inbox);
+        assert!(rendered.contains("Ajax Cockpit"));
+        assert!(rendered.contains("Repos: 1"));
+        assert!(rendered.contains("Review: 1"));
+        assert!(rendered.contains("web/fix-login: agent needs input -> open task"));
+    }
+
+    #[test]
     fn feed_inbox_appears_before_tasks() {
         let app = App::new(
             sample_repos(),
@@ -421,13 +536,9 @@ mod tests {
             sample_inbox(),
         );
         let content = render_to_string(60, 30, &app);
-
         let inbox_pos = content.find("Inbox").unwrap();
         let tasks_pos = content.find("Tasks").unwrap();
-        assert!(
-            inbox_pos < tasks_pos,
-            "Inbox section should appear before Tasks section"
-        );
+        assert!(inbox_pos < tasks_pos);
     }
 
     #[test]
@@ -439,19 +550,9 @@ mod tests {
             sample_inbox(),
         );
         let content = render_to_string(80, 30, &app);
-
-        assert!(
-            content.contains("web/fix-login"),
-            "inbox handle should appear in feed"
-        );
-        assert!(
-            content.contains("agent needs input"),
-            "inbox reason should appear in feed"
-        );
-        assert!(
-            content.contains("open task"),
-            "inbox action should appear in feed"
-        );
+        assert!(content.contains("web/fix-login"));
+        assert!(content.contains("agent needs input"));
+        assert!(content.contains("open task"));
     }
 
     #[test]
@@ -462,20 +563,7 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // Simulate a narrow mobile terminal (50 cols)
-        let backend = TestBackend::new(50, 24);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-
-        let content: String = terminal
-            .backend()
-            .buffer()
-            .content()
-            .iter()
-            .map(|c| c.symbol())
-            .collect();
-
+        let content = render_to_string(50, 24, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("Inbox"));
@@ -502,9 +590,8 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // feed_len > 3, so scrolling with a 3-row viewport should advance
         app.scroll_down(3);
-        assert!(app.scroll > 0, "scroll should advance when feed > viewport");
+        assert!(app.scroll > 0);
     }
 
     #[test]
@@ -516,8 +603,70 @@ mod tests {
             InboxResponse { items: vec![] },
         );
         let before = app.scroll;
-        // feed is short — scrolling with a large viewport should be a no-op
         app.scroll_down(100);
         assert_eq!(app.scroll, before);
+    }
+
+    #[test]
+    fn selected_inbox_tracks_scroll_position() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            InboxResponse {
+                items: vec![
+                    AttentionItem {
+                        task_id: TaskId::new("t1"),
+                        task_handle: "web/a".to_string(),
+                        reason: "r".to_string(),
+                        priority: 10,
+                        recommended_action: "open task".to_string(),
+                    },
+                    AttentionItem {
+                        task_id: TaskId::new("t2"),
+                        task_handle: "web/b".to_string(),
+                        reason: "r".to_string(),
+                        priority: 10,
+                        recommended_action: "clean task".to_string(),
+                    },
+                ],
+            },
+        );
+        assert_eq!(app.selected_inbox(), Some(0));
+        // scroll to item 1's handle row (row 3 in the feed)
+        app.scroll = 3;
+        assert_eq!(app.selected_inbox(), Some(1));
+    }
+
+    #[test]
+    fn reload_updates_app_data_and_clamps_scroll() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.scroll = 99;
+        app.reload(
+            sample_repos(),
+            TasksResponse { tasks: vec![] },
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+        // feed shrank, scroll must be clamped
+        assert!(app.scroll < 99);
+    }
+
+    #[test]
+    fn on_action_message_outcome_sets_flash() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // simulate what the event loop does with a Message outcome
+        app.flash("done".to_string());
+        assert!(app.flash.is_some());
     }
 }

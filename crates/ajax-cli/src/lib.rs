@@ -385,11 +385,18 @@ fn render_cockpit_command(
         ));
     }
 
+    // Interactive TUI without mutation support (read-only context path).
+    // Full action support requires the mutable context path (render_matches_mut).
     ajax_tui::run_interactive(
         commands::list_repos(context),
         commands::list_tasks(context, None),
         commands::review_queue(context),
         commands::inbox(context),
+        |_item| {
+            Ok(ajax_tui::ActionOutcome::Message(
+                "open in a full terminal for action support".to_string(),
+            ))
+        },
     )
     .map_err(|e| CliError::CommandFailed(e.to_string()))?;
 
@@ -593,11 +600,117 @@ fn render_matches_mut(
                 state_changed: false,
             })
         }
+        Some(("cockpit", subcommand)) => {
+            if subcommand.get_flag("json") || subcommand.get_flag("watch") {
+                return Ok(RenderedCommand {
+                    output: render_cockpit_command(context, subcommand)?,
+                    state_changed: false,
+                });
+            }
+            // Interactive TUI with full action support.
+            let mut state_changed = false;
+            let pending = ajax_tui::run_interactive(
+                commands::list_repos(context),
+                commands::list_tasks(context, None),
+                commands::review_queue(context),
+                commands::inbox(context),
+                |item| tui_cockpit_action(item, context, runner, &mut state_changed),
+            )
+            .map_err(|e| CliError::CommandFailed(e.to_string()))?;
+            if let Some(pending) = pending {
+                execute_pending_cockpit_action(&pending, context, runner, &mut state_changed)?;
+            }
+            Ok(RenderedCommand {
+                output: String::new(),
+                state_changed,
+            })
+        }
         _ => Ok(RenderedCommand {
             output: render_matches(matches, context)?,
             state_changed: false,
         }),
     }
+}
+
+fn tui_cockpit_action<R: CommandRunner>(
+    item: &ajax_core::models::AttentionItem,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+) -> std::io::Result<ajax_tui::ActionOutcome> {
+    let handle = &item.task_handle;
+    let to_io = |e: CommandError| std::io::Error::new(std::io::ErrorKind::Other, format!("{e:?}"));
+
+    match item.recommended_action.as_str() {
+        // These require an interactive tmux session — exit TUI and let the CLI attach.
+        "open task"
+        | "inspect agent"
+        | "inspect task"
+        | "inspect test output"
+        | "monitor task"
+        | "review diff"
+        | "review branch" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+            task_handle: handle.clone(),
+            recommended_action: item.recommended_action.clone(),
+        })),
+        "clean task" => {
+            let plan = commands::clean_task_plan(context, handle).map_err(to_io)?;
+            if !plan.blocked_reasons.is_empty() {
+                return Ok(ajax_tui::ActionOutcome::Message(format!(
+                    "blocked: {}",
+                    plan.blocked_reasons.join(", ")
+                )));
+            }
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            commands::mark_task_removed(context, handle).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        "repair task" => {
+            let plan = commands::repair_task_plan(context, handle).map_err(to_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        "repair worktrunk" => {
+            let plan = commands::trunk_task_plan(context, handle).map_err(to_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        _ => Ok(ajax_tui::ActionOutcome::Message(format!(
+            "try: ajax inspect {handle}"
+        ))),
+    }
+}
+
+fn execute_pending_cockpit_action<R: CommandRunner>(
+    pending: &ajax_tui::PendingAction,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+) -> Result<(), CliError> {
+    let plan = commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach)
+        .map_err(command_error)?;
+    commands::execute_plan(&plan, true, runner).map_err(command_error)?;
+    commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
+    *state_changed = true;
+    Ok(())
 }
 
 fn render_or_execute_plan(
