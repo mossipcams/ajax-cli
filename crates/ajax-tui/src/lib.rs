@@ -1,8 +1,8 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use ajax_core::{
-    models::AttentionItem,
-    output::{InboxResponse, ReposResponse, TasksResponse},
+    models::{AttentionItem, TaskId},
+    output::{InboxResponse, ReposResponse, TaskSummary, TasksResponse},
 };
 use crossterm::{
     event::{
@@ -19,7 +19,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, Paragraph},
     Frame, Terminal,
 };
-use std::{io, time::Duration};
+use std::{io, ops::Range, time::Duration};
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
@@ -74,6 +74,52 @@ pub enum ActionOutcome {
     Message(String),
 }
 
+// ── Selectable items ──────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+enum SelectableKind {
+    Inbox(AttentionItem),
+    Task(TaskSummary),
+    Review(TaskSummary),
+}
+
+impl SelectableKind {
+    /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
+    /// pass through unchanged; tasks and review entries get default actions
+    /// that the CLI dispatcher already handles ("open task", "review branch").
+    fn as_action(&self) -> AttentionItem {
+        match self {
+            SelectableKind::Inbox(item) => item.clone(),
+            SelectableKind::Task(t) => AttentionItem {
+                task_id: TaskId::new(t.id.clone()),
+                task_handle: t.qualified_handle.clone(),
+                reason: t.lifecycle_status.clone(),
+                priority: 50,
+                recommended_action: "open task".to_string(),
+            },
+            SelectableKind::Review(t) => AttentionItem {
+                task_id: TaskId::new(t.id.clone()),
+                task_handle: t.qualified_handle.clone(),
+                reason: t.lifecycle_status.clone(),
+                priority: 50,
+                recommended_action: "review branch".to_string(),
+            },
+        }
+    }
+}
+
+fn build_selectables(
+    inbox: &InboxResponse,
+    tasks: &TasksResponse,
+    review: &TasksResponse,
+) -> Vec<SelectableKind> {
+    let mut out = Vec::new();
+    out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
+    out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
+    out.extend(review.tasks.iter().cloned().map(SelectableKind::Review));
+    out
+}
+
 // ── App state ─────────────────────────────────────────────────────────────────
 
 pub struct App {
@@ -81,8 +127,10 @@ pub struct App {
     tasks: TasksResponse,
     review: TasksResponse,
     inbox: InboxResponse,
-    scroll: usize,
-    flash: Option<(String, u8)>, // (message, ticks remaining)
+    selectables: Vec<SelectableKind>,
+    selected: usize,
+    viewport_scroll: usize,
+    flash: Option<(String, u8)>,
 }
 
 const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
@@ -94,36 +142,58 @@ impl App {
         review: TasksResponse,
         inbox: InboxResponse,
     ) -> Self {
+        let selectables = build_selectables(&inbox, &tasks, &review);
         Self {
             repos,
             tasks,
             review,
             inbox,
-            scroll: 0,
+            selectables,
+            selected: 0,
+            viewport_scroll: 0,
             flash: None,
         }
     }
 
-    pub fn scroll_up(&mut self) {
-        self.scroll = self.scroll.saturating_sub(1);
+    pub fn select_prev(&mut self) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        self.selected = self.selected.saturating_sub(1);
     }
 
-    pub fn scroll_down(&mut self, viewport_rows: usize) {
-        let total = self.feed_len();
-        if total > viewport_rows {
-            self.scroll = (self.scroll + 1).min(total - viewport_rows);
+    pub fn select_next(&mut self) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        let max = self.selectables.len() - 1;
+        self.selected = (self.selected + 1).min(max);
+    }
+
+    pub fn select_index(&mut self, idx: usize) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        let max = self.selectables.len() - 1;
+        self.selected = idx.min(max);
+    }
+
+    /// Select whichever selectable occupies the given absolute feed row.
+    /// No-op if the row falls on a section header / placeholder.
+    pub fn select_at_feed_row(&mut self, feed_row: usize) {
+        let layout = selectable_row_layout(self);
+        if let Some((idx, _)) = layout
+            .iter()
+            .enumerate()
+            .find(|(_, r)| r.contains(&feed_row))
+        {
+            self.selected = idx;
         }
     }
 
-    /// Which inbox item is "selected" given the current scroll position.
-    /// Inbox item i occupies rows (1 + i*2) and (2 + i*2) in the feed;
-    /// row 0 is the Inbox section header.
-    pub fn selected_inbox(&self) -> Option<usize> {
-        if self.inbox.items.is_empty() {
-            return None;
-        }
-        let idx = self.scroll.saturating_sub(1) / 2;
-        Some(idx.min(self.inbox.items.len() - 1))
+    /// The action that Enter would dispatch right now, or None if nothing is selectable.
+    pub fn selected_action(&self) -> Option<AttentionItem> {
+        self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
     fn reload(
@@ -137,9 +207,9 @@ impl App {
         self.tasks = tasks;
         self.review = review;
         self.inbox = inbox;
-        // clamp scroll after reload in case data shrank
-        let max = self.feed_len().saturating_sub(1);
-        self.scroll = self.scroll.min(max);
+        self.selectables = build_selectables(&self.inbox, &self.tasks, &self.review);
+        let max = self.selectables.len().saturating_sub(1);
+        self.selected = self.selected.min(max);
     }
 
     fn flash(&mut self, msg: String) {
@@ -156,16 +226,61 @@ impl App {
         }
     }
 
-    fn feed_len(&self) -> usize {
-        let inbox_rows = 1 + if self.inbox.items.is_empty() {
-            1
-        } else {
-            self.inbox.items.len() * 2
+    /// Adjust viewport so the selected item is visible within `viewport_h` rows.
+    fn ensure_visible(&mut self, viewport_h: usize) {
+        if viewport_h == 0 {
+            return;
+        }
+        let layout = selectable_row_layout(self);
+        let Some(range) = layout.get(self.selected).cloned() else {
+            return;
         };
-        let tasks_rows = 1 + self.tasks.tasks.len().max(1);
-        let review_rows = 1 + self.review.tasks.len().max(1);
-        inbox_rows + tasks_rows + review_rows
+        if range.start < self.viewport_scroll {
+            self.viewport_scroll = range.start;
+        }
+        let bottom = self.viewport_scroll + viewport_h;
+        if range.end > bottom {
+            self.viewport_scroll = range.end.saturating_sub(viewport_h);
+        }
     }
+}
+
+/// Compute the row range each selectable occupies in the rendered feed,
+/// in the same order as `app.selectables`. Must stay in sync with `build_feed`.
+fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut row: usize = 0;
+
+    // Inbox
+    row += 1; // header
+    if app.inbox.items.is_empty() {
+        row += 1; // placeholder
+    } else {
+        for _ in &app.inbox.items {
+            out.push(row..row + 2);
+            row += 2;
+        }
+    }
+
+    // Tasks
+    row += 1;
+    if app.tasks.tasks.is_empty() {
+        row += 1;
+    } else {
+        for _ in &app.tasks.tasks {
+            out.push(row..row + 1);
+            row += 1;
+        }
+    }
+
+    // Review
+    row += 1;
+    for _ in &app.review.tasks {
+        out.push(row..row + 1);
+        row += 1;
+    }
+
+    out
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -209,17 +324,21 @@ fn run_event_loop<B: Backend>(
         let feed_height = height.saturating_sub(2);
 
         app.tick_flash();
+        app.ensure_visible(feed_height);
         terminal.draw(|f| render_ui(f, app))?;
 
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
-                    KeyCode::Up | KeyCode::Char('k') => app.scroll_up(),
-                    KeyCode::Down | KeyCode::Char('j') => app.scroll_down(feed_height),
+                    KeyCode::Up | KeyCode::Char('k') | KeyCode::Backspace => app.select_prev(),
+                    KeyCode::Down
+                    | KeyCode::Char('j')
+                    | KeyCode::Char(' ')
+                    | KeyCode::Tab => app.select_next(),
+                    KeyCode::Char(c @ '1'..='9') => app.select_index((c as u8 - b'1') as usize),
                     KeyCode::Enter => {
-                        if let Some(idx) = app.selected_inbox() {
-                            let item = app.inbox.items[idx].clone();
+                        if let Some(item) = app.selected_action() {
                             match on_action(&item)? {
                                 ActionOutcome::Refresh {
                                     repos,
@@ -234,11 +353,24 @@ fn run_event_loop<B: Backend>(
                     }
                     _ => {}
                 },
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollUp => app.scroll_up(),
-                    MouseEventKind::ScrollDown => app.scroll_down(feed_height),
-                    _ => {}
-                },
+                Event::Mouse(mouse) => {
+                    // Layout: row 0 = header, last row = status bar, feed in between.
+                    let feed_top: usize = 1;
+                    let feed_bottom = height.saturating_sub(1);
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => app.select_prev(),
+                        MouseEventKind::ScrollDown => app.select_next(),
+                        MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
+                            let mouse_row = mouse.row as usize;
+                            if mouse_row >= feed_top && mouse_row < feed_bottom {
+                                let feed_row =
+                                    mouse_row - feed_top + app.viewport_scroll;
+                                app.select_at_feed_row(feed_row);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 _ => {}
             }
         }
@@ -304,8 +436,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) 
         )])
     } else {
         Line::from(vec![
-            Span::styled(" scroll", Style::default().fg(Color::Yellow)),
-            Span::raw(":navigate  "),
+            Span::styled(" 1-9", Style::default().fg(Color::Yellow)),
+            Span::raw(":jump  "),
+            Span::styled("space", Style::default().fg(Color::Yellow)),
+            Span::raw("/"),
+            Span::styled("⌫", Style::default().fg(Color::Yellow)),
+            Span::raw(":next/prev  "),
             Span::styled("↵", Style::default().fg(Color::Yellow)),
             Span::raw(":act  "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
@@ -339,9 +475,49 @@ fn lifecycle_color(status: &str) -> Color {
     }
 }
 
+fn priority_color(priority: u32) -> Color {
+    if priority < 20 {
+        Color::Red
+    } else if priority < 50 {
+        Color::Yellow
+    } else {
+        Color::White
+    }
+}
+
+/// Two-character left gutter: a colored bar when selected, blank otherwise.
+fn selection_gutter(is_selected: bool, accent: Color) -> Span<'static> {
+    if is_selected {
+        Span::styled(
+            "▌ ",
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("  ")
+    }
+}
+
+/// Tap-shortcut badge `[1]`–`[9]` for the first 9 selectables, blank padding past 9.
+/// Keeping width fixed at 4 chars so handles align across rows.
+fn item_badge(sel_idx: usize) -> Span<'static> {
+    let n = sel_idx + 1;
+    if n <= 9 {
+        Span::styled(
+            format!("[{n}] "),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("    ")
+    }
+}
+
+fn continuation_pad() -> Span<'static> {
+    Span::raw("    ")
+}
+
 fn build_feed(app: &App) -> Vec<ListItem<'static>> {
     let mut rows: Vec<ListItem<'static>> = Vec::new();
-    let selected = app.selected_inbox();
+    let mut sel_idx: usize = 0;
 
     // ── Inbox ────────────────────────────────────────────────────────────────
     rows.push(section_header(&format!(
@@ -355,16 +531,9 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
             Style::default().fg(Color::DarkGray),
         )])));
     } else {
-        for (i, item) in app.inbox.items.iter().enumerate() {
-            let is_selected = selected == Some(i);
-            let bullet = if is_selected { "●" } else { "○" };
-            let priority_color = if item.priority < 20 {
-                Color::Red
-            } else if item.priority < 50 {
-                Color::Yellow
-            } else {
-                Color::White
-            };
+        for item in &app.inbox.items {
+            let is_selected = app.selected == sel_idx;
+            let accent = priority_color(item.priority);
             let handle_style = if is_selected {
                 Style::default()
                     .fg(Color::White)
@@ -375,21 +544,23 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             };
-            // Line 1: bullet + handle (reversed when selected)
             rows.push(ListItem::new(Line::from(vec![
-                Span::styled(format!(" {bullet} "), Style::default().fg(priority_color)),
+                item_badge(sel_idx),
+                selection_gutter(is_selected, accent),
                 Span::styled(item.task_handle.clone(), handle_style),
             ])));
-            // Line 2: indented reason → action
             rows.push(ListItem::new(Line::from(vec![
-                Span::raw("     "),
-                Span::styled(item.reason.clone(), Style::default().fg(priority_color)),
+                continuation_pad(),
+                selection_gutter(is_selected, accent),
+                Span::raw("  "),
+                Span::styled(item.reason.clone(), Style::default().fg(accent)),
                 Span::styled("  →  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     item.recommended_action.clone(),
                     Style::default().fg(Color::Cyan),
                 ),
             ])));
+            sel_idx += 1;
         }
     }
 
@@ -406,17 +577,25 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
         )])));
     } else {
         for t in &app.tasks.tasks {
-            let flag = if t.needs_attention { " ⚑" } else { "" };
+            let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
+            let flag = if t.needs_attention { " ⚑" } else { "" };
+            let handle_style = if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::White)
+            };
             rows.push(ListItem::new(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("{:<28}", t.qualified_handle),
-                    Style::default().fg(Color::White),
-                ),
+                item_badge(sel_idx),
+                selection_gutter(is_selected, color),
+                Span::styled(format!("{:<28}", t.qualified_handle), handle_style),
                 Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
                 Span::styled(flag.to_string(), Style::default().fg(Color::Red)),
             ])));
+            sel_idx += 1;
         }
     }
 
@@ -433,15 +612,23 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
         )])));
     } else {
         for t in &app.review.tasks {
+            let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
+            let handle_style = if is_selected {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default().fg(Color::White)
+            };
             rows.push(ListItem::new(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    format!("{:<28}", t.qualified_handle),
-                    Style::default().fg(Color::White),
-                ),
+                item_badge(sel_idx),
+                selection_gutter(is_selected, color),
+                Span::styled(format!("{:<28}", t.qualified_handle), handle_style),
                 Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
             ])));
+            sel_idx += 1;
         }
     }
 
@@ -449,7 +636,10 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
 }
 
 fn render_feed(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let visible: Vec<ListItem> = build_feed(app).into_iter().skip(app.scroll).collect();
+    let visible: Vec<ListItem> = build_feed(app)
+        .into_iter()
+        .skip(app.viewport_scroll)
+        .collect();
     let list = List::new(visible).block(Block::default());
     frame.render_widget(list, area);
 }
@@ -458,7 +648,7 @@ fn render_feed(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_cockpit, render_ui, App};
+    use super::{render_cockpit, render_ui, selectable_row_layout, App};
     use ajax_core::{
         models::{AttentionItem, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
@@ -571,90 +761,155 @@ mod tests {
     }
 
     #[test]
-    fn scroll_up_clamps_at_zero() {
+    fn select_prev_clamps_at_zero() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        app.scroll_up();
-        assert_eq!(app.scroll, 0);
+        app.select_prev();
+        assert_eq!(app.selected, 0);
     }
 
     #[test]
-    fn scroll_down_advances_when_feed_exceeds_viewport() {
+    fn select_next_walks_inbox_then_tasks_then_review() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        app.scroll_down(3);
-        assert!(app.scroll > 0);
+        // 1 inbox + 1 task + 1 review = 3 selectables
+        assert_eq!(app.selected, 0);
+        app.select_next();
+        assert_eq!(app.selected, 1);
+        app.select_next();
+        assert_eq!(app.selected, 2);
+        // clamps at last
+        app.select_next();
+        assert_eq!(app.selected, 2);
     }
 
     #[test]
-    fn scroll_down_does_not_advance_when_feed_fits() {
+    fn select_index_jumps_and_clamps() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // 3 selectables: idx 0=inbox, 1=task, 2=review
+        app.select_index(2);
+        assert_eq!(app.selected, 2);
+        // out-of-range clamps to last
+        app.select_index(99);
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn select_at_feed_row_lands_on_correct_selectable() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // Layout: [header] [inbox-l1] [inbox-l2] [header] [task] [header] [review]
+        // rows:       0        1          2         3       4       5        6
+        // selectables: 0=inbox(rows 1..3), 1=task(row 4), 2=review(row 6)
+        app.select_at_feed_row(2); // inbox second line
+        assert_eq!(app.selected, 0);
+        app.select_at_feed_row(4); // task row
+        assert_eq!(app.selected, 1);
+        app.select_at_feed_row(6); // review row
+        assert_eq!(app.selected, 2);
+        // header row → no change
+        app.select_at_feed_row(3);
+        assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn select_does_nothing_when_no_selectables() {
         let mut app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        let before = app.scroll;
-        app.scroll_down(100);
-        assert_eq!(app.scroll, before);
+        app.select_next();
+        app.select_prev();
+        assert_eq!(app.selected, 0);
+        assert!(app.selected_action().is_none());
     }
 
     #[test]
-    fn selected_inbox_tracks_scroll_position() {
+    fn selected_action_for_inbox_uses_recommended_action() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn selected_action_for_task_synthesizes_open_task() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
-            InboxResponse {
-                items: vec![
-                    AttentionItem {
-                        task_id: TaskId::new("t1"),
-                        task_handle: "web/a".to_string(),
-                        reason: "r".to_string(),
-                        priority: 10,
-                        recommended_action: "open task".to_string(),
-                    },
-                    AttentionItem {
-                        task_id: TaskId::new("t2"),
-                        task_handle: "web/b".to_string(),
-                        reason: "r".to_string(),
-                        priority: 10,
-                        recommended_action: "clean task".to_string(),
-                    },
-                ],
-            },
+            InboxResponse { items: vec![] },
         );
-        assert_eq!(app.selected_inbox(), Some(0));
-        // scroll to item 1's handle row (row 3 in the feed)
-        app.scroll = 3;
-        assert_eq!(app.selected_inbox(), Some(1));
+        // first selectable is now the task (no inbox items)
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+        // next selectable is the review entry
+        app.select_next();
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.recommended_action, "review branch");
     }
 
     #[test]
-    fn reload_updates_app_data_and_clamps_scroll() {
+    fn reload_updates_app_data_and_clamps_selection() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        app.scroll = 99;
+        app.selected = 99;
         app.reload(
             sample_repos(),
             TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        // feed shrank, scroll must be clamped
-        assert!(app.scroll < 99);
+        // no selectables left → clamped to 0
+        assert_eq!(app.selected, 0);
+        assert!(app.selected_action().is_none());
+    }
+
+    #[test]
+    fn ensure_visible_scrolls_viewport_to_selected() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        // tiny viewport forces scroll once selection moves down
+        app.select_next(); // task
+        app.select_next(); // review
+        app.ensure_visible(2);
+        let layout = selectable_row_layout(&app);
+        let range = layout[app.selected].clone();
+        assert!(app.viewport_scroll <= range.start);
+        assert!(range.end <= app.viewport_scroll + 2);
     }
 
     #[test]
@@ -665,7 +920,6 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // simulate what the event loop does with a Message outcome
         app.flash("done".to_string());
         assert!(app.flash.is_some());
     }
