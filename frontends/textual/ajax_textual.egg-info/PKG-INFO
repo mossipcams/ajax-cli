@@ -1,6 +1,0 @@
-Metadata-Version: 2.4
-Name: ajax-textual
-Version: 0.1.0
-Summary: Textual cockpit frontend for Ajax CLI
-Requires-Python: >=3.11
-Requires-Dist: textual>=0.85
