@@ -10,10 +10,7 @@ product is the `ajax` command and its typed Rust orchestration library,
   reconciliation, command plans, and output contracts.
 - `ajax-cli` owns argument parsing, context loading/saving, command dispatch,
   human rendering, JSON rendering, and process execution wiring.
-- `ajax-tui` is currently a simple Rust text cockpit renderer. It is not yet a
-  full native terminal UI framework layer.
-- `frontends/textual` is an optional Python Textual cockpit. It must consume the
-  CLI JSON contract rather than reimplementing orchestration behavior.
+- `ajax-tui` is the native Rust cockpit surface over `ajax-core` responses.
 - External tools remain durable substrates: `workmux` owns task/worktree/session
   lifecycle, `tmux` owns interactive runtime, `git` owns repository truth, and
   agent CLIs remain opaque workers.
@@ -29,9 +26,8 @@ prototype. Prefer small boundary improvements:
 
 - Keep `clap` for the command surface.
 - Keep `serde` response structs as the frontend contract.
-- Keep Textual for rapid cockpit iteration while it remains a thin frontend.
-- Consider Ratatui only if a single-binary native cockpit becomes a hard
-  product requirement.
+- Keep the cockpit native to Rust so Ajax has one install/runtime path.
+- Consider Ratatui when the cockpit grows beyond the current text renderer.
 
 ## Persistence
 
@@ -81,9 +77,10 @@ As the command surface expands, split it into modules:
 Preserve the public test helpers used by the current suite unless a task
 explicitly changes them.
 
-## Frontend Guidance
+## Cockpit Guidance
 
-The Textual frontend is a cockpit, not the orchestration engine. It should:
+The native Rust cockpit is an operator view, not the orchestration engine. It
+should:
 
 - Call `ajax cockpit --json` or other JSON-backed commands.
 - Treat missing or malformed backend data as a recoverable startup/rendering
@@ -93,9 +90,8 @@ The Textual frontend is a cockpit, not the orchestration engine. It should:
 - Avoid taking dependencies on internal Rust model details outside the JSON
   response schema.
 
-If the frontend must become a polished, always-installed native TUI, Ratatui is
-the likely replacement. Until then, Textual is acceptable because it enables
-fast iteration and runs well over SSH.
+If the cockpit must become a polished interactive TUI, Ratatui is the likely
+next step because it preserves Ajax's Rust-only runtime story.
 
 ## Validation Expectations
 
@@ -109,6 +105,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-features
 ```
 
-Python frontend tests should run in an environment with the Textual dependency
-installed. If they fail because dependencies are missing, report that explicitly
-rather than claiming the frontend is verified.
+There is no Python frontend runtime in the supported cockpit path.

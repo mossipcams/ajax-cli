@@ -7,8 +7,8 @@ what state they are in, what needs attention, and which actions are safe to
 take.
 
 The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
-The CLI is the product core; the Textual TUI is an optional cockpit over the
-same backend instead of the place where orchestration logic lives.
+The CLI is the product core; the native Rust cockpit is an operator view over
+the same backend instead of the place where orchestration logic lives.
 
 ## Architecture
 
@@ -57,7 +57,6 @@ ajax doctor
 ajax reconcile
 ajax cockpit
 ajax cockpit --watch
-ajax cockpit --textual --execute
 ```
 
 Commands that feed a UI should support JSON output:
@@ -71,21 +70,18 @@ ajax review --json
 ajax doctor --json
 ```
 
-## Startup Script
+## Native Rust Cockpit
 
-For local development, start the Textual cockpit with:
+Render the native Rust cockpit through the `ajax` command:
 
 ```sh
-./scripts/start-ajax-textual.sh
+ajax cockpit
 ```
 
-The script builds the local `ajax` binary at `target/debug/ajax`, verifies that
-the Python Textual dependency is available, and launches
-`frontends/textual/ajax_textual.py` against that binary. To use a different
-binary or Python interpreter:
+Use watch mode when you want repeated cockpit frames:
 
 ```sh
-AJAX_BIN=/path/to/ajax PYTHON_BIN=python3 ./scripts/start-ajax-textual.sh
+ajax cockpit --watch
 ```
 
 ## Source And Runtime Layout
@@ -114,8 +110,6 @@ ajax-cli/
     ajax-core/
     ajax-cli/
     ajax-tui/
-  frontends/
-    textual/
 ```
 
 Planned core modules:
@@ -136,19 +130,17 @@ Phase 1 builds `ajax-core` and the Rust CLI.
 
 Phase 2 makes frontend workflows call `ajax` commands instead of lifecycle
 substrates directly.
-The checked frontend is `frontends/textual/ajax_textual.py`, which renders a
-Textual cockpit from `ajax` JSON commands.
+The native cockpit renders from `ajax-core` responses through `ajax-tui`.
 
 Phase 3 stabilizes JSON output contracts for UI consumption.
 Current JSON-backed commands include `repos`, `tasks`, `inspect`, `inbox`,
 `next`, `doctor`, and `reconcile`.
 
-Phase 4 adds a persistent cockpit using Textual over the same backend.
+Phase 4 adds a persistent native Rust cockpit over the same backend.
 The initial cockpit artifact is the `ajax-tui` crate plus `ajax cockpit`, which
 renders an operator dashboard from `ajax-core` responses. `ajax cockpit --watch`
 keeps refreshing cockpit frames while still keeping lifecycle orchestration out
-of the UI crate. `ajax cockpit --textual --execute` launches the Python Textual
-frontend, which remains a UI shell over the CLI JSON contract.
+of the UI crate.
 
 Phase 5 adds semi-agentic attention, review, repair, and cleanup intelligence.
 The first attention layer derives prioritized structured inbox items with

@@ -2,7 +2,7 @@ mod context;
 mod render;
 
 use ajax_core::{
-    adapters::{CommandMode, CommandRunner, ProcessCommandRunner},
+    adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
     output::ReconcileResponse,
     registry::InMemoryRegistry,
@@ -206,18 +206,6 @@ fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
         .arg(
-            Arg::new("textual")
-                .long("textual")
-                .help("Launch the Textual cockpit frontend")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("execute")
-                .long("execute")
-                .help("Execute the planned Textual frontend launch")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
             Arg::new("watch")
                 .long("watch")
                 .help("Keep rendering cockpit frames")
@@ -376,10 +364,6 @@ fn render_cockpit_command(
     context: &CommandContext<InMemoryRegistry>,
     matches: &ArgMatches,
 ) -> Result<String, CliError> {
-    if matches.get_flag("textual") {
-        return render_plan(textual_cockpit_plan(), false);
-    }
-
     if matches.get_flag("json") {
         return render_response(commands::cockpit(context), true, |_| String::new());
     }
@@ -402,34 +386,6 @@ fn render_cockpit_command(
     }
 
     Ok(render_cockpit_frame(context))
-}
-
-fn textual_cockpit_plan() -> commands::CommandPlan {
-    let mut plan = commands::CommandPlan::new("launch Textual cockpit");
-    plan.commands.push(ajax_core::adapters::CommandSpec {
-        program: "python3".to_string(),
-        args: vec![
-            textual_frontend_path(),
-            "--ajax-bin".to_string(),
-            "ajax".to_string(),
-        ],
-        cwd: None,
-        mode: CommandMode::Spawn,
-    });
-    plan
-}
-
-fn textual_frontend_path() -> String {
-    std::env::var("AJAX_TEXTUAL_APP").unwrap_or_else(|_| {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../frontends/textual/ajax_textual.py")
-            .canonicalize()
-            .unwrap_or_else(|_| {
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../frontends/textual/ajax_textual.py")
-            });
-        path.display().to_string()
-    })
 }
 
 fn render_cockpit_frames(
@@ -629,20 +585,6 @@ fn render_matches_mut(
                 state_changed: false,
             })
         }
-        Some(("cockpit", subcommand)) if subcommand.get_flag("textual") => {
-            let plan = textual_cockpit_plan();
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, false)?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, false, runner).map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
-            })
-        }
         _ => Ok(RenderedCommand {
             output: render_matches(matches, context)?,
             state_changed: false,
@@ -719,8 +661,7 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
-            RecordingCommandRunner,
+            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
@@ -834,11 +775,17 @@ mod tests {
             vec!["ajax", "doctor"],
             vec!["ajax", "reconcile"],
             vec!["ajax", "cockpit"],
-            vec!["ajax", "cockpit", "--textual"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
             assert!(matches.is_ok(), "{args:?} should parse");
         }
+    }
+
+    #[test]
+    fn cockpit_no_longer_accepts_textual_frontend_flag() {
+        let matches = build_cli().try_get_matches_from(["ajax", "cockpit", "--textual"]);
+
+        assert!(matches.is_err());
     }
 
     #[test]
@@ -888,42 +835,6 @@ mod tests {
             "web/fix-login"
         );
         assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
-    }
-
-    #[test]
-    fn cockpit_textual_renders_launch_plan() {
-        let context = sample_context();
-        let output = run_with_context(["ajax", "cockpit", "--textual"], &context).unwrap();
-
-        assert!(output.contains("launch Textual cockpit"));
-        assert!(output.contains("python3"));
-        assert!(output.contains("frontends/textual/ajax_textual.py"));
-        assert!(output.contains("--ajax-bin ajax"));
-    }
-
-    #[test]
-    fn cockpit_textual_execute_uses_injected_runner() {
-        let mut context = sample_context();
-        let mut runner = RecordingCommandRunner::default();
-
-        run_with_context_and_runner(
-            ["ajax", "cockpit", "--textual", "--execute"],
-            &mut context,
-            &mut runner,
-        )
-        .unwrap();
-
-        assert_eq!(runner.commands().len(), 1);
-        assert_eq!(runner.commands()[0].program, "python3");
-        assert_eq!(runner.commands()[0].mode, CommandMode::Spawn);
-        assert!(runner.commands()[0]
-            .args
-            .iter()
-            .any(|arg| arg.ends_with("frontends/textual/ajax_textual.py")));
-        assert!(runner.commands()[0]
-            .args
-            .contains(&"--ajax-bin".to_string()));
-        assert!(runner.commands()[0].args.contains(&"ajax".to_string()));
     }
 
     #[test]
@@ -1019,89 +930,32 @@ mod tests {
     }
 
     #[test]
-    fn textual_frontend_replaces_legacy_shell_example() {
+    fn textual_frontend_files_are_removed() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let textual_app = root.join("frontends/textual/ajax_textual.py");
-        let textual_client = root.join("frontends/textual/ajax_textual_client.py");
-        let pyproject = root.join("frontends/textual/pyproject.toml");
+
+        assert!(!root.join("frontends/textual").exists());
+    }
+
+    #[test]
+    fn textual_startup_scripts_are_removed() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+
+        assert!(!root.join("scripts/start-ajax-textual.sh").exists());
+        assert!(!root.join("scripts/start-ajax-textual-lib.sh").exists());
+        assert!(!root.join("scripts/test-ajax-textual.sh").exists());
+    }
+
+    #[test]
+    fn readme_documents_native_rust_cockpit() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
-        let app = std::fs::read_to_string(textual_app).unwrap();
-        let client = std::fs::read_to_string(textual_client).unwrap();
-        let pyproject = std::fs::read_to_string(pyproject).unwrap();
 
-        for command in [
-            "from textual.app import App",
-            "snapshot = self.client.snapshot()",
-            "repos = snapshot.repos",
-            "tasks = snapshot.tasks",
-            "inbox = snapshot.inbox",
-            "review = snapshot.review",
-        ] {
-            assert!(app.contains(command), "missing {command}");
-        }
-        assert!(client.contains("json_command(\"cockpit\")"));
-        assert!(pyproject.contains("textual"));
-        assert!(readme.contains("Textual"));
-    }
-
-    #[test]
-    fn textual_frontend_uses_mobile_first_stacked_sections() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let app = std::fs::read_to_string(root.join("frontends/textual/ajax_textual.py")).unwrap();
-        let layout =
-            std::fs::read_to_string(root.join("frontends/textual/ajax_textual_layout.py")).unwrap();
-
-        for expected in [
-            "ListView",
-            "ListItem",
-            "SelectionRow",
-            "on_list_view_selected",
-            "build_flat_rows",
-            "build_flat_rows(repos, tasks, inbox, review)",
-            "viewport_layout",
-            "Screen.compact #body",
-            "ListItem.urgent",
-            "ListItem.review",
-            "#details",
-        ] {
-            assert!(app.contains(expected), "missing {expected}");
-        }
-        for expected in [
-            "DashboardSection",
-            "\"Attention\"",
-            "\"Review\"",
-            "\"Active\"",
-            "\"Repos\"",
-            "label=\"attention\"",
-            "tone=\"urgent\"",
-        ] {
-            assert!(layout.contains(expected), "missing {expected}");
-        }
-
-        assert!(!app.contains("DataTable"));
-        assert!(!app.contains("Horizontal"));
-        assert!(!app.contains("action_new_task_help"));
-        assert!(!app.contains("n create task"));
-        assert!(!layout.contains("-- Repos --"));
-    }
-
-    #[test]
-    fn textual_startup_script_launches_built_ajax_binary() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        let script = std::fs::read_to_string(root.join("scripts/start-ajax-textual.sh")).unwrap();
-
-        for expected in [
-            "AJAX_TEXTUAL_VENV",
-            "cargo build",
-            "python3 -m venv",
-            "target/debug/ajax",
-            "frontends/textual/ajax_textual.py",
-            "--ajax-bin",
-        ] {
-            assert!(script.contains(expected), "missing {expected}");
-        }
-
-        assert!(!script.contains("gum"));
+        assert!(readme.contains("native Rust cockpit"));
+        assert!(readme.contains("ajax cockpit"));
+        assert!(!readme.contains("Textual"));
+        assert!(!readme.contains("textual"));
+        assert!(!readme.contains("## Startup Script"));
+        assert!(!readme.contains("./scripts/start-ajax-textual.sh"));
     }
 
     #[test]
