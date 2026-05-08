@@ -13,10 +13,10 @@ use crossterm::{
 };
 use ratatui::{
     backend::{Backend, CrosstermBackend},
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, List, ListItem, Paragraph},
+    widgets::{Block, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
 use std::{io, ops::Range, time::Duration};
@@ -347,6 +347,29 @@ impl App {
         self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
+    /// Pop one level of view nesting. Returns true when the view changed,
+    /// false at the top level (Projects) so the caller can decide whether to quit.
+    pub fn go_back(&mut self) -> bool {
+        match &self.view {
+            AppView::Projects => false,
+            AppView::Project { .. } => {
+                self.view = AppView::Projects;
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.rebuild_selectables();
+                true
+            }
+            AppView::TaskPicker { repo, .. } => {
+                let repo = repo.clone();
+                self.view = AppView::Project { repo };
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.rebuild_selectables();
+                true
+            }
+        }
+    }
+
     pub fn activate_selected(&mut self) -> Option<AttentionItem> {
         match self.selectables.get(self.selected).cloned()? {
             SelectableKind::Project(repo) => {
@@ -486,8 +509,8 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
         row += 1; // placeholder
     } else {
         for _ in inbox_items {
-            out.push(row..row + 2);
-            row += 2;
+            out.push(row..row + 1);
+            row += 1;
         }
     }
 
@@ -560,7 +583,10 @@ fn run_event_loop<B: Backend>(
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                    KeyCode::Char('q') => return Ok(None),
+                    KeyCode::Esc => {
+                        app.go_back();
+                    }
                     KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
@@ -617,68 +643,141 @@ fn render_ui(frame: &mut Frame, app: &App) {
     render_status_bar(frame, app, chunks[2]);
 }
 
-fn render_header(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let mut parts = vec![
-        Span::styled(
-            " Ajax",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{} repos", app.repos.repos.len()),
-            Style::default().fg(Color::White),
-        ),
-        Span::styled(" · ", Style::default().fg(Color::DarkGray)),
-        Span::styled(
-            format!("{} tasks", app.tasks.tasks.len()),
-            Style::default().fg(Color::White),
-        ),
-    ];
-    if !app.review.tasks.is_empty() {
-        parts.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
-        parts.push(Span::styled(
-            format!("{} review", app.review.tasks.len()),
-            Style::default().fg(Color::Yellow),
-        ));
+fn render_header(frame: &mut Frame, app: &App, area: Rect) {
+    let mut parts = vec![Span::styled(
+        " Ajax",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    let crumb_sep = || Span::styled(" › ", Style::default().fg(Color::DarkGray));
+    let dot_sep = || Span::styled(" · ", Style::default().fg(Color::DarkGray));
+
+    match &app.view {
+        AppView::Projects => {
+            parts.push(dot_sep());
+            parts.push(Span::styled(
+                format!("{} repos", app.repos.repos.len()),
+                Style::default().fg(Color::White),
+            ));
+            parts.push(dot_sep());
+            parts.push(Span::styled(
+                format!("{} tasks", app.tasks.tasks.len()),
+                Style::default().fg(Color::White),
+            ));
+            if !app.review.tasks.is_empty() {
+                parts.push(dot_sep());
+                parts.push(Span::styled(
+                    format!("{} review", app.review.tasks.len()),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
+            if !app.inbox.items.is_empty() {
+                parts.push(dot_sep());
+                parts.push(Span::styled(
+                    format!("{} inbox", app.inbox.items.len()),
+                    Style::default().fg(Color::Red),
+                ));
+            }
+        }
+        AppView::Project { repo } => {
+            parts.push(crumb_sep());
+            parts.push(Span::styled(
+                repo.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+        AppView::TaskPicker { repo, label, .. } => {
+            parts.push(crumb_sep());
+            parts.push(Span::styled(
+                repo.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            parts.push(crumb_sep());
+            parts.push(Span::styled(
+                label.clone(),
+                Style::default().fg(Color::Cyan),
+            ));
+        }
     }
-    if !app.inbox.items.is_empty() {
-        parts.push(Span::styled(" · ", Style::default().fg(Color::DarkGray)));
-        parts.push(Span::styled(
-            format!("{} inbox", app.inbox.items.len()),
-            Style::default().fg(Color::Red),
-        ));
-    }
+
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn render_status_bar(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let content = if let Some((msg, _)) = &app.flash {
         Line::from(vec![Span::styled(
             format!(" {msg}"),
             Style::default().fg(Color::Green),
         )])
     } else {
-        Line::from(vec![
-            Span::styled(" tap", Style::default().fg(Color::Yellow)),
-            Span::raw(":select  "),
-            Span::styled("↵", Style::default().fg(Color::Yellow)),
-            Span::raw(":act  "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(":quit"),
-        ])
+        let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
+        let push_hint = |parts: &mut Vec<Span<'static>>, key: &str, label: &str, last: bool| {
+            parts.push(Span::styled(
+                key.to_string(),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            parts.push(Span::styled(
+                format!(" {label}"),
+                Style::default().fg(Color::DarkGray),
+            ));
+            if !last {
+                parts.push(Span::styled(
+                    "   ".to_string(),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            }
+        };
+        let enter_label = match &app.view {
+            AppView::Projects => "open",
+            AppView::Project { .. } => "act",
+            AppView::TaskPicker { .. } => "run",
+        };
+        let nested = !matches!(app.view, AppView::Projects);
+        push_hint(&mut parts, "↑↓", "select", false);
+        push_hint(&mut parts, "↵", enter_label, false);
+        if nested {
+            push_hint(&mut parts, "esc", "back", false);
+        }
+        push_hint(&mut parts, "q", "quit", true);
+        Line::from(parts)
     };
     frame.render_widget(Paragraph::new(content), area);
 }
 
-fn section_header(label: &str) -> ListItem<'static> {
-    let label = label.to_owned();
+fn section_header(label: &str, width: usize) -> ListItem<'static> {
+    let prefix = format!("── {label} ");
+    let prefix_chars = prefix.chars().count();
+    let pad = width.saturating_sub(prefix_chars);
+    let mut line = prefix;
+    line.extend(std::iter::repeat_n('─', pad));
     ListItem::new(Line::from(vec![Span::styled(
-        format!("── {label} "),
+        line,
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM),
+    )]))
+}
+
+fn selected_highlight() -> Style {
+    Style::default()
+        .bg(Color::Indexed(237))
+        .add_modifier(Modifier::BOLD)
+}
+
+fn empty_state(text: &str) -> ListItem<'static> {
+    ListItem::new(Line::from(vec![Span::styled(
+        format!("  {text}"),
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
     )]))
 }
 
@@ -734,10 +833,6 @@ fn item_badge(sel_idx: usize) -> Span<'static> {
     }
 }
 
-fn continuation_pad() -> Span<'static> {
-    Span::raw("    ")
-}
-
 fn task_handle_repo(handle: &str) -> Option<&str> {
     handle.split_once('/').map(|(repo, _)| repo)
 }
@@ -783,25 +878,21 @@ fn visible_review_tasks(app: &App) -> Vec<&TaskSummary> {
 }
 
 fn action_row(sel_idx: usize, is_selected: bool, label: &str) -> ListItem<'static> {
-    let label_style = if is_selected {
-        Style::default()
-            .fg(Color::White)
-            .add_modifier(Modifier::BOLD)
-            .add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
-            .fg(Color::Green)
-            .add_modifier(Modifier::BOLD)
-    };
     ListItem::new(Line::from(vec![
         item_badge(sel_idx),
         selection_gutter(is_selected, Color::Green),
-        Span::styled(label.to_string(), label_style),
+        Span::styled(
+            label.to_string(),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
     ]))
 }
 
-fn build_feed(app: &App) -> Vec<ListItem<'static>> {
+fn build_feed(app: &App, width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) {
     let mut rows: Vec<ListItem<'static>> = Vec::new();
+    let mut sel_to_row: Vec<usize> = Vec::new();
     let mut sel_idx: usize = 0;
 
     if let AppView::TaskPicker {
@@ -810,12 +901,9 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
         ..
     } = &app.view
     {
-        rows.push(section_header(&format!("Choose task: {label}")));
+        rows.push(section_header(&format!("Choose task · {label}"), width));
         if app.selectables.is_empty() {
-            rows.push(ListItem::new(Line::from(vec![Span::styled(
-                "  no matching tasks",
-                Style::default().fg(Color::DarkGray),
-            )])));
+            rows.push(empty_state("no matching tasks · esc to go back"));
         } else {
             for selectable in &app.selectables {
                 let SelectableKind::TaskAction { task, .. } = selectable else {
@@ -823,39 +911,34 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
                 };
                 let is_selected = app.selected == sel_idx;
                 let color = lifecycle_color(&task.lifecycle_status);
-                let handle_style = if is_selected {
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD)
-                        .add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default().fg(Color::White)
-                };
+                sel_to_row.push(rows.len());
                 rows.push(ListItem::new(Line::from(vec![
                     item_badge(sel_idx),
                     selection_gutter(is_selected, color),
-                    Span::styled(format!("{:<28}", task.qualified_handle), handle_style),
+                    Span::styled(
+                        format!("{:<28}", task.qualified_handle),
+                        Style::default().fg(Color::White),
+                    ),
                     Span::styled(recommended_action.clone(), Style::default().fg(Color::Cyan)),
                 ])));
                 sel_idx += 1;
             }
         }
-        return rows;
+        return (rows, sel_to_row);
     }
 
     // ── Projects ─────────────────────────────────────────────────────────────
     match &app.view {
         AppView::Projects => {
-            rows.push(section_header(&format!(
-                "Projects ({})",
-                app.repos.repos.len()
-            )));
+            rows.push(section_header(
+                &format!("Projects ({})", app.repos.repos.len()),
+                width,
+            ));
 
             if app.repos.repos.is_empty() {
-                rows.push(ListItem::new(Line::from(vec![Span::styled(
-                    "  no projects configured",
-                    Style::default().fg(Color::DarkGray),
-                )])));
+                rows.push(empty_state(
+                    "no projects configured · edit ~/.config/ajax/config.toml to add one",
+                ));
             } else {
                 for repo in &app.repos.repos {
                     let is_selected = app.selected == sel_idx;
@@ -866,20 +949,16 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
                     } else {
                         Color::Cyan
                     };
-                    let name_style = if is_selected {
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                            .add_modifier(Modifier::REVERSED)
-                    } else {
-                        Style::default()
-                            .fg(Color::White)
-                            .add_modifier(Modifier::BOLD)
-                    };
+                    sel_to_row.push(rows.len());
                     rows.push(ListItem::new(Line::from(vec![
                         item_badge(sel_idx),
                         selection_gutter(is_selected, accent),
-                        Span::styled(format!("{:<22}", repo.name), name_style),
+                        Span::styled(
+                            format!("{:<22}", repo.name),
+                            Style::default()
+                                .fg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ),
                         Span::styled(
                             format!(
                                 "{} active  {} review  {} broken",
@@ -893,14 +972,15 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
             }
         }
         AppView::Project { repo } => {
-            rows.push(section_header(&format!("Project: {repo}")));
+            rows.push(section_header(&format!("Project: {repo}"), width));
         }
         AppView::TaskPicker { .. } => {}
     }
 
-    rows.push(section_header("Actions"));
+    rows.push(section_header("Actions", width));
     match &app.view {
         AppView::Projects => {
+            sel_to_row.push(rows.len());
             rows.push(action_row(sel_idx, app.selected == sel_idx, "+ New task"));
             sel_idx += 1;
         }
@@ -909,6 +989,7 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
                 let SelectableKind::ProjectAction { label, .. } = action else {
                     continue;
                 };
+                sel_to_row.push(rows.len());
                 rows.push(action_row(sel_idx, app.selected == sel_idx, &label));
                 sel_idx += 1;
             }
@@ -918,36 +999,27 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
 
     // ── Inbox ────────────────────────────────────────────────────────────────
     let inbox_items = visible_inbox_items(app);
-    rows.push(section_header(&format!("Inbox ({})", inbox_items.len())));
+    rows.push(section_header(
+        &format!("Inbox ({})", inbox_items.len()),
+        width,
+    ));
 
     if inbox_items.is_empty() {
-        rows.push(ListItem::new(Line::from(vec![Span::styled(
-            "  no tasks need attention",
-            Style::default().fg(Color::DarkGray),
-        )])));
+        rows.push(empty_state("all caught up · no tasks need attention"));
     } else {
         for item in inbox_items {
             let is_selected = app.selected == sel_idx;
             let accent = priority_color(item.priority);
-            let handle_style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            };
+            sel_to_row.push(rows.len());
             rows.push(ListItem::new(Line::from(vec![
                 item_badge(sel_idx),
                 selection_gutter(is_selected, accent),
-                Span::styled(item.task_handle.clone(), handle_style),
-            ])));
-            rows.push(ListItem::new(Line::from(vec![
-                continuation_pad(),
-                selection_gutter(is_selected, accent),
-                Span::raw("  "),
+                Span::styled(
+                    format!("{:<22}", item.task_handle),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(item.reason.clone(), Style::default().fg(accent)),
                 Span::styled("  →  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
@@ -961,30 +1033,25 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
 
     // ── Tasks ─────────────────────────────────────────────────────────────────
     let tasks = visible_tasks(app);
-    rows.push(section_header(&format!("Tasks ({})", tasks.len())));
+    rows.push(section_header(&format!("Tasks ({})", tasks.len()), width));
 
     if tasks.is_empty() {
-        rows.push(ListItem::new(Line::from(vec![Span::styled(
-            "  no active tasks",
-            Style::default().fg(Color::DarkGray),
-        )])));
+        rows.push(empty_state(
+            "no active tasks · pick + New task above to start one",
+        ));
     } else {
         for t in tasks {
             let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
             let flag = if t.needs_attention { " ⚑" } else { "" };
-            let handle_style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default().fg(Color::White)
-            };
+            sel_to_row.push(rows.len());
             rows.push(ListItem::new(Line::from(vec![
                 item_badge(sel_idx),
                 selection_gutter(is_selected, color),
-                Span::styled(format!("{:<28}", t.qualified_handle), handle_style),
+                Span::styled(
+                    format!("{:<28}", t.qualified_handle),
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
                 Span::styled(flag.to_string(), Style::default().fg(Color::Red)),
             ])));
@@ -994,45 +1061,52 @@ fn build_feed(app: &App) -> Vec<ListItem<'static>> {
 
     // ── Review ────────────────────────────────────────────────────────────────
     let review_tasks = visible_review_tasks(app);
-    rows.push(section_header(&format!("Review ({})", review_tasks.len())));
+    rows.push(section_header(
+        &format!("Review ({})", review_tasks.len()),
+        width,
+    ));
 
     if review_tasks.is_empty() {
-        rows.push(ListItem::new(Line::from(vec![Span::styled(
-            "  no tasks ready for review",
-            Style::default().fg(Color::DarkGray),
-        )])));
+        rows.push(empty_state(
+            "nothing waiting for review · finished tasks land here",
+        ));
     } else {
         for t in review_tasks {
             let is_selected = app.selected == sel_idx;
             let color = lifecycle_color(&t.lifecycle_status);
-            let handle_style = if is_selected {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::REVERSED)
-            } else {
-                Style::default().fg(Color::White)
-            };
+            sel_to_row.push(rows.len());
             rows.push(ListItem::new(Line::from(vec![
                 item_badge(sel_idx),
                 selection_gutter(is_selected, color),
-                Span::styled(format!("{:<28}", t.qualified_handle), handle_style),
+                Span::styled(
+                    format!("{:<28}", t.qualified_handle),
+                    Style::default().fg(Color::White),
+                ),
                 Span::styled(t.lifecycle_status.clone(), Style::default().fg(color)),
             ])));
             sel_idx += 1;
         }
     }
 
-    rows
+    (rows, sel_to_row)
 }
 
-fn render_feed(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let visible: Vec<ListItem> = build_feed(app)
-        .into_iter()
-        .skip(app.viewport_scroll)
-        .collect();
-    let list = List::new(visible).block(Block::default());
-    frame.render_widget(list, area);
+fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
+    let width = area.width as usize;
+    let (items, sel_to_row) = build_feed(app, width);
+    let visible: Vec<ListItem> = items.into_iter().skip(app.viewport_scroll).collect();
+
+    let mut state = ListState::default();
+    if let Some(&row) = sel_to_row.get(app.selected) {
+        if row >= app.viewport_scroll {
+            state.select(Some(row - app.viewport_scroll));
+        }
+    }
+
+    let list = List::new(visible)
+        .block(Block::default())
+        .highlight_style(selected_highlight());
+    frame.render_stateful_widget(list, area, &mut state);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -1291,7 +1365,7 @@ mod tests {
         assert!(app.activate_selected().is_none());
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("Choose task: Open task"));
+        assert!(content.contains("Choose task · Open task"));
         assert!(content.contains("web/fix-login"));
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -1299,7 +1373,7 @@ mod tests {
     }
 
     #[test]
-    fn feed_inbox_items_rendered_as_two_rows() {
+    fn feed_inbox_items_render_handle_reason_and_action() {
         let app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -1376,22 +1450,21 @@ mod tests {
         //   2 Actions header
         //   3 + New task          ← selectable 1
         //   4 Inbox header
-        //   5 inbox line 1        ← selectable 2
-        //   6 inbox line 2          (same selectable 2)
-        //   7 Tasks header
-        //   8 task                ← selectable 3
-        //   9 Review header
-        //   10 review             ← selectable 4
+        //   5 inbox               ← selectable 2
+        //   6 Tasks header
+        //   7 task                ← selectable 3
+        //   8 Review header
+        //   9 review              ← selectable 4
         app.select_at_feed_row(1);
         assert_eq!(app.selected, 0);
-        app.select_at_feed_row(6); // inbox second line
+        app.select_at_feed_row(5);
         assert_eq!(app.selected, 2);
-        app.select_at_feed_row(8);
+        app.select_at_feed_row(7);
         assert_eq!(app.selected, 3);
-        app.select_at_feed_row(10);
+        app.select_at_feed_row(9);
         assert_eq!(app.selected, 4);
         // header row → no change
-        app.select_at_feed_row(7);
+        app.select_at_feed_row(6);
         assert_eq!(app.selected, 4);
     }
 
