@@ -127,7 +127,7 @@ pub fn build_cli() -> Command {
         .subcommand(executable_task_command("merge"))
         .subcommand(executable_task_command("clean"))
         .subcommand(executable_command(
-            Command::new("sweep").about("Clean safe task environments across repos"),
+            json_command("sweep").about("Clean safe task environments across repos"),
         ))
         .subcommand(executable_task_command("repair"))
         .subcommand(json_command("next").about("Show the next task needing attention"))
@@ -180,7 +180,7 @@ fn tasks_command() -> Command {
 }
 
 fn executable_new_command() -> Command {
-    executable_command(Command::new("new"))
+    executable_command(json_command("new"))
         .about("Create a new task environment")
         .arg(Arg::new("repo").long("repo").value_name("REPO"))
         .arg(Arg::new("title").long("title").value_name("TITLE"))
@@ -1201,6 +1201,26 @@ mod tests {
     }
 
     #[test]
+    fn textual_frontend_uses_mobile_first_stacked_sections() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let app = std::fs::read_to_string(root.join("frontends/textual/ajax_textual.py")).unwrap();
+
+        for expected in [
+            "VerticalScroll",
+            "id=\"repos\"",
+            "id=\"actions\"",
+            "action_new_task_help",
+            "Create task",
+            "No tasks yet",
+        ] {
+            assert!(app.contains(expected), "missing {expected}");
+        }
+
+        assert!(!app.contains("DataTable"));
+        assert!(!app.contains("Horizontal"));
+    }
+
+    #[test]
     fn textual_startup_script_launches_built_ajax_binary() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let script = std::fs::read_to_string(root.join("scripts/start-ajax-textual.sh")).unwrap();
@@ -1217,6 +1237,27 @@ mod tests {
         }
 
         assert!(!script.contains("gum"));
+    }
+
+    #[test]
+    fn new_command_renders_plan_without_json_panic() {
+        let output = run_with_context(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "fix login",
+                "--agent",
+                "codex",
+            ],
+            &sample_context(),
+        )
+        .unwrap();
+
+        assert!(output.contains("create task: fix login"));
+        assert!(output.contains("workmux add --repo web"));
     }
 
     #[test]
