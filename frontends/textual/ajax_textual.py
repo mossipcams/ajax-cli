@@ -2,47 +2,37 @@
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
-from dataclasses import dataclass
 from typing import Any
 
+from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Footer, Header, Label, ListItem, ListView, Static
 
-
-@dataclass(frozen=True)
-class AjaxClient:
-    ajax_bin: str
-
-    def json_command(self, *args: str) -> dict[str, Any]:
-        command = [self.ajax_bin, *args, "--json"]
-        output = subprocess.check_output(command, text=True)
-        loaded = json.loads(output)
-        if not isinstance(loaded, dict):
-            raise ValueError(f"Ajax returned non-object JSON for {' '.join(command)}")
-        return loaded
-
-    def repos(self) -> list[dict[str, Any]]:
-        return list(self.json_command("repos").get("repos", []))
-
-    def tasks(self) -> list[dict[str, Any]]:
-        return list(self.json_command("tasks").get("tasks", []))
-
-    def inbox(self) -> list[dict[str, Any]]:
-        return list(self.json_command("inbox").get("items", []))
-
-    def review(self) -> list[dict[str, Any]]:
-        return list(self.json_command("review").get("tasks", []))
-
-
-@dataclass(frozen=True)
-class SelectionRow:
-    kind: str
-    title: str
-    subtitle: str
-    detail: str
+try:
+    from ajax_textual_layout import (
+        SelectionRow,
+        SummaryCounts,
+        is_compact_viewport,
+        layout_metrics,
+        render_detail,
+        render_row,
+        render_summary,
+        startup_error_rows,
+    )
+    from ajax_textual_client import AjaxClient
+except ModuleNotFoundError:
+    from frontends.textual.ajax_textual_layout import (
+        SelectionRow,
+        SummaryCounts,
+        is_compact_viewport,
+        layout_metrics,
+        render_detail,
+        render_row,
+        render_summary,
+        startup_error_rows,
+    )
+    from frontends.textual.ajax_textual_client import AjaxClient
 
 
 class AjaxTextualApp(App[None]):
@@ -85,6 +75,30 @@ class AjaxTextualApp(App[None]):
         padding: 1;
         border: round $surface-lighten-2;
     }
+
+    Screen.compact Header,
+    Screen.compact Footer {
+        display: none;
+    }
+
+    Screen.compact #summary {
+        min-height: 1;
+        padding: 0 1;
+    }
+
+    Screen.compact #items {
+        min-height: 5;
+    }
+
+    Screen.compact ListItem {
+        min-height: 2;
+        padding: 0 1;
+    }
+
+    Screen.compact #details {
+        min-height: 4;
+        padding: 0 1;
+    }
     """
 
     BINDINGS = [
@@ -97,6 +111,8 @@ class AjaxTextualApp(App[None]):
         super().__init__()
         self.client = client
         self.rows: list[SelectionRow] = []
+        self.compact = False
+        self.summary_counts = SummaryCounts.empty()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -107,7 +123,14 @@ class AjaxTextualApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self.update_viewport_mode(self.size.width, self.size.height)
         self.refresh_data()
+
+    def on_resize(self, event: events.Resize) -> None:
+        self.update_viewport_mode(event.size.width, event.size.height)
+        self.refresh_rendered_rows()
+        self.refresh_summary()
+        self.refresh_detail()
 
     def action_refresh(self) -> None:
         self.refresh_data()
@@ -131,38 +154,97 @@ class AjaxTextualApp(App[None]):
                 self.show_detail(index)
 
     def refresh_data(self) -> None:
-        repos = self.client.repos()
-        tasks = self.client.tasks()
-        inbox = self.client.inbox()
-        review = self.client.review()
-        self.rows = build_selection_rows(repos, tasks, inbox, review)
+        try:
+            snapshot = self.client.snapshot()
+        except Exception as error:
+            self.rows = startup_error_rows(error)
+            self.summary_counts = SummaryCounts.empty()
+            self.refresh_summary()
+            self.refresh_rendered_rows()
+            self.query_one("#items", ListView).index = 0
+            self.show_detail(0)
+            return
 
-        self.query_one("#summary", Static).update(
-            f"Ajax | repos {len(repos)} | tasks {len(tasks)} | "
-            f"review {len(review)} | inbox {len(inbox)}"
+        repos = snapshot.repos
+        tasks = snapshot.tasks
+        inbox = snapshot.inbox
+        review = snapshot.review
+        self.rows = build_selection_rows(repos, tasks, inbox, review)
+        self.summary_counts = SummaryCounts(
+            repo_count=len(repos),
+            task_count=len(tasks),
+            review_count=len(review),
+            inbox_count=len(inbox),
         )
 
-        list_view = self.query_one("#items", ListView)
-        list_view.clear()
-        for row in self.rows:
-            list_view.append(ListItem(Label(render_row(row))))
+        self.refresh_summary()
+        self.refresh_rendered_rows()
 
+        list_view = self.query_one("#items", ListView)
         if self.rows:
             list_view.index = 0
             self.show_detail(0)
         else:
             self.query_one("#details", Static).update("No Ajax data available.")
 
+    def refresh_rendered_rows(self) -> None:
+        list_view = self.query_one("#items", ListView)
+        list_view.clear()
+        for row in self.rows:
+            list_view.append(
+                ListItem(
+                    Label(
+                        render_row(
+                            row,
+                            compact=self.compact,
+                            width=self.content_width(),
+                        )
+                    )
+                )
+            )
+
+    def refresh_summary(self) -> None:
+        self.query_one("#summary", Static).update(
+            render_summary(
+                repo_count=self.summary_counts.repo_count,
+                task_count=self.summary_counts.task_count,
+                review_count=self.summary_counts.review_count,
+                inbox_count=self.summary_counts.inbox_count,
+                compact=self.compact,
+            )
+        )
+
+    def refresh_detail(self) -> None:
+        list_view = self.query_one("#items", ListView)
+        index = list_view.index
+        if index is not None:
+            self.show_detail(index)
+
+    def update_viewport_mode(self, width: int, height: int) -> None:
+        compact = is_compact_viewport(width, height)
+        if compact == self.compact:
+            return
+
+        self.compact = compact
+        self.screen.set_class(compact, "compact")
+        metrics = layout_metrics(compact=compact)
+        for selector in ("Header", "Footer"):
+            for widget in self.query(selector):
+                widget.display = metrics.show_header_footer
+
     def show_detail(self, index: int) -> None:
         if index < 0 or index >= len(self.rows):
             return
-        self.query_one("#details", Static).update(self.rows[index].detail)
+        self.query_one("#details", Static).update(
+            render_detail(
+                self.rows[index],
+                compact=self.compact,
+                width=self.content_width(),
+            )
+        )
 
-
-def render_row(row: SelectionRow) -> str:
-    if row.subtitle:
-        return f"{row.title}\n{row.subtitle}"
-    return row.title
+    def content_width(self) -> int:
+        return max(self.size.width - 2, 20)
 
 
 def build_selection_rows(

@@ -235,6 +235,12 @@ fn cockpit_command() -> Command {
                 .action(ArgAction::SetTrue),
         )
         .arg(
+            Arg::new("json")
+                .long("json")
+                .help("Emit machine-readable JSON")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("interval-ms")
                 .long("interval-ms")
                 .value_name("MILLISECONDS")
@@ -383,6 +389,10 @@ fn render_cockpit_command(
 ) -> Result<String, CliError> {
     if matches.get_flag("textual") {
         return render_plan(textual_cockpit_plan(), false);
+    }
+
+    if matches.get_flag("json") {
+        return render_response(commands::cockpit(context), true, |_| String::new());
     }
 
     let iterations = matches
@@ -1075,6 +1085,24 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_json_returns_single_startup_snapshot() {
+        let context = sample_context();
+        let output = run_with_context(["ajax", "cockpit", "--json"], &context).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(parsed["repos"]["repos"][0]["name"], "web");
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
+        assert_eq!(
+            parsed["review"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
+        assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
+    }
+
+    #[test]
     fn cockpit_textual_renders_launch_plan() {
         let context = sample_context();
         let output = run_with_context(["ajax", "cockpit", "--textual"], &context).unwrap();
@@ -1135,6 +1163,7 @@ mod tests {
             ["ajax", "next", "--json", ""],
             ["ajax", "review", "--json", ""],
             ["ajax", "doctor", "--json", ""],
+            ["ajax", "cockpit", "--json", ""],
         ] {
             let filtered_args = args.into_iter().filter(|arg| !arg.is_empty());
             let matches = build_cli().try_get_matches_from(filtered_args);
@@ -1182,20 +1211,24 @@ mod tests {
     fn textual_frontend_replaces_legacy_shell_example() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let textual_app = root.join("frontends/textual/ajax_textual.py");
+        let textual_client = root.join("frontends/textual/ajax_textual_client.py");
         let pyproject = root.join("frontends/textual/pyproject.toml");
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let app = std::fs::read_to_string(textual_app).unwrap();
+        let client = std::fs::read_to_string(textual_client).unwrap();
         let pyproject = std::fs::read_to_string(pyproject).unwrap();
 
         for command in [
             "from textual.app import App",
-            "json_command(\"repos\")",
-            "json_command(\"tasks\")",
-            "json_command(\"inbox\")",
-            "json_command(\"review\")",
+            "snapshot = self.client.snapshot()",
+            "repos = snapshot.repos",
+            "tasks = snapshot.tasks",
+            "inbox = snapshot.inbox",
+            "review = snapshot.review",
         ] {
             assert!(app.contains(command), "missing {command}");
         }
+        assert!(client.contains("json_command(\"cockpit\")"));
         assert!(pyproject.contains("textual"));
         assert!(readme.contains("Textual"));
     }

@@ -9,3 +9,6 @@ dependencies = [
 
 [project.scripts]
 ajax-textual = "ajax_textual:main"
+
+[tool.setuptools]
+py-modules = ["ajax_textual", "ajax_textual_client", "ajax_textual_layout"]

@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+source "${SCRIPT_DIR}/start-ajax-textual-lib.sh"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TEXTUAL_APP="${AJAX_TEXTUAL_APP:-${REPO_ROOT}/frontends/textual/ajax_textual.py}"
@@ -19,8 +20,10 @@ if ! "${PYTHON_BIN}" -c "import textual" >/dev/null 2>&1; then
 fi
 
 if [[ -z "${AJAX_BIN:-}" ]]; then
-  cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p ajax-cli
   AJAX_BIN="${REPO_ROOT}/target/debug/ajax"
+  if ajax_binary_needs_build "${AJAX_BIN}" "${REPO_ROOT}"; then
+    cargo build --manifest-path "${REPO_ROOT}/Cargo.toml" -p ajax-cli
+  fi
 fi
 
 if [[ ! -x "${AJAX_BIN}" ]]; then
