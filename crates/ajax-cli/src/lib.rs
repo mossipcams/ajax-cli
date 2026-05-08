@@ -385,7 +385,15 @@ fn render_cockpit_command(
         ));
     }
 
-    Ok(render_cockpit_frame(context))
+    ajax_tui::run_interactive(
+        commands::list_repos(context),
+        commands::list_tasks(context, None),
+        commands::review_queue(context),
+        commands::inbox(context),
+    )
+    .map_err(|e| CliError::CommandFailed(e.to_string()))?;
+
+    Ok(String::new())
 }
 
 fn render_cockpit_frames(
@@ -789,9 +797,21 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_command_renders_dashboard_from_backend_state() {
+    fn cockpit_watch_renders_dashboard_from_backend_state() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "cockpit"], &context).unwrap();
+        let output = run_with_context(
+            [
+                "ajax",
+                "cockpit",
+                "--watch",
+                "--iterations",
+                "1",
+                "--interval-ms",
+                "0",
+            ],
+            &context,
+        )
+        .unwrap();
 
         assert!(output.contains("Ajax Cockpit"));
         assert!(output.contains("Inbox"));
