@@ -6,11 +6,16 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 TEXTUAL_APP="${AJAX_TEXTUAL_APP:-${REPO_ROOT}/frontends/textual/ajax_textual.py}"
+TEXTUAL_VENV="${AJAX_TEXTUAL_VENV:-${HOME}/.cache/ajax/textual-venv}"
 
 if ! "${PYTHON_BIN}" -c "import textual" >/dev/null 2>&1; then
-  echo "Textual is not installed for ${PYTHON_BIN}." >&2
-  echo "Install it with: ${PYTHON_BIN} -m pip install -e ${REPO_ROOT}/frontends/textual" >&2
-  exit 1
+  if [[ ! -x "${TEXTUAL_VENV}/bin/python" ]]; then
+    mkdir -p "$(dirname -- "${TEXTUAL_VENV}")"
+    python3 -m venv "${TEXTUAL_VENV}"
+  fi
+
+  PYTHON_BIN="${TEXTUAL_VENV}/bin/python"
+  "${PYTHON_BIN}" -m pip install -e "${REPO_ROOT}/frontends/textual"
 fi
 
 if [[ -z "${AJAX_BIN:-}" ]]; then

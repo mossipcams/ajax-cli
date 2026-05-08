@@ -1206,7 +1206,9 @@ mod tests {
         let script = std::fs::read_to_string(root.join("scripts/start-ajax-textual.sh")).unwrap();
 
         for expected in [
+            "AJAX_TEXTUAL_VENV",
             "cargo build",
+            "python3 -m venv",
             "target/debug/ajax",
             "frontends/textual/ajax_textual.py",
             "--ajax-bin",
