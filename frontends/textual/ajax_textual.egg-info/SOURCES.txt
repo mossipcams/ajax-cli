@@ -1,0 +1,8 @@
+ajax_textual.py
+pyproject.toml
+ajax_textual.egg-info/PKG-INFO
+ajax_textual.egg-info/SOURCES.txt
+ajax_textual.egg-info/dependency_links.txt
+ajax_textual.egg-info/entry_points.txt
+ajax_textual.egg-info/requires.txt
+ajax_textual.egg-info/top_level.txt

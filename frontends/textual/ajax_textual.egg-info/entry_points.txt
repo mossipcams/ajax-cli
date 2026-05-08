@@ -1,0 +1,2 @@
+[console_scripts]
+ajax-textual = ajax_textual:main
