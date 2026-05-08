@@ -672,8 +672,9 @@ fn tui_cockpit_action<R: CommandRunner>(
                 title,
                 agent: "codex".to_string(),
             };
-            let plan = commands::new_task_plan(context, request).map_err(to_io)?;
+            let plan = commands::new_task_plan(context, request.clone()).map_err(to_io)?;
             commands::execute_plan(&plan, true, runner).map_err(to_io)?;
+            commands::record_new_task(context, &request).map_err(to_io)?;
             *state_changed = true;
             Ok(ajax_tui::ActionOutcome::Refresh {
                 repos: commands::list_repos(context),
