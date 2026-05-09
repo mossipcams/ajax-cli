@@ -643,12 +643,8 @@ fn tui_cockpit_action<R: CommandRunner>(
         | "clean task"
         | "repair task"
         | "repair worktrunk"
-        | "reconcile" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
-            task_handle: handle.clone(),
-            recommended_action: item.recommended_action.clone(),
-            task_title: None,
-        })),
-        "new task" => Ok(ajax_tui::ActionOutcome::Message(cockpit_action_hint(
+        | "reconcile"
+        | "new task" => Ok(ajax_tui::ActionOutcome::Message(cockpit_action_hint(
             &item.recommended_action,
             handle,
         ))),
@@ -1750,13 +1746,23 @@ mod tests {
                 super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
                     .unwrap();
 
-            assert!(!matches!(outcome, ajax_tui::ActionOutcome::Refresh { .. }));
+            match outcome {
+                ajax_tui::ActionOutcome::Message(message) => {
+                    assert!(message.contains("navigation-only") || message.contains("task(s)"));
+                }
+                ajax_tui::ActionOutcome::Defer(_) => {
+                    panic!("{action} should not exit Ajax cockpit on Return")
+                }
+                ajax_tui::ActionOutcome::Refresh { .. } => {
+                    panic!("{action} should not refresh after external execution")
+                }
+            }
             assert!(!state_changed, "{action} should not mutate Ajax state");
         }
     }
 
     #[test]
-    fn cockpit_completed_task_action_defers_for_execution() {
+    fn cockpit_completed_task_action_stays_inside_ajax() {
         let mut context = sample_context();
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__task_action__web_fix_login__check"),
@@ -1773,11 +1779,44 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Defer(pending) => {
-                assert_eq!(pending.task_handle, "web/fix-login");
-                assert_eq!(pending.recommended_action, "check task");
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("navigation-only"));
+                assert!(message.contains("ajax check web/fix-login --execute"));
             }
-            _ => panic!("completed task action should defer for execution"),
+            ajax_tui::ActionOutcome::Defer(_) => {
+                panic!("completed task action should stay inside Ajax")
+            }
+            _ => panic!("completed task action should show command guidance"),
+        }
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_task_action_return_stays_inside_ajax() {
+        let mut context = sample_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__open"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Open task".to_string(),
+            priority: 0,
+            recommended_action: "open task".to_string(),
+        };
+        let mut runner = PanicRunner;
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        match outcome {
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("navigation-only"));
+                assert!(message.contains("ajax open web/fix-login --execute"));
+            }
+            ajax_tui::ActionOutcome::Defer(_) => {
+                panic!("Return in cockpit should not exit Ajax for task actions")
+            }
+            _ => panic!("task action should stay in Ajax with guidance"),
         }
         assert!(!state_changed);
     }
@@ -1951,7 +1990,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_reconcile_action_defers_for_execution() {
+    fn cockpit_reconcile_action_stays_inside_ajax() {
         let mut context = sample_context();
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__project_action__web__reconcile"),
@@ -1968,13 +2007,44 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Defer(pending) => {
-                assert_eq!(pending.task_handle, "web");
-                assert_eq!(pending.recommended_action, "reconcile");
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("navigation-only"));
+                assert!(message.contains("ajax reconcile"));
             }
-            _ => panic!("reconcile should defer for execution"),
+            ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should stay inside Ajax"),
+            _ => panic!("reconcile should show command guidance"),
         }
         assert!(runner.commands().is_empty());
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_reconcile_return_stays_inside_ajax() {
+        let mut context = sample_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__project_action__web__reconcile"),
+            task_handle: "web".to_string(),
+            reason: "Reconcile".to_string(),
+            priority: 0,
+            recommended_action: "reconcile".to_string(),
+        };
+        let mut runner = PanicRunner;
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        match outcome {
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("navigation-only"));
+                assert!(message.contains("ajax reconcile"));
+            }
+            ajax_tui::ActionOutcome::Defer(_) => {
+                panic!("Return in cockpit should not exit Ajax for reconcile")
+            }
+            _ => panic!("reconcile should stay in Ajax with guidance"),
+        }
         assert!(!state_changed);
     }
 
