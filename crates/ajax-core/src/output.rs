@@ -1,4 +1,4 @@
-use crate::models::AttentionItem;
+use crate::models::{AttentionItem, LiveObservation};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +44,7 @@ pub struct TaskSummary {
     pub title: String,
     pub lifecycle_status: String,
     pub needs_attention: bool,
+    pub live_status: Option<LiveObservation>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -118,6 +119,7 @@ mod tests {
                 title: "Fix login".to_string(),
                 lifecycle_status: "active".to_string(),
                 needs_attention: false,
+                live_status: None,
             }],
         };
         let inspect = InspectResponse {

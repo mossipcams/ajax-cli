@@ -239,6 +239,23 @@ impl TmuxAdapter {
         )
     }
 
+    pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
+        let target = format!("{session}:{window}");
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "capture-pane".to_string(),
+                "-p".to_string(),
+                "-t".to_string(),
+                target,
+                "-S".to_string(),
+                "-200".to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
     pub fn parse_session_status(session: &str, list_sessions_output: &str) -> TmuxStatus {
         TmuxStatus {
             exists: list_sessions_output
@@ -502,6 +519,20 @@ mod tests {
                     "ajax-web-fix-login",
                     "-F",
                     "#{window_name}\t#{pane_current_path}"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.capture_pane("ajax-web-fix-login", "worktrunk"),
+            CommandSpec::new(
+                "tmux",
+                [
+                    "capture-pane",
+                    "-p",
+                    "-t",
+                    "ajax-web-fix-login:worktrunk",
+                    "-S",
+                    "-200"
                 ]
             )
         );

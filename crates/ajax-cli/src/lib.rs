@@ -7,6 +7,7 @@ use ajax_core::{
     output::ReconcileResponse,
     registry::InMemoryRegistry,
 };
+use ajax_supervisor::codex::CodexAdapter;
 use clap::error::ErrorKind;
 use clap::{Arg, ArgAction, ArgMatches, Command};
 pub use context::CliContextPaths;
@@ -125,6 +126,7 @@ pub fn build_cli() -> Command {
         .subcommand(Command::new("status").about("Show Ajax status"))
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(json_command("reconcile").about("Compare registry state with external reality"))
+        .subcommand(supervise_command())
         .subcommand(cockpit_command())
 }
 
@@ -199,6 +201,23 @@ fn executable_command(command: Command) -> Command {
                 .long("yes")
                 .help("Confirm commands that require confirmation")
                 .action(ArgAction::SetTrue),
+        )
+}
+
+fn supervise_command() -> Command {
+    json_command("supervise")
+        .about("Run Codex under the Ajax live supervisor")
+        .arg(
+            Arg::new("prompt")
+                .long("prompt")
+                .value_name("PROMPT")
+                .required(true),
+        )
+        .arg(
+            Arg::new("codex-bin")
+                .long("codex-bin")
+                .value_name("PATH")
+                .hide(true),
         )
 }
 
@@ -587,15 +606,17 @@ fn render_matches_mut(
                 state_changed: false,
             })
         }
+        Some(("supervise", subcommand)) => Ok(RenderedCommand {
+            output: render_supervise_command(subcommand)?,
+            state_changed: false,
+        }),
         Some(("cockpit", subcommand)) => {
             if subcommand.get_flag("json") || subcommand.get_flag("watch") {
-                return Ok(RenderedCommand {
-                    output: render_cockpit_command(context, subcommand)?,
-                    state_changed: false,
-                });
+                return render_live_cockpit_command(context, subcommand, runner);
             }
             // Interactive TUI with full action support.
             let mut state_changed = false;
+            state_changed |= refresh_live_context(context, runner)?;
             let pending = ajax_tui::run_interactive(
                 commands::list_repos(context),
                 commands::list_tasks(context, None),
@@ -619,6 +640,105 @@ fn render_matches_mut(
             state_changed: false,
         }),
     }
+}
+
+fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
+    let prompt = matches
+        .get_one::<String>("prompt")
+        .cloned()
+        .ok_or_else(|| CliError::CommandFailed("supervise prompt is required".to_string()))?;
+    let codex_bin = matches
+        .get_one::<String>("codex-bin")
+        .cloned()
+        .or_else(|| std::env::var("AJAX_CODEX_BIN").ok())
+        .unwrap_or_else(|| "codex".to_string());
+    let json = matches.get_flag("json");
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .enable_time()
+        .build()
+        .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
+
+    let events = runtime.block_on(async move {
+        let adapter = CodexAdapter::new(codex_bin);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
+        let handle = tokio::spawn(async move { adapter.supervise_exec_json(&prompt, tx).await });
+        let mut events = Vec::new();
+        while let Some(event) = rx.recv().await {
+            events.push(event);
+        }
+        handle
+            .await
+            .map_err(|error| CliError::CommandFailed(format!("supervisor task failed: {error}")))?
+            .map_err(|error| CliError::CommandFailed(format!("supervisor failed: {error:?}")))?;
+        Ok::<_, CliError>(events)
+    })?;
+
+    if json {
+        events
+            .iter()
+            .map(|event| {
+                serde_json::to_string(event)
+                    .map_err(|error| CliError::JsonSerialization(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|lines| lines.join("\n"))
+    } else {
+        Ok(events
+            .iter()
+            .map(ajax_supervisor::renderer::render_event_log_line)
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+}
+
+fn render_live_cockpit_command<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    matches: &ArgMatches,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let iterations = matches
+        .get_one::<String>("iterations")
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let interval = matches
+        .get_one::<String>("interval-ms")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(1000);
+
+    if matches.get_flag("json") {
+        let changed = refresh_live_context(context, runner)?;
+        return Ok(RenderedCommand {
+            output: render_response(commands::cockpit(context), true, |_| String::new())?,
+            state_changed: changed,
+        });
+    }
+
+    let mut state_changed = false;
+    let frames = (0..iterations)
+        .map(|index| {
+            if index > 0 && interval > 0 {
+                std::thread::sleep(Duration::from_millis(interval));
+            }
+            let changed = refresh_live_context(context, runner)?;
+            state_changed |= changed;
+            Ok(render_cockpit_frame(context))
+        })
+        .collect::<Result<Vec<_>, CliError>>()?;
+
+    Ok(RenderedCommand {
+        output: frames.join("\n\n"),
+        state_changed,
+    })
+}
+
+fn refresh_live_context<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<bool, CliError> {
+    let response = commands::reconcile_external(context, runner).map_err(command_error)?;
+    Ok(response.tasks_changed > 0)
 }
 
 fn tui_cockpit_action<R: CommandRunner>(
@@ -929,6 +1049,7 @@ mod tests {
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "reconcile"],
+            vec!["ajax", "supervise", "--prompt", "fix tests"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
@@ -1002,6 +1123,81 @@ mod tests {
             "web/fix-login"
         );
         assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
+    }
+
+    #[test]
+    fn cockpit_json_refreshes_live_worktree_status_from_tmux_pane() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .cloned()
+            .unwrap();
+        let mut active = task;
+        active.lifecycle_status = LifecycleStatus::Active;
+        active.remove_side_flag(SideFlag::NeedsInput);
+        context.registry = InMemoryRegistry::default();
+        context.registry.create_task(active).unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+
+        let output =
+            run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["live_status"]["kind"],
+            "WaitingForApproval"
+        );
+        assert_eq!(
+            parsed["inbox"]["items"][0]["reason"],
+            "waiting for approval"
+        );
+        assert_eq!(runner.commands.len(), 5);
+    }
+
+    #[test]
+    fn supervise_command_runs_codex_json_adapter_and_renders_events() {
+        let fake_codex =
+            std::env::temp_dir().join(format!("ajax-cli-fake-codex-{}", std::process::id()));
+        std::fs::write(
+            &fake_codex,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nprintf '{\"type\":\"approval_request\",\"command\":\"cargo test\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "supervise",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        let output = super::render_supervise_command(subcommand).unwrap();
+
+        assert!(output.contains("process started"));
+        assert!(output.contains("agent started: codex"));
+        assert!(output.contains("waiting for approval: cargo test"));
+        assert!(output.contains("process exited: 0"));
+
+        let _ = std::fs::remove_file(fake_codex);
     }
 
     #[test]

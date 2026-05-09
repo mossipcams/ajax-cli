@@ -646,9 +646,7 @@ fn run_event_loop<B: Backend>(
                     code if app.is_collecting_input()
                         && is_input_delete_key(code, key.modifiers) =>
                     {
-                        if handle_back_key(app) {
-                            return Ok(None);
-                        }
+                        handle_back_key(app);
                     }
                     KeyCode::Char(character) if app.is_collecting_input() => {
                         app.push_input_char(character);
@@ -658,9 +656,7 @@ fn run_event_loop<B: Backend>(
                     }
                     KeyCode::Char('q') => return Ok(None),
                     code if is_back_key_event(code, key.modifiers) => {
-                        if handle_back_key(app) {
-                            return Ok(None);
-                        }
+                        handle_back_key(app);
                     }
                     KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
@@ -923,6 +919,13 @@ fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
     }
 }
 
+fn task_status_label(task: &TaskSummary) -> String {
+    task.live_status
+        .as_ref()
+        .map(|status| status.summary.clone())
+        .unwrap_or_else(|| task.lifecycle_status.clone())
+}
+
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
     if repo.broken_tasks > 0 {
         Span::styled("⚠", Style::default().fg(Color::Red))
@@ -1071,7 +1074,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     format!("{:<28}", t.qualified_handle),
                     Style::default().fg(Color::White),
                 ),
-                Span::styled(t.lifecycle_status.clone(), dim),
+                Span::styled(task_status_label(t), dim),
             ],
         ),
         SelectableKind::Review(t) => render_row(
@@ -1081,7 +1084,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     format!("{:<28}", t.qualified_handle),
                     Style::default().fg(Color::White),
                 ),
-                Span::styled(t.lifecycle_status.clone(), dim),
+                Span::styled(task_status_label(t), dim),
             ],
         ),
     }
@@ -1167,7 +1170,7 @@ mod tests {
         render_cockpit, render_ui, selectable_row_layout, App, AppView, TerminalModeCommand,
     };
     use ajax_core::{
-        models::{AttentionItem, TaskId},
+        models::{AttentionItem, LiveObservation, LiveStatusKind, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -1194,6 +1197,7 @@ mod tests {
                 title: "Fix login".to_string(),
                 lifecycle_status: "Active".to_string(),
                 needs_attention: true,
+                live_status: None,
             }],
         }
     }
@@ -1208,6 +1212,28 @@ mod tests {
                 recommended_action: "open task".to_string(),
             }],
         }
+    }
+
+    #[test]
+    fn task_rows_render_live_status_when_present() {
+        let mut tasks = sample_tasks();
+        tasks.tasks[0].live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+        let mut app = App::new(
+            sample_repos(),
+            tasks,
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+        app.activate_selected();
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("web/fix-login"));
+        assert!(content.contains("waiting for approval"));
+        assert!(!content.contains("Active"));
     }
 
     fn render_to_string(width: u16, height: u16, app: &App) -> String {
@@ -1679,6 +1705,7 @@ mod tests {
                     title: "Fix login".to_string(),
                     lifecycle_status: "Active".to_string(),
                     needs_attention: true,
+                    live_status: None,
                 },
                 TaskSummary {
                     id: "task-2".to_string(),
@@ -1686,6 +1713,7 @@ mod tests {
                     title: "Add cache".to_string(),
                     lifecycle_status: "Active".to_string(),
                     needs_attention: false,
+                    live_status: None,
                 },
             ],
         };

@@ -5,6 +5,7 @@ use crate::{
     },
     attention::derive_attention_items,
     config::Config,
+    live::{apply_observation, classify_pane},
     models::{AgentClient, LifecycleStatus, SafetyClassification, SideFlag, Task, TaskId},
     output::{
         CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
@@ -246,6 +247,13 @@ pub fn reconcile_external<R: Registry>(
         .into_iter()
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
+    if task_ids.is_empty() {
+        return Ok(ReconcileResponse {
+            tasks_checked: 0,
+            tasks_changed: 0,
+        });
+    }
+
     let tmux = TmuxAdapter::new("tmux");
     let git = GitAdapter::new("git");
     let sessions_output = runner
@@ -295,6 +303,30 @@ pub fn reconcile_external<R: Registry>(
             &worktree_path,
             &windows_output,
         );
+        let live_observation = if !git_status.worktree_exists {
+            Some(crate::models::LiveObservation::new(
+                crate::models::LiveStatusKind::WorktreeMissing,
+                "worktree missing",
+            ))
+        } else if !tmux_status.exists {
+            Some(crate::models::LiveObservation::new(
+                crate::models::LiveStatusKind::TmuxMissing,
+                "tmux session missing",
+            ))
+        } else if !worktrunk_status.exists || !worktrunk_status.points_at_expected_path {
+            Some(crate::models::LiveObservation::new(
+                crate::models::LiveStatusKind::WorktrunkMissing,
+                "worktrunk missing or pointed at the wrong path",
+            ))
+        } else {
+            let pane_output = runner
+                .run(
+                    &tmux
+                        .capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window),
+                )
+                .map_err(CommandError::CommandRun)?;
+            Some(classify_pane(&pane_output.stdout))
+        };
 
         if let Some(task) = context.registry.get_task_mut(task_id) {
             let before = task.clone();
@@ -306,6 +338,9 @@ pub fn reconcile_external<R: Registry>(
                     worktrunk_status: Some(worktrunk_status),
                 },
             );
+            if let Some(observation) = live_observation {
+                apply_observation(task, observation);
+            }
 
             if task != &before {
                 tasks_changed += 1;
@@ -664,6 +699,7 @@ fn task_summary(task: &Task) -> TaskSummary {
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
         needs_attention: task.side_flags().next().is_some(),
+        live_status: task.live_status.clone(),
     }
 }
 
@@ -773,7 +809,10 @@ mod tests {
             RecordingCommandRunner,
         },
         config::{Config, ManagedRepo, TestCommand},
-        models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
+        live::LiveStatusKind,
+        models::{
+            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, SideFlag, Task, TaskId,
+        },
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -1022,6 +1061,7 @@ mod tests {
             ),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "codex is working on your task\n"),
         ]);
 
         let response = reconcile_external(&mut context, &mut runner).unwrap();
@@ -1063,6 +1103,17 @@ mod tests {
                         "#{window_name}\t#{pane_current_path}"
                     ]
                 ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "capture-pane",
+                        "-p",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "-S",
+                        "-200"
+                    ]
+                ),
             ]
         );
 
@@ -1080,6 +1131,35 @@ mod tests {
                 .points_at_expected_path
         );
         assert!(!task.git_status.as_ref().unwrap().merged);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn reconcile_external_marks_live_approval_waiting_from_worktrunk_pane() {
+        let mut context = context_with_tasks();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Allow command `npm test`? y/n\n"),
+        ]);
+
+        let response = reconcile_external(&mut context, &mut runner).unwrap();
+
+        assert_eq!(response.tasks_checked, 1);
+        assert_eq!(response.tasks_changed, 1);
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
     }
 
     #[test]
@@ -1126,6 +1206,7 @@ mod tests {
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(0, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "task complete\n"),
         ]);
 
         reconcile_external(&mut context, &mut runner).unwrap();

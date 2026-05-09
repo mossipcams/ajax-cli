@@ -1,4 +1,6 @@
-use crate::models::{AgentRuntimeStatus, AttentionItem, LifecycleStatus, SideFlag, Task};
+use crate::models::{
+    AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, SideFlag, Task,
+};
 
 pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
     let mut items = tasks
@@ -40,6 +42,20 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
         });
     }
 
+    if let Some(live_status) = task.live_status.as_ref() {
+        if let Some((reason, priority, recommended_action)) =
+            attention_for_live_status(live_status.kind)
+        {
+            items.push(AttentionItem {
+                task_id: task.id.clone(),
+                task_handle: task.qualified_handle(),
+                reason: reason.to_string(),
+                priority,
+                recommended_action: recommended_action.to_string(),
+            });
+        }
+    }
+
     if let Some((reason, priority, recommended_action)) =
         attention_for_agent_status(task.agent_status)
     {
@@ -69,6 +85,28 @@ fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, &'static str) {
         SideFlag::Unpushed => ("branch has unpushed work", 55, "review branch"),
         SideFlag::Stale => ("task is stale", 60, "inspect task"),
         SideFlag::AgentRunning => ("agent is running", 90, "monitor task"),
+    }
+}
+
+fn attention_for_live_status(status: LiveStatusKind) -> Option<(&'static str, u32, &'static str)> {
+    match status {
+        LiveStatusKind::WaitingForApproval => Some(("waiting for approval", 5, "open task")),
+        LiveStatusKind::WaitingForInput => Some(("waiting for input", 6, "open task")),
+        LiveStatusKind::AuthRequired => Some(("authentication required", 7, "open task")),
+        LiveStatusKind::RateLimited => Some(("rate limited", 8, "inspect agent")),
+        LiveStatusKind::ContextLimit => Some(("context limit reached", 9, "inspect agent")),
+        LiveStatusKind::MergeConflict => Some(("merge conflict needs attention", 10, "open task")),
+        LiveStatusKind::CommandFailed => Some(("command failed", 15, "inspect agent")),
+        LiveStatusKind::WorktreeMissing => Some(("worktree missing", 30, "repair task")),
+        LiveStatusKind::TmuxMissing => Some(("tmux session missing", 25, "repair task")),
+        LiveStatusKind::WorktrunkMissing => Some(("worktrunk missing", 20, "repair worktrunk")),
+        LiveStatusKind::Blocked => Some(("agent is blocked", 12, "inspect agent")),
+        LiveStatusKind::ShellIdle
+        | LiveStatusKind::CommandRunning
+        | LiveStatusKind::TestsRunning
+        | LiveStatusKind::AgentRunning
+        | LiveStatusKind::Done
+        | LiveStatusKind::Unknown => None,
     }
 }
 

@@ -4,6 +4,8 @@ pub mod adapters;
 pub mod attention;
 pub mod commands;
 pub mod config;
+pub mod events;
+pub mod live;
 pub mod models;
 pub mod output;
 pub mod policy;

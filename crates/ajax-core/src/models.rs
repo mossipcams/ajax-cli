@@ -57,6 +57,42 @@ pub enum SideFlag {
     Unpushed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum LiveStatusKind {
+    WorktreeMissing,
+    TmuxMissing,
+    WorktrunkMissing,
+    ShellIdle,
+    CommandRunning,
+    TestsRunning,
+    AgentRunning,
+    WaitingForApproval,
+    WaitingForInput,
+    Blocked,
+    RateLimited,
+    AuthRequired,
+    MergeConflict,
+    ContextLimit,
+    CommandFailed,
+    Done,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct LiveObservation {
+    pub kind: LiveStatusKind,
+    pub summary: String,
+}
+
+impl LiveObservation {
+    pub fn new(kind: LiveStatusKind, summary: impl Into<String>) -> Self {
+        Self {
+            kind,
+            summary: summary.into(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Task {
     pub id: TaskId,
@@ -74,6 +110,8 @@ pub struct Task {
     pub git_status: Option<GitStatus>,
     pub tmux_status: Option<TmuxStatus>,
     pub worktrunk_status: Option<WorktrunkStatus>,
+    #[serde(default)]
+    pub live_status: Option<LiveObservation>,
     pub created_at: SystemTime,
     pub last_activity_at: SystemTime,
     pub metadata: HashMap<String, String>,
@@ -113,6 +151,7 @@ impl Task {
             git_status: None,
             tmux_status: None,
             worktrunk_status: None,
+            live_status: None,
             created_at: now,
             last_activity_at: now,
             metadata: HashMap::new(),

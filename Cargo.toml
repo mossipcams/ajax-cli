@@ -2,6 +2,7 @@
 members = [
     "crates/ajax-cli",
     "crates/ajax-core",
+    "crates/ajax-supervisor",
     "crates/ajax-tui",
 ]
 resolver = "2"

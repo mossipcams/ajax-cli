@@ -136,6 +136,85 @@ printf 'fake workmux %s' "$1"
         self.fake_workmux_log()
     }
 
+    fn install_fake_live_status_tools(&self, session: &str, worktree_path: &Path, pane: &str) {
+        let fake_bin = self.fake_bin_dir();
+        fs::create_dir_all(&fake_bin).unwrap_or_else(|error| {
+            panic!(
+                "failed to create fake tool directory {}: {error}",
+                fake_bin.display()
+            )
+        });
+        self.write_executable(
+            "tmux",
+            &format!(
+                r#"#!/bin/sh
+case "$1" in
+  list-sessions)
+    printf '%s\n' '{session}'
+    ;;
+  list-windows)
+    printf 'worktrunk\t%s\n' '{worktree_path}'
+    ;;
+  capture-pane)
+    cat <<'EOF'
+{pane}
+EOF
+    ;;
+  *)
+    printf 'unexpected tmux args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+"#,
+                session = session,
+                worktree_path = worktree_path.display(),
+                pane = pane
+            ),
+        );
+        self.write_executable(
+            "git",
+            r#"#!/bin/sh
+case "$*" in
+  *" status --porcelain=v1 --branch"*)
+    printf '## ajax/fix-login...origin/ajax/fix-login\n'
+    ;;
+  *" merge-base --is-ancestor "*)
+    exit 1
+    ;;
+  *)
+    printf 'unexpected git args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+"#,
+        );
+    }
+
+    fn write_executable(&self, name: &str, contents: &str) {
+        fs::create_dir_all(self.fake_bin_dir()).unwrap_or_else(|error| {
+            panic!(
+                "failed to create fake tool directory {}: {error}",
+                self.fake_bin_dir().display()
+            )
+        });
+        let script = self.fake_bin_dir().join(name);
+        fs::write(&script, contents).unwrap_or_else(|error| {
+            panic!("failed to write fake tool {}: {error}", script.display())
+        });
+        let mut permissions = fs::metadata(&script)
+            .unwrap_or_else(|error| {
+                panic!("failed to stat fake tool {}: {error}", script.display())
+            })
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap_or_else(|error| {
+            panic!(
+                "failed to make fake tool {} executable: {error}",
+                script.display()
+            )
+        });
+    }
+
     fn seed_risky_reviewable_task(&self, repo: &str, repo_path: &Path) {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
@@ -195,6 +274,82 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
+fn live_cockpit_json_refreshes_live_status_from_tmux_pane() {
+    let home = IsolatedAjaxHome::new("cockpit-live-status");
+    let repo_path = home.create_managed_repo("web");
+    home.write_config(&format!(
+        r#"
+        [[repos]]
+        name = "web"
+        path = "{}"
+        default_branch = "main"
+        "#,
+        repo_path.display()
+    ));
+    let worktree_path = repo_path.join(".ajax-worktrees/fix-login");
+    fs::create_dir_all(&worktree_path).unwrap_or_else(|error| {
+        panic!(
+            "failed to create fake task worktree {}: {error}",
+            worktree_path.display()
+        )
+    });
+    home.seed_risky_reviewable_task("web", &repo_path);
+    home.install_fake_live_status_tools(
+        "ajax-web-fix-login",
+        &worktree_path,
+        "Do you want to proceed? y/n",
+    );
+
+    let output = home.ajax_with_fake_tools(["cockpit", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "ajax cockpit --json should succeed, stderr:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let body: Value =
+        serde_json::from_str(&stdout(&output)).expect("ajax cockpit --json should emit valid JSON");
+    assert_eq!(
+        body["tasks"]["tasks"][0]["live_status"],
+        serde_json::json!({
+            "kind": "WaitingForApproval",
+            "summary": "waiting for approval"
+        })
+    );
+    assert_eq!(body["inbox"]["items"][0]["reason"], "waiting for approval");
+}
+
+#[test]
+fn live_supervise_json_streams_codex_jsonl_as_monitor_events() {
+    let home = IsolatedAjaxHome::new("supervise-json");
+    home.write_executable(
+        "codex",
+        "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nprintf '{\"type\":\"approval_request\",\"command\":\"cargo test\"}\\n'\n",
+    );
+
+    let output = home.ajax_with_fake_tools(["supervise", "--prompt", "fix tests", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "ajax supervise --json should succeed, stderr:\n{}",
+        stderr(&output)
+    );
+    assert_eq!(stderr(&output), "");
+    let lines = stdout(&output)
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("monitor event should be JSON"))
+        .collect::<Vec<_>>();
+
+    assert_eq!(lines[1]["Agent"]["Started"]["agent"], "codex");
+    assert_eq!(
+        lines[2]["Agent"]["WaitingForApproval"]["command"],
+        "cargo test"
+    );
+    assert_eq!(lines.last().unwrap()["Process"]["Exited"]["code"], 0);
+}
+
+#[test]
 fn live_help_exposes_the_scriptable_command_surface() {
     let home = IsolatedAjaxHome::new("help");
 
@@ -227,6 +382,7 @@ fn live_help_exposes_the_scriptable_command_surface() {
         "status",
         "doctor",
         "reconcile",
+        "supervise",
         "cockpit",
     ] {
         assert!(
@@ -330,7 +486,8 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
                 "qualified_handle": "web/fix-login",
                 "title": "Fix Login!",
                 "lifecycle_status": "Provisioning",
-                "needs_attention": false
+                "needs_attention": false,
+                "live_status": null
             }
         ])
     );
