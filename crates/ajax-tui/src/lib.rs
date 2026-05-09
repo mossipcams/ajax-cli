@@ -110,10 +110,9 @@ enum AppView {
 
 impl SelectableKind {
     /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
-    /// pass through unchanged; tasks and review entries get default actions
-    /// that the CLI dispatcher already handles ("open task", "review branch").
-    /// The synthetic NewTask entry uses the "new task" action, which the CLI
-    /// dispatcher matches on to invoke `commands::new_task_plan`.
+    /// pass through unchanged; tasks and review entries get default actions.
+    /// The CLI dispatcher decides whether an action is navigational or should
+    /// point the operator at an explicit executable command.
     fn as_action(&self) -> AttentionItem {
         match self {
             SelectableKind::Project(repo) => AttentionItem {
@@ -485,7 +484,7 @@ pub fn run_interactive(
 ) -> io::Result<Option<PendingAction>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    enter_terminal_mode(&mut stdout)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -493,14 +492,43 @@ pub fn run_interactive(
     let result = run_event_loop(&mut terminal, &mut app, on_action);
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    leave_terminal_mode(terminal.backend_mut())?;
     terminal.show_cursor()?;
 
     result
+}
+
+fn enter_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
+    execute!(output, EnterAlternateScreen, EnableMouseCapture)
+}
+
+fn leave_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
+    execute!(output, LeaveAlternateScreen, DisableMouseCapture)
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TerminalModeCommand {
+    EnterAlternateScreen,
+    EnableMouseCapture,
+    LeaveAlternateScreen,
+    DisableMouseCapture,
+}
+
+#[cfg(test)]
+fn terminal_entry_commands() -> &'static [TerminalModeCommand] {
+    &[
+        TerminalModeCommand::EnterAlternateScreen,
+        TerminalModeCommand::EnableMouseCapture,
+    ]
+}
+
+#[cfg(test)]
+fn terminal_exit_commands() -> &'static [TerminalModeCommand] {
+    &[
+        TerminalModeCommand::LeaveAlternateScreen,
+        TerminalModeCommand::DisableMouseCapture,
+    ]
 }
 
 // ── Event loop ────────────────────────────────────────────────────────────────
@@ -522,8 +550,10 @@ fn run_event_loop<B: Backend>(
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Char('q') => return Ok(None),
-                    KeyCode::Esc => {
-                        app.go_back();
+                    code if is_back_key(code) => {
+                        if handle_back_key(app) {
+                            return Ok(None);
+                        }
                     }
                     KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
@@ -564,6 +594,18 @@ fn run_event_loop<B: Backend>(
             }
         }
     }
+}
+
+fn handle_back_key(app: &mut App) -> bool {
+    app.go_back();
+    false
+}
+
+fn is_back_key(code: KeyCode) -> bool {
+    matches!(
+        code,
+        KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h')
+    )
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -682,7 +724,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         push_hint(&mut parts, "↑↓", "select", false);
         push_hint(&mut parts, "↵", enter_label, false);
         if nested {
-            push_hint(&mut parts, "esc", "back", false);
+            push_hint(&mut parts, "←/h", "back", false);
         }
         push_hint(&mut parts, "q", "quit", true);
         Line::from(parts)
@@ -918,8 +960,8 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     if app.selectables.is_empty() {
         let msg = match &app.view {
             AppView::Projects => "no projects yet · edit ~/.config/ajax/config.toml to add one",
-            AppView::Project { .. } => "nothing here yet · esc to go back",
-            AppView::TaskPicker { .. } => "no matching tasks · esc to go back",
+            AppView::Project { .. } => "nothing here yet · ←/h to go back",
+            AppView::TaskPicker { .. } => "no matching tasks · ←/h to go back",
         };
         rows.push(empty_state(msg));
         return (rows, sel_to_row);
@@ -963,11 +1005,12 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_cockpit, render_ui, selectable_row_layout, App};
+    use super::{render_cockpit, render_ui, selectable_row_layout, App, TerminalModeCommand};
     use ajax_core::{
         models::{AttentionItem, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
+    use crossterm::event::KeyCode;
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_repos() -> ReposResponse {
@@ -1105,6 +1148,116 @@ mod tests {
         // Header now shows a breadcrumb instead of a "Project: web" title.
         assert!(content.contains("› web"));
         assert!(content.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn top_level_back_stays_in_cockpit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        assert!(!super::handle_back_key(&mut app));
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Ajax"));
+        assert!(content.contains("web"));
+    }
+
+    #[test]
+    fn top_level_backspace_stays_in_cockpit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        assert!(super::is_back_key(KeyCode::Backspace));
+        assert!(!super::handle_back_key(&mut app));
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Ajax"));
+        assert!(content.contains("web"));
+    }
+
+    #[test]
+    fn terminal_entry_uses_only_unambiguous_tui_modes() {
+        assert_eq!(
+            super::terminal_entry_commands(),
+            &[
+                TerminalModeCommand::EnterAlternateScreen,
+                TerminalModeCommand::EnableMouseCapture
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_exit_restores_tui_modes() {
+        assert_eq!(
+            super::terminal_exit_commands(),
+            &[
+                TerminalModeCommand::LeaveAlternateScreen,
+                TerminalModeCommand::DisableMouseCapture
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_back_returns_to_parent_without_exit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+
+        assert!(!super::handle_back_key(&mut app));
+        let content = render_to_string(80, 30, &app);
+        assert!(!content.contains("› web"));
+    }
+
+    #[test]
+    fn nested_backspace_returns_to_parent_without_exit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+
+        assert!(super::is_back_key(KeyCode::Backspace));
+        assert!(!super::handle_back_key(&mut app));
+        let content = render_to_string(80, 30, &app);
+        assert!(!content.contains("› web"));
+    }
+
+    #[test]
+    fn immediate_back_keys_do_not_depend_on_escape() {
+        for key in [KeyCode::Left, KeyCode::Backspace, KeyCode::Char('h')] {
+            assert!(super::is_back_key(key), "{key:?} should navigate back");
+        }
+        assert!(!super::is_back_key(KeyCode::Esc));
+    }
+
+    #[test]
+    fn nested_views_advertise_immediate_back_keys() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("←/h back"));
+        assert!(!content.contains("esc back"));
     }
 
     #[test]

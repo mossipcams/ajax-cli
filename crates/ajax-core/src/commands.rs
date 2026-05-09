@@ -429,7 +429,11 @@ pub fn open_task_plan<R: Registry>(
     let tmux = TmuxAdapter::new("tmux");
     let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
 
-    plan.commands.push(workmux.open_task(qualified_handle));
+    plan.commands.push(command_in_task_repo(
+        context,
+        task,
+        workmux.open_task(&task.branch),
+    )?);
     match mode {
         OpenMode::Attach => plan.commands.push(tmux.attach_session(&task.tmux_session)),
         OpenMode::SwitchClient => plan.commands.push(tmux.switch_client(&task.tmux_session)),
@@ -454,7 +458,11 @@ pub fn merge_task_plan<R: Registry>(
     let mut plan = CommandPlan::new(format!("merge task: {qualified_handle}"));
 
     plan.requires_confirmation = task.side_flags().next().is_some();
-    plan.commands.push(workmux.merge_task(qualified_handle));
+    plan.commands.push(command_in_task_repo(
+        context,
+        task,
+        workmux.merge_task(&task.branch),
+    )?);
 
     Ok(plan)
 }
@@ -476,10 +484,18 @@ pub fn clean_task_plan<R: Registry>(
     let mut plan = CommandPlan::new(format!("clean task: {qualified_handle}"));
 
     match safety.classification {
-        SafetyClassification::Safe => plan.commands.push(workmux.remove_task(qualified_handle)),
+        SafetyClassification::Safe => plan.commands.push(command_in_task_repo(
+            context,
+            task,
+            workmux.remove_task(&task.branch),
+        )?),
         SafetyClassification::NeedsConfirmation | SafetyClassification::Dangerous => {
             plan.requires_confirmation = true;
-            plan.commands.push(workmux.remove_task(qualified_handle));
+            plan.commands.push(command_in_task_repo(
+                context,
+                task,
+                workmux.remove_task(&task.branch),
+            )?);
         }
         SafetyClassification::Blocked => {
             plan.blocked_reasons = safety.reasons;
@@ -540,9 +556,18 @@ pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPl
     let workmux = WorkmuxAdapter::new("workmux");
     let mut plan = CommandPlan::new("sweep cleanup");
 
-    plan.commands = sweep_cleanup_candidates(context)
+    plan.commands = context
+        .registry
+        .list_tasks()
         .into_iter()
-        .map(|qualified_handle| workmux.remove_task(&qualified_handle))
+        .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
+        .map(|task| {
+            let command = workmux.remove_task(&task.branch);
+            match task_repo_path(context, task) {
+                Some(repo_path) => command.with_cwd(repo_path),
+                None => command,
+            }
+        })
         .collect();
 
     plan
@@ -616,6 +641,7 @@ pub fn execute_plan(
                 program: command.program.clone(),
                 status_code: output.status_code,
                 stderr: output.stderr,
+                cwd: command.cwd.clone(),
             }));
         }
         outputs.push(output);
@@ -651,6 +677,25 @@ fn find_task<'a, R: Registry>(
         .into_iter()
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))
+}
+
+fn command_in_task_repo<R: Registry>(
+    context: &CommandContext<R>,
+    task: &Task,
+    command: CommandSpec,
+) -> Result<CommandSpec, CommandError> {
+    task_repo_path(context, task)
+        .map(|repo_path| command.with_cwd(repo_path))
+        .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))
+}
+
+fn task_repo_path<R: Registry>(context: &CommandContext<R>, task: &Task) -> Option<String> {
+    context
+        .config
+        .repos
+        .iter()
+        .find(|repo| repo.name == task.repo)
+        .map(|repo| repo.path.display().to_string())
 }
 
 fn update_task_lifecycle<R: Registry>(
@@ -1206,7 +1251,8 @@ mod tests {
         assert_eq!(
             outside_tmux.commands,
             vec![
-                CommandSpec::new("workmux", ["open", "web/fix-login"]),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web"),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
             ]
@@ -1214,7 +1260,8 @@ mod tests {
         assert_eq!(
             inside_tmux.commands,
             vec![
-                CommandSpec::new("workmux", ["open", "web/fix-login"]),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web"),
                 CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
             ]
@@ -1295,7 +1342,8 @@ mod tests {
         assert!(plan.requires_confirmation);
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["merge", "web/fix-login"])]
+            vec![CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
     }
 
@@ -1309,7 +1357,8 @@ mod tests {
         assert!(plan.blocked_reasons.is_empty());
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["remove", "web/fix-login"])]
+            vec![CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
     }
 
@@ -1321,7 +1370,8 @@ mod tests {
 
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["remove", "web/fix-login"])]
+            vec![CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
     }
 
@@ -1413,6 +1463,29 @@ mod tests {
                 program: "workmux".to_string(),
                 status_code: 2,
                 stderr: String::new(),
+                cwd: None,
+            })
+        );
+    }
+
+    #[test]
+    fn execute_plan_reports_nonzero_command_cwd() {
+        let mut runner = QueuedRunner::new(vec![output(1, "Error: Not in a git repository\n")]);
+        let mut plan = super::CommandPlan::new("failing");
+        plan.commands.push(
+            CommandSpec::new("workmux", ["add", "ajax/task-123"])
+                .with_cwd("/Users/matt/Desktop/Projects/autodoctor"),
+        );
+
+        let error = super::execute_plan(&plan, true, &mut runner).unwrap_err();
+
+        assert_eq!(
+            error,
+            CommandError::CommandRun(CommandRunError::NonZeroExit {
+                program: "workmux".to_string(),
+                status_code: 1,
+                stderr: String::new(),
+                cwd: Some("/Users/matt/Desktop/Projects/autodoctor".to_string()),
             })
         );
     }

@@ -58,6 +58,7 @@ pub enum CommandRunError {
         program: String,
         status_code: i32,
         stderr: String,
+        cwd: Option<String>,
     },
 }
 
