@@ -35,11 +35,11 @@ impl CodexAdapter {
             .stderr(std::process::Stdio::piped())
             .spawn()?;
 
-        let _ = events
-            .send(MonitorEvent::Process(ProcessEvent::Started {
-                pid: child.id(),
-            }))
-            .await;
+        send_event(
+            &events,
+            MonitorEvent::Process(ProcessEvent::Started { pid: child.id() }),
+        )
+        .await?;
 
         let stdout = child
             .stdout
@@ -57,20 +57,22 @@ impl CodexAdapter {
                 let event = parse_codex_json_line(&line)
                     .map(MonitorEvent::Agent)
                     .unwrap_or_else(|| MonitorEvent::Process(ProcessEvent::Stdout { line }));
-                let _ = stdout_events.send(event).await;
+                send_event(&stdout_events, event).await?;
             }
-            Ok::<(), std::io::Error>(())
+            Ok::<(), SupervisorError>(())
         });
 
         let stderr_events = events.clone();
         let stderr_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Some(line) = lines.next_line().await? {
-                let _ = stderr_events
-                    .send(MonitorEvent::Process(ProcessEvent::Stderr { line }))
-                    .await;
+                send_event(
+                    &stderr_events,
+                    MonitorEvent::Process(ProcessEvent::Stderr { line }),
+                )
+                .await?;
             }
-            Ok::<(), std::io::Error>(())
+            Ok::<(), SupervisorError>(())
         });
 
         stdout_task
@@ -81,14 +83,26 @@ impl CodexAdapter {
             .map_err(|error| SupervisorError::Process(error.to_string()))??;
 
         let status = child.wait().await?;
-        let _ = events
-            .send(MonitorEvent::Process(ProcessEvent::Exited {
+        send_event(
+            &events,
+            MonitorEvent::Process(ProcessEvent::Exited {
                 code: status.code(),
-            }))
-            .await;
+            }),
+        )
+        .await?;
 
         Ok(())
     }
+}
+
+async fn send_event(
+    events: &mpsc::Sender<MonitorEvent>,
+    event: MonitorEvent,
+) -> Result<(), SupervisorError> {
+    events
+        .send(event)
+        .await
+        .map_err(|_| SupervisorError::Process("monitor event receiver closed".to_string()))
 }
 
 pub fn parse_codex_json_line(line: &str) -> Option<AgentEvent> {
@@ -242,6 +256,31 @@ mod tests {
             events.contains(&MonitorEvent::Process(ProcessEvent::Exited {
                 code: Some(0)
             }))
+        );
+
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn codex_supervisor_reports_closed_monitor_channel() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-fake-codex-closed-{}", std::process::id()));
+        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let adapter = CodexAdapter::new(script.display().to_string());
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        let error = adapter
+            .supervise_exec_json("ignored", tx)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, crate::SupervisorError::Process(message) if message.contains("monitor event receiver closed"))
         );
 
         let _ = fs::remove_file(script);

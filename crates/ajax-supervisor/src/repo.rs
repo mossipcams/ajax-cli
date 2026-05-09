@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, process::Output};
 
 use ajax_core::{
     adapters::GitAdapter,
@@ -43,18 +43,32 @@ pub async fn git_snapshot(worktree_path: impl AsRef<Path>) -> Result<RepoEvent, 
         .args(["status", "--porcelain=v1", "--branch"])
         .output()
         .await?;
+    ensure_git_success("git status", &status_output)?;
     let diff_output = Command::new("git")
         .args(["-C"])
         .arg(worktree_path)
         .args(["diff", "--stat"])
         .output()
         .await?;
+    ensure_git_success("git diff", &diff_output)?;
 
     Ok(RepoEvent::GitSnapshot {
         worktree_path: worktree_path.to_path_buf(),
         status: GitAdapter::parse_status(&String::from_utf8_lossy(&status_output.stdout), false),
         diff_stat: String::from_utf8_lossy(&diff_output.stdout).to_string(),
     })
+}
+
+fn ensure_git_success(command: &str, output: &Output) -> Result<(), SupervisorError> {
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(SupervisorError::Process(format!(
+        "{command} failed: {}",
+        stderr.trim()
+    )))
 }
 
 #[cfg(test)]
@@ -64,7 +78,7 @@ mod tests {
     use ajax_core::events::{MonitorEvent, RepoEvent};
     use notify::{event::ModifyKind, Event, EventKind};
 
-    use super::notify_event_to_monitor_events;
+    use super::{git_snapshot, notify_event_to_monitor_events};
 
     #[test]
     fn notify_events_map_to_repo_file_changes() {
@@ -79,6 +93,18 @@ mod tests {
             vec![MonitorEvent::Repo(RepoEvent::FileChanged {
                 path: PathBuf::from("/tmp/repo/src/lib.rs")
             })]
+        );
+    }
+
+    #[tokio::test]
+    async fn git_snapshot_reports_git_command_failure() {
+        let missing_repo =
+            std::env::temp_dir().join(format!("ajax-missing-repo-{}", std::process::id()));
+
+        let error = git_snapshot(&missing_repo).await.unwrap_err();
+
+        assert!(
+            matches!(error, crate::SupervisorError::Process(message) if message.contains("git status failed"))
         );
     }
 }

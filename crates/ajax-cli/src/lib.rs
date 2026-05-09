@@ -1,3 +1,4 @@
+mod cli;
 mod context;
 mod render;
 
@@ -8,8 +9,9 @@ use ajax_core::{
     registry::InMemoryRegistry,
 };
 use ajax_supervisor::codex::CodexAdapter;
-use clap::error::ErrorKind;
-use clap::{Arg, ArgAction, ArgMatches, Command};
+use clap::ArgMatches;
+pub use cli::build_cli;
+use cli::{parse_args, ParsedArgs};
 pub use context::CliContextPaths;
 use context::{default_context_paths, load_context, save_context};
 use render::{
@@ -17,7 +19,6 @@ use render::{
     render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
     render_tasks_human,
 };
-use std::ffi::OsString;
 use std::time::Duration;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,160 +104,10 @@ pub fn run_with_context_paths_and_runner(
     Ok(rendered.output)
 }
 
-pub fn build_cli() -> Command {
-    Command::new("ajax")
-        .about("Semi-agentic operator console for isolated AI coding tasks")
-        .subcommand(repos_command())
-        .subcommand(tasks_command())
-        .subcommand(task_command("inspect"))
-        .subcommand(executable_new_command())
-        .subcommand(executable_task_command("open"))
-        .subcommand(executable_task_command("trunk"))
-        .subcommand(executable_task_command("check"))
-        .subcommand(executable_task_command("diff"))
-        .subcommand(executable_task_command("merge"))
-        .subcommand(executable_task_command("clean"))
-        .subcommand(executable_command(
-            json_command("sweep").about("Clean safe task environments across repos"),
-        ))
-        .subcommand(executable_task_command("repair"))
-        .subcommand(json_command("next").about("Show the next task needing attention"))
-        .subcommand(json_command("inbox").about("Show global attention inbox"))
-        .subcommand(json_command("review").about("Show tasks ready for review"))
-        .subcommand(Command::new("status").about("Show Ajax status"))
-        .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
-        .subcommand(json_command("reconcile").about("Compare registry state with external reality"))
-        .subcommand(supervise_command())
-        .subcommand(cockpit_command())
-}
-
-enum ParsedArgs {
-    Matches(ArgMatches),
-    Message(String),
-}
-
-fn parse_args<I, T>(args: I) -> Result<ParsedArgs, CliError>
-where
-    I: IntoIterator<Item = T>,
-    T: Into<OsString> + Clone,
-{
-    match build_cli().try_get_matches_from(args) {
-        Ok(matches) => Ok(ParsedArgs::Matches(matches)),
-        Err(error)
-            if matches!(
-                error.kind(),
-                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
-            ) =>
-        {
-            Ok(ParsedArgs::Message(error.to_string()))
-        }
-        Err(error) => Err(CliError::CommandFailed(error.to_string())),
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RenderedCommand {
     output: String,
     state_changed: bool,
-}
-
-fn repos_command() -> Command {
-    json_command("repos").about("List configured repos")
-}
-
-fn tasks_command() -> Command {
-    json_command("tasks")
-        .about("List task environments")
-        .arg(Arg::new("repo").long("repo").value_name("REPO"))
-}
-
-fn executable_new_command() -> Command {
-    executable_command(json_command("new"))
-        .about("Create a new task environment")
-        .arg(Arg::new("repo").long("repo").value_name("REPO"))
-        .arg(Arg::new("title").long("title").value_name("TITLE"))
-        .arg(Arg::new("agent").long("agent").value_name("AGENT"))
-}
-
-fn task_command(name: &'static str) -> Command {
-    json_command(name)
-        .about("Operate on a task")
-        .arg(Arg::new("task").value_name("REPO/HANDLE").required(true))
-}
-
-fn executable_task_command(name: &'static str) -> Command {
-    executable_command(task_command(name))
-}
-
-fn executable_command(command: Command) -> Command {
-    command
-        .arg(
-            Arg::new("execute")
-                .long("execute")
-                .help("Execute the planned external commands")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("yes")
-                .long("yes")
-                .help("Confirm commands that require confirmation")
-                .action(ArgAction::SetTrue),
-        )
-}
-
-fn supervise_command() -> Command {
-    json_command("supervise")
-        .about("Run Codex under the Ajax live supervisor")
-        .arg(
-            Arg::new("prompt")
-                .long("prompt")
-                .value_name("PROMPT")
-                .required(true),
-        )
-        .arg(
-            Arg::new("codex-bin")
-                .long("codex-bin")
-                .value_name("PATH")
-                .hide(true),
-        )
-}
-
-fn cockpit_command() -> Command {
-    Command::new("cockpit")
-        .about("Render the Ajax operator cockpit")
-        .arg(
-            Arg::new("watch")
-                .long("watch")
-                .help("Keep rendering cockpit frames")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .help("Emit machine-readable JSON")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("interval-ms")
-                .long("interval-ms")
-                .value_name("MILLISECONDS")
-                .default_value("1000"),
-        )
-        .arg(
-            Arg::new("iterations")
-                .long("iterations")
-                .value_name("COUNT")
-                .hide(true),
-        )
-}
-
-fn json_command(name: &'static str) -> Command {
-    Command::new(name).arg(
-        Arg::new("json")
-            .long("json")
-            .help("Emit machine-readable JSON")
-            .action(ArgAction::SetTrue),
-    )
 }
 
 fn render_matches(
@@ -374,14 +225,8 @@ fn render_cockpit_command(
         return render_response(commands::cockpit(context), true, |_| String::new());
     }
 
-    let iterations = matches
-        .get_one::<String>("iterations")
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(1);
-    let interval = matches
-        .get_one::<String>("interval-ms")
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(1000);
+    let iterations = parse_u32_arg(matches, "iterations", 1)?;
+    let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
 
     if matches.get_flag("watch") {
         return Ok(render_cockpit_frames(
@@ -697,15 +542,8 @@ fn render_live_cockpit_command<R: CommandRunner>(
     matches: &ArgMatches,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let iterations = matches
-        .get_one::<String>("iterations")
-        .and_then(|value| value.parse::<u32>().ok())
-        .unwrap_or(1)
-        .max(1);
-    let interval = matches
-        .get_one::<String>("interval-ms")
-        .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(1000);
+    let iterations = parse_u32_arg(matches, "iterations", 1)?.max(1);
+    let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
 
     if matches.get_flag("json") {
         let changed = refresh_live_context(context, runner)?;
@@ -739,6 +577,26 @@ fn refresh_live_context<R: CommandRunner>(
 ) -> Result<bool, CliError> {
     let response = commands::reconcile_external(context, runner).map_err(command_error)?;
     Ok(response.tasks_changed > 0)
+}
+
+fn parse_u32_arg(matches: &ArgMatches, name: &str, default: u32) -> Result<u32, CliError> {
+    let Some(value) = matches.get_one::<String>(name) else {
+        return Ok(default);
+    };
+
+    value
+        .parse::<u32>()
+        .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
+}
+
+fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, CliError> {
+    let Some(value) = matches.get_one::<String>(name) else {
+        return Ok(default);
+    };
+
+    value
+        .parse::<u64>()
+        .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
 }
 
 fn tui_cockpit_action<R: CommandRunner>(
@@ -1108,6 +966,34 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_rejects_invalid_interval() {
+        let error = run_with_context(
+            ["ajax", "cockpit", "--watch", "--interval-ms", "nope"],
+            &sample_context(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            super::CliError::CommandFailed("invalid --interval-ms value: nope".to_string())
+        );
+    }
+
+    #[test]
+    fn cockpit_rejects_invalid_iterations() {
+        let error = run_with_context(
+            ["ajax", "cockpit", "--watch", "--iterations", "many"],
+            &sample_context(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            super::CliError::CommandFailed("invalid --iterations value: many".to_string())
+        );
+    }
+
+    #[test]
     fn cockpit_json_returns_single_startup_snapshot() {
         let context = sample_context();
         let output = run_with_context(["ajax", "cockpit", "--json"], &context).unwrap();
@@ -1214,8 +1100,10 @@ mod tests {
         let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
 
+        assert!(lib.contains("mod cli;"));
         assert!(lib.contains("mod context;"));
         assert!(lib.contains("mod render;"));
+        assert!(crate_root.join("src/cli.rs").exists());
         assert!(crate_root.join("src/context.rs").exists());
         assert!(crate_root.join("src/render.rs").exists());
     }
@@ -1229,6 +1117,59 @@ mod tests {
 
         assert!(architecture.contains("Legacy JSON state is not migrated"));
         assert!(architecture.contains("full rewrite"));
+    }
+
+    #[test]
+    fn architecture_documents_current_workspace_boundaries() {
+        let architecture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
+        )
+        .unwrap();
+
+        for crate_name in ["ajax-core", "ajax-cli", "ajax-tui", "ajax-supervisor"] {
+            assert!(
+                architecture.contains(crate_name),
+                "architecture.md should document the {crate_name} crate boundary"
+            );
+        }
+        assert!(architecture.contains("supervised agent execution"));
+    }
+
+    #[test]
+    fn architecture_documents_current_persistence_and_cockpit_stack() {
+        let architecture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
+        )
+        .unwrap();
+
+        assert!(architecture.contains("current durable registry store"));
+        assert!(architecture.contains("SqliteRegistryStore"));
+        assert!(architecture.contains("Ratatui"));
+        assert!(architecture.contains("current interactive TUI foundation"));
+    }
+
+    #[test]
+    fn architecture_documents_current_execution_and_cli_shape() {
+        let architecture = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
+        )
+        .unwrap();
+
+        for command_mode in [
+            "CommandMode::Capture",
+            "CommandMode::InheritStdio",
+            "CommandMode::Spawn",
+        ] {
+            assert!(
+                architecture.contains(command_mode),
+                "architecture.md should name the current {command_mode} execution path"
+            );
+        }
+
+        assert!(architecture.contains("current `ajax-cli` split"));
+        assert!(!architecture.contains("Consider Ratatui"));
+        assert!(!architecture.contains("long-term implementation should"));
+        assert!(!architecture.contains("The intended persistence boundary"));
     }
 
     #[test]
