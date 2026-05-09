@@ -1163,7 +1163,9 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 
 #[cfg(test)]
 mod tests {
-    use super::{render_cockpit, render_ui, selectable_row_layout, App, TerminalModeCommand};
+    use super::{
+        render_cockpit, render_ui, selectable_row_layout, App, AppView, TerminalModeCommand,
+    };
     use ajax_core::{
         models::{AttentionItem, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
@@ -1495,6 +1497,8 @@ mod tests {
         );
         app.select_next();
         app.activate_selected();
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+        let selected_before = app.selected;
         let before = render_to_string(80, 30, &app);
 
         assert!(!super::is_back_key_event(
@@ -1505,6 +1509,8 @@ mod tests {
 
         let after = render_to_string(80, 30, &app);
         assert_eq!(before, after);
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+        assert_eq!(app.selected, selected_before);
         assert!(after.contains("› web"));
     }
 
@@ -1565,12 +1571,26 @@ mod tests {
         app.select_next();
         app.activate_selected();
         app.push_input_char('x');
+        assert!(
+            matches!(
+                &app.view,
+                AppView::NewTaskInput { repo, title } if repo == "web" && title == "x"
+            ),
+            "Delete regression setup should be editing a web task title"
+        );
 
         assert!(super::is_input_delete_key(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
         assert!(!super::handle_back_key(&mut app));
+        assert!(
+            matches!(
+                &app.view,
+                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+            ),
+            "Delete should erase editable text without leaving task title input"
+        );
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("› new task"));
@@ -1796,8 +1816,17 @@ mod tests {
 
         app.push_input_char('x');
         assert!(!super::handle_back_key(&mut app));
+        assert!(
+            matches!(
+                &app.view,
+                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+            ),
+            "first backspace should edit the task title without leaving input"
+        );
         assert!(render_to_string(80, 30, &app).contains("Task name"));
         assert!(!super::handle_back_key(&mut app));
+        assert!(matches!(app.view, AppView::Projects));
+        assert_eq!(app.selected, 0);
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
