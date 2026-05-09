@@ -267,21 +267,8 @@ fn render_matches(
             render_response(response, subcommand.get_flag("json"), render_inspect_human)
         }
         Some(("new", subcommand)) => {
-            let repo = subcommand
-                .get_one::<String>("repo")
-                .cloned()
-                .unwrap_or_else(|| "web".to_string());
-            let title = subcommand
-                .get_one::<String>("title")
-                .cloned()
-                .unwrap_or_else(|| "new task".to_string());
-            let agent = subcommand
-                .get_one::<String>("agent")
-                .cloned()
-                .unwrap_or_else(|| "codex".to_string());
-            let plan =
-                commands::new_task_plan(context, commands::NewTaskRequest { repo, title, agent })
-                    .map_err(command_error)?;
+            let request = new_task_request(subcommand)?;
+            let plan = commands::new_task_plan(context, request).map_err(command_error)?;
             render_or_execute_plan(plan, subcommand)
         }
         Some(("open", subcommand)) => {
@@ -436,7 +423,7 @@ fn render_matches_mut(
 ) -> Result<RenderedCommand, CliError> {
     match matches.subcommand() {
         Some(("new", subcommand)) => {
-            let request = new_task_request(subcommand);
+            let request = new_task_request(subcommand)?;
             let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
@@ -659,6 +646,7 @@ fn tui_cockpit_action<R: CommandRunner>(
         | "reconcile" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
             recommended_action: item.recommended_action.clone(),
+            task_title: None,
         })),
         "new task" => Ok(ajax_tui::ActionOutcome::Message(cockpit_action_hint(
             &item.recommended_action,
@@ -678,8 +666,8 @@ fn tui_cockpit_action<R: CommandRunner>(
 
 fn cockpit_action_hint(action: &str, handle: &str) -> String {
     let command = match action {
-        "new task" if handle.is_empty() => "ajax new --execute".to_string(),
-        "new task" => format!("ajax new --repo {handle} --execute"),
+        "new task" if handle.is_empty() => "ajax new --title <name> --execute".to_string(),
+        "new task" => format!("ajax new --repo {handle} --title <name> --execute"),
         "open task" | "inspect agent" | "inspect task" | "monitor task" | "review branch" => {
             format!("ajax open {handle} --execute")
         }
@@ -702,8 +690,23 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
     state_changed: &mut bool,
 ) -> Result<String, CliError> {
     if pending.recommended_action == "new task" {
-        return Err(CliError::CommandFailed(
-            "new task title is required before cockpit can run workmux".to_string(),
+        let title = pending.task_title.clone().ok_or_else(|| {
+            CliError::CommandFailed(
+                "new task title is required before cockpit can run workmux".to_string(),
+            )
+        })?;
+        let request = commands::NewTaskRequest {
+            repo: pending.task_handle.clone(),
+            title,
+            agent: "codex".to_string(),
+        };
+        let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
+        let outputs = commands::execute_plan(&plan, true, runner).map_err(command_error)?;
+        let task = commands::record_new_task(context, &request).map_err(command_error)?;
+        *state_changed = true;
+        return Ok(render_execution_outputs(
+            &outputs,
+            Some(&task.qualified_handle()),
         ));
     }
 
@@ -755,21 +758,20 @@ fn render_or_execute_plan(
     Ok(render_execution_outputs(&outputs, None))
 }
 
-fn new_task_request(matches: &ArgMatches) -> commands::NewTaskRequest {
+fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
     let repo = matches
         .get_one::<String>("repo")
         .cloned()
         .unwrap_or_else(|| "web".to_string());
-    let title = matches
-        .get_one::<String>("title")
-        .cloned()
-        .unwrap_or_else(|| "new task".to_string());
+    let title = matches.get_one::<String>("title").cloned().ok_or_else(|| {
+        CliError::CommandFailed("task title is required; pass --title".to_string())
+    })?;
     let agent = matches
         .get_one::<String>("agent")
         .cloned()
         .unwrap_or_else(|| "codex".to_string());
 
-    commands::NewTaskRequest { repo, title, agent }
+    Ok(commands::NewTaskRequest { repo, title, agent })
 }
 
 fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {
@@ -1153,6 +1155,15 @@ mod tests {
     }
 
     #[test]
+    fn new_command_requires_task_title() {
+        let error =
+            run_with_context(["ajax", "new", "--repo", "web"], &sample_context()).unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+            if message.contains("task title is required")));
+    }
+
+    #[test]
     fn repos_command_renders_human_output() {
         let context = sample_context();
         let output = run_with_context(["ajax", "repos"], &context).unwrap();
@@ -1357,6 +1368,23 @@ mod tests {
             .list_tasks()
             .iter()
             .any(|task| task.qualified_handle() == "web/fix-login"));
+    }
+
+    #[test]
+    fn new_execute_requires_task_title_before_running_workmux() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = run_with_context_and_runner(
+            ["ajax", "new", "--repo", "web", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+            if message.contains("task title is required")));
+        assert!(runner.commands().is_empty());
     }
 
     #[test]
@@ -1682,7 +1710,7 @@ mod tests {
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
                 assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax new --repo api --execute"));
+                assert!(message.contains("ajax new --repo api --title"));
             }
             _ => panic!("new task should remain inside Ajax cockpit"),
         }
@@ -1769,6 +1797,7 @@ mod tests {
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
             recommended_action: "new task".to_string(),
+            task_title: None,
         };
         let mut runner = PanicRunner;
         let mut state_changed = false;
@@ -1799,6 +1828,7 @@ mod tests {
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
             recommended_action: "new task".to_string(),
+            task_title: None,
         };
         let mut runner = QueuedRunner::new(vec![output(1, "")]);
         let mut state_changed = false;
@@ -1819,6 +1849,55 @@ mod tests {
     }
 
     #[test]
+    fn pending_new_task_action_runs_after_title_is_collected() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("api", "/Users/matt/projects/api", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let pending = ajax_tui::PendingAction {
+            task_handle: "api".to_string(),
+            recommended_action: "new task".to_string(),
+            task_title: Some("Fix login".to_string()),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let output = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(output.contains("recorded task: api/fix-login"));
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "workmux",
+                [
+                    "add",
+                    "ajax/fix-login",
+                    "--prompt",
+                    "Fix login",
+                    "--agent",
+                    "codex"
+                ]
+            )
+            .with_cwd("/Users/matt/projects/api")]
+        );
+        assert!(context
+            .registry
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "api/fix-login"));
+        assert!(state_changed);
+    }
+
+    #[test]
     fn pending_cockpit_action_runs_requested_task_command() {
         let mut context = sample_context();
         context.config.test_commands =
@@ -1826,6 +1905,7 @@ mod tests {
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
             recommended_action: "check task".to_string(),
+            task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -1854,6 +1934,7 @@ mod tests {
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
             recommended_action: "check task".to_string(),
+            task_title: None,
         };
         let mut runner = QueuedRunner::new(vec![output(0, "tests passed\n")]);
         let mut state_changed = false;

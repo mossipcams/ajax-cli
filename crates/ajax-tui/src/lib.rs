@@ -6,7 +6,8 @@ use ajax_core::{
 };
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, MouseEventKind,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+        MouseEventKind,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -57,6 +58,7 @@ pub fn render_cockpit(
 pub struct PendingAction {
     pub task_handle: String,
     pub recommended_action: String,
+    pub task_title: Option<String>,
 }
 
 /// What the `on_action` callback returns to tell the TUI what to do next.
@@ -105,6 +107,10 @@ enum AppView {
         repo: String,
         label: String,
         recommended_action: String,
+    },
+    NewTaskInput {
+        repo: String,
+        title: String,
     },
 }
 
@@ -231,6 +237,7 @@ fn build_selectables(
                     }),
             );
         }
+        AppView::NewTaskInput { .. } => {}
     }
     out
 }
@@ -346,6 +353,19 @@ impl App {
     /// Pop one level of view nesting. Returns true when the view changed,
     /// false at the top level (Projects) so the caller can decide whether to quit.
     pub fn go_back(&mut self) -> bool {
+        if let AppView::NewTaskInput { repo, title } = &mut self.view {
+            if !title.is_empty() {
+                title.pop();
+                return true;
+            }
+            let repo = repo.clone();
+            self.view = AppView::Project { repo };
+            self.selected = 0;
+            self.viewport_scroll = 0;
+            self.rebuild_selectables();
+            return true;
+        }
+
         match &self.view {
             AppView::Projects => false,
             AppView::Project { .. } => {
@@ -363,6 +383,7 @@ impl App {
                 self.rebuild_selectables();
                 true
             }
+            AppView::NewTaskInput { .. } => unreachable!("handled before immutable view match"),
         }
     }
 
@@ -373,6 +394,22 @@ impl App {
                 self.selected = 0;
                 self.viewport_scroll = 0;
                 self.rebuild_selectables();
+                None
+            }
+            SelectableKind::ProjectAction {
+                repo,
+                label,
+                recommended_action,
+            } if recommended_action == "new task" => {
+                self.view = AppView::NewTaskInput {
+                    repo,
+                    title: String::new(),
+                };
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.flash = None;
+                self.rebuild_selectables();
+                let _ = label;
                 None
             }
             SelectableKind::ProjectAction {
@@ -392,6 +429,33 @@ impl App {
             }
             selectable => Some(selectable.as_action()),
         }
+    }
+
+    pub fn push_input_char(&mut self, character: char) {
+        if let AppView::NewTaskInput { title, .. } = &mut self.view {
+            title.push(character);
+        }
+    }
+
+    pub fn submit_input(&mut self) -> Option<PendingAction> {
+        let AppView::NewTaskInput { repo, title } = &self.view else {
+            return None;
+        };
+        let title = title.trim();
+        if title.is_empty() {
+            self.flash("task name required".to_string());
+            return None;
+        }
+
+        Some(PendingAction {
+            task_handle: repo.clone(),
+            recommended_action: "new task".to_string(),
+            task_title: Some(title.to_string()),
+        })
+    }
+
+    fn is_collecting_input(&self) -> bool {
+        matches!(self.view, AppView::NewTaskInput { .. })
     }
 
     fn reload(
@@ -482,20 +546,52 @@ pub fn run_interactive(
     inbox: InboxResponse,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
-    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    enter_terminal_mode(&mut stdout)?;
+    let mut terminal_mode = TerminalModeGuard::enter(&mut stdout)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(repos, tasks, review, inbox);
     let result = run_event_loop(&mut terminal, &mut app, on_action);
 
-    disable_raw_mode()?;
-    leave_terminal_mode(terminal.backend_mut())?;
+    terminal_mode.leave(terminal.backend_mut())?;
     terminal.show_cursor()?;
 
     result
+}
+
+struct TerminalModeGuard {
+    active: bool,
+}
+
+impl TerminalModeGuard {
+    fn enter(output: &mut impl io::Write) -> io::Result<Self> {
+        enable_raw_mode()?;
+        if let Err(error) = enter_terminal_mode(output) {
+            let _ = disable_raw_mode();
+            return Err(error);
+        }
+
+        Ok(Self { active: true })
+    }
+
+    fn leave(&mut self, output: &mut impl io::Write) -> io::Result<()> {
+        let leave_result = leave_terminal_mode(output);
+        let raw_result = disable_raw_mode();
+        self.active = false;
+        leave_result?;
+        raw_result
+    }
+}
+
+impl Drop for TerminalModeGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = disable_raw_mode();
+            let mut stdout = io::stdout();
+            let _ = leave_terminal_mode(&mut stdout);
+        }
+    }
 }
 
 fn enter_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
@@ -549,6 +645,24 @@ fn run_event_loop<B: Backend>(
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Enter if app.is_collecting_input() => {
+                        if let Some(pending) = app.submit_input() {
+                            return Ok(Some(pending));
+                        }
+                    }
+                    code if app.is_collecting_input()
+                        && is_input_backspace_key(code, key.modifiers) =>
+                    {
+                        if handle_back_key(app) {
+                            return Ok(None);
+                        }
+                    }
+                    KeyCode::Char(character) if app.is_collecting_input() => {
+                        app.push_input_char(character);
+                    }
+                    KeyCode::Left if app.is_collecting_input() => {
+                        app.go_back();
+                    }
                     KeyCode::Char('q') => return Ok(None),
                     code if is_back_key(code) => {
                         if handle_back_key(app) {
@@ -606,6 +720,13 @@ fn is_back_key(code: KeyCode) -> bool {
         code,
         KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h')
     )
+}
+
+fn is_input_backspace_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(
+        code,
+        KeyCode::Backspace | KeyCode::Char('\u{8}') | KeyCode::Char('\u{7f}')
+    ) || matches!(code, KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL))
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -684,6 +805,17 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::Cyan),
             ));
         }
+        AppView::NewTaskInput { repo, .. } => {
+            parts.push(crumb_sep());
+            parts.push(Span::styled(
+                repo.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            parts.push(crumb_sep());
+            parts.push(Span::styled("new task", Style::default().fg(Color::Cyan)));
+        }
     }
 
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
@@ -719,12 +851,18 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             AppView::Projects => "open",
             AppView::Project { .. } => "act",
             AppView::TaskPicker { .. } => "run",
+            AppView::NewTaskInput { .. } => "create",
         };
         let nested = !matches!(app.view, AppView::Projects);
         push_hint(&mut parts, "↑↓", "select", false);
         push_hint(&mut parts, "↵", enter_label, false);
         if nested {
-            push_hint(&mut parts, "←/h", "back", false);
+            let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {
+                "erase/back"
+            } else {
+                "back"
+            };
+            push_hint(&mut parts, "←/h", back_label, false);
         }
         push_hint(&mut parts, "q", "quit", true);
         Line::from(parts)
@@ -957,11 +1095,33 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
 
     rows.push(blank_row());
 
+    if let AppView::NewTaskInput { title, .. } = &app.view {
+        let display_title = if title.is_empty() {
+            "<type a task name>".to_string()
+        } else {
+            title.clone()
+        };
+        rows.push(render_row(
+            action_glyph("new task"),
+            vec![
+                Span::styled(
+                    "Task name  ",
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(display_title, Style::default().fg(Color::Cyan)),
+            ],
+        ));
+        return (rows, sel_to_row);
+    }
+
     if app.selectables.is_empty() {
         let msg = match &app.view {
             AppView::Projects => "no projects yet · edit ~/.config/ajax/config.toml to add one",
             AppView::Project { .. } => "nothing here yet · ←/h to go back",
             AppView::TaskPicker { .. } => "no matching tasks · ←/h to go back",
+            AppView::NewTaskInput { .. } => "enter a task name",
         };
         rows.push(empty_state(msg));
         return (rows, sel_to_row);
@@ -1010,7 +1170,7 @@ mod tests {
         models::{AttentionItem, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_repos() -> ReposResponse {
@@ -1245,6 +1405,26 @@ mod tests {
     }
 
     #[test]
+    fn input_backspace_accepts_common_terminal_encodings() {
+        for (code, modifiers) in [
+            (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Char('\u{8}'), KeyModifiers::NONE),
+            (KeyCode::Char('\u{7f}'), KeyModifiers::NONE),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+        ] {
+            assert!(
+                super::is_input_backspace_key(code, modifiers),
+                "{code:?} with {modifiers:?} should erase input"
+            );
+        }
+
+        assert!(!super::is_input_backspace_key(
+            KeyCode::Char('h'),
+            KeyModifiers::NONE
+        ));
+    }
+
+    #[test]
     fn nested_views_advertise_immediate_back_keys() {
         let mut app = App::new(
             sample_repos(),
@@ -1395,6 +1575,79 @@ mod tests {
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn project_new_task_action_opens_title_input() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+
+        assert!(app.activate_selected().is_none());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("› new task"));
+        assert!(content.contains("Task name"));
+    }
+
+    #[test]
+    fn new_task_title_input_collects_text_before_pending_action() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+
+        assert!(app.submit_input().is_none());
+        app.push_input_char('F');
+        app.push_input_char('i');
+        app.push_input_char('x');
+
+        let pending = app.submit_input().unwrap();
+
+        assert_eq!(pending.task_handle, "web");
+        assert_eq!(pending.recommended_action, "new task");
+        assert_eq!(pending.task_title.as_deref(), Some("Fix"));
+    }
+
+    #[test]
+    fn new_task_title_backspace_edits_then_returns_to_project() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+
+        app.push_input_char('x');
+        assert!(!super::handle_back_key(&mut app));
+        assert!(render_to_string(80, 30, &app).contains("Task name"));
+        assert!(!super::handle_back_key(&mut app));
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("› web"));
+        assert!(!content.contains("› new task"));
     }
 
     #[test]
