@@ -736,8 +736,8 @@ fn tui_cockpit_action<R: CommandRunner>(
 
     match item.recommended_action.as_str() {
         "open task"
+        | "open worktrunk"
         | "inspect agent"
-        | "inspect task"
         | "inspect test output"
         | "monitor task"
         | "check task"
@@ -752,6 +752,20 @@ fn tui_cockpit_action<R: CommandRunner>(
             recommended_action: item.recommended_action.clone(),
             task_title: None,
         })),
+        "inspect task" => {
+            let response = commands::inspect_task(context, handle).map_err(|error| {
+                let message = match command_error(error) {
+                    CliError::CommandFailed(message)
+                    | CliError::JsonSerialization(message)
+                    | CliError::ContextLoad(message)
+                    | CliError::ContextSave(message) => message,
+                };
+                std::io::Error::other(message)
+            })?;
+            Ok(ajax_tui::ActionOutcome::Message(render_inspect_human(
+                &response,
+            )))
+        }
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(|error| {
                 let message = match command_error(error) {
@@ -780,7 +794,8 @@ fn tui_cockpit_action<R: CommandRunner>(
             )))
         }
         _ => Ok(ajax_tui::ActionOutcome::Message(format!(
-            "try: ajax inspect {handle}"
+            "cockpit action is not configured: {}",
+            item.recommended_action
         ))),
     }
 }
@@ -813,12 +828,16 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
     }
 
     let plan = match pending.recommended_action.as_str() {
-        "check task" => commands::check_task_plan(context, &pending.task_handle),
+        "check task" | "inspect test output" => {
+            commands::check_task_plan(context, &pending.task_handle)
+        }
         "diff task" | "review diff" => commands::diff_task_plan(context, &pending.task_handle),
         "merge task" => commands::merge_task_plan(context, &pending.task_handle),
         "clean task" => commands::clean_task_plan(context, &pending.task_handle),
         "repair task" => commands::repair_task_plan(context, &pending.task_handle),
-        "repair worktrunk" => commands::trunk_task_plan(context, &pending.task_handle),
+        "open worktrunk" | "repair worktrunk" => {
+            commands::trunk_task_plan(context, &pending.task_handle)
+        }
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(command_error)?;
             *state_changed = response.tasks_changed > 0;
@@ -837,7 +856,13 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
             commands::mark_task_removed(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
         }
-        "check task" | "diff task" | "review diff" | "repair task" | "repair worktrunk" => {}
+        "check task"
+        | "inspect test output"
+        | "diff task"
+        | "review diff"
+        | "repair task"
+        | "open worktrunk"
+        | "repair worktrunk" => {}
         _ => {
             commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
@@ -1012,6 +1037,16 @@ mod tests {
             status_code,
             stdout: stdout.to_string(),
             stderr: String::new(),
+        }
+    }
+
+    fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::AttentionItem {
+        ajax_core::models::AttentionItem {
+            task_id: TaskId::new(format!("__cockpit_action__{action}")),
+            task_handle: handle.to_string(),
+            reason: action.to_string(),
+            priority: 0,
+            recommended_action: action.to_string(),
         }
     }
 
@@ -2138,6 +2173,10 @@ mod tests {
     fn cockpit_actions_defer_to_executable_ajax_commands() {
         for (handle, action) in [
             ("web/fix-login", "open task"),
+            ("web/fix-login", "open worktrunk"),
+            ("web/fix-login", "inspect agent"),
+            ("web/fix-login", "inspect test output"),
+            ("web/fix-login", "monitor task"),
             ("web/fix-login", "review branch"),
             ("web/fix-login", "review diff"),
             ("web/fix-login", "check task"),
@@ -2176,6 +2215,208 @@ mod tests {
                 }
             }
             assert!(!state_changed, "{action} should not mutate Ajax state");
+        }
+    }
+
+    #[test]
+    fn cockpit_known_actions_never_return_command_hints() {
+        for (handle, action) in [
+            ("web/fix-login", "open task"),
+            ("web/fix-login", "inspect task"),
+            ("web/fix-login", "inspect agent"),
+            ("web/fix-login", "inspect test output"),
+            ("web/fix-login", "monitor task"),
+            ("web/fix-login", "open worktrunk"),
+            ("web/fix-login", "check task"),
+            ("web/fix-login", "diff task"),
+            ("web/fix-login", "merge task"),
+            ("web/fix-login", "clean task"),
+            ("web/fix-login", "repair task"),
+            ("web/fix-login", "repair worktrunk"),
+            ("web", "new task"),
+            ("web", "status"),
+        ] {
+            let mut context = sample_context();
+            let item = ajax_core::models::AttentionItem {
+                task_id: TaskId::new(format!("__cockpit_action__{action}")),
+                task_handle: handle.to_string(),
+                reason: action.to_string(),
+                priority: 0,
+                recommended_action: action.to_string(),
+            };
+            let mut runner = PanicRunner;
+            let mut state_changed = false;
+
+            let outcome =
+                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                    .unwrap();
+
+            if let ajax_tui::ActionOutcome::Message(message) = outcome {
+                assert!(!message.contains("try: ajax"), "{action}: {message}");
+                assert!(!message.contains("run `ajax"), "{action}: {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn cockpit_inspect_task_renders_inside_cockpit() {
+        let mut context = sample_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__cockpit_action__inspect"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Inspect task".to_string(),
+            priority: 0,
+            recommended_action: "inspect task".to_string(),
+        };
+        let mut runner = PanicRunner;
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        match outcome {
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("web/fix-login\tReviewable\tFix login"));
+                assert!(message.contains("flags: NeedsInput"));
+                assert!(!message.contains("try: ajax"));
+            }
+            _ => panic!("inspect task should render inside cockpit"),
+        }
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_unknown_action_does_not_suggest_shell_command() {
+        let mut context = sample_context();
+        let item = cockpit_item("web/fix-login", "mystery action");
+        let mut runner = PanicRunner;
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        match outcome {
+            ajax_tui::ActionOutcome::Message(message) => {
+                assert!(message.contains("mystery action"));
+                assert!(!message.contains("try: ajax"));
+                assert!(!message.contains("run `ajax"));
+            }
+            _ => panic!("unknown cockpit action should stay in cockpit"),
+        }
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_action_contract_covers_all_current_actions() {
+        enum Expected<'a> {
+            Defer,
+            Message(&'a [&'a str]),
+            Refresh,
+        }
+
+        for (handle, action, expected) in [
+            ("web/fix-login", "open task", Expected::Defer),
+            ("web/fix-login", "open worktrunk", Expected::Defer),
+            ("web/fix-login", "inspect agent", Expected::Defer),
+            ("web/fix-login", "inspect test output", Expected::Defer),
+            ("web/fix-login", "monitor task", Expected::Defer),
+            ("web/fix-login", "review branch", Expected::Defer),
+            ("web/fix-login", "review diff", Expected::Defer),
+            ("web/fix-login", "check task", Expected::Defer),
+            ("web/fix-login", "diff task", Expected::Defer),
+            ("web/fix-login", "merge task", Expected::Defer),
+            ("web/fix-login", "clean task", Expected::Defer),
+            ("web/fix-login", "repair task", Expected::Defer),
+            ("web/fix-login", "repair worktrunk", Expected::Defer),
+            (
+                "web/fix-login",
+                "inspect task",
+                Expected::Message(&[
+                    "web/fix-login\tReviewable\tFix login",
+                    "branch: ajax/fix-login",
+                    "worktree: /tmp/worktrees/web-fix-login",
+                    "tmux: ajax-web-fix-login",
+                    "flags: NeedsInput",
+                ]),
+            ),
+            (
+                "web",
+                "new task",
+                Expected::Message(&["select a project", "new task"]),
+            ),
+            ("web", "status", Expected::Message(&["web: 1 task(s)"])),
+            ("web", "reconcile", Expected::Refresh),
+        ] {
+            let mut context = sample_context();
+            let item = cockpit_item(handle, action);
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+
+            let outcome =
+                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                    .unwrap();
+
+            match expected {
+                Expected::Defer => match outcome {
+                    ajax_tui::ActionOutcome::Defer(pending) => {
+                        assert_eq!(pending.task_handle, handle, "{action}");
+                        assert_eq!(pending.recommended_action, action);
+                        assert!(pending.task_title.is_none(), "{action}");
+                        assert!(
+                            runner.commands().is_empty(),
+                            "{action} should not execute before pending handling"
+                        );
+                        assert!(!state_changed, "{action}");
+                    }
+                    ajax_tui::ActionOutcome::Message(message) => {
+                        panic!("{action} should defer, got message: {message}");
+                    }
+                    ajax_tui::ActionOutcome::Refresh { .. } => {
+                        panic!("{action} should defer, got refresh");
+                    }
+                },
+                Expected::Message(parts) => match outcome {
+                    ajax_tui::ActionOutcome::Message(message) => {
+                        for part in parts {
+                            assert!(message.contains(part), "{action}: missing {part:?}");
+                        }
+                        assert!(
+                            runner.commands().is_empty(),
+                            "{action} should not execute commands"
+                        );
+                        assert!(!state_changed, "{action}");
+                    }
+                    ajax_tui::ActionOutcome::Defer(_) => {
+                        panic!("{action} should render in cockpit, got defer");
+                    }
+                    ajax_tui::ActionOutcome::Refresh { .. } => {
+                        panic!("{action} should render in cockpit, got refresh");
+                    }
+                },
+                Expected::Refresh => match outcome {
+                    ajax_tui::ActionOutcome::Refresh {
+                        repos,
+                        tasks,
+                        review,
+                        inbox,
+                    } => {
+                        assert_eq!(repos.repos.len(), 1, "{action}");
+                        assert_eq!(tasks.tasks.len(), 1, "{action}");
+                        assert_eq!(review.tasks.len(), 1, "{action}");
+                        assert!(!inbox.items.is_empty(), "{action}");
+                        assert!(!runner.commands().is_empty(), "{action}");
+                        assert!(state_changed, "{action}");
+                    }
+                    ajax_tui::ActionOutcome::Defer(_) => {
+                        panic!("{action} should refresh, got defer");
+                    }
+                    ajax_tui::ActionOutcome::Message(message) => {
+                        panic!("{action} should refresh, got message: {message}");
+                    }
+                },
+            }
         }
     }
 
@@ -2404,6 +2645,280 @@ mod tests {
     }
 
     #[test]
+    fn pending_cockpit_check_alias_actions_run_configured_test_command() {
+        for action in ["check task", "inspect test output"] {
+            let mut context = sample_context();
+            context.config.test_commands =
+                vec![ajax_core::config::TestCommand::new("web", "cargo test")];
+            let pending = ajax_tui::PendingAction {
+                task_handle: "web/fix-login".to_string(),
+                recommended_action: action.to_string(),
+                task_title: None,
+            };
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+
+            super::execute_pending_cockpit_action(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+            )
+            .unwrap();
+
+            assert_eq!(
+                runner.commands(),
+                &[CommandSpec::new("sh", ["-lc", "cargo test"])
+                    .with_cwd("/tmp/worktrees/web-fix-login")],
+                "{action}"
+            );
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("task-1"))
+                    .unwrap()
+                    .lifecycle_status,
+                LifecycleStatus::Reviewable,
+                "{action} should not change lifecycle"
+            );
+            assert!(!state_changed, "{action}");
+        }
+    }
+
+    #[test]
+    fn pending_cockpit_diff_alias_actions_run_diff_plan() {
+        for action in ["diff task", "review diff"] {
+            let mut context = sample_context();
+            let pending = ajax_tui::PendingAction {
+                task_handle: "web/fix-login".to_string(),
+                recommended_action: action.to_string(),
+                task_title: None,
+            };
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+
+            super::execute_pending_cockpit_action(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+            )
+            .unwrap();
+
+            assert_eq!(
+                runner.commands(),
+                &[
+                    CommandSpec::new("git", ["diff", "--stat", "main...ajax/fix-login"])
+                        .with_cwd("/tmp/worktrees/web-fix-login")
+                ],
+                "{action}"
+            );
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("task-1"))
+                    .unwrap()
+                    .lifecycle_status,
+                LifecycleStatus::Reviewable,
+                "{action} should not change lifecycle"
+            );
+            assert!(!state_changed, "{action}");
+        }
+    }
+
+    #[test]
+    fn pending_cockpit_open_alias_actions_run_open_plan_and_mark_active() {
+        for action in [
+            "open task",
+            "inspect agent",
+            "monitor task",
+            "review branch",
+        ] {
+            let mut context = sample_context();
+            let pending = ajax_tui::PendingAction {
+                task_handle: "web/fix-login".to_string(),
+                recommended_action: action.to_string(),
+                task_title: None,
+            };
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+
+            super::execute_pending_cockpit_action(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+            )
+            .unwrap();
+
+            assert_eq!(
+                runner.commands(),
+                &[
+                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                        .with_cwd("/Users/matt/projects/web"),
+                    CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                        .with_mode(CommandMode::InheritStdio)
+                ],
+                "{action}"
+            );
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("task-1"))
+                    .unwrap()
+                    .lifecycle_status,
+                LifecycleStatus::Active,
+                "{action} should mark the task active"
+            );
+            assert!(state_changed, "{action}");
+        }
+    }
+
+    #[test]
+    fn pending_cockpit_repair_actions_run_expected_tmux_plans() {
+        let mut repair_context = sample_context();
+        let mut repair_task = repair_context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .cloned()
+            .unwrap();
+        repair_task.add_side_flag(SideFlag::WorktrunkMissing);
+        repair_context.registry = InMemoryRegistry::default();
+        repair_context.registry.create_task(repair_task).unwrap();
+
+        for (action, mut context) in [
+            ("repair task", repair_context),
+            ("repair worktrunk", sample_context()),
+            ("open worktrunk", sample_context()),
+        ] {
+            let pending = ajax_tui::PendingAction {
+                task_handle: "web/fix-login".to_string(),
+                recommended_action: action.to_string(),
+                task_title: None,
+            };
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+
+            super::execute_pending_cockpit_action(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+            )
+            .unwrap();
+
+            assert_eq!(
+                runner.commands(),
+                &[CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-window",
+                        "-t",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                )],
+                "{action}"
+            );
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("task-1"))
+                    .unwrap()
+                    .lifecycle_status,
+                LifecycleStatus::Reviewable,
+                "{action} should not change lifecycle"
+            );
+            assert!(!state_changed, "{action}");
+        }
+    }
+
+    #[test]
+    fn pending_cockpit_blocked_plan_does_not_run_or_mutate_state() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "check task".to_string(),
+            task_title: None,
+        };
+        let mut runner = PanicRunner;
+        let mut state_changed = false;
+
+        let error = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::CliError::CommandFailed(message)
+                if message.contains("plan blocked")
+                    && message.contains("no test command configured for repo web")
+        ));
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_failed_external_command_does_not_mutate_state() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "merge task".to_string(),
+            task_title: None,
+        };
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 42,
+            stdout: String::new(),
+            stderr: "merge failed".to_string(),
+        }]);
+        let mut state_changed = false;
+
+        let error = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::CliError::CommandFailed(message)
+                if message.contains("NonZeroExit")
+                    && message.contains("merge failed")
+                    && message.contains("/Users/matt/projects/web")
+        ));
+        assert_eq!(
+            runner.commands,
+            &[CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
     fn pending_cockpit_open_action_runs_task_and_marks_active() {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
@@ -2510,6 +3025,43 @@ mod tests {
             LifecycleStatus::Removed
         );
         assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_worktrunk_action_runs_trunk_plan() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open worktrunk".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "tmux",
+                [
+                    "new-window",
+                    "-t",
+                    "ajax-web-fix-login",
+                    "-n",
+                    "worktrunk",
+                    "-c",
+                    "/tmp/worktrees/web-fix-login"
+                ]
+            )]
+        );
+        assert!(!state_changed);
     }
 
     #[test]

@@ -246,6 +246,8 @@ fn project_action_selectables(repo: &str) -> Vec<SelectableKind> {
     [
         ("new task", "new task"),
         ("open task", "open task"),
+        ("inspect task", "inspect task"),
+        ("open worktrunk", "open worktrunk"),
         ("review branch", "review branch"),
         ("merge task", "merge task"),
         ("diff task", "diff task"),
@@ -270,6 +272,8 @@ fn task_scoped_action(action: &str) -> bool {
     matches!(
         action,
         "open task"
+            | "inspect task"
+            | "open worktrunk"
             | "review branch"
             | "check task"
             | "diff task"
@@ -1187,7 +1191,8 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        render_cockpit, render_ui, selectable_row_layout, App, AppView, TerminalModeCommand,
+        render_cockpit, render_ui, selectable_row_layout, App, AppView, SelectableKind,
+        TerminalModeCommand,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, TaskId},
@@ -1267,6 +1272,35 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+
+    fn app_in_project_view() -> App {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        assert!(app.activate_selected().is_none());
+        app
+    }
+
+    fn select_project_action(app: &mut App, action: &str) {
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::ProjectAction {
+                    recommended_action,
+                    ..
+                }) if recommended_action == action
+            ) {
+                return;
+            }
+            app.select_next();
+        }
+
+        panic!("project action not found: {action}");
     }
 
     #[test]
@@ -1675,7 +1709,9 @@ mod tests {
         let content = render_to_string(80, 30, &app);
         for expected in [
             "new task",
+            "inspect task",
             "open task",
+            "open worktrunk",
             "review branch",
             "merge task",
             "diff task",
@@ -1693,6 +1729,77 @@ mod tests {
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn project_inspect_task_action_opens_scoped_task_picker() {
+        let mut app = app_in_project_view();
+        select_project_action(&mut app, "inspect task");
+
+        assert!(app.activate_selected().is_none());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("› inspect task"));
+        assert!(content.contains("web/fix-login"));
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "inspect task");
+    }
+
+    #[test]
+    fn project_action_activation_contract_covers_every_menu_action() {
+        for action in [
+            "open task",
+            "inspect task",
+            "open worktrunk",
+            "review branch",
+            "merge task",
+            "diff task",
+            "check task",
+            "clean task",
+            "repair task",
+        ] {
+            let mut app = app_in_project_view();
+            select_project_action(&mut app, action);
+
+            assert!(app.activate_selected().is_none(), "{action}");
+            assert!(
+                matches!(
+                    &app.view,
+                    AppView::TaskPicker {
+                        repo,
+                        recommended_action,
+                        ..
+                    } if repo == "web" && recommended_action == action
+                ),
+                "{action} should open a task picker scoped to web"
+            );
+            let selected = app.selected_action().unwrap();
+            assert_eq!(selected.task_handle, "web/fix-login", "{action}");
+            assert_eq!(selected.recommended_action, action);
+        }
+
+        let mut app = app_in_project_view();
+        select_project_action(&mut app, "new task");
+        assert!(app.activate_selected().is_none());
+        assert!(
+            matches!(
+                &app.view,
+                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+            ),
+            "new task should collect a title inside cockpit"
+        );
+
+        for action in ["reconcile", "status"] {
+            let mut app = app_in_project_view();
+            select_project_action(&mut app, action);
+            let item = app
+                .activate_selected()
+                .unwrap_or_else(|| panic!("{action} should dispatch immediately"));
+            assert_eq!(item.task_handle, "web", "{action}");
+            assert_eq!(item.recommended_action, action);
+            assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+        }
     }
 
     #[test]
