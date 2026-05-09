@@ -350,41 +350,31 @@ impl App {
         self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
-    /// Pop one level of view nesting. Returns true when the view changed,
-    /// false at the top level (Projects) so the caller can decide whether to quit.
+    /// Return to the cockpit's main project list. Returns false at the top
+    /// level so callers can keep the TUI alive without treating back as quit.
+    pub fn go_home(&mut self) -> bool {
+        if matches!(self.view, AppView::Projects) {
+            return false;
+        }
+
+        self.view = AppView::Projects;
+        self.selected = 0;
+        self.viewport_scroll = 0;
+        self.rebuild_selectables();
+        true
+    }
+
+    /// Erase editable input, then return to the cockpit's main project list.
+    /// Returns false at the top level so back never exits the TUI.
     pub fn go_back(&mut self) -> bool {
-        if let AppView::NewTaskInput { repo, title } = &mut self.view {
+        if let AppView::NewTaskInput { title, .. } = &mut self.view {
             if !title.is_empty() {
                 title.pop();
                 return true;
             }
-            let repo = repo.clone();
-            self.view = AppView::Project { repo };
-            self.selected = 0;
-            self.viewport_scroll = 0;
-            self.rebuild_selectables();
-            return true;
         }
 
-        match &self.view {
-            AppView::Projects => false,
-            AppView::Project { .. } => {
-                self.view = AppView::Projects;
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.rebuild_selectables();
-                true
-            }
-            AppView::TaskPicker { repo, .. } => {
-                let repo = repo.clone();
-                self.view = AppView::Project { repo };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.rebuild_selectables();
-                true
-            }
-            AppView::NewTaskInput { .. } => unreachable!("handled before immutable view match"),
-        }
+        self.go_home()
     }
 
     pub fn activate_selected(&mut self) -> Option<AttentionItem> {
@@ -645,13 +635,16 @@ fn run_event_loop<B: Backend>(
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    KeyCode::Esc => {
+                        app.go_home();
+                    }
                     KeyCode::Enter if app.is_collecting_input() => {
                         if let Some(pending) = app.submit_input() {
                             return Ok(Some(pending));
                         }
                     }
                     code if app.is_collecting_input()
-                        && is_input_backspace_key(code, key.modifiers) =>
+                        && is_input_delete_key(code, key.modifiers) =>
                     {
                         if handle_back_key(app) {
                             return Ok(None);
@@ -664,7 +657,7 @@ fn run_event_loop<B: Backend>(
                         app.go_back();
                     }
                     KeyCode::Char('q') => return Ok(None),
-                    code if is_back_key(code) => {
+                    code if is_back_key_event(code, key.modifiers) => {
                         if handle_back_key(app) {
                             return Ok(None);
                         }
@@ -715,17 +708,22 @@ fn handle_back_key(app: &mut App) -> bool {
     false
 }
 
-fn is_back_key(code: KeyCode) -> bool {
-    matches!(
-        code,
-        KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h')
-    )
+fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Esc | KeyCode::Left | KeyCode::Char('h'))
+        || is_navigation_backspace_key(code, modifiers)
 }
 
-fn is_input_backspace_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+fn is_navigation_backspace_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
     matches!(
         code,
         KeyCode::Backspace | KeyCode::Char('\u{8}') | KeyCode::Char('\u{7f}')
+    ) || matches!(code, KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL))
+}
+
+fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(
+        code,
+        KeyCode::Backspace | KeyCode::Delete | KeyCode::Char('\u{8}') | KeyCode::Char('\u{7f}')
     ) || matches!(code, KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL))
 }
 
@@ -862,7 +860,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 "back"
             };
-            push_hint(&mut parts, "←/h", back_label, false);
+            push_hint(&mut parts, "esc/←/h", back_label, false);
         }
         push_hint(&mut parts, "q", "quit", true);
         Line::from(parts)
@@ -1119,8 +1117,8 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     if app.selectables.is_empty() {
         let msg = match &app.view {
             AppView::Projects => "no projects yet · edit ~/.config/ajax/config.toml to add one",
-            AppView::Project { .. } => "nothing here yet · ←/h to go back",
-            AppView::TaskPicker { .. } => "no matching tasks · ←/h to go back",
+            AppView::Project { .. } => "nothing here yet · esc/←/h to go back",
+            AppView::TaskPicker { .. } => "no matching tasks · esc/←/h to go back",
             AppView::NewTaskInput { .. } => "enter a task name",
         };
         rows.push(empty_state(msg));
@@ -1334,11 +1332,37 @@ mod tests {
             sample_inbox(),
         );
 
-        assert!(super::is_back_key(KeyCode::Backspace));
+        assert!(super::is_back_key_event(
+            KeyCode::Backspace,
+            KeyModifiers::NONE
+        ));
         assert!(!super::handle_back_key(&mut app));
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
+    }
+
+    #[test]
+    fn top_level_back_variants_stay_in_cockpit() {
+        for (code, modifiers) in [
+            (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Char('\u{8}'), KeyModifiers::NONE),
+            (KeyCode::Char('\u{7f}'), KeyModifiers::NONE),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+        ] {
+            let mut app = App::new(
+                sample_repos(),
+                sample_tasks(),
+                sample_tasks(),
+                sample_inbox(),
+            );
+
+            assert!(super::is_back_key_event(code, modifiers));
+            assert!(!super::handle_back_key(&mut app));
+            let content = render_to_string(80, 30, &app);
+            assert!(content.contains("Ajax"));
+            assert!(content.contains("web"));
+        }
     }
 
     #[test]
@@ -1380,6 +1404,30 @@ mod tests {
     }
 
     #[test]
+    fn task_picker_back_returns_to_ajax_main_menu() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+
+        assert!(!super::handle_back_key(&mut app));
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Ajax"));
+        assert!(content.contains("start a new task"));
+        assert!(!content.contains("› web"));
+        assert!(!content.contains("› open task"));
+    }
+
+    #[test]
     fn nested_backspace_returns_to_parent_without_exit() {
         let mut app = App::new(
             sample_repos(),
@@ -1390,7 +1438,10 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        assert!(super::is_back_key(KeyCode::Backspace));
+        assert!(super::is_back_key_event(
+            KeyCode::Backspace,
+            KeyModifiers::NONE
+        ));
         assert!(!super::handle_back_key(&mut app));
         let content = render_to_string(80, 30, &app);
         assert!(!content.contains("› web"));
@@ -1398,30 +1449,134 @@ mod tests {
 
     #[test]
     fn immediate_back_keys_do_not_depend_on_escape() {
-        for key in [KeyCode::Left, KeyCode::Backspace, KeyCode::Char('h')] {
-            assert!(super::is_back_key(key), "{key:?} should navigate back");
+        for key in [
+            KeyCode::Left,
+            KeyCode::Backspace,
+            KeyCode::Char('h'),
+            KeyCode::Esc,
+        ] {
+            assert!(
+                super::is_back_key_event(key, KeyModifiers::NONE),
+                "{key:?} should navigate back"
+            );
         }
-        assert!(!super::is_back_key(KeyCode::Esc));
     }
 
     #[test]
-    fn input_backspace_accepts_common_terminal_encodings() {
+    fn navigation_back_accepts_common_terminal_encodings() {
+        for (code, modifiers) in [
+            (KeyCode::Left, KeyModifiers::NONE),
+            (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Esc, KeyModifiers::NONE),
+            (KeyCode::Char('\u{8}'), KeyModifiers::NONE),
+            (KeyCode::Char('\u{7f}'), KeyModifiers::NONE),
+            (KeyCode::Char('h'), KeyModifiers::NONE),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+        ] {
+            assert!(
+                super::is_back_key_event(code, modifiers),
+                "{code:?} with {modifiers:?} should navigate back"
+            );
+        }
+
+        assert!(!super::is_back_key_event(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE
+        ));
+    }
+
+    #[test]
+    fn delete_is_not_a_cockpit_navigation_key() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        let before = render_to_string(80, 30, &app);
+
+        assert!(!super::is_back_key_event(
+            KeyCode::Delete,
+            KeyModifiers::NONE
+        ));
+        assert!(before.contains("› web"));
+
+        let after = render_to_string(80, 30, &app);
+        assert_eq!(before, after);
+        assert!(after.contains("› web"));
+    }
+
+    #[test]
+    fn delete_on_top_level_is_ignored_by_navigation() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        let before = render_to_string(80, 30, &app);
+
+        assert!(!super::is_back_key_event(
+            KeyCode::Delete,
+            KeyModifiers::NONE
+        ));
+
+        let after = render_to_string(80, 30, &app);
+        assert_eq!(before, after);
+        assert!(after.contains("Ajax"));
+        assert!(after.contains("start a new task"));
+    }
+
+    #[test]
+    fn input_delete_accepts_common_terminal_encodings() {
         for (code, modifiers) in [
             (KeyCode::Backspace, KeyModifiers::NONE),
+            (KeyCode::Delete, KeyModifiers::NONE),
             (KeyCode::Char('\u{8}'), KeyModifiers::NONE),
             (KeyCode::Char('\u{7f}'), KeyModifiers::NONE),
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
             assert!(
-                super::is_input_backspace_key(code, modifiers),
+                super::is_input_delete_key(code, modifiers),
                 "{code:?} with {modifiers:?} should erase input"
             );
         }
 
-        assert!(!super::is_input_backspace_key(
+        assert!(!super::is_input_delete_key(
             KeyCode::Char('h'),
             KeyModifiers::NONE
         ));
+    }
+
+    #[test]
+    fn delete_in_task_title_input_erases_without_closing_ajax() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        app.push_input_char('x');
+
+        assert!(super::is_input_delete_key(
+            KeyCode::Delete,
+            KeyModifiers::NONE
+        ));
+        assert!(!super::handle_back_key(&mut app));
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("› new task"));
+        assert!(content.contains("Task name"));
+        assert!(content.contains("<type a task name>"));
+        assert!(!content.contains("Task name  x"));
     }
 
     #[test]
@@ -1436,8 +1591,7 @@ mod tests {
         app.activate_selected();
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("←/h back"));
-        assert!(!content.contains("esc back"));
+        assert!(content.contains("esc/←/h back"));
     }
 
     #[test]
@@ -1626,7 +1780,7 @@ mod tests {
     }
 
     #[test]
-    fn new_task_title_backspace_edits_then_returns_to_project() {
+    fn new_task_title_backspace_edits_then_returns_to_main_menu() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -1646,8 +1800,36 @@ mod tests {
         assert!(!super::handle_back_key(&mut app));
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("› web"));
+        assert!(content.contains("Ajax"));
+        assert!(content.contains("start a new task"));
+        assert!(!content.contains("› web"));
         assert!(!content.contains("› new task"));
+    }
+
+    #[test]
+    fn escape_from_new_task_input_returns_to_ajax_main_menu() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.activate_selected();
+        app.select_next();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        app.push_input_char('x');
+
+        assert!(app.go_home());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("Ajax"));
+        assert!(content.contains("start a new task"));
+        assert!(!content.contains("› web"));
+        assert!(!content.contains("› new task"));
+        assert!(!content.contains("Task name"));
     }
 
     #[test]
