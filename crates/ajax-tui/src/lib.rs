@@ -417,6 +417,21 @@ impl App {
                 self.rebuild_selectables();
                 None
             }
+            SelectableKind::NewTask => {
+                if let [repo] = self.repos.repos.as_slice() {
+                    self.view = AppView::NewTaskInput {
+                        repo: repo.name.clone(),
+                        title: String::new(),
+                    };
+                    self.selected = 0;
+                    self.viewport_scroll = 0;
+                    self.flash = None;
+                    self.rebuild_selectables();
+                } else {
+                    self.flash("select a project first".to_string());
+                }
+                None
+            }
             selectable => Some(selectable.as_action()),
         }
     }
@@ -1799,6 +1814,31 @@ mod tests {
         app.select_next();
 
         assert!(app.activate_selected().is_none());
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("› new task"));
+        assert!(content.contains("Task name"));
+    }
+
+    #[test]
+    fn top_level_new_task_action_opens_title_input_for_single_repo() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        app.select_next();
+        app.select_next();
+
+        assert!(app.activate_selected().is_none());
+        assert!(
+            matches!(
+                &app.view,
+                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+            ),
+            "top-level new task should collect a task name when there is one repo"
+        );
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("› new task"));

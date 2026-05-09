@@ -729,8 +729,8 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
 fn tui_cockpit_action<R: CommandRunner>(
     item: &ajax_core::models::AttentionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut R,
-    _state_changed: &mut bool,
+    runner: &mut R,
+    state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
 
@@ -747,12 +747,32 @@ fn tui_cockpit_action<R: CommandRunner>(
         | "merge task"
         | "clean task"
         | "repair task"
-        | "repair worktrunk"
-        | "reconcile"
-        | "new task" => Ok(ajax_tui::ActionOutcome::Message(cockpit_action_hint(
-            &item.recommended_action,
-            handle,
-        ))),
+        | "repair worktrunk" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+            task_handle: handle.clone(),
+            recommended_action: item.recommended_action.clone(),
+            task_title: None,
+        })),
+        "reconcile" => {
+            let response = commands::reconcile_external(context, runner).map_err(|error| {
+                let message = match command_error(error) {
+                    CliError::CommandFailed(message)
+                    | CliError::JsonSerialization(message)
+                    | CliError::ContextLoad(message)
+                    | CliError::ContextSave(message) => message,
+                };
+                std::io::Error::other(message)
+            })?;
+            *state_changed = response.tasks_changed > 0;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
+        "new task" => Ok(ajax_tui::ActionOutcome::Message(
+            "select a project, then choose new task to enter a task name".to_string(),
+        )),
         "status" => {
             let task_count = commands::list_tasks(context, Some(handle)).tasks.len();
             Ok(ajax_tui::ActionOutcome::Message(format!(
@@ -763,25 +783,6 @@ fn tui_cockpit_action<R: CommandRunner>(
             "try: ajax inspect {handle}"
         ))),
     }
-}
-
-fn cockpit_action_hint(action: &str, handle: &str) -> String {
-    let command = match action {
-        "new task" if handle.is_empty() => "ajax new --title <name> --execute".to_string(),
-        "new task" => format!("ajax new --repo {handle} --title <name> --execute"),
-        "open task" | "inspect agent" | "inspect task" | "monitor task" | "review branch" => {
-            format!("ajax open {handle} --execute")
-        }
-        "inspect test output" | "check task" => format!("ajax check {handle} --execute"),
-        "diff task" | "review diff" => format!("ajax diff {handle} --execute"),
-        "merge task" => format!("ajax merge {handle} --execute --yes"),
-        "clean task" => format!("ajax clean {handle} --execute --yes"),
-        "repair task" | "repair worktrunk" => format!("ajax repair {handle} --execute"),
-        "reconcile" => "ajax reconcile".to_string(),
-        _ => format!("ajax inspect {handle}"),
-    };
-
-    format!("cockpit is navigation-only; run `{command}`")
 }
 
 fn execute_pending_cockpit_action<R: CommandRunner>(
@@ -913,7 +914,8 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
@@ -2094,7 +2096,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_new_task_action_stays_inside_ajax() {
+    fn cockpit_new_task_action_guides_operator_to_project_input() {
         let mut context = CommandContext::new(
             Config {
                 repos: vec![
@@ -2121,8 +2123,8 @@ mod tests {
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax new --repo api --title"));
+                assert!(message.contains("select a project"));
+                assert!(message.contains("new task"));
             }
             _ => panic!("new task should remain inside Ajax cockpit"),
         }
@@ -2133,9 +2135,8 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_actions_do_not_run_external_commands() {
+    fn cockpit_actions_defer_to_executable_ajax_commands() {
         for (handle, action) in [
-            ("web", "new task"),
             ("web/fix-login", "open task"),
             ("web/fix-login", "review branch"),
             ("web/fix-login", "review diff"),
@@ -2145,7 +2146,6 @@ mod tests {
             ("web/fix-login", "clean task"),
             ("web/fix-login", "repair task"),
             ("web/fix-login", "repair worktrunk"),
-            ("web", "reconcile"),
         ] {
             let mut context = sample_context();
             let item = ajax_core::models::AttentionItem {
@@ -2163,14 +2163,16 @@ mod tests {
                     .unwrap();
 
             match outcome {
-                ajax_tui::ActionOutcome::Message(message) => {
-                    assert!(message.contains("navigation-only") || message.contains("task(s)"));
+                ajax_tui::ActionOutcome::Defer(pending) => {
+                    assert_eq!(pending.task_handle, handle);
+                    assert_eq!(pending.recommended_action, action);
+                    assert!(pending.task_title.is_none());
                 }
-                ajax_tui::ActionOutcome::Defer(_) => {
-                    panic!("{action} should not exit Ajax cockpit on Return")
-                }
+                ajax_tui::ActionOutcome::Message(message) => panic!(
+                    "{action} should defer for execution instead of showing message: {message}"
+                ),
                 ajax_tui::ActionOutcome::Refresh { .. } => {
-                    panic!("{action} should not refresh after external execution")
+                    panic!("{action} should defer for execution instead of refreshing")
                 }
             }
             assert!(!state_changed, "{action} should not mutate Ajax state");
@@ -2195,14 +2197,12 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax check web/fix-login --execute"));
+            ajax_tui::ActionOutcome::Defer(pending) => {
+                assert_eq!(pending.task_handle, "web/fix-login");
+                assert_eq!(pending.recommended_action, "check task");
+                assert!(pending.task_title.is_none());
             }
-            ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("completed task action should stay inside Ajax")
-            }
-            _ => panic!("completed task action should show command guidance"),
+            _ => panic!("completed task action should defer for execution"),
         }
         assert!(!state_changed);
     }
@@ -2225,14 +2225,12 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax open web/fix-login --execute"));
+            ajax_tui::ActionOutcome::Defer(pending) => {
+                assert_eq!(pending.task_handle, "web/fix-login");
+                assert_eq!(pending.recommended_action, "open task");
+                assert!(pending.task_title.is_none());
             }
-            ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("Return in cockpit should not exit Ajax for task actions")
-            }
-            _ => panic!("task action should stay in Ajax with guidance"),
+            _ => panic!("task action should defer for execution"),
         }
         assert!(!state_changed);
     }
@@ -2406,7 +2404,116 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_reconcile_action_stays_inside_ajax() {
+    fn pending_cockpit_open_action_runs_task_and_marks_active() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open task".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web"),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Active
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_merge_action_runs_task_and_marks_merged() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "merge task".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Merged
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_clean_action_runs_task_and_marks_removed() {
+        let mut context = cleanable_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "clean task".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn cockpit_reconcile_action_runs_and_refreshes_cockpit() {
         let mut context = sample_context();
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__project_action__web__reconcile"),
@@ -2423,20 +2530,35 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax reconcile"));
+            ajax_tui::ActionOutcome::Refresh {
+                repos,
+                tasks,
+                review,
+                inbox,
+            } => {
+                assert_eq!(repos.repos.len(), 1);
+                assert_eq!(tasks.tasks.len(), 1);
+                assert_eq!(review.tasks.len(), 1);
+                assert!(!inbox.items.is_empty());
             }
-            ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should stay inside Ajax"),
-            _ => panic!("reconcile should show command guidance"),
+            ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should refresh in cockpit"),
+            ajax_tui::ActionOutcome::Message(message) => {
+                panic!("reconcile should run instead of showing message: {message}")
+            }
         }
-        assert!(runner.commands().is_empty());
-        assert!(!state_changed);
+        assert!(!runner.commands().is_empty());
+        assert!(state_changed);
     }
 
     #[test]
-    fn cockpit_reconcile_return_stays_inside_ajax() {
-        let mut context = sample_context();
+    fn cockpit_reconcile_refreshes_without_runner_when_no_tasks_exist() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__project_action__web__reconcile"),
             task_handle: "web".to_string(),
@@ -2452,14 +2574,23 @@ mod tests {
                 .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Message(message) => {
-                assert!(message.contains("navigation-only"));
-                assert!(message.contains("ajax reconcile"));
+            ajax_tui::ActionOutcome::Refresh {
+                repos,
+                tasks,
+                review,
+                inbox,
+            } => {
+                assert_eq!(repos.repos.len(), 1);
+                assert!(tasks.tasks.is_empty());
+                assert!(review.tasks.is_empty());
+                assert!(inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("Return in cockpit should not exit Ajax for reconcile")
+                panic!("reconcile should refresh instead of deferring")
             }
-            _ => panic!("reconcile should stay in Ajax with guidance"),
+            ajax_tui::ActionOutcome::Message(message) => {
+                panic!("reconcile should run instead of showing message: {message}")
+            }
         }
         assert!(!state_changed);
     }
