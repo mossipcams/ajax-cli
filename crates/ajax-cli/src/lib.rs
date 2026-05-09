@@ -5,7 +5,7 @@ mod render;
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    output::ReconcileResponse,
+    output::{DoctorCheck, ReconcileResponse},
     registry::InMemoryRegistry,
 };
 use ajax_supervisor::codex::CodexAdapter;
@@ -40,7 +40,8 @@ pub fn run_with_args(
     let paths = default_context_paths()?;
     let mut context = load_context(&paths)?;
     let mut runner = ProcessCommandRunner;
-    let rendered = render_matches_mut(&matches, &mut context, &mut runner)?;
+    let rendered =
+        render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths))?;
     if rendered.state_changed {
         save_context(&paths, &context)?;
     }
@@ -83,7 +84,7 @@ pub fn run_with_context_paths(
     };
     let context = load_context(paths)?;
 
-    render_matches(&matches, &context)
+    render_matches_with_paths(&matches, &context, Some(paths))
 }
 
 pub fn run_with_context_paths_and_runner(
@@ -96,7 +97,7 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Message(message) => return Ok(message),
     };
     let mut context = load_context(paths)?;
-    let rendered = render_matches_mut(&matches, &mut context, runner)?;
+    let rendered = render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))?;
     if rendered.state_changed {
         save_context(paths, &context)?;
     }
@@ -113,6 +114,14 @@ struct RenderedCommand {
 fn render_matches(
     matches: &ArgMatches,
     context: &CommandContext<InMemoryRegistry>,
+) -> Result<String, CliError> {
+    render_matches_with_paths(matches, context, None)
+}
+
+fn render_matches_with_paths(
+    matches: &ArgMatches,
+    context: &CommandContext<InMemoryRegistry>,
+    paths: Option<&CliContextPaths>,
 ) -> Result<String, CliError> {
     match matches.subcommand() {
         Some(("repos", subcommand)) => render_response(
@@ -195,14 +204,17 @@ fn render_matches(
             subcommand.get_flag("json"),
             render_tasks_human,
         ),
-        Some(("doctor", subcommand)) => render_response(
-            commands::doctor(context),
-            subcommand.get_flag("json"),
-            render_doctor_human,
-        ),
+        Some(("doctor", subcommand)) => {
+            let mut response = commands::doctor(context);
+            if let Some(paths) = paths {
+                response.checks.extend(context_path_checks(paths));
+            }
+            render_response(response, subcommand.get_flag("json"), render_doctor_human)
+        }
         Some(("status", _)) => {
             render_response(commands::status(context), false, render_tasks_human)
         }
+        Some(("state", subcommand)) => render_state_command(context, subcommand),
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
         Some(("reconcile", subcommand)) => render_response(
             ReconcileResponse {
@@ -215,6 +227,102 @@ fn render_matches(
         Some((name, _)) => Ok(format!("{name}: command accepted; adapter wiring pending")),
         None => Ok("ajax: no command provided".to_string()),
     }
+}
+
+fn render_state_command(
+    context: &CommandContext<InMemoryRegistry>,
+    matches: &ArgMatches,
+) -> Result<String, CliError> {
+    match matches.subcommand() {
+        Some(("export", subcommand)) => {
+            let output = subcommand.get_one::<String>("output").ok_or_else(|| {
+                CliError::CommandFailed("state export --output is required".to_string())
+            })?;
+            export_state_snapshot(context, std::path::Path::new(output))
+        }
+        Some((name, _)) => Err(CliError::CommandFailed(format!(
+            "unknown state subcommand: {name}"
+        ))),
+        None => Err(CliError::CommandFailed(
+            "state subcommand is required".to_string(),
+        )),
+    }
+}
+
+fn export_state_snapshot(
+    context: &CommandContext<InMemoryRegistry>,
+    path: &std::path::Path,
+) -> Result<String, CliError> {
+    if path.exists() {
+        return Err(CliError::CommandFailed(format!(
+            "state export target already exists: {}",
+            path.display()
+        )));
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+    }
+    context
+        .registry
+        .save_json_snapshot(path)
+        .map_err(|error| CliError::CommandFailed(format!("state export failed: {error:?}")))?;
+
+    Ok(format!("exported state snapshot: {}", path.display()))
+}
+
+fn context_path_checks(paths: &CliContextPaths) -> Vec<DoctorCheck> {
+    let config_exists = paths.config_file.is_file();
+    let state_exists = paths.state_file.is_file();
+    let state_parent_creatable = state_exists || parent_directory_available(&paths.state_file);
+
+    vec![
+        DoctorCheck {
+            name: "config:path".to_string(),
+            ok: config_exists,
+            message: if config_exists {
+                format!("file exists: {}", paths.config_file.display())
+            } else {
+                format!(
+                    "file not found; defaults in use: {}",
+                    paths.config_file.display()
+                )
+            },
+        },
+        DoctorCheck {
+            name: "state:path".to_string(),
+            ok: state_parent_creatable,
+            message: if state_exists {
+                format!("file exists: {}", paths.state_file.display())
+            } else if state_parent_creatable {
+                "parent directory can be created".to_string()
+            } else {
+                format!(
+                    "parent directory unavailable: {}",
+                    paths.state_file.display()
+                )
+            },
+        },
+    ]
+}
+
+fn parent_directory_available(path: &std::path::Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    let parent = if parent.as_os_str().is_empty() {
+        std::env::current_dir().ok()
+    } else if parent.is_absolute() {
+        Some(parent.to_path_buf())
+    } else {
+        std::env::current_dir()
+            .ok()
+            .map(|current_dir| current_dir.join(parent))
+    };
+
+    parent.is_some_and(|parent| {
+        parent.is_dir() || parent.ancestors().skip(1).any(|ancestor| ancestor.is_dir())
+    })
 }
 
 fn render_cockpit_command(
@@ -485,6 +593,25 @@ fn render_matches_mut(
             state_changed: false,
         }),
     }
+}
+
+fn render_matches_mut_with_paths(
+    matches: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    paths: Option<&CliContextPaths>,
+) -> Result<RenderedCommand, CliError> {
+    if matches
+        .subcommand()
+        .is_some_and(|(name, _)| name == "doctor")
+    {
+        return Ok(RenderedCommand {
+            output: render_matches_with_paths(matches, context, paths)?,
+            state_changed: false,
+        });
+    }
+
+    render_matches_mut(matches, context, runner)
 }
 
 fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
@@ -782,7 +909,7 @@ fn command_error(error: CommandError) -> CliError {
 mod tests {
     use super::{
         build_cli, run_with_context, run_with_context_and_runner, run_with_context_paths,
-        run_with_context_paths_and_runner, CliContextPaths,
+        run_with_context_paths_and_runner, CliContextPaths, CliError,
     };
     use ajax_core::{
         adapters::{
@@ -1198,6 +1325,88 @@ mod tests {
     }
 
     #[test]
+    fn doctor_reports_context_path_health() {
+        let directory =
+            std::env::temp_dir().join(format!("ajax-doctor-paths-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state").join("ajax.db");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/missing/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+
+        let output = run_with_context_paths(
+            ["ajax", "doctor"],
+            &CliContextPaths::new(&config_file, &state_file),
+        )
+        .unwrap();
+
+        assert!(output.contains("config:path\ttrue\t"));
+        assert!(output.contains("state:path\ttrue\tparent directory can be created"));
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn doctor_accepts_relative_state_paths_with_creatable_parents() {
+        assert!(super::parent_directory_available(Path::new("ajax.db")));
+        assert!(super::parent_directory_available(Path::new(
+            "state/ajax.db"
+        )));
+    }
+
+    #[test]
+    fn state_export_writes_registry_snapshot_without_overwriting() {
+        let directory =
+            std::env::temp_dir().join(format!("ajax-state-export-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let export_path = directory.join("backup.json");
+        let context = sample_context();
+
+        let output = run_with_context(
+            [
+                "ajax",
+                "state",
+                "export",
+                "--output",
+                export_path.to_str().unwrap(),
+            ],
+            &context,
+        )
+        .unwrap();
+        let snapshot = std::fs::read_to_string(&export_path).unwrap();
+        let overwrite_error = run_with_context(
+            [
+                "ajax",
+                "state",
+                "export",
+                "--output",
+                export_path.to_str().unwrap(),
+            ],
+            &context,
+        )
+        .unwrap_err();
+
+        assert!(output.contains("exported state snapshot"));
+        assert!(snapshot.contains("\"repo\": \"web\""));
+        assert!(snapshot.contains("\"handle\": \"fix-login\""));
+        assert_eq!(
+            overwrite_error,
+            CliError::CommandFailed(format!(
+                "state export target already exists: {}",
+                export_path.display()
+            ))
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
     fn executable_commands_accept_execute_and_yes_flags() {
         for args in [
             vec!["ajax", "new", "--repo", "web", "--execute"],
@@ -1262,6 +1471,76 @@ mod tests {
         assert!(!readme.contains("textual"));
         assert!(!readme.contains("## Startup Script"));
         assert!(!readme.contains("./scripts/start-ajax-textual.sh"));
+    }
+
+    #[test]
+    fn release_hygiene_documents_install_config_and_release_process() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+        let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
+        let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
+        let license = std::fs::read_to_string(root.join("LICENSE")).unwrap();
+
+        assert!(!workspace_manifest.contains("https://github.com/example/ajax-cli"));
+        assert!(workspace_manifest.contains("repository = \"https://github.com/"));
+        assert!(license.contains("MIT License"));
+        assert!(readme.contains("## Install"));
+        assert!(readme.contains("## Configuration"));
+        assert!(readme.contains("## First Run"));
+        assert!(changelog.contains("# Changelog"));
+        assert!(release.contains("# Release Process"));
+        assert!(release.contains("cargo fmt --check"));
+        assert!(release.contains("cargo test --all-features"));
+    }
+
+    #[test]
+    fn tui_dependency_uses_audit_clean_ratatui_feature_set() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let tui_manifest =
+            std::fs::read_to_string(root.join("crates/ajax-tui/Cargo.toml")).unwrap();
+        let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
+
+        assert!(tui_manifest.contains("version = \"0.30\""));
+        assert!(tui_manifest.contains("default-features = false"));
+        assert!(tui_manifest.contains("\"crossterm\""));
+        assert!(tui_manifest.contains("\"underline-color\""));
+        assert!(tui_manifest.contains("\"layout-cache\""));
+        assert!(!tui_manifest.contains("all-widgets"));
+        assert!(workspace_manifest.contains("rust-version = \"1.88\""));
+        assert!(toolchain.contains("channel = \"1.88.0\""));
+    }
+
+    #[test]
+    fn audit_policy_has_no_accepted_warnings() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let audit_policy = std::fs::read_to_string(root.join("AUDIT.md")).unwrap();
+
+        assert!(audit_policy.contains("No Accepted Warnings"));
+        assert!(audit_policy.contains("cargo audit -D warnings"));
+        assert!(!audit_policy.contains("RUSTSEC-2024-0436"));
+        assert!(!audit_policy.contains("RUSTSEC-2026-0002"));
+    }
+
+    #[test]
+    fn smoke_workflow_script_is_documented_for_release_validation() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let smoke = std::fs::read_to_string(root.join("scripts/smoke.sh")).unwrap();
+        let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
+        let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
+
+        assert!(smoke.contains("ajax doctor"));
+        assert!(smoke.contains("ajax new"));
+        assert!(smoke.contains("ajax merge"));
+        assert!(smoke.contains("ajax state export"));
+        assert!(smoke.contains("target/release/ajax"));
+        assert!(smoke.contains("cargo build --release -p ajax-cli"));
+        assert!(!smoke.contains("target/debug/ajax"));
+        assert!(smoke.contains("if [[ -z \"${AJAX_BIN:-}\" ]]"));
+        assert!(smoke.contains("ajax binary is not executable"));
+        assert!(readme.contains("scripts/smoke.sh"));
+        assert!(release.contains("scripts/smoke.sh"));
     }
 
     #[test]

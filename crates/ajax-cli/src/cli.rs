@@ -30,6 +30,7 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("inbox").about("Show global attention inbox"))
         .subcommand(json_command("review").about("Show tasks ready for review"))
         .subcommand(Command::new("status").about("Show Ajax status"))
+        .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(json_command("reconcile").about("Compare registry state with external reality"))
         .subcommand(supervise_command())
@@ -113,6 +114,21 @@ fn supervise_command() -> Command {
                 .long("codex-bin")
                 .value_name("PATH")
                 .hide(true),
+        )
+}
+
+fn state_command() -> Command {
+    Command::new("state")
+        .about("Manage Ajax durable state")
+        .subcommand(
+            Command::new("export")
+                .about("Export the current registry state as JSON")
+                .arg(
+                    Arg::new("output")
+                        .long("output")
+                        .value_name("PATH")
+                        .required(true),
+                ),
         )
 }
 

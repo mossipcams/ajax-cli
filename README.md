@@ -10,6 +10,88 @@ The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
 The CLI is the product core; the native Rust cockpit is an operator view over
 the same backend instead of the place where orchestration logic lives.
 
+## Install
+
+Ajax is a Rust workspace. Build the local binary with:
+
+```sh
+cargo build --release -p ajax-cli
+```
+
+The compiled binary is:
+
+```sh
+target/release/ajax
+```
+
+For local daily use, put that binary on your `PATH` or install it from the
+workspace:
+
+```sh
+cargo install --path crates/ajax-cli
+```
+
+Ajax expects `git`, `tmux`, `workmux`, and an agent CLI such as `codex` to be
+available on `PATH`. Run `ajax doctor` after installing to check the local
+operator environment.
+
+## Configuration
+
+Ajax reads configuration from `~/.config/ajax/config.toml` unless
+`AJAX_CONFIG` points to another file. Runtime state is stored in
+`~/.local/state/ajax/ajax.db` unless `AJAX_STATE` points to another SQLite
+database path.
+
+Minimal configuration:
+
+```toml
+[[repos]]
+name = "web"
+path = "/Users/matt/projects/web"
+default_branch = "main"
+
+[[test_commands]]
+repo = "web"
+command = "cargo test"
+```
+
+Each managed repo should have a matching test command so `ajax check` and
+`ajax doctor` can verify the workflow end to end.
+
+## First Run
+
+After installing and writing a config file, start with:
+
+```sh
+ajax doctor
+ajax repos
+ajax tasks
+```
+
+Create a task plan before executing it:
+
+```sh
+ajax new --repo web --title "fix login" --agent codex
+```
+
+When the plan looks right, execute it:
+
+```sh
+ajax new --repo web --title "fix login" --agent codex --execute
+```
+
+Before changing machines or testing a state migration, export a backup:
+
+```sh
+ajax state export --output ~/ajax-state-backup.json
+```
+
+Run the deterministic local smoke workflow before release-sensitive changes:
+
+```sh
+scripts/smoke.sh
+```
+
 ## Architecture
 
 Ajax owns orchestration, state, policy, attention, safety, workflow, and the

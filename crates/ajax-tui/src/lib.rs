@@ -625,12 +625,17 @@ fn run_event_loop<B: Backend>(
     mut on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     loop {
-        let height = terminal.size()?.height as usize;
+        let height = terminal
+            .size()
+            .map_err(|_| io::Error::other("terminal backend size error"))?
+            .height as usize;
         let feed_height = height.saturating_sub(2);
 
         app.tick_flash();
         app.ensure_visible(feed_height);
-        terminal.draw(|f| render_ui(f, app))?;
+        terminal
+            .draw(|f| render_ui(f, app))
+            .map_err(|_| io::Error::other("terminal backend draw error"))?;
 
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {

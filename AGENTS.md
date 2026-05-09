@@ -21,10 +21,17 @@ For each task after approval:
 2. Write minimal implementation -> run test -> show pass
 3. Ask: "Task N done. Continue?" -> wait for yes
 
+Exception: if the approval explicitly says to finish all tasks, implement all
+tasks until finished, or otherwise continue through the full approved plan, do
+not stop after each task. Continue task-by-task with TDD until the approved plan
+is complete, then report the final validation results.
+
 ## Rules
 - NEVER implement without failing test first
 - NEVER skip approval step
 - NEVER move to next task without asking
+- Exception: when the user has explicitly approved finishing all tasks, do not
+  ask after each task; continue through the approved plan until finished.
 - Never modify files in the `tests/` directory unless explicitly asked to.
 - Never delete or weaken test assertions.
 - When tests fail, fix the implementation, not the tests.

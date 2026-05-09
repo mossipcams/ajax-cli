@@ -8,6 +8,8 @@ use crate::models::{LifecycleStatus, Task, TaskId};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
+const SQLITE_SCHEMA_VERSION: i64 = 1;
+
 pub trait Registry {
     fn create_task(&mut self, task: Task) -> Result<(), RegistryError>;
     fn get_task(&self, task_id: &TaskId) -> Option<&Task>;
@@ -185,6 +187,14 @@ impl SqliteRegistryStore {
     }
 
     fn migrate(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+        let user_version = sqlite_user_version(connection)?;
+        if user_version > SQLITE_SCHEMA_VERSION {
+            return Err(RegistrySnapshotError::IncompatibleSchema {
+                found: user_version,
+                supported: SQLITE_SCHEMA_VERSION,
+            });
+        }
+
         connection
             .execute_batch(
                 r#"
@@ -202,6 +212,9 @@ impl SqliteRegistryStore {
                 );
                 "#,
             )
+            .map_err(database_error)?;
+        connection
+            .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
             .map_err(database_error)
     }
 }
@@ -306,6 +319,12 @@ fn database_error(error: rusqlite::Error) -> RegistrySnapshotError {
     RegistrySnapshotError::Database(error.to_string())
 }
 
+fn sqlite_user_version(connection: &Connection) -> Result<i64, RegistrySnapshotError> {
+    connection
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .map_err(database_error)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistryError {
     DuplicateTask(TaskId),
@@ -318,6 +337,7 @@ pub enum RegistrySnapshotError {
     Decode(String),
     Database(String),
     Io(String),
+    IncompatibleSchema { found: i64, supported: i64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -357,7 +377,7 @@ pub enum RegistryEventKind {
 mod tests {
     use super::{
         InMemoryRegistry, JsonRegistryStore, Registry, RegistryError, RegistryEventKind,
-        RegistryStore, SqliteRegistryStore,
+        RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
     };
     use crate::models::{AgentClient, LifecycleStatus, Task, TaskId};
 
@@ -542,5 +562,50 @@ mod tests {
         assert_eq!(restored.list_tasks().len(), 1);
         assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
         assert_eq!(restored.events_for_task(&TaskId::new("task-1")).len(), 2);
+    }
+
+    #[test]
+    fn sqlite_registry_store_records_current_schema_version() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-schema-version"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&InMemoryRegistry::default()).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(version, 1);
+    }
+
+    #[test]
+    fn sqlite_registry_store_rejects_future_schema_version() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-future-schema"
+        ));
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch("PRAGMA user_version = 999;")
+            .unwrap();
+        drop(connection);
+        let store = SqliteRegistryStore::new(&path);
+
+        let error = store.load().unwrap_err();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            error,
+            RegistrySnapshotError::IncompatibleSchema {
+                found: 999,
+                supported: 1
+            }
+        );
     }
 }

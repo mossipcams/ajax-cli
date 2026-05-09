@@ -9,5 +9,6 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
+rust-version = "1.88"
 license = "MIT"
-repository = "https://github.com/example/ajax-cli"
+repository = "https://github.com/matt/ajax-cli"
