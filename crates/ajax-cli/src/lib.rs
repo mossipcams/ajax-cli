@@ -344,22 +344,9 @@ fn render_cockpit_command(
         ));
     }
 
-    // Interactive TUI without mutation support (read-only context path).
-    // Full action support requires the mutable context path (render_matches_mut).
-    ajax_tui::run_interactive(
-        commands::list_repos(context),
-        commands::list_tasks(context, None),
-        commands::review_queue(context),
-        commands::inbox(context),
-        |_item| {
-            Ok(ajax_tui::ActionOutcome::Message(
-                "open in a full terminal for action support".to_string(),
-            ))
-        },
-    )
-    .map_err(|e| CliError::CommandFailed(e.to_string()))?;
-
-    Ok(String::new())
+    Err(CliError::CommandFailed(
+        "interactive cockpit requires command execution support".to_string(),
+    ))
 }
 
 fn render_cockpit_frames(
@@ -1084,6 +1071,24 @@ mod tests {
         let matches = build_cli().try_get_matches_from(["ajax", "cockpit", "--textual"]);
 
         assert!(matches.is_err());
+    }
+
+    #[test]
+    fn read_only_cockpit_rejects_interactive_mode_before_navigation_only_tui() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "cockpit"])
+            .unwrap();
+        let Some(("cockpit", subcommand)) = matches.subcommand() else {
+            panic!("expected cockpit subcommand");
+        };
+
+        let error = super::render_cockpit_command(&sample_context(), subcommand).unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::CliError::CommandFailed(message)
+                if message.contains("interactive cockpit requires command execution support")
+        ));
     }
 
     #[test]
