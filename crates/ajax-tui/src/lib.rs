@@ -120,7 +120,6 @@ enum SelectableKind {
     },
     Inbox(AttentionItem),
     Task(TaskSummary),
-    Review(TaskSummary),
     /// Action row inside the per-task action menu.
     TaskAction {
         task: TaskSummary,
@@ -152,7 +151,7 @@ enum AppView {
 
 impl SelectableKind {
     /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
-    /// pass through unchanged; tasks and review entries get default actions.
+    /// pass through unchanged; task rows get the default open action.
     /// The CLI dispatcher decides whether an action is navigational or should
     /// point the operator at an explicit executable command.
     fn as_action(&self) -> AttentionItem {
@@ -186,13 +185,6 @@ impl SelectableKind {
                 priority: 50,
                 recommended_action: RecommendedAction::OpenTask.as_str().to_string(),
             },
-            SelectableKind::Review(t) => AttentionItem {
-                task_id: TaskId::new(t.id.clone()),
-                task_handle: t.qualified_handle.clone(),
-                reason: t.lifecycle_status.clone(),
-                priority: 50,
-                recommended_action: RecommendedAction::ReviewBranch.as_str().to_string(),
-            },
             SelectableKind::TaskAction {
                 task,
                 recommended_action,
@@ -223,6 +215,12 @@ fn build_selectables(
         }
         AppView::Project { repo } => {
             out.push(SelectableKind::NewTask { repo: repo.clone() });
+            let project_review_tasks = review
+                .tasks
+                .iter()
+                .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                .cloned()
+                .collect::<Vec<_>>();
             out.extend(
                 inbox
                     .items
@@ -236,17 +234,15 @@ fn build_selectables(
                     .tasks
                     .iter()
                     .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                    .filter(|task| {
+                        !project_review_tasks
+                            .iter()
+                            .any(|review_task| review_task.id == task.id)
+                    })
                     .cloned()
                     .map(SelectableKind::Task),
             );
-            out.extend(
-                review
-                    .tasks
-                    .iter()
-                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                    .cloned()
-                    .map(SelectableKind::Review),
-            );
+            out.extend(project_review_tasks.into_iter().map(SelectableKind::Task));
             out.push(SelectableKind::Reconcile { repo: repo.clone() });
         }
         AppView::TaskActions {
@@ -419,18 +415,6 @@ impl App {
                 self.view = AppView::TaskActions {
                     task,
                     is_review: false,
-                    parent: Box::new(self.view.clone()),
-                };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.flash = None;
-                self.rebuild_selectables();
-                None
-            }
-            SelectableKind::Review(task) => {
-                self.view = AppView::TaskActions {
-                    task,
-                    is_review: true,
                     parent: Box::new(self.view.clone()),
                 };
                 self.selected = 0;
@@ -1118,7 +1102,7 @@ fn group_of(kind: &SelectableKind) -> &'static str {
         SelectableKind::NewTask { .. } => "create",
         SelectableKind::Inbox(_) => "hot",
         SelectableKind::Project(_) => "projects",
-        SelectableKind::Task(_) | SelectableKind::Review(_) => "tasks",
+        SelectableKind::Task(_) => "tasks",
         SelectableKind::TaskAction { .. } => "task-actions",
         SelectableKind::Reconcile { .. } => "admin",
     }
@@ -1393,18 +1377,6 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     format!("{:<28}", t.qualified_handle),
                     Style::default()
                         .fg(task_handle_color(&t.lifecycle_status, t.needs_attention))
-                        .add_modifier(bold),
-                ),
-                Span::styled(task_status_label(t), dim),
-            ],
-        ),
-        SelectableKind::Review(t) => render_row(
-            task_glyph(&t.lifecycle_status, false),
-            vec![
-                Span::styled(
-                    format!("{:<28}", t.qualified_handle),
-                    Style::default()
-                        .fg(task_handle_color(&t.lifecycle_status, false))
                         .add_modifier(bold),
                 ),
                 Span::styled(task_status_label(t), dim),
@@ -2242,6 +2214,39 @@ mod tests {
     }
 
     #[test]
+    fn project_view_shows_one_status_row_for_review_task() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        app.activate_selected();
+
+        let task_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| {
+                matches!(
+                    selectable,
+                    SelectableKind::Task(task) if task.qualified_handle == "web/fix-login"
+                )
+            })
+            .count();
+
+        assert_eq!(task_rows, 1);
+        assert!(
+            app.selectables
+                .iter()
+                .any(|selectable| matches!(selectable, SelectableKind::Task(task) if task.qualified_handle == "web/fix-login"))
+        );
+        app.select_next();
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
     fn enter_on_task_opens_task_actions_menu() {
         let mut app = App::new(
             sample_repos(),
@@ -2278,7 +2283,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_review_task_lists_review_branch_first() {
+    fn enter_on_review_task_opens_task_actions_menu() {
         let mut app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
@@ -2287,30 +2292,30 @@ mod tests {
         );
         // Projects view: [project] only (review tasks aren't shown at top level).
         app.activate_selected();
-        // Project view: [NewTask, review, Reconcile]. Step to the review row.
+        // Project view: [NewTask, task, Reconcile]. Step to the task row.
         app.select_next();
         assert!(matches!(
             app.selectables.get(app.selected),
-            Some(SelectableKind::Review(_))
+            Some(SelectableKind::Task(_))
         ));
 
         assert!(app.activate_selected().is_none());
         assert!(matches!(
             &app.view,
             AppView::TaskActions {
-                is_review: true,
+                is_review: false,
                 ..
             }
         ));
         let item = app.selected_action().unwrap();
-        assert_eq!(item.recommended_action, "review branch");
+        assert_eq!(item.recommended_action, "open task");
     }
 
     #[test]
     fn task_actions_back_returns_to_parent_view() {
         let mut app = app_in_project_view();
-        // Project view: [NewTask, inbox, task, review, Reconcile].
-        // Step past NewTask + inbox to the task row.
+        // Project view: [NewTask, inbox, task, Reconcile].
+        // Step past NewTask + inbox to the task status row.
         app.select_next();
         app.select_next();
         assert!(matches!(
@@ -2331,7 +2336,7 @@ mod tests {
         app.select_next();
         app.activate_selected(); // open TaskActions menu
 
-        // Default first row is "open task"; Enter dispatches it.
+        // All task status rows open the same task action menu.
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
@@ -2782,7 +2787,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_action_for_task_synthesizes_open_task() {
+    fn selected_action_for_review_task_uses_single_open_row() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -2791,14 +2796,11 @@ mod tests {
         );
         // Projects view (no inbox): [project, task]. Drill into the project.
         app.activate_selected();
-        // Project view (no inbox): [NewTask, task, review, Reconcile]. Step past NewTask.
+        // Project view (no inbox): [NewTask, task, Reconcile]. Step past NewTask.
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
-        app.select_next();
-        let item = app.selected_action().unwrap();
-        assert_eq!(item.recommended_action, "review branch");
     }
 
     #[test]
