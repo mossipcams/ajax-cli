@@ -81,20 +81,22 @@ pub enum ActionOutcome {
 #[derive(Clone)]
 enum SelectableKind {
     Project(RepoSummary),
-    ProjectAction {
+    /// Synthetic "+ new task" row, only shown inside a project.
+    NewTask {
         repo: String,
-        label: String,
-        recommended_action: String,
     },
+    /// Project-level admin action row (currently only reconcile).
+    Reconcile {
+        repo: String,
+    },
+    Inbox(AttentionItem),
+    Task(TaskSummary),
+    Review(TaskSummary),
+    /// Action row inside the per-task action menu.
     TaskAction {
         task: TaskSummary,
         recommended_action: String,
     },
-    /// Synthetic top-of-feed entry. Dispatched as a "new task" action.
-    NewTask,
-    Inbox(AttentionItem),
-    Task(TaskSummary),
-    Review(TaskSummary),
 }
 
 #[derive(Clone)]
@@ -103,10 +105,12 @@ enum AppView {
     Project {
         repo: String,
     },
-    TaskPicker {
-        repo: String,
-        label: String,
-        recommended_action: String,
+    /// Per-task action menu reached by selecting a task and pressing Enter.
+    /// `is_review` controls which action is listed first.
+    TaskActions {
+        task: TaskSummary,
+        is_review: bool,
+        parent: Box<AppView>,
     },
     NewTaskInput {
         repo: String,
@@ -131,33 +135,19 @@ impl SelectableKind {
                 priority: 0,
                 recommended_action: "select project".to_string(),
             },
-            SelectableKind::ProjectAction {
-                repo,
-                label,
-                recommended_action,
-            } => AttentionItem {
-                task_id: TaskId::new(format!("__project_action__{repo}__{recommended_action}")),
+            SelectableKind::NewTask { repo } => AttentionItem {
+                task_id: TaskId::new(format!("__new_task__{repo}")),
                 task_handle: repo.clone(),
-                reason: label.clone(),
-                priority: 0,
-                recommended_action: recommended_action.clone(),
-            },
-            SelectableKind::TaskAction {
-                task,
-                recommended_action,
-            } => AttentionItem {
-                task_id: TaskId::new(task.id.clone()),
-                task_handle: task.qualified_handle.clone(),
-                reason: task.lifecycle_status.clone(),
-                priority: 50,
-                recommended_action: recommended_action.clone(),
-            },
-            SelectableKind::NewTask => AttentionItem {
-                task_id: TaskId::new("__new_task__"),
-                task_handle: String::new(),
                 reason: "create a new task".to_string(),
                 priority: 0,
                 recommended_action: "new task".to_string(),
+            },
+            SelectableKind::Reconcile { repo } => AttentionItem {
+                task_id: TaskId::new(format!("__reconcile__{repo}")),
+                task_handle: repo.clone(),
+                reason: "reconcile external state".to_string(),
+                priority: 0,
+                recommended_action: "reconcile".to_string(),
             },
             SelectableKind::Inbox(item) => item.clone(),
             SelectableKind::Task(t) => AttentionItem {
@@ -174,7 +164,44 @@ impl SelectableKind {
                 priority: 50,
                 recommended_action: "review branch".to_string(),
             },
+            SelectableKind::TaskAction {
+                task,
+                recommended_action,
+            } => AttentionItem {
+                task_id: TaskId::new(task.id.clone()),
+                task_handle: task.qualified_handle.clone(),
+                reason: task.lifecycle_status.clone(),
+                priority: 50,
+                recommended_action: recommended_action.clone(),
+            },
         }
+    }
+}
+
+/// Per-task action menu contents, ordered with the most likely action first.
+fn task_action_list(is_review: bool) -> Vec<&'static str> {
+    if is_review {
+        vec![
+            "review branch",
+            "open task",
+            "diff task",
+            "check task",
+            "merge task",
+            "open worktrunk",
+            "inspect task",
+            "clean task",
+        ]
+    } else {
+        vec![
+            "open task",
+            "diff task",
+            "check task",
+            "merge task",
+            "review branch",
+            "open worktrunk",
+            "inspect task",
+            "clean task",
+        ]
     }
 }
 
@@ -190,10 +217,10 @@ fn build_selectables(
         AppView::Projects => {
             out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
-            out.push(SelectableKind::NewTask);
             out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
         }
         AppView::Project { repo } => {
+            out.push(SelectableKind::NewTask { repo: repo.clone() });
             out.extend(
                 inbox
                     .items
@@ -218,72 +245,22 @@ fn build_selectables(
                     .cloned()
                     .map(SelectableKind::Review),
             );
-            out.extend(project_action_selectables(repo));
+            out.push(SelectableKind::Reconcile { repo: repo.clone() });
         }
-        AppView::TaskPicker {
-            repo,
-            recommended_action,
-            ..
+        AppView::TaskActions {
+            task, is_review, ..
         } => {
-            let source_tasks = if recommended_action == "review branch" {
-                &review.tasks
-            } else {
-                &tasks.tasks
-            };
-            out.extend(
-                source_tasks
-                    .iter()
-                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                    .cloned()
-                    .map(|task| SelectableKind::TaskAction {
-                        task,
-                        recommended_action: recommended_action.clone(),
-                    }),
-            );
+            out.extend(task_action_list(*is_review).into_iter().map(|action| {
+                SelectableKind::TaskAction {
+                    task: task.clone(),
+                    recommended_action: action.to_string(),
+                }
+            }));
         }
         AppView::NewTaskInput { .. } => {}
         AppView::Help { .. } => {}
     }
     out
-}
-
-fn project_action_selectables(repo: &str) -> Vec<SelectableKind> {
-    [
-        ("new task", "new task"),
-        ("open task", "open task"),
-        ("inspect task", "inspect task"),
-        ("open worktrunk", "open worktrunk"),
-        ("review branch", "review branch"),
-        ("merge task", "merge task"),
-        ("diff task", "diff task"),
-        ("check task", "check task"),
-        ("clean task", "clean task"),
-        ("reconcile", "reconcile"),
-        ("status", "status"),
-    ]
-    .into_iter()
-    .map(
-        |(label, recommended_action)| SelectableKind::ProjectAction {
-            repo: repo.to_string(),
-            label: label.to_string(),
-            recommended_action: recommended_action.to_string(),
-        },
-    )
-    .collect()
-}
-
-fn task_scoped_action(action: &str) -> bool {
-    matches!(
-        action,
-        "open task"
-            | "inspect task"
-            | "open worktrunk"
-            | "review branch"
-            | "check task"
-            | "diff task"
-            | "merge task"
-            | "clean task"
-    )
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
@@ -382,6 +359,14 @@ impl App {
             return true;
         }
 
+        if let AppView::TaskActions { parent, .. } = &self.view {
+            self.view = *parent.clone();
+            self.selected = 0;
+            self.viewport_scroll = 0;
+            self.rebuild_selectables();
+            return true;
+        }
+
         if let AppView::NewTaskInput { title, .. } = &mut self.view {
             if !title.is_empty() {
                 title.pop();
@@ -415,11 +400,7 @@ impl App {
                 self.rebuild_selectables();
                 None
             }
-            SelectableKind::ProjectAction {
-                repo,
-                label,
-                recommended_action,
-            } if recommended_action == "new task" => {
+            SelectableKind::NewTask { repo } => {
                 self.view = AppView::NewTaskInput {
                     repo,
                     title: String::new(),
@@ -428,37 +409,30 @@ impl App {
                 self.viewport_scroll = 0;
                 self.flash = None;
                 self.rebuild_selectables();
-                let _ = label;
                 None
             }
-            SelectableKind::ProjectAction {
-                repo,
-                label,
-                recommended_action,
-            } if task_scoped_action(&recommended_action) => {
-                self.view = AppView::TaskPicker {
-                    repo,
-                    label,
-                    recommended_action,
+            SelectableKind::Task(task) => {
+                self.view = AppView::TaskActions {
+                    task,
+                    is_review: false,
+                    parent: Box::new(self.view.clone()),
                 };
                 self.selected = 0;
                 self.viewport_scroll = 0;
+                self.flash = None;
                 self.rebuild_selectables();
                 None
             }
-            SelectableKind::NewTask => {
-                if let [repo] = self.repos.repos.as_slice() {
-                    self.view = AppView::NewTaskInput {
-                        repo: repo.name.clone(),
-                        title: String::new(),
-                    };
-                    self.selected = 0;
-                    self.viewport_scroll = 0;
-                    self.flash = None;
-                    self.rebuild_selectables();
-                } else {
-                    self.flash("select a project first".to_string());
-                }
+            SelectableKind::Review(task) => {
+                self.view = AppView::TaskActions {
+                    task,
+                    is_review: true,
+                    parent: Box::new(self.view.clone()),
+                };
+                self.selected = 0;
+                self.viewport_scroll = 0;
+                self.flash = None;
+                self.rebuild_selectables();
                 None
             }
             selectable => Some(selectable.as_action()),
@@ -879,17 +853,19 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ));
         }
-        AppView::TaskPicker { repo, label, .. } => {
+        AppView::TaskActions { task, .. } => {
+            if let Some(repo) = task_summary_repo(task) {
+                parts.push(crumb_sep());
+                parts.push(Span::styled(
+                    repo.to_string(),
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
             parts.push(crumb_sep());
             parts.push(Span::styled(
-                repo.clone(),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            parts.push(crumb_sep());
-            parts.push(Span::styled(
-                label.clone(),
+                task.qualified_handle.clone(),
                 Style::default().fg(Color::Cyan),
             ));
         }
@@ -941,8 +917,8 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         };
         let enter_label = match &app.view {
             AppView::Projects => "open",
-            AppView::Project { .. } => "act",
-            AppView::TaskPicker { .. } => "run",
+            AppView::Project { .. } => "open",
+            AppView::TaskActions { .. } => "run",
             AppView::NewTaskInput { .. } => "create",
             AppView::Help { .. } => "back",
         };
@@ -993,12 +969,12 @@ fn task_summary_repo(task: &TaskSummary) -> Option<&str> {
 
 fn group_of(kind: &SelectableKind) -> &'static str {
     match kind {
+        SelectableKind::NewTask { .. } => "create",
         SelectableKind::Inbox(_) => "hot",
         SelectableKind::Project(_) => "projects",
-        SelectableKind::Task(_) | SelectableKind::Review(_) | SelectableKind::TaskAction { .. } => {
-            "tasks"
-        }
-        SelectableKind::NewTask | SelectableKind::ProjectAction { .. } => "actions",
+        SelectableKind::Task(_) | SelectableKind::Review(_) => "tasks",
+        SelectableKind::TaskAction { .. } => "task-actions",
+        SelectableKind::Reconcile { .. } => "admin",
     }
 }
 
@@ -1051,13 +1027,15 @@ fn action_glyph(recommended_action: &str) -> Span<'static> {
     let (glyph, color) = match recommended_action {
         "new task" => ("+", Color::Green),
         "open task" => (">", Color::Cyan),
+        "open worktrunk" => ("W", Color::Cyan),
+        "inspect task" => ("i", Color::DarkGray),
         "review branch" => ("R", Color::Yellow),
         "merge task" => ("M", Color::Yellow),
         "diff task" => ("D", Color::DarkGray),
         "check task" => ("C", Color::DarkGray),
         "clean task" => ("X", Color::Red),
         "reconcile" => ("@", Color::DarkGray),
-        "status" => ("?", Color::DarkGray),
+        "help" => ("?", Color::DarkGray),
         _ => (".", Color::DarkGray),
     };
     Span::styled(glyph, Style::default().fg(color))
@@ -1120,7 +1098,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                 Span::styled(project_subtitle(repo), dim),
             ],
         ),
-        SelectableKind::NewTask => render_row(
+        SelectableKind::NewTask { .. } => render_row(
             action_glyph("new task"),
             vec![Span::styled(
                 "start a new task",
@@ -1129,38 +1107,30 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     .add_modifier(Modifier::BOLD),
             )],
         ),
-        SelectableKind::ProjectAction {
-            label,
-            recommended_action,
-            ..
-        } => {
-            let primary = matches!(
-                recommended_action.as_str(),
-                "new task" | "open task" | "review branch" | "merge task" | "clean task"
-            );
-            let label_style = if primary {
-                Style::default().fg(Color::White)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            render_row(
-                action_glyph(recommended_action),
-                vec![Span::styled(label.clone(), label_style)],
-            )
-        }
-        SelectableKind::TaskAction {
-            task,
-            recommended_action,
-        } => render_row(
-            task_glyph(&task.lifecycle_status, false),
+        SelectableKind::Reconcile { .. } => render_row(
+            action_glyph("reconcile"),
             vec![
-                Span::styled(
-                    format!("{:<28}", task.qualified_handle),
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(recommended_action.clone(), cyan),
+                Span::styled("reconcile", Style::default().fg(Color::DarkGray)),
+                Span::styled("  sync external state", dim),
             ],
         ),
+        SelectableKind::TaskAction {
+            recommended_action, ..
+        } => {
+            let destructive = recommended_action == "clean task";
+            let label_style = if destructive {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            };
+            let _ = cyan;
+            render_row(
+                action_glyph(recommended_action),
+                vec![Span::styled(recommended_action.clone(), label_style)],
+            )
+        }
         SelectableKind::Task(t) => render_row(
             task_glyph(&t.lifecycle_status, t.needs_attention),
             vec![
@@ -1213,7 +1183,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
 
     if matches!(app.view, AppView::Help { .. }) {
         rows.push(render_row(
-            action_glyph("status"),
+            action_glyph("help"),
             vec![Span::styled(
                 "Keyboard shortcuts",
                 Style::default()
@@ -1250,7 +1220,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         let msg = match &app.view {
             AppView::Projects => "no projects yet - edit ~/.config/ajax/config.toml to add one",
             AppView::Project { .. } => "nothing here yet - esc/h to go back",
-            AppView::TaskPicker { .. } => "no matching tasks - esc/h to go back",
+            AppView::TaskActions { .. } => "no actions available",
             AppView::NewTaskInput { .. } => "enter a task name",
             AppView::Help { .. } => "keyboard shortcuts",
         };
@@ -1305,7 +1275,7 @@ mod tests {
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn sample_repos() -> ReposResponse {
         ReposResponse {
@@ -1432,23 +1402,6 @@ mod tests {
         app
     }
 
-    fn select_project_action(app: &mut App, action: &str) {
-        for _ in 0..app.selectables.len() {
-            if matches!(
-                app.selectables.get(app.selected),
-                Some(SelectableKind::ProjectAction {
-                    recommended_action,
-                    ..
-                }) if recommended_action == action
-            ) {
-                return;
-            }
-            app.select_next();
-        }
-
-        panic!("project action not found: {action}");
-    }
-
     #[test]
     fn cockpit_renders_backend_snapshot() {
         let repos = sample_repos();
@@ -1550,11 +1503,19 @@ mod tests {
             }
             app.select_next();
         }
-        let item = app.activate_selected().unwrap();
+        // Enter on a Task opens the per-task action menu (default first row = "open task").
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            AppView::TaskActions {
+                is_review: false,
+                ..
+            }
+        ));
 
+        let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
-        assert!(matches!(app.view, AppView::Projects));
     }
 
     #[test]
@@ -1671,30 +1632,6 @@ mod tests {
     }
 
     #[test]
-    fn task_picker_back_returns_to_ajax_main_menu() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
-        app.select_next();
-        app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
-        app.select_next();
-        app.activate_selected();
-
-        assert!(!super::handle_back_key(&mut app));
-        let content = render_to_string(80, 30, &app);
-        assert!(content.contains("Ajax"));
-        assert!(content.contains("start a new task"));
-        assert!(!content.contains("> web"));
-        assert!(!content.contains("> open task"));
-    }
-
-    #[test]
     fn nested_backspace_returns_to_parent_without_exit() {
         let mut app = App::new(
             sample_repos(),
@@ -1797,7 +1734,7 @@ mod tests {
         let after = render_to_string(80, 30, &app);
         assert_eq!(before, after);
         assert!(after.contains("Ajax"));
-        assert!(after.contains("start a new task"));
+        assert!(after.contains("web"));
     }
 
     #[test]
@@ -1829,11 +1766,9 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
+        // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
         app.activate_selected();
         app.push_input_char('x');
         assert!(
@@ -1955,141 +1890,148 @@ mod tests {
     }
 
     #[test]
-    fn project_workflow_shows_action_menu() {
+    fn project_view_lists_new_task_first_then_tasks_then_reconcile() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        // Drill into the project (inbox → project → NewTask, so step past inbox).
+        // Projects view: [inbox, project, task]. Drill into the project.
         app.select_next();
         app.activate_selected();
 
-        let content = render_to_string(80, 30, &app);
-        for expected in [
-            "new task",
-            "inspect task",
-            "open task",
-            "open worktrunk",
-            "review branch",
-            "merge task",
-            "diff task",
-            "check task",
-            "clean task",
-            "reconcile",
-            "status",
-        ] {
-            assert!(content.contains(expected), "missing {expected}");
+        // Project view should be: [NewTask, inbox, task, review, Reconcile].
+        assert!(matches!(
+            app.selectables.first(),
+            Some(SelectableKind::NewTask { .. })
+        ));
+        assert!(matches!(
+            app.selectables.last(),
+            Some(SelectableKind::Reconcile { .. })
+        ));
+        // No action wall — only one task-style row in the middle is dispatched
+        // on Enter and that's a Task or Review (not a project-action verb).
+        for s in &app.selectables {
+            assert!(
+                !matches!(s, SelectableKind::TaskAction { .. }),
+                "project view must not contain TaskAction rows"
+            );
         }
-        // No "Back" entry in the new design — esc handles back navigation.
-        assert!(!content.contains("Back"));
-        // First selectable on the Project view is the (filtered) inbox row.
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("start a new task"));
+        assert!(content.contains("reconcile"));
+    }
+
+    #[test]
+    fn enter_on_task_opens_task_actions_menu() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+        // Projects view (no inbox, no review): [project, task]. Walk to the task.
+        app.select_next();
+        app.select_next();
+        assert!(matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Task(_))
+        ));
+
+        // Enter opens the per-task action menu, doesn't dispatch directly.
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            AppView::TaskActions { task, is_review: false, .. }
+                if task.qualified_handle == "web/fix-login"
+        ));
+
+        // First action in a non-review menu is "open task".
         let item = app.selected_action().unwrap();
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+
+        let content = render_to_string(80, 30, &app);
+        assert!(content.contains("> web/fix-login"));
+        for verb in ["open task", "diff task", "merge task", "clean task"] {
+            assert!(content.contains(verb), "menu missing {verb}");
+        }
+    }
+
+    #[test]
+    fn enter_on_review_task_lists_review_branch_first() {
+        let mut app = App::new(
+            sample_repos(),
+            TasksResponse { tasks: vec![] },
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        // Projects view: [project] only (review tasks aren't shown at top level).
+        app.activate_selected();
+        // Project view: [NewTask, review, Reconcile]. Step to the review row.
+        app.select_next();
+        assert!(matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Review(_))
+        ));
+
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            AppView::TaskActions {
+                is_review: true,
+                ..
+            }
+        ));
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.recommended_action, "review branch");
+    }
+
+    #[test]
+    fn task_actions_back_returns_to_parent_view() {
+        let mut app = app_in_project_view();
+        // Project view: [NewTask, inbox, task, review, Reconcile].
+        // Step past NewTask + inbox to the task row.
+        app.select_next();
+        app.select_next();
+        assert!(matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Task(_))
+        ));
+        app.activate_selected();
+        assert!(matches!(app.view, AppView::TaskActions { .. }));
+
+        super::handle_back_key(&mut app);
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+    }
+
+    #[test]
+    fn task_action_dispatches_recommended_action_on_enter() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.select_next();
+        app.activate_selected(); // open TaskActions menu
+
+        // Default first row is "open task"; Enter dispatches it.
+        let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
     }
 
     #[test]
-    fn project_clean_task_action_does_not_render_as_disabled() {
-        let app = app_in_project_view();
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let width = buffer.area.width as usize;
-        let label: Vec<String> = "clean task".chars().map(|c| c.to_string()).collect();
-        let clean_cell = buffer
-            .content()
-            .chunks(width)
-            .find_map(|row| {
-                row.windows(label.len()).find_map(|cells| {
-                    cells
-                        .iter()
-                        .zip(label.iter())
-                        .all(|(cell, expected)| cell.symbol() == expected)
-                        .then_some(&cells[0])
-                })
-            })
-            .expect("project action menu should include clean task");
-
-        assert_ne!(
-            clean_cell.fg,
-            Color::DarkGray,
-            "clean task should not look disabled when workmux cleanup is available"
-        );
-    }
-
-    #[test]
-    fn project_inspect_task_action_opens_scoped_task_picker() {
+    fn reconcile_row_dispatches_immediately() {
         let mut app = app_in_project_view();
-        select_project_action(&mut app, "inspect task");
-
-        assert!(app.activate_selected().is_none());
-
-        let content = render_to_string(80, 30, &app);
-        assert!(content.contains("> inspect task"));
-        assert!(content.contains("web/fix-login"));
-        let item = app.selected_action().unwrap();
-        assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "inspect task");
-    }
-
-    #[test]
-    fn project_action_activation_contract_covers_every_menu_action() {
-        for action in [
-            "open task",
-            "inspect task",
-            "open worktrunk",
-            "review branch",
-            "merge task",
-            "diff task",
-            "check task",
-            "clean task",
-        ] {
-            let mut app = app_in_project_view();
-            select_project_action(&mut app, action);
-
-            assert!(app.activate_selected().is_none(), "{action}");
-            assert!(
-                matches!(
-                    &app.view,
-                    AppView::TaskPicker {
-                        repo,
-                        recommended_action,
-                        ..
-                    } if repo == "web" && recommended_action == action
-                ),
-                "{action} should open a task picker scoped to web"
-            );
-            let selected = app.selected_action().unwrap();
-            assert_eq!(selected.task_handle, "web/fix-login", "{action}");
-            assert_eq!(selected.recommended_action, action);
-        }
-
-        let mut app = app_in_project_view();
-        select_project_action(&mut app, "new task");
-        assert!(app.activate_selected().is_none());
-        assert!(
-            matches!(
-                &app.view,
-                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
-            ),
-            "new task should collect a title inside cockpit"
-        );
-
-        for action in ["reconcile", "status"] {
-            let mut app = app_in_project_view();
-            select_project_action(&mut app, action);
-            let item = app
-                .activate_selected()
-                .unwrap_or_else(|| panic!("{action} should dispatch immediately"));
-            assert_eq!(item.task_handle, "web", "{action}");
-            assert_eq!(item.recommended_action, action);
-            assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
-        }
+        // Reconcile is the last selectable on Project view.
+        app.selected = app.selectables.len() - 1;
+        assert!(matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Reconcile { .. })
+        ));
+        let item = app.activate_selected().unwrap();
+        assert_eq!(item.task_handle, "web");
+        assert_eq!(item.recommended_action, "reconcile");
     }
 
     #[test]
@@ -2166,74 +2108,23 @@ mod tests {
     }
 
     #[test]
-    fn project_task_action_opens_scoped_task_picker() {
+    fn project_new_task_row_opens_title_input() {
+        // NewTask is the first selectable inside Project view.
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        // Projects view: [inbox, project, NewTask]. Drill into the project.
+        // Projects view: [inbox, project, task]. Drill into project.
         app.select_next();
         app.activate_selected();
-        // Project view: [inbox, task, review, new task, open task, ...].
-        // Walk to the "open task" project action (index 4).
-        app.select_next();
-        app.select_next();
-        app.select_next();
-        app.select_next();
-
+        // Project view, selected = 0 = NewTask.
+        assert!(matches!(
+            app.selectables.first(),
+            Some(SelectableKind::NewTask { .. })
+        ));
         assert!(app.activate_selected().is_none());
-
-        let content = render_to_string(80, 30, &app);
-        // Breadcrumb now reads "Ajax > web > open task".
-        assert!(content.contains("> open task"));
-        assert!(content.contains("web/fix-login"));
-        let item = app.selected_action().unwrap();
-        assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
-    }
-
-    #[test]
-    fn project_new_task_action_opens_title_input() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
-        app.select_next();
-        app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
-
-        assert!(app.activate_selected().is_none());
-
-        let content = render_to_string(80, 30, &app);
-        assert!(content.contains("> new task"));
-        assert!(content.contains("Task name"));
-    }
-
-    #[test]
-    fn top_level_new_task_action_opens_title_input_for_single_repo() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
-        app.select_next();
-        app.select_next();
-
-        assert!(app.activate_selected().is_none());
-        assert!(
-            matches!(
-                &app.view,
-                AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
-            ),
-            "top-level new task should collect a task name when there is one repo"
-        );
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("> new task"));
@@ -2248,11 +2139,9 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
+        // Projects → drill into project; NewTask is selected = 0 in Project view.
         app.select_next();
         app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
         app.activate_selected();
 
         assert!(app.submit_input().is_none());
@@ -2275,11 +2164,9 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
+        // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
         app.activate_selected();
 
         app.push_input_char('x');
@@ -2298,7 +2185,7 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
-        assert!(content.contains("start a new task"));
+        assert!(content.contains("web"));
         assert!(!content.contains("> web"));
         assert!(!content.contains("> new task"));
     }
@@ -2311,11 +2198,9 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
+        // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
-        app.select_next();
-        app.select_next();
-        app.select_next();
         app.activate_selected();
         app.push_input_char('x');
 
@@ -2323,7 +2208,7 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
-        assert!(content.contains("start a new task"));
+        assert!(content.contains("web"));
         assert!(!content.contains("> web"));
         assert!(!content.contains("> new task"));
         assert!(!content.contains("Task name"));
@@ -2377,21 +2262,19 @@ mod tests {
             sample_tasks(),
             sample_inbox(),
         );
-        // Projects view: [inbox, project, NewTask, task status].
+        // Projects view: [inbox, project, task].
         assert_eq!(app.selected, 0);
         app.select_next();
         assert_eq!(app.selected, 1);
         app.select_next();
         assert_eq!(app.selected, 2);
-        app.select_next();
-        assert_eq!(app.selected, 3);
         assert_eq!(
             app.selected_action().unwrap().recommended_action,
             "open task"
         );
         // clamps at last
         app.select_next();
-        assert_eq!(app.selected, 3);
+        assert_eq!(app.selected, 2);
     }
 
     #[test]
@@ -2428,7 +2311,12 @@ mod tests {
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        app.select_next();
+        // Top-level holds only the project; drilling in always shows NewTask first.
+        app.activate_selected();
+        assert!(matches!(
+            app.selectables.first(),
+            Some(SelectableKind::NewTask { .. })
+        ));
         let item = app.selected_action().unwrap();
         assert_eq!(item.recommended_action, "new task");
     }
@@ -2455,9 +2343,10 @@ mod tests {
             sample_tasks(),
             InboxResponse { items: vec![] },
         );
-        // Projects view (no inbox): [project, NewTask]. Drill into the project.
+        // Projects view (no inbox): [project, task]. Drill into the project.
         app.activate_selected();
-        // Project view (no inbox): [task, review, ...10 actions].
+        // Project view (no inbox): [NewTask, task, review, Reconcile]. Step past NewTask.
+        app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
@@ -2481,11 +2370,11 @@ mod tests {
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
-        // project and NewTask remain → clamped to NewTask.
-        assert_eq!(app.selected, 1);
+        // Only the project row remains at top level → clamps to it.
+        assert_eq!(app.selected, 0);
         assert_eq!(
             app.selected_action().unwrap().recommended_action,
-            "new task"
+            "select project"
         );
     }
 
