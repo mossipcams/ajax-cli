@@ -925,13 +925,11 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
             *state_changed = true;
             return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
-        "check task"
-        | "inspect test output"
-        | "diff task"
-        | "review diff"
-        | "repair task"
-        | "open worktrunk"
-        | "repair worktrunk" => {}
+        "repair task" | "repair worktrunk" => {
+            *state_changed |= refresh_live_context(context, runner)?;
+            return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        }
+        "check task" | "inspect test output" | "diff task" | "review diff" | "open worktrunk" => {}
         _ => {
             commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
@@ -2951,7 +2949,7 @@ mod tests {
                 let mut runner = RecordingCommandRunner::default();
                 let mut state_changed = false;
 
-                super::execute_pending_cockpit_action(
+                let output = super::execute_pending_cockpit_action(
                     &pending,
                     &mut context,
                     &mut runner,
@@ -2959,7 +2957,20 @@ mod tests {
                 )
                 .unwrap();
 
-                assert_eq!(runner.commands(), &[expected_command], "{action}");
+                if action.starts_with("repair") {
+                    assert_eq!(
+                        output,
+                        super::PendingCockpitOutcome::ReturnToCockpit,
+                        "{action}"
+                    );
+                } else {
+                    assert!(matches!(output, super::PendingCockpitOutcome::Exit(_)));
+                }
+                assert_eq!(
+                    runner.commands().first(),
+                    Some(&expected_command),
+                    "{action}"
+                );
                 assert_eq!(
                     context
                         .registry
@@ -2969,9 +2980,110 @@ mod tests {
                     LifecycleStatus::Reviewable,
                     "{action} should not change lifecycle"
                 );
-                assert!(!state_changed, "{action}");
+                if !action.starts_with("repair") {
+                    assert!(!state_changed, "{action}");
+                }
             }
         }
+    }
+
+    #[test]
+    fn pending_cockpit_repair_refreshes_after_recreating_worktree() {
+        let mut context = repair_context_with_flag(SideFlag::WorktreeMissing);
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "repair task".to_string(),
+            task_title: None,
+        };
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "created worktree\n"),
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "matt@host project % "),
+        ]);
+        let mut state_changed = false;
+
+        let output = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert!(state_changed);
+        assert_eq!(
+            runner.commands,
+            vec![
+                repair_add_command(),
+                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "list-windows",
+                        "-a",
+                        "-F",
+                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "merge-base",
+                        "--is-ancestor",
+                        "ajax/fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "list-windows",
+                        "-t",
+                        "ajax-web-fix-login",
+                        "-F",
+                        "#{window_name}\t#{pane_current_path}"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "capture-pane",
+                        "-p",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "-S",
+                        "-200"
+                    ]
+                ),
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task.git_status.as_ref().unwrap().worktree_exists);
+        assert!(task.tmux_status.as_ref().unwrap().exists);
+        assert!(
+            task.worktrunk_status
+                .as_ref()
+                .unwrap()
+                .points_at_expected_path
+        );
     }
 
     fn repair_add_command() -> CommandSpec {
