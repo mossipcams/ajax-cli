@@ -88,8 +88,23 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         return LiveObservation::new(LiveStatusKind::CommandFailed, "command failed");
     }
 
-    if contains_any(&lower, &["test result: ok", "tests passed"]) {
+    if contains_any(
+        &lower,
+        &[
+            "test result: ok",
+            "tests passed",
+            "all pre-pr checks passed",
+            "successfully completed",
+            "task complete",
+            "all done",
+            "done",
+        ],
+    ) {
         return LiveObservation::new(LiveStatusKind::Done, "done");
+    }
+
+    if looks_like_shell_prompt(trimmed) {
+        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
     }
 
     if contains_any(
@@ -116,22 +131,6 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         ],
     ) {
         return LiveObservation::new(LiveStatusKind::AgentRunning, "agent running");
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "successfully completed",
-            "task complete",
-            "all done",
-            "done",
-        ],
-    ) {
-        return LiveObservation::new(LiveStatusKind::Done, "done");
-    }
-
-    if looks_like_shell_prompt(trimmed) {
-        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
     }
 
     LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state")
@@ -421,6 +420,19 @@ mod tests {
 
             assert_eq!(observation.kind, expected, "{pane}");
         }
+    }
+
+    #[test]
+    fn pane_classifier_uses_final_prompt_over_stale_running_history() {
+        let pane = "\
+The targeted checks pass. I’m continuing the cherry-pick now.
+The rebased commit is created. I’m running the full pre-PR parity script now.
+All pre-PR checks passed.
+matt@Matts-MacBook-Pro ajax-tech-debt %";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::Done);
     }
 
     #[test]
