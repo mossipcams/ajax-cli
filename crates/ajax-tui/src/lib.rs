@@ -188,6 +188,7 @@ fn build_selectables(
             out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
             out.push(SelectableKind::NewTask);
+            out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
         }
         AppView::Project { repo } => {
             out.extend(
@@ -1373,6 +1374,47 @@ mod tests {
     }
 
     #[test]
+    fn main_page_renders_task_statuses_without_opening_project() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("web/fix-login"));
+        assert!(content.contains("Active"));
+        assert!(!content.contains("› web"));
+    }
+
+    #[test]
+    fn main_page_task_row_enters_open_task_action() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Task(_))
+            ) {
+                break;
+            }
+            app.select_next();
+        }
+        let item = app.activate_selected().unwrap();
+
+        assert_eq!(item.task_handle, "web/fix-login");
+        assert_eq!(item.recommended_action, "open task");
+        assert!(matches!(app.view, AppView::Projects));
+    }
+
+    #[test]
     fn activating_project_opens_project_workflow() {
         let mut app = App::new(
             sample_repos(),
@@ -2082,22 +2124,28 @@ mod tests {
     }
 
     #[test]
-    fn select_next_walks_inbox_project_newtask() {
+    fn select_next_walks_inbox_project_newtask_status() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
             sample_tasks(),
             sample_inbox(),
         );
-        // Projects view: [inbox, project, NewTask] = 3 selectables.
+        // Projects view: [inbox, project, NewTask, task status].
         assert_eq!(app.selected, 0);
         app.select_next();
         assert_eq!(app.selected, 1);
         app.select_next();
         assert_eq!(app.selected, 2);
+        app.select_next();
+        assert_eq!(app.selected, 3);
+        assert_eq!(
+            app.selected_action().unwrap().recommended_action,
+            "open task"
+        );
         // clamps at last
         app.select_next();
-        assert_eq!(app.selected, 2);
+        assert_eq!(app.selected, 3);
     }
 
     #[test]
