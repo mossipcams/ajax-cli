@@ -165,19 +165,11 @@ impl WorkmuxAdapter {
     }
 
     pub fn add_task(&self, task: &WorkmuxNewTask) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "add".to_string(),
-                task.branch.clone(),
-                "--agent".to_string(),
-                task.agent.clone(),
-                "--background".to_string(),
-                "--no-hooks".to_string(),
-            ],
-            cwd: Some(task.repo_path.clone()),
-            mode: CommandMode::Capture,
-        }
+        self.add_task_with_args(task, [])
+    }
+
+    pub fn add_task_open_if_exists(&self, task: &WorkmuxNewTask) -> CommandSpec {
+        self.add_task_with_args(task, ["--open-if-exists"])
     }
 
     pub fn open_task(&self, qualified_handle: &str) -> CommandSpec {
@@ -190,6 +182,29 @@ impl WorkmuxAdapter {
 
     pub fn remove_task(&self, qualified_handle: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["remove", qualified_handle])
+    }
+
+    fn add_task_with_args<const N: usize>(
+        &self,
+        task: &WorkmuxNewTask,
+        extra_args: [&str; N],
+    ) -> CommandSpec {
+        let mut args = vec![
+            "add".to_string(),
+            task.branch.clone(),
+            "--agent".to_string(),
+            task.agent.clone(),
+            "--background".to_string(),
+            "--no-hooks".to_string(),
+        ];
+        args.extend(extra_args.into_iter().map(str::to_string));
+
+        CommandSpec {
+            program: self.program.clone(),
+            args,
+            cwd: Some(task.repo_path.clone()),
+            mode: CommandMode::Capture,
+        }
     }
 }
 
@@ -477,6 +492,22 @@ mod tests {
         assert_eq!(
             adapter.open_task("web/fix-login"),
             CommandSpec::new("workmux", ["open", "web/fix-login"])
+        );
+        assert_eq!(
+            adapter.add_task_open_if_exists(&new_task),
+            CommandSpec::new(
+                "workmux",
+                [
+                    "add",
+                    "ajax/fix-login",
+                    "--agent",
+                    "codex",
+                    "--background",
+                    "--no-hooks",
+                    "--open-if-exists"
+                ]
+            )
+            .with_cwd("/Users/matt/projects/web")
         );
         assert_eq!(
             adapter.merge_task("web/fix-login"),

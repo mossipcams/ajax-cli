@@ -2905,16 +2905,44 @@ mod tests {
             (
                 "repair task",
                 vec![
-                    repair_context_with_flag(SideFlag::WorktrunkMissing),
-                    repair_context_with_flag(SideFlag::TmuxMissing),
-                    repair_context_with_flag(SideFlag::WorktreeMissing),
-                    repair_context_with_flag(SideFlag::BranchMissing),
+                    (
+                        repair_context_with_flag(SideFlag::WorktrunkMissing),
+                        CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                            .with_cwd("/Users/matt/projects/web"),
+                    ),
+                    (
+                        repair_context_with_flag(SideFlag::TmuxMissing),
+                        CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                            .with_cwd("/Users/matt/projects/web"),
+                    ),
+                    (
+                        repair_context_with_flag(SideFlag::WorktreeMissing),
+                        repair_add_command(),
+                    ),
+                    (
+                        repair_context_with_flag(SideFlag::BranchMissing),
+                        repair_add_command(),
+                    ),
                 ],
             ),
-            ("repair worktrunk", vec![sample_context()]),
-            ("open worktrunk", vec![sample_context()]),
+            (
+                "repair worktrunk",
+                vec![(
+                    sample_context(),
+                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                        .with_cwd("/Users/matt/projects/web"),
+                )],
+            ),
+            (
+                "open worktrunk",
+                vec![(
+                    sample_context(),
+                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                        .with_cwd("/Users/matt/projects/web"),
+                )],
+            ),
         ] {
-            for mut context in contexts {
+            for (mut context, expected_command) in contexts {
                 let pending = ajax_tui::PendingAction {
                     task_handle: "web/fix-login".to_string(),
                     recommended_action: action.to_string(),
@@ -2931,12 +2959,7 @@ mod tests {
                 )
                 .unwrap();
 
-                assert_eq!(
-                    runner.commands(),
-                    &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                        .with_cwd("/Users/matt/projects/web")],
-                    "{action}"
-                );
+                assert_eq!(runner.commands(), &[expected_command], "{action}");
                 assert_eq!(
                     context
                         .registry
@@ -2949,6 +2972,22 @@ mod tests {
                 assert!(!state_changed, "{action}");
             }
         }
+    }
+
+    fn repair_add_command() -> CommandSpec {
+        CommandSpec::new(
+            "workmux",
+            [
+                "add",
+                "ajax/fix-login",
+                "--agent",
+                "codex",
+                "--background",
+                "--no-hooks",
+                "--open-if-exists",
+            ],
+        )
+        .with_cwd("/Users/matt/projects/web")
     }
 
     fn repair_context_with_flag(flag: SideFlag) -> CommandContext<InMemoryRegistry> {

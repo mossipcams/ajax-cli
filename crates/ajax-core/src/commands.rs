@@ -838,7 +838,19 @@ pub fn repair_task_plan<R: Registry>(
     let workmux = WorkmuxAdapter::new("workmux");
     let mut plan = CommandPlan::new(format!("repair task: {qualified_handle}"));
 
-    if has_repairable_resource_flag(task) {
+    if task.has_side_flag(SideFlag::WorktreeMissing) || task.has_side_flag(SideFlag::BranchMissing)
+    {
+        let Some(repo_path) = task_repo_path(context, task) else {
+            return Err(CommandError::RepoNotFound(task.repo.clone()));
+        };
+        plan.commands
+            .push(workmux.add_task_open_if_exists(&WorkmuxNewTask {
+                repo_path,
+                branch: task.branch.clone(),
+                title: task.title.clone(),
+                agent: agent_name(task.selected_agent).to_string(),
+            }));
+    } else if has_repairable_resource_flag(task) {
         plan.commands.push(command_in_task_repo(
             context,
             task,
@@ -1023,6 +1035,13 @@ fn agent_from_name(name: &str) -> AgentClient {
         "claude" => AgentClient::Claude,
         "codex" => AgentClient::Codex,
         _ => AgentClient::Other,
+    }
+}
+
+fn agent_name(agent: AgentClient) -> &'static str {
+    match agent {
+        AgentClient::Claude => "claude",
+        AgentClient::Codex | AgentClient::Other => "codex",
     }
 }
 
@@ -1902,12 +1921,13 @@ mod tests {
     }
 
     #[test]
-    fn repair_task_plan_reopens_workmux_for_broken_resource_flags() {
-        for flag in [
-            SideFlag::TmuxMissing,
-            SideFlag::WorktreeMissing,
-            SideFlag::BranchMissing,
-        ] {
+    fn repair_task_plan_reopens_workmux_when_tmux_is_missing() {
+        repair_task_plan_reopens_workmux_for_flag(SideFlag::TmuxMissing);
+    }
+
+    #[test]
+    fn repair_task_plan_recreates_missing_worktree_or_branch() {
+        for flag in [SideFlag::WorktreeMissing, SideFlag::BranchMissing] {
             repair_task_plan_reopens_workmux_for_flag(flag);
         }
     }
@@ -1926,12 +1946,25 @@ mod tests {
 
         let plan = repair_task_plan(&context, "web/fix-login").unwrap();
 
-        assert_eq!(
-            plan.commands,
-            vec![CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")],
-            "{flag:?}"
-        );
+        let expected = match flag {
+            SideFlag::WorktreeMissing | SideFlag::BranchMissing => CommandSpec::new(
+                "workmux",
+                [
+                    "add",
+                    "ajax/fix-login",
+                    "--agent",
+                    "codex",
+                    "--background",
+                    "--no-hooks",
+                    "--open-if-exists",
+                ],
+            )
+            .with_cwd("/Users/matt/projects/web"),
+            _ => CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web"),
+        };
+
+        assert_eq!(plan.commands, vec![expected], "{flag:?}");
     }
 
     #[test]
