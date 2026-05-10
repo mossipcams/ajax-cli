@@ -101,6 +101,7 @@ mod tests {
     use crate::models::{
         AgentClient, GitStatus, SafetyClassification, SideFlag, Task, TaskId, TmuxStatus,
     };
+    use proptest::prelude::*;
     use rstest::rstest;
 
     fn clean_merged_task() -> Task {
@@ -215,6 +216,110 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason == "worktree is missing"));
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    struct CleanupScenario {
+        git_worktree_exists: bool,
+        flag_worktree_missing: bool,
+        git_branch_exists: bool,
+        flag_branch_missing: bool,
+        git_conflicted: bool,
+        flag_conflicted: bool,
+        git_dirty: bool,
+        untracked_files: u32,
+        flag_dirty: bool,
+        merged: bool,
+        ahead: u32,
+        unpushed_commits: u32,
+        flag_unpushed: bool,
+    }
+
+    impl CleanupScenario {
+        fn apply_to(self, task: &mut Task) {
+            let git = task.git_status.as_mut().unwrap();
+            git.worktree_exists = self.git_worktree_exists;
+            git.branch_exists = self.git_branch_exists;
+            git.conflicted = self.git_conflicted;
+            git.dirty = self.git_dirty;
+            git.untracked_files = self.untracked_files;
+            git.merged = self.merged;
+            git.ahead = self.ahead;
+            git.unpushed_commits = self.unpushed_commits;
+
+            if self.flag_worktree_missing {
+                task.add_side_flag(SideFlag::WorktreeMissing);
+            }
+            if self.flag_branch_missing {
+                task.add_side_flag(SideFlag::BranchMissing);
+            }
+            if self.flag_conflicted {
+                task.add_side_flag(SideFlag::Conflicted);
+            }
+            if self.flag_dirty {
+                task.add_side_flag(SideFlag::Dirty);
+            }
+            if self.flag_unpushed {
+                task.add_side_flag(SideFlag::Unpushed);
+            }
+        }
+
+        fn expected_classification(self) -> SafetyClassification {
+            if !self.git_worktree_exists
+                || self.flag_worktree_missing
+                || !self.git_branch_exists
+                || self.flag_branch_missing
+            {
+                SafetyClassification::Blocked
+            } else if self.git_conflicted || self.flag_conflicted {
+                SafetyClassification::Dangerous
+            } else if self.git_dirty
+                || self.untracked_files > 0
+                || self.flag_dirty
+                || !self.merged
+                || self.ahead > 0
+                || self.unpushed_commits > 0
+                || self.flag_unpushed
+            {
+                SafetyClassification::NeedsConfirmation
+            } else {
+                SafetyClassification::Safe
+            }
+        }
+    }
+
+    fn cleanup_scenario_strategy() -> impl Strategy<Value = CleanupScenario> {
+        (0_u16..1024, 0..4_u32, 0..4_u32, 0..4_u32).prop_map(
+            |(mask, untracked_files, ahead, unpushed_commits)| CleanupScenario {
+                git_worktree_exists: mask & (1 << 0) != 0,
+                flag_worktree_missing: mask & (1 << 1) != 0,
+                git_branch_exists: mask & (1 << 2) != 0,
+                flag_branch_missing: mask & (1 << 3) != 0,
+                git_conflicted: mask & (1 << 4) != 0,
+                flag_conflicted: mask & (1 << 5) != 0,
+                git_dirty: mask & (1 << 6) != 0,
+                untracked_files,
+                flag_dirty: mask & (1 << 7) != 0,
+                merged: mask & (1 << 8) != 0,
+                ahead,
+                unpushed_commits,
+                flag_unpushed: mask & (1 << 9) != 0,
+            },
+        )
+    }
+
+    proptest! {
+        #[test]
+        fn cleanup_safety_uses_highest_risk_classification(
+            scenario in cleanup_scenario_strategy(),
+        ) {
+            let mut task = clean_merged_task();
+            scenario.apply_to(&mut task);
+
+            let report = cleanup_safety(&task);
+
+            prop_assert_eq!(report.classification, scenario.expected_classification());
+        }
     }
 
     #[derive(Clone, Copy)]

@@ -130,6 +130,7 @@ mod tests {
         CleanupRules, Config, ConfigParseError, ConfigPaths, LauncherDefinition, ManagedRepo,
         TestCommand,
     };
+    use proptest::prelude::*;
     use std::path::Path;
 
     #[test]
@@ -173,6 +174,32 @@ mod tests {
         assert_eq!(config.launchers[0].name, "codex");
         assert!(config.cleanup.require_clean_worktree);
         assert_eq!(config.test_commands[0].command, "cargo test");
+    }
+
+    proptest! {
+        #[test]
+        fn constructors_preserve_input_values(
+            repo_name in "\\PC*",
+            repo_path in "\\PC*",
+            default_branch in "\\PC*",
+            launcher_name in "\\PC*",
+            launcher_command in "\\PC*",
+            test_repo in "\\PC*",
+            test_command in "\\PC*",
+        ) {
+            let repo = ManagedRepo::new(&repo_name, &repo_path, &default_branch);
+            prop_assert_eq!(repo.name, repo_name);
+            prop_assert_eq!(repo.path, Path::new(&repo_path));
+            prop_assert_eq!(repo.default_branch, default_branch);
+
+            let launcher = LauncherDefinition::new(&launcher_name, &launcher_command);
+            prop_assert_eq!(launcher.name, launcher_name);
+            prop_assert_eq!(launcher.command, launcher_command);
+
+            let test_command_value = TestCommand::new(&test_repo, &test_command);
+            prop_assert_eq!(test_command_value.repo, test_repo);
+            prop_assert_eq!(test_command_value.command, test_command);
+        }
     }
 
     #[test]

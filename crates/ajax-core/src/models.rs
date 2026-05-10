@@ -410,9 +410,77 @@ impl RecommendedAction {
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RecommendedAction, Repo, SideFlag,
-        Task, TaskId, TmuxStatus, WorktrunkStatus,
+        AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
+        LiveStatusKind, RecommendedAction, Repo, SideFlag, Task, TaskId, TmuxStatus,
+        WorktrunkStatus,
     };
+    use proptest::prelude::*;
+    use std::collections::BTreeSet;
+
+    fn text_strategy() -> impl Strategy<Value = String> {
+        "\\PC{0,64}"
+    }
+
+    fn side_flag_strategy() -> impl Strategy<Value = SideFlag> {
+        prop::sample::select(
+            [
+                SideFlag::Dirty,
+                SideFlag::AgentRunning,
+                SideFlag::AgentDead,
+                SideFlag::NeedsInput,
+                SideFlag::TestsFailed,
+                SideFlag::TmuxMissing,
+                SideFlag::WorktreeMissing,
+                SideFlag::WorktrunkMissing,
+                SideFlag::BranchMissing,
+                SideFlag::Stale,
+                SideFlag::Conflicted,
+                SideFlag::Unpushed,
+            ]
+            .to_vec(),
+        )
+    }
+
+    fn live_status_kind_strategy() -> impl Strategy<Value = LiveStatusKind> {
+        prop::sample::select(
+            [
+                LiveStatusKind::WorktreeMissing,
+                LiveStatusKind::TmuxMissing,
+                LiveStatusKind::WorktrunkMissing,
+                LiveStatusKind::ShellIdle,
+                LiveStatusKind::CommandRunning,
+                LiveStatusKind::TestsRunning,
+                LiveStatusKind::AgentRunning,
+                LiveStatusKind::WaitingForApproval,
+                LiveStatusKind::WaitingForInput,
+                LiveStatusKind::Blocked,
+                LiveStatusKind::RateLimited,
+                LiveStatusKind::AuthRequired,
+                LiveStatusKind::MergeConflict,
+                LiveStatusKind::CiFailed,
+                LiveStatusKind::ContextLimit,
+                LiveStatusKind::CommandFailed,
+                LiveStatusKind::Done,
+                LiveStatusKind::Unknown,
+            ]
+            .to_vec(),
+        )
+    }
+
+    fn sample_task() -> Task {
+        Task::new(
+            TaskId::new("task-generated"),
+            "web",
+            "generated",
+            "Generated task",
+            "ajax/generated",
+            "main",
+            "/tmp/worktrees/generated",
+            "ajax-web-generated",
+            "worktrunk",
+            AgentClient::Codex,
+        )
+    }
 
     #[test]
     fn task_identity_maps_to_repo_handle() {
@@ -433,6 +501,70 @@ mod tests {
         assert_eq!(task.lifecycle_status, LifecycleStatus::Created);
         assert_eq!(task.agent_attempts.len(), 0);
         assert_eq!(task.selected_agent, AgentClient::Codex);
+    }
+
+    proptest! {
+        #[test]
+        fn task_identity_and_handle_preserve_generated_inputs(
+            id in text_strategy(),
+            repo in text_strategy(),
+            handle in text_strategy(),
+            title in text_strategy(),
+            branch in text_strategy(),
+            base_branch in text_strategy(),
+            worktree_path in text_strategy(),
+            tmux_session in text_strategy(),
+            worktrunk_window in text_strategy(),
+        ) {
+            let task = Task::new(
+                TaskId::new(&id),
+                &repo,
+                &handle,
+                &title,
+                &branch,
+                &base_branch,
+                &worktree_path,
+                &tmux_session,
+                &worktrunk_window,
+                AgentClient::Codex,
+            );
+
+            prop_assert_eq!(task.id.as_str(), id);
+            prop_assert_eq!(&task.repo, &repo);
+            prop_assert_eq!(&task.handle, &handle);
+            prop_assert_eq!(&task.title, &title);
+            prop_assert_eq!(&task.branch, &branch);
+            prop_assert_eq!(&task.base_branch, &base_branch);
+            prop_assert_eq!(&task.worktree_path, std::path::Path::new(&worktree_path));
+            prop_assert_eq!(&task.tmux_session, &tmux_session);
+            prop_assert_eq!(&task.worktrunk_window, &worktrunk_window);
+            prop_assert_eq!(task.qualified_handle(), format!("{repo}/{handle}"));
+        }
+
+        #[test]
+        fn repo_tmux_and_worktrunk_constructors_preserve_generated_inputs(
+            repo_name in text_strategy(),
+            repo_path in text_strategy(),
+            default_branch in text_strategy(),
+            tmux_session in text_strategy(),
+            worktrunk_window in text_strategy(),
+            worktrunk_path in text_strategy(),
+        ) {
+            let repo = Repo::new(&repo_name, &repo_path, &default_branch);
+            prop_assert_eq!(repo.name, repo_name);
+            prop_assert_eq!(repo.path, std::path::Path::new(&repo_path));
+            prop_assert_eq!(repo.default_branch, default_branch);
+
+            let tmux = TmuxStatus::present(&tmux_session);
+            prop_assert!(tmux.exists);
+            prop_assert_eq!(tmux.session_name, tmux_session);
+
+            let worktrunk = WorktrunkStatus::present(&worktrunk_window, &worktrunk_path);
+            prop_assert!(worktrunk.exists);
+            prop_assert_eq!(worktrunk.window_name, worktrunk_window);
+            prop_assert_eq!(worktrunk.current_path, std::path::Path::new(&worktrunk_path));
+            prop_assert!(worktrunk.points_at_expected_path);
+        }
     }
 
     #[test]
@@ -456,6 +588,69 @@ mod tests {
         assert!(task.has_side_flag(SideFlag::Dirty));
         assert!(task.has_side_flag(SideFlag::AgentRunning));
         assert!(!task.has_side_flag(SideFlag::Conflicted));
+    }
+
+    proptest! {
+        #[test]
+        fn side_flags_are_unique_sorted_and_removable(
+            flags in prop::collection::vec(side_flag_strategy(), 0..32),
+            removed in side_flag_strategy(),
+        ) {
+            let mut task = sample_task();
+            let mut expected = BTreeSet::new();
+
+            for flag in flags {
+                task.add_side_flag(flag);
+                task.add_side_flag(flag);
+                expected.insert(flag);
+            }
+
+            prop_assert_eq!(task.side_flags().collect::<Vec<_>>(), expected.iter().copied().collect::<Vec<_>>());
+
+            task.remove_side_flag(removed);
+            expected.remove(&removed);
+
+            prop_assert_eq!(task.side_flags().collect::<Vec<_>>(), expected.iter().copied().collect::<Vec<_>>());
+        }
+
+        #[test]
+        fn mark_resource_missing_resets_agent_state_only_for_missing_substrate_flags(
+            flag in side_flag_strategy(),
+        ) {
+            let mut task = sample_task();
+            task.agent_status = AgentRuntimeStatus::Running;
+            task.add_side_flag(SideFlag::AgentRunning);
+
+            task.mark_resource_missing(flag);
+
+            prop_assert!(task.has_side_flag(flag));
+            if flag.is_missing_substrate() {
+                prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+                prop_assert!(!task.has_side_flag(SideFlag::AgentRunning));
+            } else {
+                prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+                prop_assert!(task.has_side_flag(SideFlag::AgentRunning));
+            }
+        }
+
+        #[test]
+        fn has_missing_substrate_matches_missing_flags_or_live_status(
+            flags in prop::collection::vec(side_flag_strategy(), 0..32),
+            live_kind in prop::option::of(live_status_kind_strategy()),
+        ) {
+            let mut task = sample_task();
+            let expected_from_flags = flags.iter().copied().any(SideFlag::is_missing_substrate);
+            let expected_from_live = live_kind.is_some_and(LiveStatusKind::is_missing_substrate);
+
+            for flag in flags {
+                task.add_side_flag(flag);
+            }
+            if let Some(kind) = live_kind {
+                task.live_status = Some(LiveObservation::new(kind, "generated status"));
+            }
+
+            prop_assert_eq!(task.has_missing_substrate(), expected_from_flags || expected_from_live);
+        }
     }
 
     #[test]
