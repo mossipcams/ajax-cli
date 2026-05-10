@@ -456,7 +456,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(
         std::fs::read_to_string(&workmux_log).expect("fake workmux should record invocation"),
         format!(
-            "cwd={}\nargs=add ajax/fix-login --prompt Fix Login! --agent codex\n",
+            "cwd={}\nargs=add ajax/fix-login --prompt Fix Login! --agent codex --background\n",
             fs::canonicalize(&repo_path)
                 .expect("managed repo path should canonicalize")
                 .display()

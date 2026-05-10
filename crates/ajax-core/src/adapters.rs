@@ -174,6 +174,7 @@ impl WorkmuxAdapter {
                 task.title.clone(),
                 "--agent".to_string(),
                 task.agent.clone(),
+                "--background".to_string(),
             ],
             cwd: Some(task.repo_path.clone()),
             mode: CommandMode::Capture,
@@ -469,7 +470,8 @@ mod tests {
                     "--prompt",
                     "fix login",
                     "--agent",
-                    "codex"
+                    "codex",
+                    "--background"
                 ]
             )
             .with_cwd("/Users/matt/projects/web")

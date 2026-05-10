@@ -145,7 +145,7 @@ pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
                 .registry
                 .list_tasks()
                 .into_iter()
-                .filter(|task| task.repo == repo.name)
+                .filter(|task| task.repo == repo.name && is_operational_task(task))
                 .collect();
 
             RepoSummary {
@@ -175,6 +175,7 @@ pub fn list_tasks<R: Registry>(context: &CommandContext<R>, repo: Option<&str>) 
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .filter(|task| repo.is_none_or(|repo_name| task.repo == repo_name))
         .map(task_summary)
         .collect();
@@ -229,6 +230,7 @@ pub fn inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -351,6 +353,7 @@ pub fn reconcile_filesystem<R: Registry>(context: &mut CommandContext<R>) -> Rec
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     let mut tasks_changed = 0;
@@ -380,6 +383,7 @@ pub fn reconcile_external<R: Registry>(
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     if task_ids.is_empty() {
@@ -522,6 +526,7 @@ pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: Syste
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     let mut tasks_changed = 0;
@@ -657,6 +662,12 @@ pub fn record_new_task<R: Registry>(
     request: &NewTaskRequest,
 ) -> Result<Task, CommandError> {
     let task = task_from_new_request(context, request)?;
+    if let Some(existing) = context.registry.get_task_mut(&task.id) {
+        if existing.lifecycle_status == LifecycleStatus::Removed {
+            *existing = task.clone();
+            return Ok(task);
+        }
+    }
     context
         .registry
         .create_task(task.clone())
@@ -898,6 +909,10 @@ fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
         .count() as u32
 }
 
+fn is_operational_task(task: &Task) -> bool {
+    task.lifecycle_status != LifecycleStatus::Removed
+}
+
 fn task_summary(task: &Task) -> TaskSummary {
     TaskSummary {
         id: task.id.as_str().to_string(),
@@ -1134,6 +1149,43 @@ mod tests {
         assert_eq!(all_tasks.tasks.len(), 1);
         assert_eq!(web_tasks.tasks.len(), 1);
         assert_eq!(api_tasks.tasks.len(), 0);
+    }
+
+    #[test]
+    fn removed_tasks_are_hidden_from_operational_summaries() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Removed;
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        task.add_side_flag(SideFlag::BranchMissing);
+        task.live_status = Some(crate::models::LiveObservation::new(
+            LiveStatusKind::WorktreeMissing,
+            "worktree missing",
+        ));
+
+        assert!(list_tasks(&context, None).tasks.is_empty());
+        assert!(inbox(&context).items.is_empty());
+        assert_eq!(list_repos(&context).repos[0].broken_tasks, 0);
+    }
+
+    #[test]
+    fn reconcile_external_skips_removed_tasks() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Removed;
+        let mut runner = QueuedRunner::default();
+
+        let response = reconcile_external(&mut context, &mut runner).unwrap();
+
+        assert_eq!(response.tasks_checked, 0);
+        assert_eq!(response.tasks_changed, 0);
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
@@ -1574,7 +1626,8 @@ mod tests {
                     "--prompt",
                     "fix login",
                     "--agent",
-                    "codex"
+                    "codex",
+                    "--background"
                 ]
             )
             .with_cwd("/Users/matt/projects/web")]
@@ -1653,6 +1706,42 @@ mod tests {
             .list_tasks()
             .iter()
             .any(|task| task.qualified_handle() == "api/add-cache"));
+    }
+
+    #[test]
+    fn record_new_task_reuses_removed_task_handle() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut removed = task_from_new_request(
+            &context,
+            &NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login!".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        context.registry.create_task(removed).unwrap();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login!".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let task = super::record_new_task(&mut context, &request).unwrap();
+
+        assert_eq!(task.qualified_handle(), "web/fix-login");
+        assert_eq!(context.registry.list_tasks().len(), 1);
+        assert_eq!(
+            context.registry.list_tasks()[0].lifecycle_status,
+            LifecycleStatus::Provisioning
+        );
     }
 
     #[test]

@@ -1604,7 +1604,7 @@ mod tests {
 
         assert!(output.contains("create task: fix login"));
         assert!(output.contains(
-            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --prompt fix login --agent codex)"
+            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --prompt fix login --agent codex --background)"
         ));
     }
 
@@ -2575,7 +2575,8 @@ mod tests {
                     "--prompt",
                     "Fix login",
                     "--agent",
-                    "codex"
+                    "codex",
+                    "--background"
                 ]
             )
             .with_cwd("/Users/matt/projects/api")]
