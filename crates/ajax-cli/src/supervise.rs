@@ -1,4 +1,4 @@
-use ajax_supervisor::codex::CodexAdapter;
+use ajax_supervisor::{spawn_monitor, MonitorConfig};
 use clap::ArgMatches;
 
 use crate::CliError;
@@ -21,17 +21,19 @@ pub(crate) fn render_supervise_command(matches: &ArgMatches) -> Result<String, C
         .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
 
     let (events, supervise_result) = runtime.block_on(async move {
-        let adapter = CodexAdapter::new(codex_bin);
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
-        let handle = tokio::spawn(async move { adapter.supervise_exec_json(&prompt, tx).await });
+        let mut config = MonitorConfig::codex_exec(prompt);
+        config.codex_bin = codex_bin;
+        let (handle, mut rx) =
+            spawn_monitor(config).map_err(|error| CliError::CommandFailed(error.to_string()))?;
         let mut events = Vec::new();
         while let Some(event) = rx.recv().await {
             events.push(event);
         }
-        let supervise_result = match handle.await {
-            Ok(result) => result.map_err(|error| format!("supervisor failed: {error}")),
-            Err(error) => Err(format!("supervisor task failed: {error}")),
-        };
+        let supervise_result = handle
+            .wait()
+            .await
+            .map(|_| ())
+            .map_err(|error| format!("supervisor failed: {error}"));
         Ok::<_, CliError>((events, supervise_result))
     })?;
     if let Err(message) = supervise_result {

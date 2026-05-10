@@ -1,3 +1,11 @@
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
+};
+
 use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
 use serde_json::Value;
 use tokio::{
@@ -6,7 +14,7 @@ use tokio::{
     sync::mpsc,
 };
 
-use crate::SupervisorError;
+use crate::{process::HangDetector, SupervisorError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CodexAdapter {
@@ -24,22 +32,53 @@ impl CodexAdapter {
         vec!["exec".to_string(), "--json".to_string(), prompt.to_string()]
     }
 
-    pub async fn supervise_exec_json(
+    pub async fn supervise_exec_json_with_options(
         &self,
         prompt: &str,
         events: mpsc::Sender<MonitorEvent>,
-    ) -> Result<(), SupervisorError> {
+        hang_after: Option<Duration>,
+    ) -> Result<Option<i32>, SupervisorError> {
         let mut child = Command::new(&self.program)
             .args(self.exec_json_args(prompt))
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()?;
+        let hang_detector = hang_after
+            .map(|hang_after| Arc::new(Mutex::new(HangDetector::new(Instant::now(), hang_after))));
+        let process_done = Arc::new(AtomicBool::new(false));
 
         send_event(
             &events,
             MonitorEvent::Process(ProcessEvent::Started { pid: child.id() }),
         )
         .await?;
+
+        let hang_task = hang_detector.as_ref().map(|hang_detector| {
+            let hang_events = events.clone();
+            let hang_detector = Arc::clone(hang_detector);
+            let hang_process_done = Arc::clone(&process_done);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if hang_process_done.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let quiet_for = match hang_detector.lock() {
+                        Ok(detector) if detector.is_hung(Instant::now()) => {
+                            detector.quiet_for(Instant::now())
+                        }
+                        Ok(_) => continue,
+                        Err(_) => break,
+                    };
+                    let _ = send_event(
+                        &hang_events,
+                        MonitorEvent::Process(ProcessEvent::Hung { quiet_for }),
+                    )
+                    .await;
+                    break;
+                }
+            })
+        });
 
         let stdout = child
             .stdout
@@ -51,9 +90,11 @@ impl CodexAdapter {
             .ok_or_else(|| SupervisorError::Process("missing codex stderr".to_string()))?;
 
         let stdout_events = events.clone();
+        let stdout_hang_detector = hang_detector.clone();
         let stdout_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stdout).lines();
             while let Some(line) = lines.next_line().await? {
+                observe_output(stdout_hang_detector.as_ref());
                 let event = parse_codex_json_line(&line)
                     .map(MonitorEvent::Agent)
                     .unwrap_or_else(|| MonitorEvent::Process(ProcessEvent::Stdout { line }));
@@ -63,9 +104,11 @@ impl CodexAdapter {
         });
 
         let stderr_events = events.clone();
+        let stderr_hang_detector = hang_detector.clone();
         let stderr_task = tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Some(line) = lines.next_line().await? {
+                observe_output(stderr_hang_detector.as_ref());
                 send_event(
                     &stderr_events,
                     MonitorEvent::Process(ProcessEvent::Stderr { line }),
@@ -83,6 +126,10 @@ impl CodexAdapter {
             .map_err(|error| SupervisorError::Process(error.to_string()))??;
 
         let status = child.wait().await?;
+        process_done.store(true, Ordering::SeqCst);
+        if let Some(hang_task) = hang_task {
+            hang_task.abort();
+        }
         let status_code = status.code();
         send_event(
             &events,
@@ -98,7 +145,15 @@ impl CodexAdapter {
             return Err(SupervisorError::Process(message));
         }
 
-        Ok(())
+        Ok(status_code)
+    }
+}
+
+fn observe_output(hang_detector: Option<&Arc<Mutex<HangDetector>>>) {
+    if let Some(hang_detector) = hang_detector {
+        if let Ok(mut detector) = hang_detector.lock() {
+            detector.observe_output(Instant::now());
+        }
     }
 }
 
@@ -112,7 +167,7 @@ async fn send_event(
         .map_err(|_| SupervisorError::Process("monitor event receiver closed".to_string()))
 }
 
-pub fn parse_codex_json_line(line: &str) -> Option<AgentEvent> {
+fn parse_codex_json_line(line: &str) -> Option<AgentEvent> {
     let value = serde_json::from_str::<Value>(line).ok()?;
     let event_type = value
         .get("type")
@@ -235,7 +290,10 @@ mod tests {
         let adapter = CodexAdapter::new(script.display().to_string());
         let (tx, mut rx) = mpsc::channel(8);
 
-        adapter.supervise_exec_json("ignored", tx).await.unwrap();
+        adapter
+            .supervise_exec_json_with_options("ignored", tx, None)
+            .await
+            .unwrap();
 
         let mut events = Vec::new();
         while let Ok(event) = rx.try_recv() {
@@ -285,7 +343,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
 
         let error = adapter
-            .supervise_exec_json("ignored", tx)
+            .supervise_exec_json_with_options("ignored", tx, None)
             .await
             .unwrap_err();
 
@@ -322,7 +380,7 @@ mod tests {
         drop(rx);
 
         let error = adapter
-            .supervise_exec_json("ignored", tx)
+            .supervise_exec_json_with_options("ignored", tx, None)
             .await
             .unwrap_err();
 

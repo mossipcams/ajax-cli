@@ -1,4 +1,4 @@
-use std::{path::Path, process::Output};
+use std::{ffi::OsStr, path::Path, process::Output};
 
 use ajax_core::{
     adapters::GitAdapter,
@@ -20,8 +20,14 @@ pub fn notify_event_to_monitor_events(event: Event) -> Vec<MonitorEvent> {
     event
         .paths
         .into_iter()
+        .filter(|path| !is_git_internal_path(path))
         .map(|path| MonitorEvent::Repo(RepoEvent::FileChanged { path }))
         .collect()
+}
+
+fn is_git_internal_path(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == OsStr::new(".git"))
 }
 
 pub fn watch_repo(
