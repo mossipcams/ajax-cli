@@ -375,7 +375,6 @@ fn live_help_exposes_the_scriptable_command_surface() {
         "merge",
         "clean",
         "sweep",
-        "repair",
         "next",
         "inbox",
         "review",

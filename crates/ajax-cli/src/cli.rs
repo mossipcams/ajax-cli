@@ -25,7 +25,6 @@ pub fn build_cli() -> Command {
         .subcommand(executable_command(
             json_command("sweep").about("Clean safe task environments across repos"),
         ))
-        .subcommand(executable_task_command("repair"))
         .subcommand(json_command("next").about("Show the next task needing attention"))
         .subcommand(json_command("inbox").about("Show global attention inbox"))
         .subcommand(json_command("review").about("Show tasks ready for review"))

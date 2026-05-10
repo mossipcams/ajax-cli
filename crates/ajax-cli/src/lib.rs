@@ -184,11 +184,6 @@ fn render_matches_with_paths(
         Some(("sweep", subcommand)) => {
             render_or_execute_plan(commands::sweep_cleanup_plan(context), subcommand)
         }
-        Some(("repair", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::repair_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
-        }
         Some(("next", subcommand)) => render_response(
             commands::next(context),
             subcommand.get_flag("json"),
@@ -541,22 +536,6 @@ fn render_matches_mut(
                 state_changed: !candidates.is_empty(),
             })
         }
-        Some(("repair", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::repair_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
-            })
-        }
         Some(("supervise", subcommand)) => Ok(RenderedCommand {
             output: render_supervise_command(subcommand)?,
             state_changed: false,
@@ -793,9 +772,7 @@ fn tui_cockpit_action<R: CommandRunner>(
         | "diff task"
         | "review diff"
         | "review branch"
-        | "merge task"
-        | "repair task"
-        | "repair worktrunk" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+        | "merge task" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
             recommended_action: item.recommended_action.clone(),
             task_title: None,
@@ -907,10 +884,7 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "diff task" | "review diff" => commands::diff_task_plan(context, &pending.task_handle),
         "merge task" => commands::merge_task_plan(context, &pending.task_handle),
         "clean task" => commands::clean_task_plan(context, &pending.task_handle),
-        "repair task" => commands::repair_task_plan(context, &pending.task_handle),
-        "open worktrunk" | "repair worktrunk" => {
-            commands::trunk_task_plan(context, &pending.task_handle)
-        }
+        "open worktrunk" => commands::trunk_task_plan(context, &pending.task_handle),
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(command_error)?;
             *state_changed = response.tasks_changed > 0;
@@ -930,9 +904,6 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
             commands::mark_task_removed(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
             return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        "repair task" | "repair worktrunk" => {
-            *state_changed |= refresh_live_context(context, runner)?;
         }
         "check task" | "inspect test output" | "diff task" | "review diff" => {}
         "open worktrunk" => {}
@@ -1154,7 +1125,6 @@ mod tests {
             vec!["ajax", "merge", "web/fix-login"],
             vec!["ajax", "clean", "web/fix-login"],
             vec!["ajax", "sweep"],
-            vec!["ajax", "repair", "web/fix-login"],
             vec!["ajax", "next"],
             vec!["ajax", "inbox"],
             vec!["ajax", "review"],
@@ -1592,7 +1562,6 @@ mod tests {
             vec!["ajax", "merge", "web/fix-login", "--execute", "--yes"],
             vec!["ajax", "clean", "web/fix-login", "--execute", "--yes"],
             vec!["ajax", "sweep", "--execute", "--yes"],
-            vec!["ajax", "repair", "web/fix-login", "--execute"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
             assert!(matches.is_ok(), "{args:?} should parse");
@@ -1608,7 +1577,6 @@ mod tests {
             vec!["ajax", "diff"],
             vec!["ajax", "merge"],
             vec!["ajax", "clean"],
-            vec!["ajax", "repair"],
         ] {
             let error = run_with_context(args.clone(), &sample_context()).unwrap_err();
             assert!(
@@ -2231,33 +2199,6 @@ mod tests {
     }
 
     #[test]
-    fn repair_execute_uses_injected_runner() {
-        let mut context = sample_context();
-        let mut task = context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .cloned()
-            .unwrap();
-        task.add_side_flag(SideFlag::WorktrunkMissing);
-        context.registry = InMemoryRegistry::default();
-        context.registry.create_task(task).unwrap();
-        let mut runner = RecordingCommandRunner::default();
-
-        run_with_context_and_runner(
-            ["ajax", "repair", "web/fix-login", "--execute"],
-            &mut context,
-            &mut runner,
-        )
-        .unwrap();
-
-        assert_eq!(
-            runner.commands(),
-            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
-        );
-    }
-
-    #[test]
     fn sweep_execute_uses_injected_runner_and_marks_safe_tasks_removed() {
         let mut context = cleanable_context();
         let mut runner = RecordingCommandRunner::default();
@@ -2332,8 +2273,6 @@ mod tests {
             ("web/fix-login", "check task"),
             ("web/fix-login", "diff task"),
             ("web/fix-login", "merge task"),
-            ("web/fix-login", "repair task"),
-            ("web/fix-login", "repair worktrunk"),
         ] {
             let mut context = sample_context();
             let item = ajax_core::models::AttentionItem {
@@ -2379,8 +2318,6 @@ mod tests {
             ("web/fix-login", "check task"),
             ("web/fix-login", "diff task"),
             ("web/fix-login", "merge task"),
-            ("web/fix-login", "repair task"),
-            ("web/fix-login", "repair worktrunk"),
             ("web", "new task"),
             ("web", "status"),
         ] {
@@ -2490,8 +2427,6 @@ mod tests {
             ("web/fix-login", "diff task", Expected::Defer),
             ("web/fix-login", "merge task", Expected::Defer),
             ("web/fix-login", "clean task", Expected::Refresh),
-            ("web/fix-login", "repair task", Expected::Defer),
-            ("web/fix-login", "repair worktrunk", Expected::Defer),
             (
                 "web/fix-login",
                 "inspect task",
@@ -2569,7 +2504,7 @@ mod tests {
                         inbox,
                     } => {
                         assert_eq!(repos.repos.len(), 1, "{action}");
-                        if action == "clean task" {
+                        if matches!(action, "clean task" | "reconcile") {
                             assert!(tasks.tasks.is_empty(), "{action}");
                             assert!(review.tasks.is_empty(), "{action}");
                             assert!(inbox.items.is_empty(), "{action}");
@@ -3133,48 +3068,15 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_repair_actions_reopen_workmux() {
-        for (action, contexts) in [
-            (
-                "repair task",
-                vec![
-                    (
-                        repair_context_with_flag(SideFlag::WorktrunkMissing),
-                        CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                            .with_cwd("/Users/matt/projects/web"),
-                    ),
-                    (
-                        repair_context_with_flag(SideFlag::TmuxMissing),
-                        CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                            .with_cwd("/Users/matt/projects/web"),
-                    ),
-                    (
-                        repair_context_with_flag(SideFlag::WorktreeMissing),
-                        repair_add_command(),
-                    ),
-                    (
-                        repair_context_with_flag(SideFlag::BranchMissing),
-                        repair_add_command(),
-                    ),
-                ],
-            ),
-            (
-                "repair worktrunk",
-                vec![(
-                    sample_context(),
-                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                        .with_cwd("/Users/matt/projects/web"),
-                )],
-            ),
-            (
-                "open worktrunk",
-                vec![(
-                    sample_context(),
-                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                        .with_cwd("/Users/matt/projects/web"),
-                )],
-            ),
-        ] {
+    fn pending_cockpit_open_worktrunk_runs_workmux() {
+        for (action, contexts) in [(
+            "open worktrunk",
+            vec![(
+                sample_context(),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web"),
+            )],
+        )] {
             for (mut context, expected_command) in contexts {
                 let pending = ajax_tui::PendingAction {
                     task_handle: "web/fix-login".to_string(),
@@ -3192,15 +3094,7 @@ mod tests {
                 )
                 .unwrap();
 
-                if action.starts_with("repair") {
-                    assert_eq!(
-                        output,
-                        super::PendingCockpitOutcome::ReturnToCockpit,
-                        "{action}"
-                    );
-                } else {
-                    assert!(matches!(output, super::PendingCockpitOutcome::Exit(_)));
-                }
+                assert!(matches!(output, super::PendingCockpitOutcome::Exit(_)));
                 assert_eq!(
                     runner.commands().first(),
                     Some(&expected_command),
@@ -3215,139 +3109,9 @@ mod tests {
                     LifecycleStatus::Reviewable,
                     "{action} should not change lifecycle"
                 );
-                if !action.starts_with("repair") {
-                    assert!(!state_changed, "{action}");
-                }
+                assert!(!state_changed, "{action}");
             }
         }
-    }
-
-    #[test]
-    fn pending_cockpit_repair_refreshes_after_recreating_worktree() {
-        let mut context = repair_context_with_flag(SideFlag::WorktreeMissing);
-        let pending = ajax_tui::PendingAction {
-            task_handle: "web/fix-login".to_string(),
-            recommended_action: "repair task".to_string(),
-            task_title: None,
-        };
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "created worktree\n"),
-            output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
-            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
-            output(1, ""),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
-            output(0, "matt@host project % "),
-        ]);
-        let mut state_changed = false;
-
-        let output = super::execute_pending_cockpit_action(
-            &pending,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
-
-        assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
-        assert!(state_changed);
-        assert_eq!(
-            runner.commands,
-            vec![
-                repair_add_command(),
-                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-a",
-                        "-F",
-                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "status",
-                        "--porcelain=v1",
-                        "--branch"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "merge-base",
-                        "--is-ancestor",
-                        "ajax/fix-login",
-                        "main"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-t",
-                        "ajax-web-fix-login",
-                        "-F",
-                        "#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "capture-pane",
-                        "-p",
-                        "-t",
-                        "ajax-web-fix-login:worktrunk",
-                        "-S",
-                        "-200"
-                    ]
-                ),
-            ]
-        );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
-        assert!(task.git_status.as_ref().unwrap().worktree_exists);
-        assert!(task.tmux_status.as_ref().unwrap().exists);
-        assert!(
-            task.worktrunk_status
-                .as_ref()
-                .unwrap()
-                .points_at_expected_path
-        );
-    }
-
-    fn repair_add_command() -> CommandSpec {
-        CommandSpec::new(
-            "workmux",
-            [
-                "add",
-                "ajax/fix-login",
-                "--agent",
-                "codex",
-                "--background",
-                "--no-hooks",
-                "--open-if-exists",
-            ],
-        )
-        .with_cwd("/Users/matt/projects/web")
-    }
-
-    fn repair_context_with_flag(flag: SideFlag) -> CommandContext<InMemoryRegistry> {
-        let mut context = sample_context();
-        let mut repair_task = context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .cloned()
-            .unwrap();
-        repair_task.add_side_flag(flag);
-        context.registry = InMemoryRegistry::default();
-        context.registry.create_task(repair_task).unwrap();
-        context
     }
 
     #[test]
@@ -3590,9 +3354,9 @@ mod tests {
                 inbox,
             } => {
                 assert_eq!(repos.repos.len(), 1);
-                assert_eq!(tasks.tasks.len(), 1);
-                assert_eq!(review.tasks.len(), 1);
-                assert!(!inbox.items.is_empty());
+                assert!(tasks.tasks.is_empty());
+                assert!(review.tasks.is_empty());
+                assert!(inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should refresh in cockpit"),
             ajax_tui::ActionOutcome::Message(message) => {

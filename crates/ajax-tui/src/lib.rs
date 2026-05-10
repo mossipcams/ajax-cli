@@ -254,7 +254,6 @@ fn project_action_selectables(repo: &str) -> Vec<SelectableKind> {
         ("diff task", "diff task"),
         ("check task", "check task"),
         ("clean task", "clean task"),
-        ("repair task", "repair task"),
         ("reconcile", "reconcile"),
         ("status", "status"),
     ]
@@ -280,7 +279,6 @@ fn task_scoped_action(action: &str) -> bool {
             | "diff task"
             | "merge task"
             | "clean task"
-            | "repair task"
     )
 }
 
@@ -952,9 +950,7 @@ fn task_status_label(task: &TaskSummary) -> String {
 }
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
-    if repo.broken_tasks > 0 {
-        Span::styled("!", Style::default().fg(Color::Red))
-    } else if repo.reviewable_tasks > 0 {
+    if repo.reviewable_tasks > 0 {
         Span::styled("R", Style::default().fg(Color::Yellow))
     } else if repo.active_tasks > 0 {
         Span::styled("*", Style::default().fg(Color::Green))
@@ -983,7 +979,6 @@ fn action_glyph(recommended_action: &str) -> Span<'static> {
         "diff task" => ("D", Color::DarkGray),
         "check task" => ("C", Color::DarkGray),
         "clean task" => ("X", Color::Red),
-        "repair task" => ("R", Color::DarkGray),
         "reconcile" => ("@", Color::DarkGray),
         "status" => ("?", Color::DarkGray),
         _ => (".", Color::DarkGray),
@@ -1008,9 +1003,6 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     }
     if repo.reviewable_tasks > 0 {
         parts.push(format!("{} review", repo.reviewable_tasks));
-    }
-    if repo.broken_tasks > 0 {
-        parts.push(format!("{} broken", repo.broken_tasks));
     }
     if parts.is_empty() {
         "idle".to_string()
@@ -1210,7 +1202,6 @@ mod tests {
                 active_tasks: 1,
                 reviewable_tasks: 1,
                 cleanable_tasks: 0,
-                broken_tasks: 0,
             }],
         }
     }
@@ -1385,7 +1376,6 @@ mod tests {
                     active_tasks: 1,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
-                    broken_tasks: 0,
                 },
                 RepoSummary {
                     name: "autosnooze".to_string(),
@@ -1393,7 +1383,6 @@ mod tests {
                     active_tasks: 0,
                     reviewable_tasks: 1,
                     cleanable_tasks: 0,
-                    broken_tasks: 0,
                 },
             ],
         };
@@ -1800,7 +1789,6 @@ mod tests {
             "diff task",
             "check task",
             "clean task",
-            "repair task",
             "reconcile",
             "status",
         ] {
@@ -1872,7 +1860,6 @@ mod tests {
             "diff task",
             "check task",
             "clean task",
-            "repair task",
         ] {
             let mut app = app_in_project_view();
             select_project_action(&mut app, action);
@@ -1927,7 +1914,6 @@ mod tests {
                     active_tasks: 1,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
-                    broken_tasks: 0,
                 },
                 RepoSummary {
                     name: "api".to_string(),
@@ -1935,7 +1921,6 @@ mod tests {
                     active_tasks: 1,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
-                    broken_tasks: 0,
                 },
             ],
         };

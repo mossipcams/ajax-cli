@@ -29,7 +29,6 @@ pub struct RepoSummary {
     pub active_tasks: u32,
     pub reviewable_tasks: u32,
     pub cleanable_tasks: u32,
-    pub broken_tasks: u32,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -109,7 +108,6 @@ mod tests {
                 active_tasks: 2,
                 reviewable_tasks: 1,
                 cleanable_tasks: 0,
-                broken_tasks: 0,
             }],
         };
         let tasks = TasksResponse {

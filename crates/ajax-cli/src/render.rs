@@ -54,13 +54,12 @@ pub(crate) fn render_repos_human(response: &ReposResponse) -> String {
         .iter()
         .map(|repo| {
             format!(
-                "{}\t{}\tactive:{} reviewable:{} cleanable:{} broken:{}",
+                "{}\t{}\tactive:{} reviewable:{} cleanable:{}",
                 repo.name,
                 repo.path,
                 repo.active_tasks,
                 repo.reviewable_tasks,
-                repo.cleanable_tasks,
-                repo.broken_tasks
+                repo.cleanable_tasks
             )
         })
         .collect::<Vec<_>>()

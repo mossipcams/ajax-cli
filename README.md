@@ -130,7 +130,6 @@ ajax diff web/fix-login
 ajax merge web/fix-login
 ajax clean web/fix-login
 ajax sweep
-ajax repair web/fix-login
 ajax next
 ajax inbox
 ajax review
@@ -163,7 +162,7 @@ ajax cockpit
 The cockpit uses a project-first workflow modeled after the earlier gum flow:
 choose a project, choose an action, then choose the task when that action needs
 one. Project actions include creating a task, opening or reviewing a task,
-running checks, viewing diffs, merging, cleaning, repairing, reconciling, and
+running checks, viewing diffs, merging, cleaning, reconciling, and
 showing project status. The frontend remains a Rust shell over the same
 `ajax-core` command and JSON contracts.
 
@@ -231,7 +230,7 @@ renders an operator dashboard from `ajax-core` responses. `ajax cockpit --watch`
 keeps refreshing cockpit frames while still keeping lifecycle orchestration out
 of the UI crate.
 
-Phase 5 adds semi-agentic attention, review, repair, and cleanup intelligence.
+Phase 5 adds semi-agentic attention, review, and cleanup intelligence.
 The first attention layer derives prioritized structured inbox items with
 recommended actions from lifecycle state and side flags.
 
