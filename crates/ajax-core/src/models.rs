@@ -72,6 +72,7 @@ pub enum LiveStatusKind {
     RateLimited,
     AuthRequired,
     MergeConflict,
+    CiFailed,
     ContextLimit,
     CommandFailed,
     Done,

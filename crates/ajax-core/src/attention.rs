@@ -171,6 +171,7 @@ fn attention_for_live_status(
         LiveStatusKind::CommandFailed => {
             Some(("command failed", 15, RecommendedAction::InspectAgent))
         }
+        LiveStatusKind::CiFailed => Some(("ci failed", 11, RecommendedAction::InspectTestOutput)),
         LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::InspectAgent)),
         LiveStatusKind::WorktreeMissing
         | LiveStatusKind::TmuxMissing

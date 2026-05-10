@@ -52,9 +52,13 @@ impl From<notify::Error> for SupervisorError {
 
 #[cfg(test)]
 mod tests {
-    use ajax_core::models::LiveStatusKind;
+    use std::path::PathBuf;
 
-    use super::{AgentEvent, MonitorEvent, ProcessEvent, SupervisorError, SupervisorStatusMachine};
+    use ajax_core::models::{GitStatus, LiveStatusKind};
+
+    use super::{
+        AgentEvent, MonitorEvent, ProcessEvent, RepoEvent, SupervisorError, SupervisorStatusMachine,
+    };
 
     #[test]
     fn supervisor_errors_have_operator_facing_display() {
@@ -90,5 +94,59 @@ mod tests {
             status.observation().map(|observation| observation.kind),
             Some(LiveStatusKind::CommandFailed)
         );
+    }
+
+    #[test]
+    fn supervisor_status_machine_preserves_conflict_over_late_output() {
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply(&MonitorEvent::Agent(AgentEvent::Thinking));
+        status.apply(&MonitorEvent::Repo(RepoEvent::GitSnapshot {
+            worktree_path: PathBuf::from("/tmp/worktree"),
+            status: git_status_with_conflicts(),
+            diff_stat: String::new(),
+        }));
+        status.apply(&MonitorEvent::Process(ProcessEvent::Stdout {
+            line: "still streaming logs".to_string(),
+        }));
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::MergeConflict)
+        );
+    }
+
+    #[test]
+    fn supervisor_status_machine_preserves_ci_failure_over_late_output() {
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply(&MonitorEvent::Agent(AgentEvent::Thinking));
+        status.apply(&MonitorEvent::Process(ProcessEvent::Stdout {
+            line: "GitHub Actions failed: test.yml / build".to_string(),
+        }));
+        status.apply(&MonitorEvent::Process(ProcessEvent::Stdout {
+            line: "late stdout".to_string(),
+        }));
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::CiFailed)
+        );
+    }
+
+    fn git_status_with_conflicts() -> GitStatus {
+        GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: true,
+            last_commit: None,
+        }
     }
 }

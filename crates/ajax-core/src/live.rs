@@ -79,12 +79,30 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 
     if contains_any(
         &lower,
-        &["merge conflict", "conflict (content)", "fix conflicts"],
+        &[
+            "merge conflict",
+            "conflict (",
+            "automatic merge failed",
+            "fix conflicts",
+        ],
     ) {
         return LiveObservation::new(
             LiveStatusKind::MergeConflict,
             "merge conflict needs attention",
         );
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "ci failed",
+            "github actions failed",
+            "check run failed",
+            "workflow failed",
+            "failing checks",
+        ],
+    ) {
+        return LiveObservation::new(LiveStatusKind::CiFailed, "ci failed");
     }
 
     if contains_any(
@@ -107,7 +125,6 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "command failed",
             "exit code",
             "nonzeroexit",
-            "error:",
             "failed with",
         ],
     ) {
@@ -181,10 +198,14 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
         LiveStatusKind::AuthRequired
         | LiveStatusKind::RateLimited
         | LiveStatusKind::ContextLimit
+        | LiveStatusKind::CiFailed
         | LiveStatusKind::CommandFailed
         | LiveStatusKind::Blocked => {
             task.agent_status = AgentRuntimeStatus::Blocked;
             update_live_lifecycle(task, LifecycleStatus::Error);
+            if observation.kind == LiveStatusKind::CiFailed {
+                task.add_side_flag(SideFlag::TestsFailed);
+            }
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
@@ -290,6 +311,7 @@ fn is_failure_status(kind: LiveStatusKind) -> bool {
         LiveStatusKind::AuthRequired
             | LiveStatusKind::RateLimited
             | LiveStatusKind::ContextLimit
+            | LiveStatusKind::CiFailed
             | LiveStatusKind::CommandFailed
             | LiveStatusKind::Blocked
             | LiveStatusKind::MergeConflict
@@ -320,6 +342,7 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
             | LiveStatusKind::RateLimited
             | LiveStatusKind::AuthRequired
             | LiveStatusKind::MergeConflict
+            | LiveStatusKind::CiFailed
             | LiveStatusKind::ContextLimit
             | LiveStatusKind::CommandFailed
             | LiveStatusKind::Done
@@ -394,6 +417,35 @@ mod tests {
             (
                 "CONFLICT (content): merge conflict in src/lib.rs",
                 LiveStatusKind::MergeConflict,
+            ),
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, expected, "{pane}");
+        }
+    }
+
+    #[test]
+    fn pane_classifier_detects_conflict_and_ci_failure_evidence() {
+        for (pane, expected) in [
+            (
+                "Automatic merge failed; fix conflicts and then commit the result.",
+                LiveStatusKind::MergeConflict,
+            ),
+            (
+                "CONFLICT (modify/delete): src/lib.rs deleted in HEAD and modified in feature",
+                LiveStatusKind::MergeConflict,
+            ),
+            ("CI failed for this branch", LiveStatusKind::CiFailed),
+            (
+                "GitHub Actions failed: test.yml / build",
+                LiveStatusKind::CiFailed,
+            ),
+            ("check run failed: cargo test", LiveStatusKind::CiFailed),
+            ("workflow failed after 3m", LiveStatusKind::CiFailed),
+            (
+                "There are failing checks on the PR",
+                LiveStatusKind::CiFailed,
             ),
         ] {
             let observation = classify_pane(pane);
@@ -593,6 +645,29 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CommandFailed)
+        );
+    }
+
+    #[test]
+    fn ci_failed_observation_marks_task_blocked_and_tests_failed() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
+        );
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(task.has_side_flag(SideFlag::TestsFailed));
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CiFailed)
         );
     }
 
