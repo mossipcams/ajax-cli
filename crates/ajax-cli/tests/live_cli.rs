@@ -514,10 +514,7 @@ fn live_new_execute_requires_title_before_workmux_can_run() {
         "ajax new --execute without a title should fail"
     );
     assert_eq!(stdout(&output), "");
-    assert_eq!(
-        stderr(&output),
-        "CommandFailed(\"task title is required; pass --title\")\n"
-    );
+    assert_eq!(stderr(&output), "task title is required; pass --title\n");
     assert!(
         !workmux_log.exists(),
         "workmux must not run until Ajax has a completed task title"

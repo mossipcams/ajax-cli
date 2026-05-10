@@ -553,7 +553,18 @@ pub fn new_task_plan<R: Registry>(
     };
 
     let workmux = WorkmuxAdapter::new("workmux");
-    let branch = format!("ajax/{}", slugify_title(&request.title));
+    let handle = slugify_title(&request.title);
+    let qualified_handle = format!("{}/{}", request.repo, handle);
+    if context.registry.list_tasks().into_iter().any(|task| {
+        task.qualified_handle() == qualified_handle
+            && task.lifecycle_status != LifecycleStatus::Removed
+    }) {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "task already exists: {qualified_handle}"
+        )]));
+    }
+
+    let branch = format!("ajax/{handle}");
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     plan.commands.push(workmux.add_task(&WorkmuxNewTask {
         repo_path: repo.path.display().to_string(),
@@ -686,6 +697,23 @@ pub fn open_task_plan<R: Registry>(
     Ok(plan)
 }
 
+pub fn new_task_open_plan<R: Registry>(
+    context: &CommandContext<R>,
+    request: &NewTaskRequest,
+) -> Result<CommandPlan, CommandError> {
+    let task = task_from_new_request(context, request)?;
+    let workmux = WorkmuxAdapter::new("workmux");
+    let mut plan = CommandPlan::new(format!("open task: {}", task.qualified_handle()));
+
+    plan.commands.push(command_in_task_repo(
+        context,
+        &task,
+        workmux.open_task(&task.branch),
+    )?);
+
+    Ok(plan)
+}
+
 pub fn mark_task_opened<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
@@ -804,6 +832,7 @@ pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPl
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
         .map(|task| {
             let command = workmux.remove_task(&task.branch);
@@ -822,6 +851,7 @@ pub fn sweep_cleanup_candidates<R: Registry>(context: &CommandContext<R>) -> Vec
         .registry
         .list_tasks()
         .into_iter()
+        .filter(|task| is_operational_task(task))
         .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
         .map(Task::qualified_handle)
         .collect()
@@ -1670,7 +1700,7 @@ mod tests {
             &context,
             NewTaskRequest {
                 repo: "web".to_string(),
-                title: "fix login".to_string(),
+                title: "fix logout".to_string(),
                 agent: "codex".to_string(),
             },
         )
@@ -1683,7 +1713,7 @@ mod tests {
                 "workmux",
                 [
                     "add",
-                    "ajax/fix-login",
+                    "ajax/fix-logout",
                     "--agent",
                     "codex",
                     "--background",
@@ -1928,6 +1958,21 @@ mod tests {
             vec![CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
                 .with_cwd("/Users/matt/projects/web")]
         );
+    }
+
+    #[test]
+    fn sweep_cleanup_ignores_removed_tasks() {
+        let mut context = context_with_cleanable_task();
+        context
+            .registry
+            .update_lifecycle(&TaskId::new("task-1"), LifecycleStatus::Removed)
+            .unwrap();
+
+        let plan = sweep_cleanup_plan(&context);
+        let candidates = super::sweep_cleanup_candidates(&context);
+
+        assert!(plan.commands.is_empty());
+        assert!(candidates.is_empty());
     }
 
     #[test]

@@ -112,6 +112,9 @@ enum AppView {
         repo: String,
         title: String,
     },
+    Help {
+        previous: Box<AppView>,
+    },
 }
 
 impl SelectableKind {
@@ -239,6 +242,7 @@ fn build_selectables(
             );
         }
         AppView::NewTaskInput { .. } => {}
+        AppView::Help { .. } => {}
     }
     out
 }
@@ -370,6 +374,14 @@ impl App {
     /// Erase editable input, then return to the cockpit's main project list.
     /// Returns false at the top level so back never exits the TUI.
     pub fn go_back(&mut self) -> bool {
+        if let AppView::Help { previous } = &self.view {
+            self.view = *previous.clone();
+            self.selected = 0;
+            self.viewport_scroll = 0;
+            self.rebuild_selectables();
+            return true;
+        }
+
         if let AppView::NewTaskInput { title, .. } = &mut self.view {
             if !title.is_empty() {
                 title.pop();
@@ -378,6 +390,20 @@ impl App {
         }
 
         self.go_home()
+    }
+
+    pub fn open_help(&mut self) {
+        if matches!(self.view, AppView::Help { .. }) {
+            return;
+        }
+
+        self.view = AppView::Help {
+            previous: Box::new(self.view.clone()),
+        };
+        self.selected = 0;
+        self.viewport_scroll = 0;
+        self.flash = None;
+        self.rebuild_selectables();
     }
 
     pub fn activate_selected(&mut self) -> Option<AttentionItem> {
@@ -554,12 +580,26 @@ pub fn run_interactive(
     inbox: InboxResponse,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
+    run_interactive_with_flash(repos, tasks, review, inbox, None, on_action)
+}
+
+pub fn run_interactive_with_flash(
+    repos: ReposResponse,
+    tasks: TasksResponse,
+    review: TasksResponse,
+    inbox: InboxResponse,
+    initial_flash: Option<String>,
+    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+) -> io::Result<Option<PendingAction>> {
     let mut stdout = io::stdout();
     let mut terminal_mode = TerminalModeGuard::enter(&mut stdout)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(repos, tasks, review, inbox);
+    if let Some(message) = initial_flash {
+        app.flash(message);
+    }
     let result = run_event_loop(&mut terminal, &mut app, on_action);
 
     terminal_mode.leave(terminal.backend_mut())?;
@@ -658,8 +698,11 @@ fn run_event_loop<B: Backend>(
         if event::poll(Duration::from_millis(250))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
+                    code if is_help_key_event(code, key.modifiers) => {
+                        app.open_help();
+                    }
                     KeyCode::Esc => {
-                        app.go_home();
+                        handle_escape_key(app);
                     }
                     KeyCode::Enter if app.is_collecting_input() => {
                         if let Some(pending) = app.submit_input() {
@@ -685,15 +728,8 @@ fn run_event_loop<B: Backend>(
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
                         if let Some(item) = app.activate_selected() {
-                            match on_action(&item)? {
-                                ActionOutcome::Refresh {
-                                    repos,
-                                    tasks,
-                                    review,
-                                    inbox,
-                                } => app.reload(repos, tasks, review, inbox),
-                                ActionOutcome::Defer(pending) => return Ok(Some(pending)),
-                                ActionOutcome::Message(msg) => app.flash(msg),
+                            if let Some(pending) = handle_action_result(app, on_action(&item))? {
+                                return Ok(Some(pending));
                             }
                         }
                     }
@@ -722,14 +758,49 @@ fn run_event_loop<B: Backend>(
     }
 }
 
+fn handle_action_result(
+    app: &mut App,
+    result: io::Result<ActionOutcome>,
+) -> io::Result<Option<PendingAction>> {
+    match result {
+        Ok(ActionOutcome::Refresh {
+            repos,
+            tasks,
+            review,
+            inbox,
+        }) => {
+            app.reload(repos, tasks, review, inbox);
+            Ok(None)
+        }
+        Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
+        Ok(ActionOutcome::Message(message)) => {
+            app.flash(message);
+            Ok(None)
+        }
+        Err(error) => {
+            app.flash(error.to_string());
+            Ok(None)
+        }
+    }
+}
+
 fn handle_back_key(app: &mut App) -> bool {
     app.go_back();
     false
 }
 
+fn handle_escape_key(app: &mut App) -> bool {
+    app.go_back()
+}
+
 fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
     matches!(code, KeyCode::Esc | KeyCode::Left | KeyCode::Char('h'))
         || is_navigation_backspace_key(code, modifiers)
+}
+
+fn is_help_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
+    matches!(code, KeyCode::Char('?'))
+        || matches!(code, KeyCode::Char('/') if modifiers.contains(KeyModifiers::SHIFT))
 }
 
 fn is_navigation_backspace_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -833,6 +904,10 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(crumb_sep());
             parts.push(Span::styled("new task", Style::default().fg(Color::Cyan)));
         }
+        AppView::Help { .. } => {
+            parts.push(crumb_sep());
+            parts.push(Span::styled("help", Style::default().fg(Color::Cyan)));
+        }
     }
 
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
@@ -869,10 +944,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             AppView::Project { .. } => "act",
             AppView::TaskPicker { .. } => "run",
             AppView::NewTaskInput { .. } => "create",
+            AppView::Help { .. } => "back",
         };
         let nested = !matches!(app.view, AppView::Projects);
         push_hint(&mut parts, "up/down", "select", false);
         push_hint(&mut parts, "enter", enter_label, false);
+        push_hint(&mut parts, "?", "help", false);
         if nested {
             let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {
                 "erase/back"
@@ -1134,12 +1211,48 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         return (rows, sel_to_row);
     }
 
+    if matches!(app.view, AppView::Help { .. }) {
+        rows.push(render_row(
+            action_glyph("status"),
+            vec![Span::styled(
+                "Keyboard shortcuts",
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )],
+        ));
+        for (key, label) in [
+            ("up/down", "select the previous or next row"),
+            ("j/k", "select the next or previous row"),
+            ("enter", "open or run the selected row"),
+            ("?", "show this help page"),
+            ("esc/h/backspace", "go back to the previous view"),
+            ("q", "quit the cockpit"),
+            ("mouse scroll", "move the selection"),
+            ("mouse click", "select a visible row"),
+            (
+                "new task input",
+                "type a title; backspace erases before going back",
+            ),
+        ] {
+            rows.push(render_row(
+                Span::styled(".", Style::default().fg(Color::DarkGray)),
+                vec![
+                    Span::styled(format!("{key:<18}"), Style::default().fg(Color::Yellow)),
+                    Span::styled(label.to_string(), Style::default().fg(Color::DarkGray)),
+                ],
+            ));
+        }
+        return (rows, sel_to_row);
+    }
+
     if app.selectables.is_empty() {
         let msg = match &app.view {
             AppView::Projects => "no projects yet - edit ~/.config/ajax/config.toml to add one",
             AppView::Project { .. } => "nothing here yet - esc/h to go back",
             AppView::TaskPicker { .. } => "no matching tasks - esc/h to go back",
             AppView::NewTaskInput { .. } => "enter a task name",
+            AppView::Help { .. } => "keyboard shortcuts",
         };
         rows.push(empty_state(msg));
         return (rows, sel_to_row);
@@ -1767,6 +1880,81 @@ mod tests {
     }
 
     #[test]
+    fn help_page_lists_cockpit_shortcuts() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        app.open_help();
+
+        let content = render_to_string(80, 30, &app);
+        for expected in [
+            "> help",
+            "Keyboard shortcuts",
+            "up/down",
+            "j/k",
+            "enter",
+            "?",
+            "esc/h/backspace",
+            "q",
+            "mouse scroll",
+            "mouse click",
+            "new task input",
+        ] {
+            assert!(content.contains(expected), "missing {expected}");
+        }
+    }
+
+    #[test]
+    fn question_mark_is_the_help_shortcut() {
+        assert!(super::is_help_key_event(
+            KeyCode::Char('?'),
+            KeyModifiers::NONE
+        ));
+        assert!(super::is_help_key_event(
+            KeyCode::Char('/'),
+            KeyModifiers::SHIFT
+        ));
+        assert!(!super::is_help_key_event(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE
+        ));
+    }
+
+    #[test]
+    fn help_back_returns_to_previous_view() {
+        let mut app = app_in_project_view();
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+
+        app.open_help();
+        assert!(matches!(app.view, AppView::Help { .. }));
+        assert!(!super::handle_back_key(&mut app));
+
+        let content = render_to_string(80, 30, &app);
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+        assert!(content.contains("> web"));
+        assert!(!content.contains("Keyboard shortcuts"));
+    }
+
+    #[test]
+    fn help_escape_returns_to_previous_view() {
+        let mut app = app_in_project_view();
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+
+        app.open_help();
+        assert!(matches!(app.view, AppView::Help { .. }));
+        assert!(super::handle_escape_key(&mut app));
+
+        let content = render_to_string(80, 30, &app);
+        assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+        assert!(content.contains("> web"));
+        assert!(!content.contains("Keyboard shortcuts"));
+    }
+
+    #[test]
     fn project_workflow_shows_action_menu() {
         let mut app = App::new(
             sample_repos(),
@@ -2329,5 +2517,27 @@ mod tests {
         );
         app.flash("done".to_string());
         assert!(app.flash.is_some());
+    }
+
+    #[test]
+    fn action_errors_set_flash_and_stay_in_ajax() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        let pending = super::handle_action_result(
+            &mut app,
+            Err(std::io::Error::other("workmux exited with status 42")),
+        )
+        .unwrap();
+
+        assert!(pending.is_none());
+        assert_eq!(
+            app.flash.as_ref().map(|(message, _)| message.as_str()),
+            Some("workmux exited with status 42")
+        );
     }
 }

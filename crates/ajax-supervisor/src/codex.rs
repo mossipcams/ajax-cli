@@ -83,13 +83,20 @@ impl CodexAdapter {
             .map_err(|error| SupervisorError::Process(error.to_string()))??;
 
         let status = child.wait().await?;
+        let status_code = status.code();
         send_event(
             &events,
-            MonitorEvent::Process(ProcessEvent::Exited {
-                code: status.code(),
-            }),
+            MonitorEvent::Process(ProcessEvent::Exited { code: status_code }),
         )
         .await?;
+
+        if !status.success() {
+            let message = status_code.map_or_else(
+                || "codex exited without a status code".to_string(),
+                |code| format!("codex exited with status {code}"),
+            );
+            return Err(SupervisorError::Process(message));
+        }
 
         Ok(())
     }
@@ -255,6 +262,46 @@ mod tests {
         assert!(
             events.contains(&MonitorEvent::Process(ProcessEvent::Exited {
                 code: Some(0)
+            }))
+        );
+
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn codex_supervisor_reports_nonzero_agent_exit() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-fake-codex-nonzero-{}", std::process::id()));
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nexit 42\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let adapter = CodexAdapter::new(script.display().to_string());
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let error = adapter
+            .supervise_exec_json("ignored", tx)
+            .await
+            .unwrap_err();
+
+        let mut events = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            events.push(event);
+        }
+
+        assert!(matches!(
+            error,
+            crate::SupervisorError::Process(message)
+                if message == "codex exited with status 42"
+        ));
+        assert!(
+            events.contains(&MonitorEvent::Process(ProcessEvent::Exited {
+                code: Some(42)
             }))
         );
 

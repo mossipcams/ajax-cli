@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::process::{Command, Stdio};
+use std::{
+    error::Error,
+    fmt,
+    process::{Command, Stdio},
+};
 
 use crate::models::{GitStatus, TmuxStatus, WorktrunkStatus};
 
@@ -61,6 +65,33 @@ pub enum CommandRunError {
         cwd: Option<String>,
     },
 }
+
+impl fmt::Display for CommandRunError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SpawnFailed(message) => write!(formatter, "failed to start command: {message}"),
+            Self::MissingStatusCode => write!(formatter, "command exited without a status code"),
+            Self::NonZeroExit {
+                program,
+                status_code,
+                stderr,
+                cwd,
+            } => {
+                write!(formatter, "{program} exited with status {status_code}")?;
+                if let Some(cwd) = cwd {
+                    write!(formatter, " in {cwd}")?;
+                }
+                let stderr = stderr.trim();
+                if !stderr.is_empty() {
+                    write!(formatter, ": {stderr}")?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+impl Error for CommandRunError {}
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecordingCommandRunner {

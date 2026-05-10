@@ -1,5 +1,7 @@
 use std::{
     collections::BTreeMap,
+    error::Error,
+    fmt,
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -332,6 +334,21 @@ pub enum RegistryError {
     TaskNotFound(TaskId),
 }
 
+impl fmt::Display for RegistryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DuplicateTask(task_id) => {
+                write!(formatter, "duplicate task: {}", task_id.as_str())
+            }
+            Self::TaskNotFound(task_id) => {
+                write!(formatter, "task not found: {}", task_id.as_str())
+            }
+        }
+    }
+}
+
+impl Error for RegistryError {}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistrySnapshotError {
     Encode(String),
@@ -340,6 +357,23 @@ pub enum RegistrySnapshotError {
     Io(String),
     IncompatibleSchema { found: i64, supported: i64 },
 }
+
+impl fmt::Display for RegistrySnapshotError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Encode(message) => write!(formatter, "state encode failed: {message}"),
+            Self::Decode(message) => write!(formatter, "state decode failed: {message}"),
+            Self::Database(message) => write!(formatter, "database error: {message}"),
+            Self::Io(message) => write!(formatter, "I/O error: {message}"),
+            Self::IncompatibleSchema { found, supported } => write!(
+                formatter,
+                "incompatible state schema: found {found}, supported {supported}"
+            ),
+        }
+    }
+}
+
+impl Error for RegistrySnapshotError {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 struct RegistrySnapshot {
@@ -427,6 +461,34 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, RegistryError::DuplicateTask(TaskId::new("task-1")));
+    }
+
+    #[test]
+    fn registry_errors_have_operator_facing_display() {
+        assert_eq!(
+            RegistryError::DuplicateTask(TaskId::new("task-1")).to_string(),
+            "duplicate task: task-1"
+        );
+        assert_eq!(
+            RegistryError::TaskNotFound(TaskId::new("missing")).to_string(),
+            "task not found: missing"
+        );
+    }
+
+    #[test]
+    fn registry_snapshot_errors_have_operator_facing_display() {
+        assert_eq!(
+            RegistrySnapshotError::Database("file is not a database".to_string()).to_string(),
+            "database error: file is not a database"
+        );
+        assert_eq!(
+            RegistrySnapshotError::IncompatibleSchema {
+                found: 4,
+                supported: 1,
+            }
+            .to_string(),
+            "incompatible state schema: found 4, supported 1"
+        );
     }
 
     #[test]

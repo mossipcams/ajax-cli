@@ -47,7 +47,7 @@ pub(crate) fn load_context(
         let contents = std::fs::read_to_string(&paths.config_file)
             .map_err(|error| CliError::ContextLoad(error.to_string()))?;
         Config::from_toml_str(&contents)
-            .map_err(|error| CliError::ContextLoad(format!("config parse failed: {error:?}")))?
+            .map_err(|error| CliError::ContextLoad(format!("config parse failed: {error}")))?
     } else {
         Config::default()
     };
@@ -56,7 +56,7 @@ pub(crate) fn load_context(
         reject_legacy_json_state(&paths.state_file)?;
         store
             .load()
-            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error:?}")))?
+            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
     } else {
         InMemoryRegistry::default()
     };
@@ -94,5 +94,5 @@ pub(crate) fn save_context(
     }
     SqliteRegistryStore::new(&paths.state_file)
         .save(&context.registry)
-        .map_err(|error| CliError::ContextSave(format!("state save failed: {error:?}")))
+        .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))
 }

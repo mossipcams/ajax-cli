@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{error::Error, fmt, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -45,6 +45,16 @@ impl Config {
 pub enum ConfigParseError {
     Toml(String),
 }
+
+impl fmt::Display for ConfigParseError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Toml(message) => write!(formatter, "toml parse error: {message}"),
+        }
+    }
+}
+
+impl Error for ConfigParseError {}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ManagedRepo {
@@ -116,7 +126,10 @@ impl TestCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{CleanupRules, Config, ConfigPaths, LauncherDefinition, ManagedRepo, TestCommand};
+    use super::{
+        CleanupRules, Config, ConfigParseError, ConfigPaths, LauncherDefinition, ManagedRepo,
+        TestCommand,
+    };
     use std::path::Path;
 
     #[test]
@@ -190,5 +203,13 @@ mod tests {
         assert_eq!(config.repos[0].name, "web");
         assert_eq!(config.launchers[0].command, "codex");
         assert_eq!(config.test_commands[0].repo, "web");
+    }
+
+    #[test]
+    fn config_parse_errors_have_operator_facing_display() {
+        assert_eq!(
+            ConfigParseError::Toml("missing field".to_string()).to_string(),
+            "toml parse error: missing field"
+        );
     }
 }

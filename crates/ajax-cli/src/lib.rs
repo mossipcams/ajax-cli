@@ -5,7 +5,7 @@ mod render;
 use ajax_core::{
     adapters::{CommandOutput, CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    output::{DoctorCheck, ReconcileResponse},
+    output::DoctorCheck,
     registry::{InMemoryRegistry, Registry},
 };
 use ajax_supervisor::codex::CodexAdapter;
@@ -24,9 +24,40 @@ use std::time::Duration;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
     CommandFailed(String),
+    CommandFailedAfterStateChange(String),
     JsonSerialization(String),
     ContextLoad(String),
     ContextSave(String),
+}
+
+impl std::fmt::Display for CliError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CliError::CommandFailed(message) | CliError::CommandFailedAfterStateChange(message) => {
+                write!(formatter, "{message}")
+            }
+            CliError::JsonSerialization(message) => {
+                write!(formatter, "json serialization failed: {message}")
+            }
+            CliError::ContextLoad(message) => write!(formatter, "context load failed: {message}"),
+            CliError::ContextSave(message) => write!(formatter, "context save failed: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for CliError {}
+
+impl CliError {
+    fn state_changed(&self) -> bool {
+        matches!(self, CliError::CommandFailedAfterStateChange(_))
+    }
+
+    fn after_state_change(self) -> Self {
+        match self {
+            CliError::CommandFailed(message) => CliError::CommandFailedAfterStateChange(message),
+            error => error,
+        }
+    }
 }
 
 pub fn run_with_args(
@@ -41,7 +72,15 @@ pub fn run_with_args(
     let mut context = load_context(&paths)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
-        render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths))?;
+        match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                if error.state_changed() {
+                    save_context(&paths, &context)?;
+                }
+                return Err(error);
+            }
+        };
     if rendered.state_changed {
         save_context(&paths, &context)?;
     }
@@ -97,7 +136,16 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Message(message) => return Ok(message),
     };
     let mut context = load_context(paths)?;
-    let rendered = render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))?;
+    let rendered = match render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))
+    {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            if error.state_changed() {
+                save_context(paths, &context)?;
+            }
+            return Err(error);
+        }
+    };
     if rendered.state_changed {
         save_context(paths, &context)?;
     }
@@ -148,41 +196,41 @@ fn render_matches_with_paths(
         Some(("new", subcommand)) => {
             let request = new_task_request(subcommand)?;
             let plan = commands::new_task_plan(context, request).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("open", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::open_task_plan(context, task, commands::OpenMode::Attach)
                 .map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("trunk", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::trunk_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("check", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::check_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("diff", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::diff_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("merge", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("clean", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
-            render_or_execute_plan(plan, subcommand)
+            render_readonly_plan(plan, subcommand)
         }
         Some(("sweep", subcommand)) => {
-            render_or_execute_plan(commands::sweep_cleanup_plan(context), subcommand)
+            render_readonly_plan(commands::sweep_cleanup_plan(context), subcommand)
         }
         Some(("next", subcommand)) => render_response(
             commands::next(context),
@@ -206,21 +254,25 @@ fn render_matches_with_paths(
             }
             render_response(response, subcommand.get_flag("json"), render_doctor_human)
         }
-        Some(("status", _)) => {
-            render_response(commands::status(context), false, render_tasks_human)
-        }
+        Some(("status", subcommand)) => render_response(
+            commands::status(context),
+            subcommand.get_flag("json"),
+            render_tasks_human,
+        ),
         Some(("state", subcommand)) => render_state_command(context, subcommand),
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
-        Some(("reconcile", subcommand)) => render_response(
-            ReconcileResponse {
-                tasks_checked: 0,
-                tasks_changed: 0,
-            },
-            subcommand.get_flag("json"),
-            render_reconcile_human,
-        ),
-        Some((name, _)) => Ok(format!("{name}: command accepted; adapter wiring pending")),
-        None => Ok("ajax: no command provided".to_string()),
+        Some(("reconcile", _)) => Err(CliError::CommandFailed(
+            "reconcile requires mutable context and runner support".to_string(),
+        )),
+        Some(("supervise", _)) => Err(CliError::CommandFailed(
+            "supervise requires mutable context and runner support".to_string(),
+        )),
+        Some((name, _)) => Err(CliError::CommandFailed(format!(
+            "unsupported command: {name}"
+        ))),
+        None => Err(CliError::CommandFailed(
+            "command is required; pass --help".to_string(),
+        )),
     }
 }
 
@@ -261,7 +313,7 @@ fn export_state_snapshot(
     context
         .registry
         .save_json_snapshot(path)
-        .map_err(|error| CliError::CommandFailed(format!("state export failed: {error:?}")))?;
+        .map_err(|error| CliError::CommandFailed(format!("state export failed: {error}")))?;
 
     Ok(format!("exported state snapshot: {}", path.display()))
 }
@@ -410,10 +462,14 @@ fn render_matches_mut(
                 state_changed: response.tasks_changed > 0,
             })
         }
-        Some(("status", _)) => {
+        Some(("status", subcommand)) => {
             let changed = refresh_live_context(context, runner)?;
             Ok(RenderedCommand {
-                output: render_response(commands::status(context), false, render_tasks_human)?,
+                output: render_response(
+                    commands::status(context),
+                    subcommand.get_flag("json"),
+                    render_tasks_human,
+                )?,
                 state_changed: changed,
             })
         }
@@ -526,11 +582,8 @@ fn render_matches_mut(
                     state_changed: false,
                 });
             }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            for candidate in &candidates {
-                commands::mark_task_removed(context, candidate).map_err(command_error)?;
-            }
+            let outputs =
+                execute_sweep_cleanup(context, runner, &candidates, subcommand.get_flag("yes"))?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, None),
                 state_changed: !candidates.is_empty(),
@@ -546,13 +599,15 @@ fn render_matches_mut(
             }
             // Interactive TUI with full action support.
             let mut state_changed = false;
+            let mut cockpit_flash = None;
             state_changed |= refresh_live_context(context, runner)?;
             loop {
-                let pending = ajax_tui::run_interactive(
+                let pending = ajax_tui::run_interactive_with_flash(
                     commands::list_repos(context),
                     commands::list_tasks(context, None),
                     commands::review_queue(context),
                     commands::inbox(context),
+                    cockpit_flash.take(),
                     |item| tui_cockpit_action(item, context, runner, &mut state_changed),
                 )
                 .map_err(|e| CliError::CommandFailed(e.to_string()))?;
@@ -563,8 +618,14 @@ fn render_matches_mut(
                     });
                 };
 
-                match execute_pending_cockpit_action(&pending, context, runner, &mut state_changed)?
-                {
+                let Some(outcome) = handle_pending_cockpit_result(
+                    execute_pending_cockpit_action(&pending, context, runner, &mut state_changed),
+                    &mut cockpit_flash,
+                ) else {
+                    continue;
+                };
+
+                match outcome {
                     PendingCockpitOutcome::Exit(output) => {
                         return Ok(RenderedCommand {
                             output,
@@ -579,6 +640,19 @@ fn render_matches_mut(
             output: render_matches(matches, context)?,
             state_changed: false,
         }),
+    }
+}
+
+fn handle_pending_cockpit_result(
+    result: Result<PendingCockpitOutcome, CliError>,
+    cockpit_flash: &mut Option<String>,
+) -> Option<PendingCockpitOutcome> {
+    match result {
+        Ok(outcome) => Some(outcome),
+        Err(error) => {
+            *cockpit_flash = Some(error.to_string());
+            None
+        }
     }
 }
 
@@ -618,7 +692,7 @@ fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
         .build()
         .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
 
-    let events = runtime.block_on(async move {
+    let (events, supervise_result) = runtime.block_on(async move {
         let adapter = CodexAdapter::new(codex_bin);
         let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
         let handle = tokio::spawn(async move { adapter.supervise_exec_json(&prompt, tx).await });
@@ -626,12 +700,17 @@ fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
         while let Some(event) = rx.recv().await {
             events.push(event);
         }
-        handle
-            .await
-            .map_err(|error| CliError::CommandFailed(format!("supervisor task failed: {error}")))?
-            .map_err(|error| CliError::CommandFailed(format!("supervisor failed: {error:?}")))?;
-        Ok::<_, CliError>(events)
+        let supervise_result = match handle.await {
+            Ok(result) => result.map_err(|error| format!("supervisor failed: {error}")),
+            Err(error) => Err(format!("supervisor task failed: {error}")),
+        };
+        Ok::<_, CliError>((events, supervise_result))
     })?;
+    if let Err(message) = supervise_result {
+        return Err(CliError::CommandFailed(supervisor_failure_message(
+            message, &events,
+        )));
+    }
 
     if json {
         events
@@ -649,6 +728,24 @@ fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
             .collect::<Vec<_>>()
             .join("\n"))
     }
+}
+
+fn supervisor_failure_message(message: String, events: &[ajax_supervisor::MonitorEvent]) -> String {
+    let stderr = events
+        .iter()
+        .filter_map(|event| match event {
+            ajax_supervisor::MonitorEvent::Process(ajax_supervisor::ProcessEvent::Stderr {
+                line,
+            }) => Some(line.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    if stderr.is_empty() {
+        return message;
+    }
+
+    format!("{message}; stderr: {}", stderr.join(" | "))
 }
 
 fn render_live_cockpit_command<R: CommandRunner>(
@@ -701,14 +798,9 @@ fn execute_new_task_plan<R: CommandRunner>(
     confirmed: bool,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
     let mut outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
-    let task = commands::record_new_task(context, request).map_err(command_error)?;
-    let open_plan = commands::open_task_plan(
-        context,
-        &task.qualified_handle(),
-        commands::OpenMode::Attach,
-    )
-    .map_err(command_error)?;
+    let open_plan = commands::new_task_open_plan(context, request).map_err(command_error)?;
     outputs.extend(commands::execute_plan(&open_plan, true, runner).map_err(command_error)?);
+    let task = commands::record_new_task(context, request).map_err(command_error)?;
     commands::mark_task_opened(context, &task.qualified_handle()).map_err(command_error)?;
 
     let task = context
@@ -720,6 +812,37 @@ fn execute_new_task_plan<R: CommandRunner>(
         .unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+fn execute_sweep_cleanup<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    candidates: &[String],
+    confirmed: bool,
+) -> Result<Vec<CommandOutput>, CliError> {
+    let mut outputs = Vec::new();
+    let mut state_changed = false;
+
+    for candidate in candidates {
+        let plan = commands::clean_task_plan(context, candidate).map_err(command_error)?;
+        match commands::execute_plan(&plan, confirmed, runner) {
+            Ok(mut command_outputs) => {
+                outputs.append(&mut command_outputs);
+                commands::mark_task_removed(context, candidate).map_err(command_error)?;
+                state_changed = true;
+            }
+            Err(error) => {
+                let cli_error = command_error(error);
+                return Err(if state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                });
+            }
+        }
+    }
+
+    Ok(outputs)
 }
 
 fn parse_u32_arg(matches: &ArgMatches, name: &str, default: u32) -> Result<u32, CliError> {
@@ -781,6 +904,7 @@ fn tui_cockpit_action<R: CommandRunner>(
             let response = commands::inspect_task(context, handle).map_err(|error| {
                 let message = match command_error(error) {
                     CliError::CommandFailed(message)
+                    | CliError::CommandFailedAfterStateChange(message)
                     | CliError::JsonSerialization(message)
                     | CliError::ContextLoad(message)
                     | CliError::ContextSave(message) => message,
@@ -795,6 +919,7 @@ fn tui_cockpit_action<R: CommandRunner>(
             let response = commands::reconcile_external(context, runner).map_err(|error| {
                 let message = match command_error(error) {
                     CliError::CommandFailed(message)
+                    | CliError::CommandFailedAfterStateChange(message)
                     | CliError::JsonSerialization(message)
                     | CliError::ContextLoad(message)
                     | CliError::ContextSave(message) => message,
@@ -828,6 +953,7 @@ fn tui_cockpit_action<R: CommandRunner>(
 fn command_error_as_io(error: CommandError) -> std::io::Error {
     let message = match command_error(error) {
         CliError::CommandFailed(message)
+        | CliError::CommandFailedAfterStateChange(message)
         | CliError::JsonSerialization(message)
         | CliError::ContextLoad(message)
         | CliError::ContextSave(message) => message,
@@ -885,12 +1011,19 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "merge task" => commands::merge_task_plan(context, &pending.task_handle),
         "clean task" => commands::clean_task_plan(context, &pending.task_handle),
         "open worktrunk" => commands::trunk_task_plan(context, &pending.task_handle),
+        "open task" | "inspect agent" | "monitor task" | "review branch" => {
+            commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach)
+        }
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(command_error)?;
             *state_changed = response.tasks_changed > 0;
             return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
-        _ => commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach),
+        action => {
+            return Err(CliError::CommandFailed(format!(
+                "unknown cockpit action: {action}"
+            )));
+        }
     }
     .map_err(command_error)?;
     let outputs = commands::execute_plan(&plan, true, runner).map_err(command_error)?;
@@ -932,18 +1065,17 @@ fn pending_action_returns_to_cockpit(action: &str) -> bool {
     )
 }
 
-fn render_or_execute_plan(
+fn render_readonly_plan(
     plan: commands::CommandPlan,
     matches: &ArgMatches,
 ) -> Result<String, CliError> {
-    if !matches.get_flag("execute") {
-        return render_plan(plan, matches.get_flag("json"));
+    if matches.get_flag("execute") {
+        return Err(CliError::CommandFailed(
+            "execution requires mutable context and runner support".to_string(),
+        ));
     }
 
-    let mut runner = ProcessCommandRunner;
-    let outputs = commands::execute_plan(&plan, matches.get_flag("yes"), &mut runner)
-        .map_err(command_error)?;
-    Ok(render_execution_outputs(&outputs, None))
+    render_plan(plan, matches.get_flag("json"))
 }
 
 fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
@@ -984,10 +1116,10 @@ fn command_error(error: CommandError) -> CliError {
             CliError::CommandFailed(format!("plan blocked: {}", reasons.join(", ")))
         }
         CommandError::CommandRun(error) => {
-            CliError::CommandFailed(format!("command failed: {error:?}"))
+            CliError::CommandFailed(format!("command failed: {error}"))
         }
         CommandError::Registry(error) => {
-            CliError::CommandFailed(format!("registry update failed: {error:?}"))
+            CliError::CommandFailed(format!("registry update failed: {error}"))
         }
     }
 }
@@ -1061,6 +1193,38 @@ mod tests {
         context
     }
 
+    fn two_cleanable_tasks_context() -> CommandContext<InMemoryRegistry> {
+        let mut context = cleanable_context();
+        let mut task = Task::new(
+            TaskId::new("task-2"),
+            "web",
+            "fix-sidebar",
+            "Fix sidebar",
+            "ajax/fix-sidebar",
+            "main",
+            "/tmp/worktrees/web-fix-sidebar",
+            "ajax-web-fix-sidebar",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Cleanable;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-sidebar".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        context.registry.create_task(task).unwrap();
+        context
+    }
+
     #[derive(Default)]
     struct QueuedRunner {
         outputs: std::collections::VecDeque<CommandOutput>,
@@ -1099,6 +1263,23 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: String::new(),
         }
+    }
+
+    #[test]
+    fn cli_error_display_omits_internal_enum_wrapping() {
+        let error = CliError::CommandFailed("task title is required; pass --title".to_string());
+
+        assert_eq!(error.to_string(), "task title is required; pass --title");
+        assert!(!error.to_string().contains("CommandFailed"));
+    }
+
+    #[test]
+    fn binary_prints_cli_errors_with_display_formatting() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
+
+        assert!(main_source.contains("eprintln!(\"{error}\")"));
+        assert!(!main_source.contains("eprintln!(\"{error:?}\")"));
     }
 
     fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::AttentionItem {
@@ -1162,6 +1343,17 @@ mod tests {
             super::CliError::CommandFailed(message)
                 if message.contains("interactive cockpit requires command execution support")
         ));
+    }
+
+    #[test]
+    fn readonly_dispatch_does_not_have_adapter_wiring_placeholder() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let adapter_placeholder = ["adapter wiring", " pending"].concat();
+        let accepted_placeholder = ["command", " accepted"].concat();
+
+        assert!(!lib_source.contains(&adapter_placeholder));
+        assert!(!lib_source.contains(&accepted_placeholder));
     }
 
     #[test]
@@ -1326,6 +1518,36 @@ mod tests {
     }
 
     #[test]
+    fn status_command_renders_json_after_refreshing_live_state() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+
+        let output =
+            run_with_context_and_runner(["ajax", "status", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(
+            parsed["tasks"][0]["live_status"]["kind"],
+            "WaitingForApproval"
+        );
+    }
+
+    #[test]
     fn supervise_command_runs_codex_json_adapter_and_renders_events() {
         let fake_codex =
             std::env::temp_dir().join(format!("ajax-cli-fake-codex-{}", std::process::id()));
@@ -1360,12 +1582,96 @@ mod tests {
     }
 
     #[test]
+    fn supervise_command_reports_nonzero_agent_exit() {
+        let fake_codex = std::env::temp_dir().join(format!(
+            "ajax-cli-fake-codex-nonzero-{}",
+            std::process::id()
+        ));
+        std::fs::write(
+            &fake_codex,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nexit 42\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "supervise",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        let error = super::render_supervise_command(subcommand).unwrap_err();
+
+        let _ = std::fs::remove_file(fake_codex);
+        assert!(matches!(error, CliError::CommandFailed(message)
+                if message == "supervisor failed: process error: codex exited with status 42"));
+    }
+
+    #[test]
+    fn supervise_command_keeps_stderr_context_on_agent_exit() {
+        let fake_codex =
+            std::env::temp_dir().join(format!("ajax-cli-fake-codex-stderr-{}", std::process::id()));
+        std::fs::write(
+            &fake_codex,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nprintf 'auth expired\\n' >&2\nexit 42\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "supervise",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        let error = super::render_supervise_command(subcommand).unwrap_err();
+
+        let _ = std::fs::remove_file(fake_codex);
+        assert!(error.to_string().contains("codex exited with status 42"));
+        assert!(error.to_string().contains("stderr: auth expired"));
+    }
+
+    #[test]
     fn help_output_is_successful() {
         let context = sample_context();
         let output = run_with_context(["ajax", "--help"], &context).unwrap();
 
         assert!(output.contains("Usage: ajax [COMMAND]"));
         assert!(output.contains("Commands:"));
+    }
+
+    #[test]
+    fn bare_command_reports_missing_subcommand_as_error() {
+        let error = run_with_context(["ajax"], &sample_context()).unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("command is required; pass --help")));
+    }
+
+    #[test]
+    fn readonly_context_rejects_supervise_instead_of_reporting_placeholder_success() {
+        let error = run_with_context(
+            ["ajax", "supervise", "--prompt", "fix tests"],
+            &sample_context(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("supervise requires mutable context and runner support")));
     }
 
     #[test]
@@ -1453,6 +1759,16 @@ mod tests {
     }
 
     #[test]
+    fn readonly_context_rejects_reconcile_instead_of_reporting_synthetic_success() {
+        let context = sample_context();
+
+        let error = run_with_context(["ajax", "reconcile", "--json"], &context).unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("reconcile requires mutable context and runner support")));
+    }
+
+    #[test]
     fn json_flag_is_available_for_ui_consumed_commands() {
         for args in [
             ["ajax", "repos", "--json", ""],
@@ -1461,6 +1777,7 @@ mod tests {
             ["ajax", "inbox", "--json", ""],
             ["ajax", "next", "--json", ""],
             ["ajax", "review", "--json", ""],
+            ["ajax", "status", "--json", ""],
             ["ajax", "doctor", "--json", ""],
             ["ajax", "cockpit", "--json", ""],
         ] {
@@ -1696,7 +2013,7 @@ mod tests {
                 "--repo",
                 "web",
                 "--title",
-                "fix login",
+                "fix logout",
                 "--agent",
                 "codex",
             ],
@@ -1704,9 +2021,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output.contains("create task: fix login"));
+        assert!(output.contains("create task: fix logout"));
         assert!(output.contains(
-            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --agent codex --background --no-hooks)"
+            "(cd /Users/matt/projects/web && workmux add ajax/fix-logout --agent codex --background --no-hooks)"
         ));
     }
 
@@ -1755,6 +2072,17 @@ mod tests {
 
         assert!(output.contains("(cd /Users/matt/projects/web && workmux open ajax/fix-login)"));
         assert!(!output.contains("tmux attach-session -t ajax-web-fix-login"));
+    }
+
+    #[test]
+    fn readonly_context_rejects_execute_before_running_external_commands() {
+        let context = sample_context();
+
+        let error =
+            run_with_context(["ajax", "open", "web/fix-login", "--execute"], &context).unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("execution requires mutable context and runner support")));
     }
 
     #[test]
@@ -1890,6 +2218,30 @@ mod tests {
     }
 
     #[test]
+    fn cli_context_load_errors_do_not_expose_debug_variants() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-context-{}-{}",
+            std::process::id(),
+            "invalid-sqlite"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        std::fs::write(&state_file, "not sqlite").unwrap();
+
+        let error = run_with_context_paths(
+            ["ajax", "tasks", "--json"],
+            &CliContextPaths::new(&config_file, &state_file),
+        )
+        .unwrap_err();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(matches!(error, super::CliError::ContextLoad(message)
+                if message.contains("state load failed: database error:")
+                    && !message.contains("Database(")));
+    }
+
+    #[test]
     fn new_execute_records_task_in_registry_after_runner_succeeds() {
         let mut context = CommandContext::new(
             Config {
@@ -1949,6 +2301,158 @@ mod tests {
             "/Users/matt/projects/web__worktrees/ajax-fix-login"
         );
         assert_eq!(recorded.lifecycle_status, LifecycleStatus::Active);
+    }
+
+    #[test]
+    fn new_execute_rejects_existing_task_before_running_workmux() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("task already exists: web/fix-login")));
+        assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn new_execute_open_failure_does_not_record_task_state() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            CommandOutput {
+                status_code: 42,
+                stdout: String::new(),
+                stderr: "open failed".to_string(),
+            },
+        ]);
+
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: open failed"));
+        assert!(context.registry.list_tasks().is_empty());
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "workmux",
+                    [
+                        "add",
+                        "ajax/fix-login",
+                        "--agent",
+                        "codex",
+                        "--background",
+                        "--no-hooks"
+                    ]
+                )
+                .with_cwd("/Users/matt/projects/web"),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
+        );
+    }
+
+    #[test]
+    fn new_execute_allows_reusing_removed_task_handle() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut removed = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        context.registry.create_task(removed).unwrap();
+        let mut runner = RecordingCommandRunner::default();
+
+        let output = run_with_context_and_runner(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(output.contains("recorded task: web/fix-login"));
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "workmux",
+                    [
+                        "add",
+                        "ajax/fix-login",
+                        "--agent",
+                        "codex",
+                        "--background",
+                        "--no-hooks"
+                    ]
+                )
+                .with_cwd("/Users/matt/projects/web"),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Active
+        );
     }
 
     #[test]
@@ -2081,8 +2585,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("NonZeroExit")
-                    && message.contains("/Users/matt/projects/web")));
+                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web"));
         assert_eq!(
             context
                 .registry
@@ -2091,6 +2594,27 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Reviewable
         );
+    }
+
+    #[test]
+    fn external_command_failure_uses_operator_facing_message() {
+        let mut context = sample_context();
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 42,
+            stdout: String::new(),
+            stderr: "merge failed".to_string(),
+        }]);
+
+        let error = run_with_context_and_runner(
+            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(matches!(&error, super::CliError::CommandFailed(message)
+                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: merge failed"));
+        assert!(!error.to_string().contains("NonZeroExit"));
     }
 
     #[test]
@@ -2218,6 +2742,57 @@ mod tests {
                 .unwrap()
                 .lifecycle_status,
             LifecycleStatus::Removed
+        );
+    }
+
+    #[test]
+    fn sweep_execute_persists_completed_removals_when_later_command_fails() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-sweep-partial-{}-{}",
+            std::process::id(),
+            "state"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+        SqliteRegistryStore::new(&state_file)
+            .save(&two_cleanable_tasks_context().registry)
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![output(0, ""), output(2, "remove failed")]);
+
+        let error = run_with_context_paths_and_runner(
+            ["ajax", "sweep", "--execute"],
+            &CliContextPaths::new(&config_file, &state_file),
+            &mut runner,
+        )
+        .unwrap_err();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(error.to_string().contains("workmux exited with status 2"));
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-2"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Cleanable
         );
     }
 
@@ -3151,6 +3726,39 @@ mod tests {
     }
 
     #[test]
+    fn pending_cockpit_unknown_action_does_not_open_or_mutate_task() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "mystery action".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let error = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+                if message.contains("unknown cockpit action: mystery action")));
+        assert!(runner.commands().is_empty());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
     fn pending_cockpit_failed_external_command_does_not_mutate_state() {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
@@ -3176,9 +3784,7 @@ mod tests {
         assert!(matches!(
             error,
             super::CliError::CommandFailed(message)
-                if message.contains("NonZeroExit")
-                    && message.contains("merge failed")
-                    && message.contains("/Users/matt/projects/web")
+                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: merge failed"
         ));
         assert_eq!(
             runner.commands,
@@ -3194,6 +3800,24 @@ mod tests {
             LifecycleStatus::Reviewable
         );
         assert!(!state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_errors_return_to_ajax_with_flash_message() {
+        let mut cockpit_flash = None;
+
+        let outcome = super::handle_pending_cockpit_result(
+            Err(CliError::CommandFailed(
+                "workmux exited with status 42".to_string(),
+            )),
+            &mut cockpit_flash,
+        );
+
+        assert!(outcome.is_none());
+        assert_eq!(
+            cockpit_flash.as_deref(),
+            Some("workmux exited with status 42")
+        );
     }
 
     #[test]
