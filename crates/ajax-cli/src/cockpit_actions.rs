@@ -49,36 +49,34 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
     state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
+    let action = RecommendedAction::from_label(item.recommended_action.as_str());
 
-    match RecommendedAction::from_label(item.recommended_action.as_str()) {
-        Some(RecommendedAction::CleanTask) => {
-            let plan = commands::clean_task_plan(context, handle).map_err(command_error_as_io)?;
+    if let Some(operation) = action.and_then(TaskCommandOperation::from_recommended_action) {
+        if operation == TaskCommandOperation::Clean {
+            let plan = operation
+                .plan(context, handle)
+                .map_err(command_error_as_io)?;
             commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
-            commands::mark_task_removed(context, handle).map_err(command_error_as_io)?;
-            *state_changed = true;
-            Ok(ajax_tui::ActionOutcome::Refresh {
+            let changed = operation
+                .apply_after_execute(context, handle)
+                .map_err(command_error_as_io)?;
+            *state_changed |= changed;
+            return Ok(ajax_tui::ActionOutcome::Refresh {
                 repos: commands::list_repos(context),
                 tasks: commands::list_tasks(context, None),
                 review: commands::review_queue(context),
                 inbox: commands::inbox(context),
-            })
+            });
         }
-        Some(
-            RecommendedAction::OpenTask
-            | RecommendedAction::OpenWorktrunk
-            | RecommendedAction::InspectAgent
-            | RecommendedAction::InspectTestOutput
-            | RecommendedAction::MonitorTask
-            | RecommendedAction::CheckTask
-            | RecommendedAction::DiffTask
-            | RecommendedAction::ReviewDiff
-            | RecommendedAction::ReviewBranch
-            | RecommendedAction::MergeTask,
-        ) => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+
+        return Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
             recommended_action: item.recommended_action.clone(),
             task_title: None,
-        })),
+        }));
+    }
+
+    match action {
         Some(RecommendedAction::InspectTask) => {
             let response = commands::inspect_task(context, handle).map_err(|error| {
                 let message = match command_error(error) {
@@ -122,12 +120,14 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
                 "{handle}: {task_count} task(s)"
             )))
         }
-        Some(RecommendedAction::SelectProject) | None => {
-            Ok(ajax_tui::ActionOutcome::Message(format!(
-                "cockpit action is not configured: {}",
-                item.recommended_action
-            )))
-        }
+        Some(action) => Ok(ajax_tui::ActionOutcome::Message(format!(
+            "cockpit action is not configured: {}",
+            action.as_str()
+        ))),
+        None => Ok(ajax_tui::ActionOutcome::Message(format!(
+            "cockpit action is not configured: {}",
+            item.recommended_action
+        ))),
     }
 }
 
@@ -204,33 +204,10 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
         .apply_after_execute(context, &pending.task_handle)
         .map_err(command_error)?;
     *state_changed |= changed;
-    match operation {
-        TaskCommandOperation::Merge | TaskCommandOperation::Clean => {
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        TaskCommandOperation::Open
-        | TaskCommandOperation::Trunk
-        | TaskCommandOperation::Check
-        | TaskCommandOperation::Diff => {}
-    }
-    if pending_action_returns_to_cockpit(&pending.recommended_action) {
+    if operation.returns_to_cockpit_after_execute() {
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }
     Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
         &outputs, None,
     )))
-}
-
-fn pending_action_returns_to_cockpit(action: &str) -> bool {
-    !matches!(
-        RecommendedAction::from_label(action),
-        Some(
-            RecommendedAction::NewTask
-                | RecommendedAction::OpenTask
-                | RecommendedAction::OpenWorktrunk
-                | RecommendedAction::InspectAgent
-                | RecommendedAction::MonitorTask
-                | RecommendedAction::ReviewBranch
-        )
-    )
 }

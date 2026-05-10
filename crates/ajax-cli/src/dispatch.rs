@@ -92,6 +92,10 @@ impl TaskCommandOperation {
             Self::Trunk | Self::Check | Self::Diff => Ok(false),
         }
     }
+
+    pub(crate) fn returns_to_cockpit_after_execute(self) -> bool {
+        matches!(self, Self::Check | Self::Diff | Self::Merge | Self::Clean)
+    }
 }
 
 pub(crate) fn render_task_command<R: CommandRunner>(

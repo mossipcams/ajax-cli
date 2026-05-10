@@ -3027,6 +3027,31 @@ mod tests {
     }
 
     #[test]
+    fn task_command_operation_defines_cockpit_return_policy() {
+        for operation in [
+            super::TaskCommandOperation::Open,
+            super::TaskCommandOperation::Trunk,
+        ] {
+            assert!(
+                !operation.returns_to_cockpit_after_execute(),
+                "{operation:?} should exit to the external command output"
+            );
+        }
+
+        for operation in [
+            super::TaskCommandOperation::Check,
+            super::TaskCommandOperation::Diff,
+            super::TaskCommandOperation::Merge,
+            super::TaskCommandOperation::Clean,
+        ] {
+            assert!(
+                operation.returns_to_cockpit_after_execute(),
+                "{operation:?} should return to the task picker"
+            );
+        }
+    }
+
+    #[test]
     fn pending_cockpit_non_open_actions_return_to_ajax() {
         for action in ["check task", "inspect test output"] {
             let mut context = sample_context();

@@ -1,7 +1,5 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-mod actions;
-
 use ajax_core::{
     models::{AttentionItem, RecommendedAction, TaskId},
     output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
@@ -23,8 +21,6 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{io, ops::Range, time::Duration};
-
-use actions::task_action_list;
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
@@ -227,12 +223,14 @@ fn build_selectables(
         AppView::TaskActions {
             task, is_review, ..
         } => {
-            out.extend(task_action_list(*is_review).into_iter().map(|action| {
-                SelectableKind::TaskAction {
-                    task: task.clone(),
-                    recommended_action: action.to_string(),
-                }
-            }));
+            out.extend(
+                RecommendedAction::task_picker_menu(*is_review)
+                    .iter()
+                    .map(|action| SelectableKind::TaskAction {
+                        task: task.clone(),
+                        recommended_action: action.as_str().to_string(),
+                    }),
+            );
         }
         AppView::NewTaskInput { .. } => {}
         AppView::Help { .. } => {}
@@ -414,9 +412,9 @@ impl App {
             }
             SelectableKind::Inbox(item) => {
                 if let Some((task, is_review)) = self.find_task_for_handle(&item.task_handle) {
-                    let preselected = task_action_list(is_review)
+                    let preselected = RecommendedAction::task_picker_menu(is_review)
                         .iter()
-                        .position(|action| *action == item.recommended_action.as_str())
+                        .position(|action| action.as_str() == item.recommended_action.as_str())
                         .unwrap_or(0);
                     self.view = AppView::TaskActions {
                         task,
@@ -541,21 +539,10 @@ impl App {
 /// Compute the row range each selectable occupies in the rendered feed,
 /// in the same order as `app.selectables`. Must stay in sync with `build_feed`.
 fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
-    let mut out = Vec::new();
-    let mut row: usize = 1; // top breathing-space row
-    let mut prev_group: Option<&'static str> = None;
-    for selectable in &app.selectables {
-        let group = group_of(selectable);
-        if let Some(prev) = prev_group {
-            if prev != group {
-                row += 1; // blank separator between groups
-            }
-        }
-        out.push(row..row + 1);
-        row += 1;
-        prev_group = Some(group);
-    }
-    out
+    selectable_feed_rows(app)
+        .into_iter()
+        .map(|row| row..row + 1)
+        .collect()
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -1122,26 +1109,88 @@ fn inbox_glyph(priority: u32) -> Span<'static> {
     Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
 
-fn action_glyph(recommended_action: &str) -> Span<'static> {
-    let (glyph, color, bold) = match RecommendedAction::from_label(recommended_action) {
-        Some(RecommendedAction::NewTask) => ("+", Color::LightGreen, true),
-        Some(RecommendedAction::OpenTask) => (">", Color::LightCyan, true),
-        Some(RecommendedAction::OpenWorktrunk) => ("W", Color::LightBlue, false),
-        Some(RecommendedAction::InspectTask) => ("i", Color::Gray, false),
-        Some(RecommendedAction::ReviewBranch) => ("R", Color::LightYellow, true),
-        Some(RecommendedAction::MergeTask) => ("M", Color::LightMagenta, true),
-        Some(RecommendedAction::DiffTask) => ("D", Color::LightBlue, false),
-        Some(RecommendedAction::CheckTask) => ("C", Color::LightGreen, false),
-        Some(RecommendedAction::CleanTask) => ("X", Color::LightRed, true),
-        Some(RecommendedAction::Reconcile) => ("@", Color::DarkGray, false),
-        None if recommended_action == "help" => ("?", Color::LightYellow, false),
-        _ => (".", Color::DarkGray, false),
-    };
-    let mut style = Style::default().fg(color);
-    if bold {
-        style = style.add_modifier(Modifier::BOLD);
+#[derive(Clone, Copy)]
+struct ActionChrome {
+    glyph: &'static str,
+    glyph_color: Color,
+    label_color: Color,
+    bold: bool,
+}
+
+fn action_chrome(recommended_action: &str) -> ActionChrome {
+    match RecommendedAction::from_label(recommended_action) {
+        Some(RecommendedAction::NewTask) => {
+            ActionChrome::new("+", Color::LightGreen, Color::LightGreen, true)
+        }
+        Some(
+            RecommendedAction::OpenTask
+            | RecommendedAction::InspectAgent
+            | RecommendedAction::MonitorTask,
+        ) => ActionChrome::new(">", Color::LightCyan, Color::LightCyan, true),
+        Some(RecommendedAction::OpenWorktrunk) => {
+            ActionChrome::new("W", Color::LightBlue, Color::LightBlue, true)
+        }
+        Some(RecommendedAction::InspectTask) => {
+            ActionChrome::new("i", Color::Gray, Color::Gray, true)
+        }
+        Some(RecommendedAction::ReviewBranch) => {
+            ActionChrome::new("R", Color::LightYellow, Color::LightYellow, true)
+        }
+        Some(RecommendedAction::MergeTask) => {
+            ActionChrome::new("M", Color::LightMagenta, Color::LightMagenta, true)
+        }
+        Some(RecommendedAction::DiffTask | RecommendedAction::ReviewDiff) => {
+            ActionChrome::new("D", Color::LightBlue, Color::LightGreen, true)
+        }
+        Some(RecommendedAction::CheckTask | RecommendedAction::InspectTestOutput) => {
+            ActionChrome::new("C", Color::LightGreen, Color::LightGreen, true)
+        }
+        Some(RecommendedAction::CleanTask) => {
+            ActionChrome::new("X", Color::LightRed, Color::LightRed, true)
+        }
+        Some(RecommendedAction::Reconcile) => {
+            ActionChrome::new("@", Color::DarkGray, Color::Gray, false)
+        }
+        None if recommended_action == "help" => {
+            ActionChrome::new("?", Color::LightYellow, Color::White, true)
+        }
+        _ => ActionChrome::new(".", Color::DarkGray, Color::Gray, false),
     }
-    Span::styled(glyph, style)
+}
+
+impl ActionChrome {
+    const fn new(glyph: &'static str, glyph_color: Color, label_color: Color, bold: bool) -> Self {
+        Self {
+            glyph,
+            glyph_color,
+            label_color,
+            bold,
+        }
+    }
+
+    fn glyph_style(self) -> Style {
+        self.apply_weight(Style::default().fg(self.glyph_color))
+    }
+
+    fn label_style(self) -> Style {
+        self.apply_weight(Style::default().fg(self.label_color))
+    }
+
+    fn apply_weight(self, mut style: Style) -> Style {
+        if self.bold {
+            style = style.add_modifier(Modifier::BOLD);
+        }
+        style
+    }
+}
+
+fn action_glyph(recommended_action: &str) -> Span<'static> {
+    let chrome = action_chrome(recommended_action);
+    Span::styled(chrome.glyph, chrome.glyph_style())
+}
+
+fn action_label_style(recommended_action: &str) -> Style {
+    action_chrome(recommended_action).label_style()
 }
 
 fn priority_accent(priority: u32) -> Color {
@@ -1226,36 +1275,13 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
         ),
         SelectableKind::TaskAction {
             recommended_action, ..
-        } => {
-            let label_style = match recommended_action.as_str() {
-                action if action == RecommendedAction::CleanTask.as_str() => {
-                    Style::default().fg(Color::LightRed).add_modifier(bold)
-                }
-                action if action == RecommendedAction::ReviewBranch.as_str() => {
-                    Style::default().fg(Color::LightYellow).add_modifier(bold)
-                }
-                action if action == RecommendedAction::MergeTask.as_str() => {
-                    Style::default().fg(Color::LightMagenta).add_modifier(bold)
-                }
-                action if action == RecommendedAction::OpenTask.as_str() => {
-                    Style::default().fg(Color::LightCyan).add_modifier(bold)
-                }
-                action if action == RecommendedAction::OpenWorktrunk.as_str() => {
-                    Style::default().fg(Color::LightBlue).add_modifier(bold)
-                }
-                action
-                    if action == RecommendedAction::DiffTask.as_str()
-                        || action == RecommendedAction::CheckTask.as_str() =>
-                {
-                    Style::default().fg(Color::LightGreen).add_modifier(bold)
-                }
-                _ => Style::default().fg(Color::Gray).add_modifier(bold),
-            };
-            render_row(
-                action_glyph(recommended_action),
-                vec![Span::styled(recommended_action.clone(), label_style)],
-            )
-        }
+        } => render_row(
+            action_glyph(recommended_action),
+            vec![Span::styled(
+                recommended_action.clone(),
+                action_label_style(recommended_action),
+            )],
+        ),
         SelectableKind::Task(t) => render_row(
             task_glyph(&t.lifecycle_status, t.needs_attention),
             vec![
@@ -1373,6 +1399,11 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     (rows, sel_to_row)
 }
 
+fn selectable_feed_rows(app: &App) -> Vec<usize> {
+    let (_, selectable_rows) = build_feed(app, 0);
+    selectable_rows
+}
+
 fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize;
     let (items, sel_to_row) = build_feed(app, width);
@@ -1396,11 +1427,11 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        render_cockpit, render_ui, selectable_row_layout, task_action_list, App, AppView,
-        SelectableKind, TerminalModeCommand,
+        action_chrome, render_cockpit, render_ui, selectable_feed_rows, selectable_row_layout, App,
+        AppView, SelectableKind, TerminalModeCommand,
     };
     use ajax_core::{
-        models::{AttentionItem, LiveObservation, LiveStatusKind, TaskId},
+        models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -1487,15 +1518,6 @@ mod tests {
             .count();
 
         assert_eq!(empty_cells, 0);
-    }
-
-    #[test]
-    fn tui_action_logic_lives_in_actions_module() {
-        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
-
-        assert!(lib.contains("mod actions;"));
-        assert!(crate_root.join("src/actions.rs").exists());
     }
 
     #[test]
@@ -2181,35 +2203,62 @@ mod tests {
 
     #[test]
     fn task_action_menu_uses_core_action_catalog_labels() {
-        let non_review = task_action_list(false);
-        let review = task_action_list(true);
+        let non_review = RecommendedAction::task_picker_menu(false)
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+        let review = RecommendedAction::task_picker_menu(true)
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
 
         assert_eq!(
             non_review,
             vec![
-                ajax_core::models::RecommendedAction::OpenTask.as_str(),
-                ajax_core::models::RecommendedAction::DiffTask.as_str(),
-                ajax_core::models::RecommendedAction::CheckTask.as_str(),
-                ajax_core::models::RecommendedAction::MergeTask.as_str(),
-                ajax_core::models::RecommendedAction::ReviewBranch.as_str(),
-                ajax_core::models::RecommendedAction::OpenWorktrunk.as_str(),
-                ajax_core::models::RecommendedAction::InspectTask.as_str(),
-                ajax_core::models::RecommendedAction::CleanTask.as_str(),
+                RecommendedAction::OpenTask.as_str(),
+                RecommendedAction::DiffTask.as_str(),
+                RecommendedAction::CheckTask.as_str(),
+                RecommendedAction::MergeTask.as_str(),
+                RecommendedAction::ReviewBranch.as_str(),
+                RecommendedAction::OpenWorktrunk.as_str(),
+                RecommendedAction::InspectTask.as_str(),
+                RecommendedAction::CleanTask.as_str(),
             ]
         );
         assert_eq!(
             review,
             vec![
-                ajax_core::models::RecommendedAction::ReviewBranch.as_str(),
-                ajax_core::models::RecommendedAction::OpenTask.as_str(),
-                ajax_core::models::RecommendedAction::DiffTask.as_str(),
-                ajax_core::models::RecommendedAction::CheckTask.as_str(),
-                ajax_core::models::RecommendedAction::MergeTask.as_str(),
-                ajax_core::models::RecommendedAction::OpenWorktrunk.as_str(),
-                ajax_core::models::RecommendedAction::InspectTask.as_str(),
-                ajax_core::models::RecommendedAction::CleanTask.as_str(),
+                RecommendedAction::ReviewBranch.as_str(),
+                RecommendedAction::OpenTask.as_str(),
+                RecommendedAction::DiffTask.as_str(),
+                RecommendedAction::CheckTask.as_str(),
+                RecommendedAction::MergeTask.as_str(),
+                RecommendedAction::OpenWorktrunk.as_str(),
+                RecommendedAction::InspectTask.as_str(),
+                RecommendedAction::CleanTask.as_str(),
             ]
         );
+    }
+
+    #[test]
+    fn task_picker_actions_have_dedicated_render_metadata() {
+        for action in RecommendedAction::task_picker_menu(false)
+            .iter()
+            .chain(RecommendedAction::task_picker_menu(true))
+        {
+            let chrome = action_chrome(action.as_str());
+            assert_ne!(chrome.glyph, ".", "{action:?}");
+        }
+
+        for action in [
+            RecommendedAction::InspectAgent,
+            RecommendedAction::InspectTestOutput,
+            RecommendedAction::MonitorTask,
+            RecommendedAction::ReviewDiff,
+        ] {
+            let chrome = action_chrome(action.as_str());
+            assert_ne!(chrome.glyph, ".", "{action:?}");
+        }
     }
 
     #[test]
@@ -2548,6 +2597,20 @@ mod tests {
         // blank separator row → no change
         app.select_at_feed_row(2);
         assert_eq!(app.selected, 2);
+    }
+
+    #[test]
+    fn selectable_row_layout_comes_from_rendered_feed_rows() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.activate_selected();
+
+        let expected = selectable_feed_rows(&app)
+            .into_iter()
+            .map(|row| row..row + 1)
+            .collect::<Vec<_>>();
+
+        assert_eq!(selectable_row_layout(&app), expected);
     }
 
     #[test]

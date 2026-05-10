@@ -372,6 +372,28 @@ pub enum RecommendedAction {
     Status,
 }
 
+const TASK_PICKER_MENU: [RecommendedAction; 8] = [
+    RecommendedAction::OpenTask,
+    RecommendedAction::DiffTask,
+    RecommendedAction::CheckTask,
+    RecommendedAction::MergeTask,
+    RecommendedAction::ReviewBranch,
+    RecommendedAction::OpenWorktrunk,
+    RecommendedAction::InspectTask,
+    RecommendedAction::CleanTask,
+];
+
+const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 8] = [
+    RecommendedAction::ReviewBranch,
+    RecommendedAction::OpenTask,
+    RecommendedAction::DiffTask,
+    RecommendedAction::CheckTask,
+    RecommendedAction::MergeTask,
+    RecommendedAction::OpenWorktrunk,
+    RecommendedAction::InspectTask,
+    RecommendedAction::CleanTask,
+];
+
 impl RecommendedAction {
     pub const fn all() -> &'static [Self] {
         &[
@@ -420,6 +442,14 @@ impl RecommendedAction {
             .iter()
             .copied()
             .find(|action| action.as_str() == label)
+    }
+
+    pub const fn task_picker_menu(is_review: bool) -> &'static [Self] {
+        if is_review {
+            &REVIEW_TASK_PICKER_MENU
+        } else {
+            &TASK_PICKER_MENU
+        }
     }
 }
 
@@ -543,5 +573,42 @@ mod tests {
                 Some(label)
             );
         }
+    }
+
+    #[test]
+    fn recommended_actions_define_task_picker_menus() {
+        let labels = |is_review| {
+            RecommendedAction::task_picker_menu(is_review)
+                .iter()
+                .map(|action| action.as_str())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            labels(false),
+            vec![
+                "open task",
+                "diff task",
+                "check task",
+                "merge task",
+                "review branch",
+                "open worktrunk",
+                "inspect task",
+                "clean task",
+            ]
+        );
+        assert_eq!(
+            labels(true),
+            vec![
+                "review branch",
+                "open task",
+                "diff task",
+                "check task",
+                "merge task",
+                "open worktrunk",
+                "inspect task",
+                "clean task",
+            ]
+        );
     }
 }
