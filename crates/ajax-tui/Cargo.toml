@@ -17,4 +17,4 @@ ratatui = { version = "0.30", default-features = false, features = [
     "underline-color",
     "layout-cache",
 ] }
-crossterm = "0.28"
+crossterm = "0.29"
