@@ -239,6 +239,18 @@ impl TmuxAdapter {
         )
     }
 
+    pub fn list_all_windows(&self) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "list-windows",
+                "-a",
+                "-F",
+                "#{session_name}\t#{window_name}\t#{pane_current_path}",
+            ],
+        )
+    }
+
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
         let target = format!("{session}:{window}");
         CommandSpec {

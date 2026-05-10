@@ -926,8 +926,7 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
-            RecordingCommandRunner,
+            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
@@ -1195,6 +1194,7 @@ mod tests {
         context.registry.create_task(active).unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1218,7 +1218,7 @@ mod tests {
             parsed["inbox"]["items"][0]["reason"],
             "waiting for approval"
         );
-        assert_eq!(runner.commands.len(), 5);
+        assert_eq!(runner.commands.len(), 6);
     }
 
     #[test]
@@ -1652,7 +1652,7 @@ mod tests {
         let output = run_with_context(["ajax", "open", "web/fix-login"], &context).unwrap();
 
         assert!(output.contains("(cd /Users/matt/projects/web && workmux open ajax/fix-login)"));
-        assert!(output.contains("$ tmux attach-session -t ajax-web-fix-login"));
+        assert!(!output.contains("tmux attach-session -t ajax-web-fix-login"));
     }
 
     #[test]
@@ -1817,11 +1817,17 @@ mod tests {
 
         assert!(output.contains("recorded task: web/fix-login"));
         assert_eq!(runner.commands().len(), 1);
-        assert!(context
+        let recorded = context
             .registry
             .list_tasks()
             .iter()
-            .any(|task| task.qualified_handle() == "web/fix-login"));
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .cloned()
+            .expect("new task should be recorded");
+        assert_eq!(
+            recorded.worktree_path.to_string_lossy(),
+            "/Users/matt/projects/web__worktrees/ajax-fix-login"
+        );
     }
 
     #[test]
@@ -1881,10 +1887,16 @@ mod tests {
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(output.contains("recorded task: web/fix-login"));
-        assert!(restored
+        let recorded = restored
             .list_tasks()
             .iter()
-            .any(|task| task.qualified_handle() == "web/fix-login"));
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .cloned()
+            .expect("new task should be persisted");
+        assert_eq!(
+            recorded.worktree_path.to_string_lossy(),
+            "/Users/matt/projects/web__worktrees/ajax-fix-login"
+        );
     }
 
     #[test]
@@ -2018,18 +2030,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new(
-                "tmux",
-                [
-                    "new-window",
-                    "-t",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            )]
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
     }
 
@@ -2097,18 +2099,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new(
-                "tmux",
-                [
-                    "new-window",
-                    "-t",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            )]
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
     }
 
@@ -2758,12 +2750,8 @@ mod tests {
 
             assert_eq!(
                 runner.commands(),
-                &[
-                    CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                        .with_cwd("/Users/matt/projects/web"),
-                    CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
-                        .with_mode(CommandMode::InheritStdio)
-                ],
+                &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")],
                 "{action}"
             );
             assert_eq!(
@@ -2780,7 +2768,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_repair_actions_run_expected_tmux_plans() {
+    fn pending_cockpit_repair_actions_reopen_workmux() {
         let mut repair_context = sample_context();
         let mut repair_task = repair_context
             .registry
@@ -2814,18 +2802,8 @@ mod tests {
 
             assert_eq!(
                 runner.commands(),
-                &[CommandSpec::new(
-                    "tmux",
-                    [
-                        "new-window",
-                        "-t",
-                        "ajax-web-fix-login",
-                        "-n",
-                        "worktrunk",
-                        "-c",
-                        "/tmp/worktrees/web-fix-login"
-                    ]
-                )],
+                &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")],
                 "{action}"
             );
             assert_eq!(
@@ -2944,12 +2922,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web"),
-                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio)
-            ]
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
         assert_eq!(
             context
@@ -3053,18 +3027,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new(
-                "tmux",
-                [
-                    "new-window",
-                    "-t",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            )]
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
         assert!(!state_changed);
     }
@@ -3177,6 +3141,7 @@ mod tests {
             .unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "other-session\n"),
+            output(0, ""),
             output(128, "fatal: not a git repository\n"),
         ]);
 
@@ -3194,6 +3159,15 @@ mod tests {
             runner.commands,
             vec![
                 CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "list-windows",
+                        "-a",
+                        "-F",
+                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
+                    ]
+                ),
                 CommandSpec::new(
                     "git",
                     [
