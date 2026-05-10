@@ -1138,6 +1138,9 @@ struct ActionChrome {
 
 fn action_chrome(recommended_action: &str) -> ActionChrome {
     match RecommendedAction::from_label(recommended_action) {
+        Some(RecommendedAction::SelectProject) => {
+            ActionChrome::new("P", primary_accent(), primary_accent(), true)
+        }
         Some(RecommendedAction::NewTask) => {
             ActionChrome::new("+", primary_accent(), primary_accent(), true)
         }
@@ -1152,6 +1155,9 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         }
         Some(RecommendedAction::Reconcile) => {
             ActionChrome::new("@", Color::DarkGray, Color::Gray, false)
+        }
+        Some(RecommendedAction::Status) => {
+            ActionChrome::new("S", primary_accent(), primary_accent(), true)
         }
         None if recommended_action == "help" => {
             ActionChrome::new("?", Color::LightYellow, Color::White, true)
@@ -2235,6 +2241,15 @@ mod tests {
         let chrome = action_chrome(action.as_str());
         assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
         assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
+    }
+
+    #[test]
+    fn current_core_actions_have_dedicated_render_metadata() {
+        for action in RecommendedAction::all() {
+            let chrome = action_chrome(action.as_str());
+
+            assert_ne!(chrome.glyph, ".", "{action:?}");
+        }
     }
 
     #[test]

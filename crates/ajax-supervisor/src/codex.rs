@@ -233,7 +233,11 @@ fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
 
 fn mentions_approval(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains("approval") || lower.contains("allow command") || lower.contains("proceed?")
+    lower.contains("approval required")
+        || lower.contains("requires approval")
+        || lower.contains("waiting for approval")
+        || lower.contains("allow command")
+        || lower.contains("proceed?")
 }
 
 #[cfg(test)]
@@ -262,6 +266,16 @@ mod tests {
         assert_eq!(
             parse_codex_json_line(r#"{"type":"completed"}"#),
             Some(AgentEvent::Completed)
+        );
+    }
+
+    #[test]
+    fn codex_json_messages_do_not_infer_approval_from_negative_phrasing() {
+        assert_eq!(
+            parse_codex_json_line(r#"{"type":"message","message":"no approval needed"}"#),
+            Some(AgentEvent::Message {
+                text: "no approval needed".to_string()
+            })
         );
     }
 

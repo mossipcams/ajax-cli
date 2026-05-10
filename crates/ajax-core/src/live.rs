@@ -10,25 +10,42 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         return LiveObservation::new(LiveStatusKind::Unknown, "pane is empty");
     }
 
-    let lower = trimmed.to_ascii_lowercase();
+    let lines = meaningful_lines(trimmed);
+    if lines
+        .last()
+        .is_some_and(|line| looks_like_shell_prompt(line))
+    {
+        if let Some(observation) = lines
+            .iter()
+            .rev()
+            .nth(1)
+            .and_then(|line| classify_pane_line(line))
+        {
+            return observation;
+        }
 
-    if contains_any(
-        &lower,
-        &[
-            "test result: ok",
-            "tests passed",
-            "all pre-pr checks passed",
-            "successfully completed",
-            "task complete",
-            "all done",
-            "done",
-        ],
-    ) {
-        return LiveObservation::new(LiveStatusKind::Done, "done");
+        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
     }
 
-    if looks_like_shell_prompt(trimmed) {
-        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
+    lines
+        .iter()
+        .rev()
+        .find_map(|line| classify_pane_line(line))
+        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
+}
+
+fn meaningful_lines(text: &str) -> Vec<&str> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn classify_pane_line(line: &str) -> Option<LiveObservation> {
+    let lower = line.to_ascii_lowercase();
+
+    if is_completion_line(&lower) {
+        return Some(LiveObservation::new(LiveStatusKind::Done, "done"));
     }
 
     if contains_any(
@@ -36,13 +53,15 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         &[
             "do you want to proceed",
             "allow command",
-            "approve",
-            "approval",
+            "approval request",
             "y/n",
             "[y/n]",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval");
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
     }
 
     if contains_any(
@@ -56,25 +75,34 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "auth required",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::AuthRequired, "authentication required");
+        return Some(LiveObservation::new(
+            LiveStatusKind::AuthRequired,
+            "authentication required",
+        ));
     }
 
     if contains_any(
         &lower,
         &["rate limit", "too many requests", "try again later"],
     ) {
-        return LiveObservation::new(LiveStatusKind::RateLimited, "rate limited");
+        return Some(LiveObservation::new(
+            LiveStatusKind::RateLimited,
+            "rate limited",
+        ));
     }
 
     if contains_any(&lower, &["context limit", "token limit", "context length"]) {
-        return LiveObservation::new(LiveStatusKind::ContextLimit, "context limit reached");
+        return Some(LiveObservation::new(
+            LiveStatusKind::ContextLimit,
+            "context limit reached",
+        ));
     }
 
     if contains_any(
         &lower,
         &["blocked", "cannot continue", "manual intervention required"],
     ) {
-        return LiveObservation::new(LiveStatusKind::Blocked, "blocked");
+        return Some(LiveObservation::new(LiveStatusKind::Blocked, "blocked"));
     }
 
     if contains_any(
@@ -86,10 +114,10 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "fix conflicts",
         ],
     ) {
-        return LiveObservation::new(
+        return Some(LiveObservation::new(
             LiveStatusKind::MergeConflict,
             "merge conflict needs attention",
-        );
+        ));
     }
 
     if contains_any(
@@ -102,7 +130,7 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "failing checks",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::CiFailed, "ci failed");
+        return Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
     }
 
     if contains_any(
@@ -115,7 +143,10 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "select an option",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
     }
 
     if contains_any(
@@ -128,21 +159,30 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "failed with",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::CommandFailed, "command failed");
+        return Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "command failed",
+        ));
     }
 
     if contains_any(
         &lower,
         &["running command", "executing command", "$ cargo", "$ npm"],
     ) {
-        return LiveObservation::new(LiveStatusKind::CommandRunning, "command running");
+        return Some(LiveObservation::new(
+            LiveStatusKind::CommandRunning,
+            "command running",
+        ));
     }
 
     if contains_any(
         &lower,
         &["cargo test", "running test", "running 0 tests", "running "],
     ) {
-        return LiveObservation::new(LiveStatusKind::TestsRunning, "tests running");
+        return Some(LiveObservation::new(
+            LiveStatusKind::TestsRunning,
+            "tests running",
+        ));
     }
 
     if contains_any(
@@ -154,10 +194,27 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
             "working on your task",
         ],
     ) {
-        return LiveObservation::new(LiveStatusKind::AgentRunning, "agent running");
+        return Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
     }
 
-    LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state")
+    None
+}
+
+fn is_completion_line(lower: &str) -> bool {
+    contains_any(
+        lower,
+        &[
+            "test result: ok",
+            "tests passed",
+            "all pre-pr checks passed",
+            "successfully completed",
+            "task complete",
+            "all done",
+        ],
+    ) || lower.trim_matches(|character: char| !character.is_ascii_alphanumeric()) == "done"
 }
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
@@ -518,6 +575,28 @@ matt@Matts-MacBook-Pro ajax-tech-debt %";
         let observation = classify_pane(pane);
 
         assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
+    }
+
+    #[test]
+    fn pane_classifier_does_not_treat_negative_done_phrasing_as_complete() {
+        let pane = "The task is not done yet; running cargo test now";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::TestsRunning);
+    }
+
+    #[test]
+    fn pane_classifier_uses_current_failure_over_stale_success_history() {
+        let pane = "\
+All pre-PR checks passed.
+Later validation found a regression.
+Command failed with exit code 101
+matt@Matts-MacBook-Pro ajax-tech-debt %";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::CommandFailed);
     }
 
     #[test]
