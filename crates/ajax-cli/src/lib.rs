@@ -907,9 +907,7 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(command_error)?;
             *state_changed = response.tasks_changed > 0;
-            return Ok(PendingCockpitOutcome::Exit(render_reconcile_human(
-                &response,
-            )));
+            return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
         _ => commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach),
     }
@@ -919,6 +917,7 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "merge task" => {
             commands::mark_task_merged(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
+            return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
         "clean task" => {
             commands::mark_task_removed(context, &pending.task_handle).map_err(command_error)?;
@@ -927,17 +926,32 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         }
         "repair task" | "repair worktrunk" => {
             *state_changed |= refresh_live_context(context, runner)?;
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
-        "check task" | "inspect test output" | "diff task" | "review diff" | "open worktrunk" => {}
+        "check task" | "inspect test output" | "diff task" | "review diff" => {}
+        "open worktrunk" => {}
         _ => {
             commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
         }
     }
+    if pending_action_returns_to_cockpit(&pending.recommended_action) {
+        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+    }
     Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
         &outputs, None,
     )))
+}
+
+fn pending_action_returns_to_cockpit(action: &str) -> bool {
+    !matches!(
+        action,
+        "new task"
+            | "open task"
+            | "open worktrunk"
+            | "inspect agent"
+            | "monitor task"
+            | "review branch"
+    )
 }
 
 fn render_or_execute_plan(
@@ -2748,7 +2762,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_action_renders_command_output() {
+    fn pending_cockpit_action_returns_to_ajax_after_command_output() {
         let mut context = sample_context();
         context.config.test_commands =
             vec![ajax_core::config::TestCommand::new("web", "cargo test")];
@@ -2760,7 +2774,7 @@ mod tests {
         let mut runner = QueuedRunner::new(vec![output(0, "tests passed\n")]);
         let mut state_changed = false;
 
-        let rendered = super::execute_pending_cockpit_action(
+        let outcome = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
@@ -2768,7 +2782,190 @@ mod tests {
         )
         .unwrap();
 
-        assert!(rendered.contains("stdout:tests passed"));
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            runner.commands,
+            &[CommandSpec::new("sh", ["-lc", "cargo test"])
+                .with_cwd("/tmp/worktrees/web-fix-login")]
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_non_open_actions_return_to_ajax() {
+        for action in ["check task", "inspect test output"] {
+            let mut context = sample_context();
+            context.config.test_commands =
+                vec![ajax_core::config::TestCommand::new("web", "cargo test")];
+            assert_pending_action_returns_to_ajax(
+                &mut context,
+                action,
+                QueuedRunner::new(vec![output(0, "tests passed\n")]),
+            );
+        }
+
+        for action in ["diff task", "review diff"] {
+            let mut context = sample_context();
+            assert_pending_action_returns_to_ajax(
+                &mut context,
+                action,
+                QueuedRunner::new(vec![output(0, "diff stat\n")]),
+            );
+        }
+    }
+
+    #[test]
+    fn pending_cockpit_merge_and_reconcile_return_to_ajax() {
+        let mut merge_context = sample_context();
+        let mut merge_runner = QueuedRunner::new(vec![output(0, "merged\n")]);
+        let mut state_changed = false;
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "merge task".to_string(),
+            task_title: None,
+        };
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut merge_context,
+            &mut merge_runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            merge_context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Merged
+        );
+        assert!(state_changed);
+
+        let mut reconcile_context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut reconcile_runner = PanicRunner;
+        let mut reconcile_state_changed = false;
+        let reconcile_pending = ajax_tui::PendingAction {
+            task_handle: "web".to_string(),
+            recommended_action: "reconcile".to_string(),
+            task_title: None,
+        };
+
+        let reconcile_outcome = super::execute_pending_cockpit_action(
+            &reconcile_pending,
+            &mut reconcile_context,
+            &mut reconcile_runner,
+            &mut reconcile_state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            reconcile_outcome,
+            super::PendingCockpitOutcome::ReturnToCockpit
+        );
+        assert!(!reconcile_state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_and_create_actions_exit_ajax() {
+        for action in [
+            "open task",
+            "open worktrunk",
+            "inspect agent",
+            "monitor task",
+            "review branch",
+        ] {
+            let mut context = sample_context();
+            let mut runner = RecordingCommandRunner::default();
+            let mut state_changed = false;
+            let pending = ajax_tui::PendingAction {
+                task_handle: "web/fix-login".to_string(),
+                recommended_action: action.to_string(),
+                task_title: None,
+            };
+
+            let outcome = super::execute_pending_cockpit_action(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+            )
+            .unwrap();
+
+            assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        }
+
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("api", "/Users/matt/projects/api", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let pending = ajax_tui::PendingAction {
+            task_handle: "api".to_string(),
+            recommended_action: "new task".to_string(),
+            task_title: Some("Fix login".to_string()),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert!(state_changed);
+    }
+
+    fn assert_pending_action_returns_to_ajax(
+        context: &mut CommandContext<InMemoryRegistry>,
+        action: &str,
+        mut runner: QueuedRunner,
+    ) {
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: action.to_string(),
+            task_title: None,
+        };
+        let mut state_changed = false;
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            super::PendingCockpitOutcome::ReturnToCockpit,
+            "{action}"
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable,
+            "{action} should not change lifecycle"
+        );
+        assert!(!state_changed, "{action}");
+        assert_eq!(runner.commands.len(), 1, "{action}");
     }
 
     #[test]
