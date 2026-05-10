@@ -113,7 +113,7 @@ impl Registry for InMemoryRegistry {
 }
 
 impl InMemoryRegistry {
-    pub fn to_json_snapshot(&self) -> Result<String, RegistrySnapshotError> {
+    pub fn export_json_snapshot(&self) -> Result<String, RegistrySnapshotError> {
         let snapshot = RegistrySnapshot {
             tasks: self.tasks.values().cloned().collect(),
             events: self.events.clone(),
@@ -123,56 +123,15 @@ impl InMemoryRegistry {
             .map_err(|error| RegistrySnapshotError::Encode(error.to_string()))
     }
 
-    pub fn from_json_snapshot(json: &str) -> Result<Self, RegistrySnapshotError> {
-        let snapshot: RegistrySnapshot = serde_json::from_str(json)
-            .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
-
-        Ok(Self {
-            tasks: snapshot
-                .tasks
-                .into_iter()
-                .map(|task| (task.id.clone(), task))
-                .collect(),
-            events: snapshot.events,
-        })
-    }
-
-    pub fn save_json_snapshot(&self, path: &Path) -> Result<(), RegistrySnapshotError> {
-        let json = self.to_json_snapshot()?;
+    pub fn export_json_snapshot_file(&self, path: &Path) -> Result<(), RegistrySnapshotError> {
+        let json = self.export_json_snapshot()?;
         std::fs::write(path, json).map_err(|error| RegistrySnapshotError::Io(error.to_string()))
-    }
-
-    pub fn load_json_snapshot(path: &Path) -> Result<Self, RegistrySnapshotError> {
-        let json = std::fs::read_to_string(path)
-            .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
-        Self::from_json_snapshot(&json)
     }
 }
 
 pub trait RegistryStore {
     fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError>;
     fn save(&self, registry: &InMemoryRegistry) -> Result<(), RegistrySnapshotError>;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct JsonRegistryStore {
-    path: PathBuf,
-}
-
-impl JsonRegistryStore {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
-    }
-}
-
-impl RegistryStore for JsonRegistryStore {
-    fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
-        InMemoryRegistry::load_json_snapshot(&self.path)
-    }
-
-    fn save(&self, registry: &InMemoryRegistry) -> Result<(), RegistrySnapshotError> {
-        registry.save_json_snapshot(&self.path)
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -411,8 +370,8 @@ pub enum RegistryEventKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        InMemoryRegistry, JsonRegistryStore, Registry, RegistryError, RegistryEventKind,
-        RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
+        InMemoryRegistry, Registry, RegistryError, RegistryEventKind, RegistrySnapshotError,
+        RegistryStore, SqliteRegistryStore,
     };
     use crate::models::{AgentClient, LifecycleStatus, SideFlag, Task, TaskId};
 
@@ -555,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_exports_and_restores_structured_snapshot() {
+    fn registry_exports_structured_json_snapshot() {
         let mut registry = InMemoryRegistry::default();
         registry
             .create_task(task("task-1", "web", "fix-login"))
@@ -564,16 +523,15 @@ mod tests {
             .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
             .unwrap();
 
-        let json = registry.to_json_snapshot().unwrap();
-        let restored = InMemoryRegistry::from_json_snapshot(&json).unwrap();
+        let json = registry.export_json_snapshot().unwrap();
 
-        assert_eq!(restored.list_tasks().len(), 1);
-        assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
-        assert_eq!(restored.events_for_task(&TaskId::new("task-1")).len(), 2);
+        assert!(json.contains("\"repo\": \"web\""));
+        assert!(json.contains("\"handle\": \"fix-login\""));
+        assert!(json.contains("\"message\": \"ready\""));
     }
 
     #[test]
-    fn registry_saves_and_loads_snapshot_file() {
+    fn registry_exports_snapshot_file_without_importing_it() {
         let mut registry = InMemoryRegistry::default();
         registry
             .create_task(task("task-1", "web", "fix-login"))
@@ -581,40 +539,32 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-{}-{}.json",
             std::process::id(),
-            "save-load"
+            "export"
         ));
 
-        registry.save_json_snapshot(&path).unwrap();
-        let restored = InMemoryRegistry::load_json_snapshot(&path).unwrap();
+        registry.export_json_snapshot_file(&path).unwrap();
+        let snapshot = std::fs::read_to_string(&path).unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(restored.list_tasks().len(), 1);
-        assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
+        assert!(snapshot.contains("\"repo\": \"web\""));
+        assert!(snapshot.contains("\"handle\": \"fix-login\""));
     }
 
     #[test]
-    fn registry_store_abstraction_saves_and_loads_registry_state() {
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(task("task-1", "web", "fix-login"))
-            .unwrap();
-        registry
-            .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
-            .unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "ajax-registry-store-{}-{}.json",
-            std::process::id(),
-            "save-load"
-        ));
-        let store = JsonRegistryStore::new(&path);
+    fn registry_has_no_legacy_json_state_import_surface() {
+        let source =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/registry.rs"))
+                .unwrap();
+        let legacy_store = ["Json", "RegistryStore"].concat();
+        let legacy_import = ["from", "_json_snapshot"].concat();
+        let legacy_file_import = ["load", "_json_snapshot"].concat();
 
-        store.save(&registry).unwrap();
-        let restored = store.load().unwrap();
-        std::fs::remove_file(&path).unwrap();
-
-        assert_eq!(restored.list_tasks().len(), 1);
-        assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
-        assert_eq!(restored.events_for_task(&TaskId::new("task-1")).len(), 2);
+        assert!(!source.contains(&legacy_store), "{legacy_store}");
+        assert!(!source.contains(&legacy_import), "{legacy_import}");
+        assert!(
+            !source.contains(&legacy_file_import),
+            "{legacy_file_import}"
+        );
     }
 
     #[test]

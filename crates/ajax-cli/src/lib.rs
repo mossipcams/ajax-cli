@@ -320,7 +320,7 @@ fn export_state_snapshot(
     }
     context
         .registry
-        .save_json_snapshot(path)
+        .export_json_snapshot_file(path)
         .map_err(|error| CliError::CommandFailed(format!("state export failed: {error}")))?;
 
     Ok(format!("exported state snapshot: {}", path.display()))
@@ -1940,10 +1940,7 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         let config_file = directory.join("config.toml");
         let state_file = directory.join("state.db");
-        sample_context()
-            .registry
-            .save_json_snapshot(&state_file)
-            .unwrap();
+        std::fs::write(&state_file, r#"{"tasks":[],"events":[]}"#).unwrap();
 
         let error = run_with_context_paths(
             ["ajax", "tasks", "--json"],
