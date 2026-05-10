@@ -151,17 +151,12 @@ pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
             RepoSummary {
                 name: repo.name.clone(),
                 path: repo.path.display().to_string(),
-                active_tasks: count_lifecycle(&repo_tasks, LifecycleStatus::Active),
+                active_tasks: count_active_tasks(&repo_tasks),
                 reviewable_tasks: count_lifecycle(&repo_tasks, LifecycleStatus::Reviewable),
                 cleanable_tasks: count_lifecycle(&repo_tasks, LifecycleStatus::Cleanable),
                 broken_tasks: repo_tasks
                     .iter()
-                    .filter(|task| {
-                        task.has_side_flag(SideFlag::TmuxMissing)
-                            || task.has_side_flag(SideFlag::WorktreeMissing)
-                            || task.has_side_flag(SideFlag::WorktrunkMissing)
-                            || task.has_side_flag(SideFlag::BranchMissing)
-                    })
+                    .filter(|task| has_repairable_resource_flag(task))
                     .count() as u32,
             }
         })
@@ -843,7 +838,7 @@ pub fn repair_task_plan<R: Registry>(
     let workmux = WorkmuxAdapter::new("workmux");
     let mut plan = CommandPlan::new(format!("repair task: {qualified_handle}"));
 
-    if task.has_side_flag(SideFlag::WorktrunkMissing) {
+    if has_repairable_resource_flag(task) {
         plan.commands.push(command_in_task_repo(
             context,
             task,
@@ -852,6 +847,13 @@ pub fn repair_task_plan<R: Registry>(
     }
 
     Ok(plan)
+}
+
+fn has_repairable_resource_flag(task: &Task) -> bool {
+    task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::TmuxMissing)
+        || task.has_side_flag(SideFlag::WorktreeMissing)
+        || task.has_side_flag(SideFlag::BranchMissing)
 }
 
 pub fn trunk_task_plan<R: Registry>(
@@ -906,6 +908,15 @@ fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
     tasks
         .iter()
         .filter(|task| task.lifecycle_status == status)
+        .count() as u32
+}
+
+fn count_active_tasks(tasks: &[&Task]) -> u32 {
+    tasks
+        .iter()
+        .filter(|task| {
+            task.lifecycle_status == LifecycleStatus::Active && !has_repairable_resource_flag(task)
+        })
         .count() as u32
 }
 
@@ -1136,6 +1147,22 @@ mod tests {
         assert_eq!(response.repos[0].reviewable_tasks, 1);
         assert_eq!(response.repos[1].name, "api");
         assert_eq!(response.repos[1].active_tasks, 0);
+    }
+
+    #[test]
+    fn broken_resource_tasks_are_not_counted_as_active() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::WorktreeMissing);
+
+        let response = list_repos(&context);
+
+        assert_eq!(response.repos[0].active_tasks, 0);
+        assert_eq!(response.repos[0].broken_tasks, 1);
     }
 
     #[test]
@@ -1871,6 +1898,21 @@ mod tests {
 
     #[test]
     fn repair_task_plan_reopens_workmux_when_worktrunk_is_missing() {
+        repair_task_plan_reopens_workmux_for_flag(SideFlag::WorktrunkMissing);
+    }
+
+    #[test]
+    fn repair_task_plan_reopens_workmux_for_broken_resource_flags() {
+        for flag in [
+            SideFlag::TmuxMissing,
+            SideFlag::WorktreeMissing,
+            SideFlag::BranchMissing,
+        ] {
+            repair_task_plan_reopens_workmux_for_flag(flag);
+        }
+    }
+
+    fn repair_task_plan_reopens_workmux_for_flag(flag: SideFlag) {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1878,7 +1920,7 @@ mod tests {
             .cloned()
             .unwrap();
         let mut broken = task;
-        broken.add_side_flag(SideFlag::WorktrunkMissing);
+        broken.add_side_flag(flag);
         context.registry = InMemoryRegistry::default();
         context.registry.create_task(broken).unwrap();
 
@@ -1887,7 +1929,8 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+                .with_cwd("/Users/matt/projects/web")],
+            "{flag:?}"
         );
     }
 

@@ -138,17 +138,24 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
     match observation.kind {
         LiveStatusKind::WorktreeMissing => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
-            task.add_side_flag(SideFlag::WorktreeMissing);
+            mark_resource_missing(task, SideFlag::WorktreeMissing);
         }
-        LiveStatusKind::TmuxMissing | LiveStatusKind::WorktrunkMissing => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
+        LiveStatusKind::TmuxMissing => {
+            mark_resource_missing(task, SideFlag::TmuxMissing);
+        }
+        LiveStatusKind::WorktrunkMissing => {
+            mark_resource_missing(task, SideFlag::WorktrunkMissing);
         }
         LiveStatusKind::AgentRunning
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning => {
-            task.agent_status = AgentRuntimeStatus::Running;
-            task.add_side_flag(SideFlag::AgentRunning);
+            if has_missing_resource(task) {
+                task.agent_status = AgentRuntimeStatus::Unknown;
+                task.remove_side_flag(SideFlag::AgentRunning);
+            } else {
+                task.agent_status = AgentRuntimeStatus::Running;
+                task.add_side_flag(SideFlag::AgentRunning);
+            }
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentDead);
         }
@@ -190,6 +197,23 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
     task.live_status = Some(observation);
 }
 
+fn mark_resource_missing(task: &mut Task, flag: SideFlag) {
+    task.agent_status = AgentRuntimeStatus::Unknown;
+    task.add_side_flag(flag);
+    task.remove_side_flag(SideFlag::AgentRunning);
+}
+
+fn has_missing_resource(task: &Task) -> bool {
+    [
+        SideFlag::WorktreeMissing,
+        SideFlag::TmuxMissing,
+        SideFlag::WorktrunkMissing,
+        SideFlag::BranchMissing,
+    ]
+    .into_iter()
+    .any(|flag| task.has_side_flag(flag))
+}
+
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
@@ -206,9 +230,26 @@ fn looks_like_shell_prompt(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::LiveStatusKind;
+    use crate::models::{
+        AgentClient, AgentRuntimeStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
+    };
 
-    use super::classify_pane;
+    use super::{apply_observation, classify_pane};
+
+    fn base_task() -> Task {
+        Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        )
+    }
 
     #[test]
     fn pane_classifier_detects_agent_attention_states() {
@@ -263,5 +304,38 @@ mod tests {
 
             assert_eq!(observation.kind, expected, "{pane}");
         }
+    }
+
+    #[test]
+    fn missing_resource_observations_clear_agent_running() {
+        for status in [
+            LiveStatusKind::WorktreeMissing,
+            LiveStatusKind::TmuxMissing,
+            LiveStatusKind::WorktrunkMissing,
+        ] {
+            let mut task = base_task();
+            task.agent_status = AgentRuntimeStatus::Running;
+            task.add_side_flag(SideFlag::AgentRunning);
+
+            apply_observation(&mut task, LiveObservation::new(status, "resource missing"));
+
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown, "{status:?}");
+            assert!(!task.has_side_flag(SideFlag::AgentRunning), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn running_observation_does_not_override_missing_resources() {
+        let mut task = base_task();
+        task.add_side_flag(SideFlag::WorktreeMissing);
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
     }
 }

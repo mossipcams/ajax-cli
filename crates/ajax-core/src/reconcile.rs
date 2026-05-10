@@ -1,7 +1,9 @@
 use crate::{
     adapters::TmuxAdapter,
     attention::derive_attention_items,
-    models::{AttentionItem, GitStatus, SideFlag, Task, TmuxStatus, WorktrunkStatus},
+    models::{
+        AgentRuntimeStatus, AttentionItem, GitStatus, SideFlag, Task, TmuxStatus, WorktrunkStatus,
+    },
 };
 use std::path::Path;
 
@@ -20,7 +22,7 @@ pub fn reconcile_task(task: &mut Task, input: ReconciliationInput) {
 
     if let Some(tmux_status) = input.tmux_status {
         if !tmux_status.exists {
-            task.add_side_flag(SideFlag::TmuxMissing);
+            mark_resource_missing(task, SideFlag::TmuxMissing);
         } else {
             task.remove_side_flag(SideFlag::TmuxMissing);
         }
@@ -29,7 +31,7 @@ pub fn reconcile_task(task: &mut Task, input: ReconciliationInput) {
 
     if let Some(worktrunk_status) = input.worktrunk_status {
         if !worktrunk_status.exists || !worktrunk_status.points_at_expected_path {
-            task.add_side_flag(SideFlag::WorktrunkMissing);
+            mark_resource_missing(task, SideFlag::WorktrunkMissing);
         } else {
             task.remove_side_flag(SideFlag::WorktrunkMissing);
         }
@@ -61,7 +63,7 @@ pub fn reconcile_task_from_tmux_output(
 
 pub fn reconcile_task_filesystem(task: &mut Task) {
     if !Path::new(&task.worktree_path).exists() {
-        task.add_side_flag(SideFlag::WorktreeMissing);
+        mark_resource_missing(task, SideFlag::WorktreeMissing);
     } else {
         task.remove_side_flag(SideFlag::WorktreeMissing);
     }
@@ -73,13 +75,13 @@ pub fn attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
 
 fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
     if !git_status.worktree_exists {
-        task.add_side_flag(SideFlag::WorktreeMissing);
+        mark_resource_missing(task, SideFlag::WorktreeMissing);
     } else {
         task.remove_side_flag(SideFlag::WorktreeMissing);
     }
 
     if !git_status.branch_exists {
-        task.add_side_flag(SideFlag::BranchMissing);
+        mark_resource_missing(task, SideFlag::BranchMissing);
     } else {
         task.remove_side_flag(SideFlag::BranchMissing);
     }
@@ -103,13 +105,20 @@ fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
     }
 }
 
+fn mark_resource_missing(task: &mut Task, flag: SideFlag) {
+    task.agent_status = AgentRuntimeStatus::Unknown;
+    task.add_side_flag(flag);
+    task.remove_side_flag(SideFlag::AgentRunning);
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         attention_items, reconcile_task, reconcile_task_from_tmux_output, ReconciliationInput,
     };
     use crate::models::{
-        AgentClient, AttentionItem, GitStatus, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        AgentClient, AgentRuntimeStatus, AttentionItem, GitStatus, SideFlag, Task, TaskId,
+        TmuxStatus, WorktrunkStatus,
     };
 
     fn base_task() -> Task {
@@ -162,6 +171,58 @@ mod tests {
         assert!(task.has_side_flag(SideFlag::BranchMissing));
         assert!(task.has_side_flag(SideFlag::TmuxMissing));
         assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
+    }
+
+    #[test]
+    fn reconciliation_clears_running_state_for_missing_resources() {
+        let mut task = base_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+
+        reconcile_task(
+            &mut task,
+            ReconciliationInput {
+                git_status: Some(GitStatus {
+                    worktree_exists: false,
+                    branch_exists: false,
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                }),
+                tmux_status: Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+                worktrunk_status: Some(WorktrunkStatus {
+                    exists: false,
+                    window_name: "worktrunk".to_string(),
+                    current_path: "/tmp/wrong".into(),
+                    points_at_expected_path: false,
+                }),
+            },
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+    }
+
+    #[test]
+    fn filesystem_reconciliation_clears_running_state_for_missing_worktree() {
+        let mut task = base_task();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        task.worktree_path = format!("/tmp/ajax-missing-worktree-{}", std::process::id()).into();
+
+        super::reconcile_task_filesystem(&mut task);
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
     }
 
     #[test]

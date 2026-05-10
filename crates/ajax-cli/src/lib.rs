@@ -2901,54 +2901,67 @@ mod tests {
 
     #[test]
     fn pending_cockpit_repair_actions_reopen_workmux() {
-        let mut repair_context = sample_context();
-        let mut repair_task = repair_context
+        for (action, contexts) in [
+            (
+                "repair task",
+                vec![
+                    repair_context_with_flag(SideFlag::WorktrunkMissing),
+                    repair_context_with_flag(SideFlag::TmuxMissing),
+                    repair_context_with_flag(SideFlag::WorktreeMissing),
+                    repair_context_with_flag(SideFlag::BranchMissing),
+                ],
+            ),
+            ("repair worktrunk", vec![sample_context()]),
+            ("open worktrunk", vec![sample_context()]),
+        ] {
+            for mut context in contexts {
+                let pending = ajax_tui::PendingAction {
+                    task_handle: "web/fix-login".to_string(),
+                    recommended_action: action.to_string(),
+                    task_title: None,
+                };
+                let mut runner = RecordingCommandRunner::default();
+                let mut state_changed = false;
+
+                super::execute_pending_cockpit_action(
+                    &pending,
+                    &mut context,
+                    &mut runner,
+                    &mut state_changed,
+                )
+                .unwrap();
+
+                assert_eq!(
+                    runner.commands(),
+                    &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                        .with_cwd("/Users/matt/projects/web")],
+                    "{action}"
+                );
+                assert_eq!(
+                    context
+                        .registry
+                        .get_task(&TaskId::new("task-1"))
+                        .unwrap()
+                        .lifecycle_status,
+                    LifecycleStatus::Reviewable,
+                    "{action} should not change lifecycle"
+                );
+                assert!(!state_changed, "{action}");
+            }
+        }
+    }
+
+    fn repair_context_with_flag(flag: SideFlag) -> CommandContext<InMemoryRegistry> {
+        let mut context = sample_context();
+        let mut repair_task = context
             .registry
             .get_task(&TaskId::new("task-1"))
             .cloned()
             .unwrap();
-        repair_task.add_side_flag(SideFlag::WorktrunkMissing);
-        repair_context.registry = InMemoryRegistry::default();
-        repair_context.registry.create_task(repair_task).unwrap();
-
-        for (action, mut context) in [
-            ("repair task", repair_context),
-            ("repair worktrunk", sample_context()),
-            ("open worktrunk", sample_context()),
-        ] {
-            let pending = ajax_tui::PendingAction {
-                task_handle: "web/fix-login".to_string(),
-                recommended_action: action.to_string(),
-                task_title: None,
-            };
-            let mut runner = RecordingCommandRunner::default();
-            let mut state_changed = false;
-
-            super::execute_pending_cockpit_action(
-                &pending,
-                &mut context,
-                &mut runner,
-                &mut state_changed,
-            )
-            .unwrap();
-
-            assert_eq!(
-                runner.commands(),
-                &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")],
-                "{action}"
-            );
-            assert_eq!(
-                context
-                    .registry
-                    .get_task(&TaskId::new("task-1"))
-                    .unwrap()
-                    .lifecycle_status,
-                LifecycleStatus::Reviewable,
-                "{action} should not change lifecycle"
-            );
-            assert!(!state_changed, "{action}");
-        }
+        repair_task.add_side_flag(flag);
+        context.registry = InMemoryRegistry::default();
+        context.registry.create_task(repair_task).unwrap();
+        context
     }
 
     #[test]

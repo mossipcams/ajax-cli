@@ -8,6 +8,8 @@ pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
         .flat_map(attention_items_for_task)
         .collect::<Vec<_>>();
 
+    items = deduplicate_attention_items(items);
+
     items.sort_by(|left, right| {
         left.priority
             .cmp(&right.priority)
@@ -18,10 +20,40 @@ pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
     items
 }
 
+fn deduplicate_attention_items(items: Vec<AttentionItem>) -> Vec<AttentionItem> {
+    let mut deduplicated: Vec<AttentionItem> = Vec::new();
+
+    for item in items {
+        if let Some(existing) = deduplicated.iter_mut().find(|existing| {
+            existing.task_id == item.task_id
+                && existing.reason == item.reason
+                && existing.recommended_action == item.recommended_action
+        }) {
+            if item.priority < existing.priority {
+                *existing = item;
+            }
+        } else {
+            deduplicated.push(item);
+        }
+    }
+
+    deduplicated
+}
+
 fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     let mut items = Vec::new();
+    let has_repair_attention = task_has_repair_attention(task);
+    if let Some(item) = repair_attention_for_task(task) {
+        items.push(item);
+    }
 
     for flag in task.side_flags() {
+        if repair_resource_flag(flag) {
+            continue;
+        }
+        if has_repair_attention && flag == SideFlag::AgentRunning {
+            continue;
+        }
         let (reason, priority, recommended_action) = attention_for_flag(flag);
         items.push(AttentionItem {
             task_id: task.id.clone(),
@@ -43,16 +75,19 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     }
 
     if let Some(live_status) = task.live_status.as_ref() {
-        if let Some((reason, priority, recommended_action)) =
-            attention_for_live_status(live_status.kind)
-        {
-            items.push(AttentionItem {
-                task_id: task.id.clone(),
-                task_handle: task.qualified_handle(),
-                reason: reason.to_string(),
-                priority,
-                recommended_action: recommended_action.to_string(),
-            });
+        let coalesced_repair_status = repair_live_status(live_status.kind) && has_repair_attention;
+        if !coalesced_repair_status {
+            if let Some((reason, priority, recommended_action)) =
+                attention_for_live_status(live_status.kind)
+            {
+                items.push(AttentionItem {
+                    task_id: task.id.clone(),
+                    task_handle: task.qualified_handle(),
+                    reason: reason.to_string(),
+                    priority,
+                    recommended_action: recommended_action.to_string(),
+                });
+            }
         }
     }
 
@@ -69,6 +104,58 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     }
 
     items
+}
+
+fn repair_attention_for_task(task: &Task) -> Option<AttentionItem> {
+    let side_flag_priority = task
+        .side_flags()
+        .filter(|&flag| repair_resource_flag(flag))
+        .map(|flag| attention_for_flag(flag).1)
+        .min();
+    let live_status_priority = task.live_status.as_ref().and_then(|live_status| {
+        repair_live_status(live_status.kind)
+            .then(|| attention_for_live_status(live_status.kind).map(|(_, priority, _)| priority))
+            .flatten()
+    });
+    let priority = side_flag_priority
+        .into_iter()
+        .chain(live_status_priority)
+        .min()?;
+
+    Some(AttentionItem {
+        task_id: task.id.clone(),
+        task_handle: task.qualified_handle(),
+        reason: "task resources missing".to_string(),
+        priority,
+        recommended_action: "repair task".to_string(),
+    })
+}
+
+fn task_has_repair_attention(task: &Task) -> bool {
+    task.side_flags().any(repair_resource_flag)
+        || task
+            .live_status
+            .as_ref()
+            .is_some_and(|live_status| repair_live_status(live_status.kind))
+}
+
+fn repair_resource_flag(flag: SideFlag) -> bool {
+    matches!(
+        flag,
+        SideFlag::WorktrunkMissing
+            | SideFlag::TmuxMissing
+            | SideFlag::WorktreeMissing
+            | SideFlag::BranchMissing
+    )
+}
+
+fn repair_live_status(status: LiveStatusKind) -> bool {
+    matches!(
+        status,
+        LiveStatusKind::WorktreeMissing
+            | LiveStatusKind::TmuxMissing
+            | LiveStatusKind::WorktrunkMissing
+    )
 }
 
 fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, &'static str) {
@@ -127,7 +214,8 @@ fn attention_for_agent_status(
 #[cfg(test)]
 mod tests {
     use crate::models::{
-        AgentClient, AgentRuntimeStatus, AttentionItem, LifecycleStatus, SideFlag, Task, TaskId,
+        AgentClient, AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveObservation,
+        LiveStatusKind, SideFlag, Task, TaskId,
     };
 
     fn task_with_flags(handle: &str, flags: &[SideFlag]) -> Task {
@@ -173,9 +261,9 @@ mod tests {
                 AttentionItem {
                     task_id: TaskId::new("task-broken"),
                     task_handle: "web/broken".to_string(),
-                    reason: "worktrunk missing".to_string(),
+                    reason: "task resources missing".to_string(),
                     priority: 20,
-                    recommended_action: "repair worktrunk".to_string(),
+                    recommended_action: "repair task".to_string(),
                 },
                 AttentionItem {
                     task_id: TaskId::new("task-merged-task"),
@@ -199,5 +287,74 @@ mod tests {
         assert_eq!(items[0].reason, "agent is blocked");
         assert_eq!(items[0].priority, 12);
         assert_eq!(items[0].recommended_action, "inspect agent");
+    }
+
+    #[test]
+    fn duplicate_attention_from_flags_and_live_status_is_collapsed() {
+        let mut task = task_with_flags("missing-worktree", &[SideFlag::WorktreeMissing]);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WorktreeMissing,
+            "worktree missing",
+        ));
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(
+            items,
+            vec![AttentionItem {
+                task_id: TaskId::new("task-missing-worktree"),
+                task_handle: "web/missing-worktree".to_string(),
+                reason: "task resources missing".to_string(),
+                priority: 30,
+                recommended_action: "repair task".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn broken_resource_flags_share_one_repair_task_item() {
+        let task = task_with_flags(
+            "broken",
+            &[
+                SideFlag::WorktrunkMissing,
+                SideFlag::TmuxMissing,
+                SideFlag::WorktreeMissing,
+                SideFlag::BranchMissing,
+            ],
+        );
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(
+            items,
+            vec![AttentionItem {
+                task_id: TaskId::new("task-broken"),
+                task_handle: "web/broken".to_string(),
+                reason: "task resources missing".to_string(),
+                priority: 20,
+                recommended_action: "repair task".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn repair_attention_suppresses_stale_agent_running_item() {
+        let task = task_with_flags(
+            "broken-running",
+            &[SideFlag::WorktreeMissing, SideFlag::AgentRunning],
+        );
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(
+            items,
+            vec![AttentionItem {
+                task_id: TaskId::new("task-broken-running"),
+                task_handle: "web/broken-running".to_string(),
+                reason: "task resources missing".to_string(),
+                priority: 30,
+                recommended_action: "repair task".to_string(),
+            }]
+        );
     }
 }

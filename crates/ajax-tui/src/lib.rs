@@ -771,8 +771,8 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     )];
 
-    let crumb_sep = || Span::styled(" › ", Style::default().fg(Color::DarkGray));
-    let dot_sep = || Span::styled(" · ", Style::default().fg(Color::DarkGray));
+    let crumb_sep = || Span::styled(" > ", Style::default().fg(Color::DarkGray));
+    let dot_sep = || Span::styled(" - ", Style::default().fg(Color::DarkGray));
 
     match &app.view {
         AppView::Projects => {
@@ -873,15 +873,15 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             AppView::NewTaskInput { .. } => "create",
         };
         let nested = !matches!(app.view, AppView::Projects);
-        push_hint(&mut parts, "↑↓", "select", false);
-        push_hint(&mut parts, "↵", enter_label, false);
+        push_hint(&mut parts, "up/down", "select", false);
+        push_hint(&mut parts, "enter", enter_label, false);
         if nested {
             let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {
                 "erase/back"
             } else {
                 "back"
             };
-            push_hint(&mut parts, "esc/←/h", back_label, false);
+            push_hint(&mut parts, "esc/h", back_label, false);
         }
         push_hint(&mut parts, "q", "quit", true);
         Line::from(parts)
@@ -929,18 +929,18 @@ fn group_of(kind: &SelectableKind) -> &'static str {
 
 fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
     if needs_attention {
-        return Span::styled("⚡", Style::default().fg(Color::Red));
+        return Span::styled("!", Style::default().fg(Color::Red));
     }
     if status.contains("Active") {
-        Span::styled("●", Style::default().fg(Color::Green))
+        Span::styled("*", Style::default().fg(Color::Green))
     } else if status.contains("Reviewable") || status.contains("Mergeable") {
-        Span::styled("✓", Style::default().fg(Color::Yellow))
+        Span::styled("R", Style::default().fg(Color::Yellow))
     } else if status.contains("Error") || status.contains("Orphaned") {
-        Span::styled("⚠", Style::default().fg(Color::Red))
+        Span::styled("!", Style::default().fg(Color::Red))
     } else if status.contains("Waiting") {
-        Span::styled("◔", Style::default().fg(Color::Blue))
+        Span::styled("~", Style::default().fg(Color::Blue))
     } else {
-        Span::styled("○", Style::default().fg(Color::DarkGray))
+        Span::styled(".", Style::default().fg(Color::DarkGray))
     }
 }
 
@@ -953,13 +953,13 @@ fn task_status_label(task: &TaskSummary) -> String {
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
     if repo.broken_tasks > 0 {
-        Span::styled("⚠", Style::default().fg(Color::Red))
+        Span::styled("!", Style::default().fg(Color::Red))
     } else if repo.reviewable_tasks > 0 {
-        Span::styled("✓", Style::default().fg(Color::Yellow))
+        Span::styled("R", Style::default().fg(Color::Yellow))
     } else if repo.active_tasks > 0 {
-        Span::styled("●", Style::default().fg(Color::Green))
+        Span::styled("*", Style::default().fg(Color::Green))
     } else {
-        Span::styled("○", Style::default().fg(Color::DarkGray))
+        Span::styled(".", Style::default().fg(Color::DarkGray))
     }
 }
 
@@ -971,22 +971,22 @@ fn inbox_glyph(priority: u32) -> Span<'static> {
     } else {
         Color::Cyan
     };
-    Span::styled("⚡", Style::default().fg(color))
+    Span::styled("!", Style::default().fg(color))
 }
 
 fn action_glyph(recommended_action: &str) -> Span<'static> {
     let (glyph, color) = match recommended_action {
         "new task" => ("+", Color::Green),
-        "open task" => ("▸", Color::Cyan),
-        "review branch" => ("✓", Color::Yellow),
-        "merge task" => ("⇄", Color::Yellow),
-        "diff task" => ("◇", Color::DarkGray),
-        "check task" => ("⊙", Color::DarkGray),
-        "clean task" => ("✕", Color::Red),
-        "repair task" => ("⚒", Color::DarkGray),
-        "reconcile" => ("⟳", Color::DarkGray),
+        "open task" => (">", Color::Cyan),
+        "review branch" => ("R", Color::Yellow),
+        "merge task" => ("M", Color::Yellow),
+        "diff task" => ("D", Color::DarkGray),
+        "check task" => ("C", Color::DarkGray),
+        "clean task" => ("X", Color::Red),
+        "repair task" => ("R", Color::DarkGray),
+        "reconcile" => ("@", Color::DarkGray),
         "status" => ("?", Color::DarkGray),
-        _ => ("·", Color::DarkGray),
+        _ => (".", Color::DarkGray),
     };
     Span::styled(glyph, Style::default().fg(color))
 }
@@ -1015,7 +1015,7 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     if parts.is_empty() {
         "idle".to_string()
     } else {
-        parts.join(" · ")
+        parts.join(" - ")
     }
 }
 
@@ -1040,7 +1040,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     item.reason.clone(),
                     Style::default().fg(priority_accent(item.priority)),
                 ),
-                Span::styled("  →  ", dim),
+                Span::styled("  ->  ", dim),
                 Span::styled(item.recommended_action.clone(), cyan),
             ],
         ),
@@ -1144,9 +1144,9 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
 
     if app.selectables.is_empty() {
         let msg = match &app.view {
-            AppView::Projects => "no projects yet · edit ~/.config/ajax/config.toml to add one",
-            AppView::Project { .. } => "nothing here yet · esc/←/h to go back",
-            AppView::TaskPicker { .. } => "no matching tasks · esc/←/h to go back",
+            AppView::Projects => "no projects yet - edit ~/.config/ajax/config.toml to add one",
+            AppView::Project { .. } => "nothing here yet - esc/h to go back",
+            AppView::TaskPicker { .. } => "no matching tasks - esc/h to go back",
             AppView::NewTaskInput { .. } => "enter a task name",
         };
         rows.push(empty_state(msg));
@@ -1260,6 +1260,47 @@ mod tests {
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("waiting for approval"));
         assert!(!content.contains("Active"));
+    }
+
+    #[test]
+    fn cockpit_render_uses_single_cell_symbols() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let empty_cells = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .filter(|cell| cell.symbol().is_empty())
+            .count();
+
+        assert_eq!(empty_cells, 0);
+    }
+
+    #[test]
+    fn cockpit_render_uses_ascii_chrome_for_tmux_copy() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(
+            content.is_ascii(),
+            "cockpit chrome should avoid wide glyph artifacts in tmux"
+        );
     }
 
     fn render_to_string(width: u16, height: u16, app: &App) -> String {
@@ -1386,7 +1427,7 @@ mod tests {
 
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("Active"));
-        assert!(!content.contains("› web"));
+        assert!(!content.contains("> web"));
     }
 
     #[test]
@@ -1428,7 +1469,7 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         // Header now shows a breadcrumb instead of a "Project: web" title.
-        assert!(content.contains("› web"));
+        assert!(content.contains("> web"));
         assert!(content.contains("web/fix-login"));
     }
 
@@ -1524,7 +1565,7 @@ mod tests {
 
         assert!(!super::handle_back_key(&mut app));
         let content = render_to_string(80, 30, &app);
-        assert!(!content.contains("› web"));
+        assert!(!content.contains("> web"));
     }
 
     #[test]
@@ -1547,8 +1588,8 @@ mod tests {
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("start a new task"));
-        assert!(!content.contains("› web"));
-        assert!(!content.contains("› open task"));
+        assert!(!content.contains("> web"));
+        assert!(!content.contains("> open task"));
     }
 
     #[test]
@@ -1568,7 +1609,7 @@ mod tests {
         ));
         assert!(!super::handle_back_key(&mut app));
         let content = render_to_string(80, 30, &app);
-        assert!(!content.contains("› web"));
+        assert!(!content.contains("> web"));
     }
 
     #[test]
@@ -1627,13 +1668,13 @@ mod tests {
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
-        assert!(before.contains("› web"));
+        assert!(before.contains("> web"));
 
         let after = render_to_string(80, 30, &app);
         assert_eq!(before, after);
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
         assert_eq!(app.selected, selected_before);
-        assert!(after.contains("› web"));
+        assert!(after.contains("> web"));
     }
 
     #[test]
@@ -1715,7 +1756,7 @@ mod tests {
         );
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("› new task"));
+        assert!(content.contains("> new task"));
         assert!(content.contains("Task name"));
         assert!(content.contains("<type a task name>"));
         assert!(!content.contains("Task name  x"));
@@ -1733,7 +1774,7 @@ mod tests {
         app.activate_selected();
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("esc/←/h back"));
+        assert!(content.contains("esc/h back"));
     }
 
     #[test]
@@ -1813,7 +1854,7 @@ mod tests {
         assert!(app.activate_selected().is_none());
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("› inspect task"));
+        assert!(content.contains("> inspect task"));
         assert!(content.contains("web/fix-login"));
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -1945,7 +1986,7 @@ mod tests {
         app.activate_selected();
 
         let content = render_to_string(100, 50, &app);
-        assert!(content.contains("› api"));
+        assert!(content.contains("> api"));
         assert!(content.contains("api/add-cache"));
         assert!(!content.contains("web/fix-login"));
         assert!(!content.contains("agent needs input"));
@@ -1972,8 +2013,8 @@ mod tests {
         assert!(app.activate_selected().is_none());
 
         let content = render_to_string(80, 30, &app);
-        // Breadcrumb now reads "Ajax › web › open task".
-        assert!(content.contains("› open task"));
+        // Breadcrumb now reads "Ajax > web > open task".
+        assert!(content.contains("> open task"));
         assert!(content.contains("web/fix-login"));
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -1997,7 +2038,7 @@ mod tests {
         assert!(app.activate_selected().is_none());
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("› new task"));
+        assert!(content.contains("> new task"));
         assert!(content.contains("Task name"));
     }
 
@@ -2022,7 +2063,7 @@ mod tests {
         );
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("› new task"));
+        assert!(content.contains("> new task"));
         assert!(content.contains("Task name"));
     }
 
@@ -2085,8 +2126,8 @@ mod tests {
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("start a new task"));
-        assert!(!content.contains("› web"));
-        assert!(!content.contains("› new task"));
+        assert!(!content.contains("> web"));
+        assert!(!content.contains("> new task"));
     }
 
     #[test]
@@ -2110,8 +2151,8 @@ mod tests {
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("start a new task"));
-        assert!(!content.contains("› web"));
-        assert!(!content.contains("› new task"));
+        assert!(!content.contains("> web"));
+        assert!(!content.contains("> new task"));
         assert!(!content.contains("Task name"));
     }
 
