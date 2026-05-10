@@ -1,9 +1,7 @@
 use crate::{
     adapters::TmuxAdapter,
     attention::derive_attention_items,
-    models::{
-        AgentRuntimeStatus, AttentionItem, GitStatus, SideFlag, Task, TmuxStatus, WorktrunkStatus,
-    },
+    models::{AttentionItem, GitStatus, SideFlag, Task, TmuxStatus, WorktrunkStatus},
 };
 use std::path::Path;
 
@@ -22,7 +20,7 @@ pub fn reconcile_task(task: &mut Task, input: ReconciliationInput) {
 
     if let Some(tmux_status) = input.tmux_status {
         if !tmux_status.exists {
-            mark_resource_missing(task, SideFlag::TmuxMissing);
+            task.mark_resource_missing(SideFlag::TmuxMissing);
         } else {
             task.remove_side_flag(SideFlag::TmuxMissing);
         }
@@ -31,7 +29,7 @@ pub fn reconcile_task(task: &mut Task, input: ReconciliationInput) {
 
     if let Some(worktrunk_status) = input.worktrunk_status {
         if !worktrunk_status.exists || !worktrunk_status.points_at_expected_path {
-            mark_resource_missing(task, SideFlag::WorktrunkMissing);
+            task.mark_resource_missing(SideFlag::WorktrunkMissing);
         } else {
             task.remove_side_flag(SideFlag::WorktrunkMissing);
         }
@@ -63,7 +61,7 @@ pub fn reconcile_task_from_tmux_output(
 
 pub fn reconcile_task_filesystem(task: &mut Task) {
     if !Path::new(&task.worktree_path).exists() {
-        mark_resource_missing(task, SideFlag::WorktreeMissing);
+        task.mark_resource_missing(SideFlag::WorktreeMissing);
     } else {
         task.remove_side_flag(SideFlag::WorktreeMissing);
     }
@@ -75,7 +73,7 @@ pub fn attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
 
 fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
     if !git_status.worktree_exists {
-        mark_resource_missing(task, SideFlag::WorktreeMissing);
+        task.mark_resource_missing(SideFlag::WorktreeMissing);
     } else {
         task.remove_side_flag(SideFlag::WorktreeMissing);
     }
@@ -86,7 +84,7 @@ fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
         .is_some_and(|current_branch| current_branch == task.branch);
 
     if !git_status.branch_exists || !on_expected_branch {
-        mark_resource_missing(task, SideFlag::BranchMissing);
+        task.mark_resource_missing(SideFlag::BranchMissing);
     } else {
         task.remove_side_flag(SideFlag::BranchMissing);
     }
@@ -108,12 +106,6 @@ fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
     } else {
         task.remove_side_flag(SideFlag::Unpushed);
     }
-}
-
-fn mark_resource_missing(task: &mut Task, flag: SideFlag) {
-    task.agent_status = AgentRuntimeStatus::Unknown;
-    task.add_side_flag(flag);
-    task.remove_side_flag(SideFlag::AgentRunning);
 }
 
 #[cfg(test)]

@@ -1,5 +1,6 @@
 use crate::models::{
-    AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, SideFlag, Task,
+    AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, RecommendedAction,
+    SideFlag, Task,
 };
 
 pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
@@ -54,7 +55,7 @@ fn operator_waiting_reason(reason: &str) -> bool {
 }
 
 fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
-    if task_has_missing_substrate(task) {
+    if task.has_missing_substrate() {
         return Vec::new();
     }
 
@@ -67,7 +68,7 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
             task_handle: task.qualified_handle(),
             reason: reason.to_string(),
             priority,
-            recommended_action: recommended_action.to_string(),
+            recommended_action: recommended_action.as_str().to_string(),
         });
     }
 
@@ -77,7 +78,7 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
             task_handle: task.qualified_handle(),
             reason: "task is cleanable".to_string(),
             priority: 80,
-            recommended_action: "clean task".to_string(),
+            recommended_action: RecommendedAction::CleanTask.as_str().to_string(),
         });
     }
 
@@ -90,7 +91,7 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
                 task_handle: task.qualified_handle(),
                 reason: reason.to_string(),
                 priority,
-                recommended_action: recommended_action.to_string(),
+                recommended_action: recommended_action.as_str().to_string(),
             });
         }
     }
@@ -103,67 +104,60 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
             task_handle: task.qualified_handle(),
             reason: reason.to_string(),
             priority,
-            recommended_action: recommended_action.to_string(),
+            recommended_action: recommended_action.as_str().to_string(),
         });
     }
 
     items
 }
 
-fn task_has_missing_substrate(task: &Task) -> bool {
-    task.side_flags().any(missing_substrate_flag)
-        || task
-            .live_status
-            .as_ref()
-            .is_some_and(|live_status| missing_substrate_live_status(live_status.kind))
-}
-
-fn missing_substrate_flag(flag: SideFlag) -> bool {
-    matches!(
-        flag,
-        SideFlag::WorktrunkMissing
-            | SideFlag::TmuxMissing
-            | SideFlag::WorktreeMissing
-            | SideFlag::BranchMissing
-    )
-}
-
-fn missing_substrate_live_status(status: LiveStatusKind) -> bool {
-    matches!(
-        status,
-        LiveStatusKind::WorktreeMissing
-            | LiveStatusKind::TmuxMissing
-            | LiveStatusKind::WorktrunkMissing
-    )
-}
-
-fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, &'static str) {
+fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) {
     match flag {
-        SideFlag::NeedsInput => ("agent needs input", 10, "open task"),
-        SideFlag::TestsFailed => ("tests failed", 15, "inspect test output"),
-        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, "inspect task"),
-        SideFlag::TmuxMissing => ("tmux session missing", 25, "inspect task"),
-        SideFlag::WorktreeMissing => ("worktree missing", 30, "inspect task"),
-        SideFlag::BranchMissing => ("branch missing", 35, "inspect task"),
-        SideFlag::Conflicted => ("git conflicts detected", 40, "open task"),
-        SideFlag::AgentDead => ("agent appears dead", 45, "inspect agent"),
-        SideFlag::Dirty => ("worktree is dirty", 50, "review diff"),
-        SideFlag::Unpushed => ("branch has unpushed work", 55, "review branch"),
-        SideFlag::Stale => ("task is stale", 60, "inspect task"),
-        SideFlag::AgentRunning => ("agent is running", 90, "monitor task"),
+        SideFlag::NeedsInput => ("agent needs input", 10, RecommendedAction::OpenTask),
+        SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::InspectTestOutput),
+        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::InspectTask),
+        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::InspectTask),
+        SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::InspectTask),
+        SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::InspectTask),
+        SideFlag::Conflicted => ("git conflicts detected", 40, RecommendedAction::OpenTask),
+        SideFlag::AgentDead => ("agent appears dead", 45, RecommendedAction::InspectAgent),
+        SideFlag::Dirty => ("worktree is dirty", 50, RecommendedAction::ReviewDiff),
+        SideFlag::Unpushed => (
+            "branch has unpushed work",
+            55,
+            RecommendedAction::ReviewBranch,
+        ),
+        SideFlag::Stale => ("task is stale", 60, RecommendedAction::InspectTask),
+        SideFlag::AgentRunning => ("agent is running", 90, RecommendedAction::MonitorTask),
     }
 }
 
-fn attention_for_live_status(status: LiveStatusKind) -> Option<(&'static str, u32, &'static str)> {
+fn attention_for_live_status(
+    status: LiveStatusKind,
+) -> Option<(&'static str, u32, RecommendedAction)> {
     match status {
-        LiveStatusKind::WaitingForApproval => Some(("waiting for approval", 5, "open task")),
-        LiveStatusKind::WaitingForInput => Some(("waiting for input", 6, "open task")),
-        LiveStatusKind::AuthRequired => Some(("authentication required", 7, "open task")),
-        LiveStatusKind::RateLimited => Some(("rate limited", 8, "inspect agent")),
-        LiveStatusKind::ContextLimit => Some(("context limit reached", 9, "inspect agent")),
-        LiveStatusKind::MergeConflict => Some(("merge conflict needs attention", 10, "open task")),
-        LiveStatusKind::CommandFailed => Some(("command failed", 15, "inspect agent")),
-        LiveStatusKind::Blocked => Some(("agent is blocked", 12, "inspect agent")),
+        LiveStatusKind::WaitingForApproval => {
+            Some(("waiting for approval", 5, RecommendedAction::OpenTask))
+        }
+        LiveStatusKind::WaitingForInput => {
+            Some(("waiting for input", 6, RecommendedAction::OpenTask))
+        }
+        LiveStatusKind::AuthRequired => {
+            Some(("authentication required", 7, RecommendedAction::OpenTask))
+        }
+        LiveStatusKind::RateLimited => Some(("rate limited", 8, RecommendedAction::InspectAgent)),
+        LiveStatusKind::ContextLimit => {
+            Some(("context limit reached", 9, RecommendedAction::InspectAgent))
+        }
+        LiveStatusKind::MergeConflict => Some((
+            "merge conflict needs attention",
+            10,
+            RecommendedAction::OpenTask,
+        )),
+        LiveStatusKind::CommandFailed => {
+            Some(("command failed", 15, RecommendedAction::InspectAgent))
+        }
+        LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::InspectAgent)),
         LiveStatusKind::WorktreeMissing
         | LiveStatusKind::TmuxMissing
         | LiveStatusKind::WorktrunkMissing => None,
@@ -178,11 +172,15 @@ fn attention_for_live_status(status: LiveStatusKind) -> Option<(&'static str, u3
 
 fn attention_for_agent_status(
     status: AgentRuntimeStatus,
-) -> Option<(&'static str, u32, &'static str)> {
+) -> Option<(&'static str, u32, RecommendedAction)> {
     match status {
-        AgentRuntimeStatus::Waiting => Some(("agent is waiting", 10, "open task")),
-        AgentRuntimeStatus::Blocked => Some(("agent is blocked", 12, "inspect agent")),
-        AgentRuntimeStatus::Dead => Some(("agent appears dead", 45, "inspect agent")),
+        AgentRuntimeStatus::Waiting => Some(("agent is waiting", 10, RecommendedAction::OpenTask)),
+        AgentRuntimeStatus::Blocked => {
+            Some(("agent is blocked", 12, RecommendedAction::InspectAgent))
+        }
+        AgentRuntimeStatus::Dead => {
+            Some(("agent appears dead", 45, RecommendedAction::InspectAgent))
+        }
         AgentRuntimeStatus::NotStarted
         | AgentRuntimeStatus::Running
         | AgentRuntimeStatus::Done

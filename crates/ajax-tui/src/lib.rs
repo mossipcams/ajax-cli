@@ -1,7 +1,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod actions;
+
 use ajax_core::{
-    models::{AttentionItem, TaskId},
+    models::{AttentionItem, RecommendedAction, TaskId},
     output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
 };
 use crossterm::{
@@ -21,6 +23,8 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{io, ops::Range, time::Duration};
+
+use actions::task_action_list;
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
@@ -133,21 +137,21 @@ impl SelectableKind {
                 task_handle: repo.name.clone(),
                 reason: "project".to_string(),
                 priority: 0,
-                recommended_action: "select project".to_string(),
+                recommended_action: RecommendedAction::SelectProject.as_str().to_string(),
             },
             SelectableKind::NewTask { repo } => AttentionItem {
                 task_id: TaskId::new(format!("__new_task__{repo}")),
                 task_handle: repo.clone(),
                 reason: "create a new task".to_string(),
                 priority: 0,
-                recommended_action: "new task".to_string(),
+                recommended_action: RecommendedAction::NewTask.as_str().to_string(),
             },
             SelectableKind::Reconcile { repo } => AttentionItem {
                 task_id: TaskId::new(format!("__reconcile__{repo}")),
                 task_handle: repo.clone(),
                 reason: "reconcile external state".to_string(),
                 priority: 0,
-                recommended_action: "reconcile".to_string(),
+                recommended_action: RecommendedAction::Reconcile.as_str().to_string(),
             },
             SelectableKind::Inbox(item) => item.clone(),
             SelectableKind::Task(t) => AttentionItem {
@@ -155,14 +159,14 @@ impl SelectableKind {
                 task_handle: t.qualified_handle.clone(),
                 reason: t.lifecycle_status.clone(),
                 priority: 50,
-                recommended_action: "open task".to_string(),
+                recommended_action: RecommendedAction::OpenTask.as_str().to_string(),
             },
             SelectableKind::Review(t) => AttentionItem {
                 task_id: TaskId::new(t.id.clone()),
                 task_handle: t.qualified_handle.clone(),
                 reason: t.lifecycle_status.clone(),
                 priority: 50,
-                recommended_action: "review branch".to_string(),
+                recommended_action: RecommendedAction::ReviewBranch.as_str().to_string(),
             },
             SelectableKind::TaskAction {
                 task,
@@ -175,33 +179,6 @@ impl SelectableKind {
                 recommended_action: recommended_action.clone(),
             },
         }
-    }
-}
-
-/// Per-task action menu contents, ordered with the most likely action first.
-fn task_action_list(is_review: bool) -> Vec<&'static str> {
-    if is_review {
-        vec![
-            "review branch",
-            "open task",
-            "diff task",
-            "check task",
-            "merge task",
-            "open worktrunk",
-            "inspect task",
-            "clean task",
-        ]
-    } else {
-        vec![
-            "open task",
-            "diff task",
-            "check task",
-            "merge task",
-            "review branch",
-            "open worktrunk",
-            "inspect task",
-            "clean task",
-        ]
     }
 }
 
@@ -493,7 +470,7 @@ impl App {
 
         Some(PendingAction {
             task_handle: repo.clone(),
-            recommended_action: "new task".to_string(),
+            recommended_action: RecommendedAction::NewTask.as_str().to_string(),
             task_title: Some(title.to_string()),
         })
     }
@@ -1146,18 +1123,18 @@ fn inbox_glyph(priority: u32) -> Span<'static> {
 }
 
 fn action_glyph(recommended_action: &str) -> Span<'static> {
-    let (glyph, color, bold) = match recommended_action {
-        "new task" => ("+", Color::LightGreen, true),
-        "open task" => (">", Color::LightCyan, true),
-        "open worktrunk" => ("W", Color::LightBlue, false),
-        "inspect task" => ("i", Color::Gray, false),
-        "review branch" => ("R", Color::LightYellow, true),
-        "merge task" => ("M", Color::LightMagenta, true),
-        "diff task" => ("D", Color::LightBlue, false),
-        "check task" => ("C", Color::LightGreen, false),
-        "clean task" => ("X", Color::LightRed, true),
-        "reconcile" => ("@", Color::DarkGray, false),
-        "help" => ("?", Color::LightYellow, false),
+    let (glyph, color, bold) = match RecommendedAction::from_label(recommended_action) {
+        Some(RecommendedAction::NewTask) => ("+", Color::LightGreen, true),
+        Some(RecommendedAction::OpenTask) => (">", Color::LightCyan, true),
+        Some(RecommendedAction::OpenWorktrunk) => ("W", Color::LightBlue, false),
+        Some(RecommendedAction::InspectTask) => ("i", Color::Gray, false),
+        Some(RecommendedAction::ReviewBranch) => ("R", Color::LightYellow, true),
+        Some(RecommendedAction::MergeTask) => ("M", Color::LightMagenta, true),
+        Some(RecommendedAction::DiffTask) => ("D", Color::LightBlue, false),
+        Some(RecommendedAction::CheckTask) => ("C", Color::LightGreen, false),
+        Some(RecommendedAction::CleanTask) => ("X", Color::LightRed, true),
+        Some(RecommendedAction::Reconcile) => ("@", Color::DarkGray, false),
+        None if recommended_action == "help" => ("?", Color::LightYellow, false),
         _ => (".", Color::DarkGray, false),
     };
     let mut style = Style::default().fg(color);
@@ -1251,12 +1228,25 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             recommended_action, ..
         } => {
             let label_style = match recommended_action.as_str() {
-                "clean task" => Style::default().fg(Color::LightRed).add_modifier(bold),
-                "review branch" => Style::default().fg(Color::LightYellow).add_modifier(bold),
-                "merge task" => Style::default().fg(Color::LightMagenta).add_modifier(bold),
-                "open task" => Style::default().fg(Color::LightCyan).add_modifier(bold),
-                "open worktrunk" => Style::default().fg(Color::LightBlue).add_modifier(bold),
-                "diff task" | "check task" => {
+                action if action == RecommendedAction::CleanTask.as_str() => {
+                    Style::default().fg(Color::LightRed).add_modifier(bold)
+                }
+                action if action == RecommendedAction::ReviewBranch.as_str() => {
+                    Style::default().fg(Color::LightYellow).add_modifier(bold)
+                }
+                action if action == RecommendedAction::MergeTask.as_str() => {
+                    Style::default().fg(Color::LightMagenta).add_modifier(bold)
+                }
+                action if action == RecommendedAction::OpenTask.as_str() => {
+                    Style::default().fg(Color::LightCyan).add_modifier(bold)
+                }
+                action if action == RecommendedAction::OpenWorktrunk.as_str() => {
+                    Style::default().fg(Color::LightBlue).add_modifier(bold)
+                }
+                action
+                    if action == RecommendedAction::DiffTask.as_str()
+                        || action == RecommendedAction::CheckTask.as_str() =>
+                {
                     Style::default().fg(Color::LightGreen).add_modifier(bold)
                 }
                 _ => Style::default().fg(Color::Gray).add_modifier(bold),
@@ -1406,8 +1396,8 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        render_cockpit, render_ui, selectable_row_layout, App, AppView, SelectableKind,
-        TerminalModeCommand,
+        render_cockpit, render_ui, selectable_row_layout, task_action_list, App, AppView,
+        SelectableKind, TerminalModeCommand,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, TaskId},
@@ -1497,6 +1487,36 @@ mod tests {
             .count();
 
         assert_eq!(empty_cells, 0);
+    }
+
+    #[test]
+    fn tui_action_logic_lives_in_actions_module() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
+
+        assert!(lib.contains("mod actions;"));
+        assert!(crate_root.join("src/actions.rs").exists());
+    }
+
+    #[test]
+    fn cockpit_brand_renders_at_header_right_edge() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            sample_tasks(),
+            sample_inbox(),
+        );
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let brand = (73..79)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect::<String>();
+        assert_eq!(brand, "[AJAX]");
+        assert_eq!(buffer[(79, 0)].symbol(), " ");
     }
 
     #[test]
@@ -2157,6 +2177,39 @@ mod tests {
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn task_action_menu_uses_core_action_catalog_labels() {
+        let non_review = task_action_list(false);
+        let review = task_action_list(true);
+
+        assert_eq!(
+            non_review,
+            vec![
+                ajax_core::models::RecommendedAction::OpenTask.as_str(),
+                ajax_core::models::RecommendedAction::DiffTask.as_str(),
+                ajax_core::models::RecommendedAction::CheckTask.as_str(),
+                ajax_core::models::RecommendedAction::MergeTask.as_str(),
+                ajax_core::models::RecommendedAction::ReviewBranch.as_str(),
+                ajax_core::models::RecommendedAction::OpenWorktrunk.as_str(),
+                ajax_core::models::RecommendedAction::InspectTask.as_str(),
+                ajax_core::models::RecommendedAction::CleanTask.as_str(),
+            ]
+        );
+        assert_eq!(
+            review,
+            vec![
+                ajax_core::models::RecommendedAction::ReviewBranch.as_str(),
+                ajax_core::models::RecommendedAction::OpenTask.as_str(),
+                ajax_core::models::RecommendedAction::DiffTask.as_str(),
+                ajax_core::models::RecommendedAction::CheckTask.as_str(),
+                ajax_core::models::RecommendedAction::MergeTask.as_str(),
+                ajax_core::models::RecommendedAction::OpenWorktrunk.as_str(),
+                ajax_core::models::RecommendedAction::InspectTask.as_str(),
+                ajax_core::models::RecommendedAction::CleanTask.as_str(),
+            ]
+        );
     }
 
     #[test]

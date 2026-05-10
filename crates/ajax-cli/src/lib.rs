@@ -1,6 +1,9 @@
 mod cli;
+mod cockpit_actions;
 mod context;
+mod dispatch;
 mod render;
+mod supervise;
 
 use ajax_core::{
     adapters::{CommandOutput, CommandRunner, ProcessCommandRunner},
@@ -8,18 +11,23 @@ use ajax_core::{
     output::DoctorCheck,
     registry::{InMemoryRegistry, Registry},
 };
-use ajax_supervisor::codex::CodexAdapter;
 use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
+use cockpit_actions::{
+    execute_pending_cockpit_action, handle_pending_cockpit_result, tui_cockpit_action,
+    PendingCockpitOutcome,
+};
 pub use context::CliContextPaths;
 use context::{default_context_paths, load_context, save_context};
+use dispatch::{render_task_command, TaskCommandOperation};
 use render::{
     render_doctor_human, render_execution_outputs, render_inbox_human, render_inspect_human,
     render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
     render_tasks_human,
 };
 use std::time::Duration;
+use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -154,9 +162,9 @@ pub fn run_with_context_paths_and_runner(
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct RenderedCommand {
-    output: String,
-    state_changed: bool,
+pub(crate) struct RenderedCommand {
+    pub(crate) output: String,
+    pub(crate) state_changed: bool,
 }
 
 fn render_matches(
@@ -473,105 +481,11 @@ fn render_matches_mut(
                 state_changed: changed,
             })
         }
-        Some(("open", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::open_task_plan(context, task, commands::OpenMode::Attach)
-                .map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            commands::mark_task_opened(context, task).map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: true,
-            })
-        }
-        Some(("trunk", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::trunk_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
-            })
-        }
-        Some(("check", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::check_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
-            })
-        }
-        Some(("diff", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::diff_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: false,
-            })
-        }
-        Some(("merge", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            commands::mark_task_merged(context, task).map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: true,
-            })
-        }
-        Some(("clean", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            commands::mark_task_removed(context, task).map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: true,
-            })
+        Some((name @ ("open" | "trunk" | "check" | "diff" | "merge" | "clean"), subcommand)) => {
+            let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
+                CliError::CommandFailed(format!("unsupported task command: {name}"))
+            })?;
+            render_task_command(operation, subcommand, context, runner)
         }
         Some(("sweep", subcommand)) => {
             let plan = commands::sweep_cleanup_plan(context);
@@ -643,19 +557,6 @@ fn render_matches_mut(
     }
 }
 
-fn handle_pending_cockpit_result(
-    result: Result<PendingCockpitOutcome, CliError>,
-    cockpit_flash: &mut Option<String>,
-) -> Option<PendingCockpitOutcome> {
-    match result {
-        Ok(outcome) => Some(outcome),
-        Err(error) => {
-            *cockpit_flash = Some(error.to_string());
-            None
-        }
-    }
-}
-
 fn render_matches_mut_with_paths(
     matches: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
@@ -673,79 +574,6 @@ fn render_matches_mut_with_paths(
     }
 
     render_matches_mut(matches, context, runner)
-}
-
-fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
-    let prompt = matches
-        .get_one::<String>("prompt")
-        .cloned()
-        .ok_or_else(|| CliError::CommandFailed("supervise prompt is required".to_string()))?;
-    let codex_bin = matches
-        .get_one::<String>("codex-bin")
-        .cloned()
-        .or_else(|| std::env::var("AJAX_CODEX_BIN").ok())
-        .unwrap_or_else(|| "codex".to_string());
-    let json = matches.get_flag("json");
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_io()
-        .enable_time()
-        .build()
-        .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
-
-    let (events, supervise_result) = runtime.block_on(async move {
-        let adapter = CodexAdapter::new(codex_bin);
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1024);
-        let handle = tokio::spawn(async move { adapter.supervise_exec_json(&prompt, tx).await });
-        let mut events = Vec::new();
-        while let Some(event) = rx.recv().await {
-            events.push(event);
-        }
-        let supervise_result = match handle.await {
-            Ok(result) => result.map_err(|error| format!("supervisor failed: {error}")),
-            Err(error) => Err(format!("supervisor task failed: {error}")),
-        };
-        Ok::<_, CliError>((events, supervise_result))
-    })?;
-    if let Err(message) = supervise_result {
-        return Err(CliError::CommandFailed(supervisor_failure_message(
-            message, &events,
-        )));
-    }
-
-    if json {
-        events
-            .iter()
-            .map(|event| {
-                serde_json::to_string(event)
-                    .map_err(|error| CliError::JsonSerialization(error.to_string()))
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .map(|lines| lines.join("\n"))
-    } else {
-        Ok(events
-            .iter()
-            .map(ajax_supervisor::renderer::render_event_log_line)
-            .collect::<Vec<_>>()
-            .join("\n"))
-    }
-}
-
-fn supervisor_failure_message(message: String, events: &[ajax_supervisor::MonitorEvent]) -> String {
-    let stderr = events
-        .iter()
-        .filter_map(|event| match event {
-            ajax_supervisor::MonitorEvent::Process(ajax_supervisor::ProcessEvent::Stderr {
-                line,
-            }) => Some(line.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    if stderr.is_empty() {
-        return message;
-    }
-
-    format!("{message}; stderr: {}", stderr.join(" | "))
 }
 
 fn render_live_cockpit_command<R: CommandRunner>(
@@ -790,7 +618,7 @@ fn refresh_live_context<R: CommandRunner>(
     Ok(response.tasks_changed > 0)
 }
 
-fn execute_new_task_plan<R: CommandRunner>(
+pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     request: &commands::NewTaskRequest,
@@ -865,206 +693,6 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
         .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
 }
 
-fn tui_cockpit_action<R: CommandRunner>(
-    item: &ajax_core::models::AttentionItem,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
-) -> std::io::Result<ajax_tui::ActionOutcome> {
-    let handle = &item.task_handle;
-
-    match item.recommended_action.as_str() {
-        "clean task" => {
-            let plan = commands::clean_task_plan(context, handle).map_err(command_error_as_io)?;
-            commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
-            commands::mark_task_removed(context, handle).map_err(command_error_as_io)?;
-            *state_changed = true;
-            Ok(ajax_tui::ActionOutcome::Refresh {
-                repos: commands::list_repos(context),
-                tasks: commands::list_tasks(context, None),
-                review: commands::review_queue(context),
-                inbox: commands::inbox(context),
-            })
-        }
-        "open task"
-        | "open worktrunk"
-        | "inspect agent"
-        | "inspect test output"
-        | "monitor task"
-        | "check task"
-        | "diff task"
-        | "review diff"
-        | "review branch"
-        | "merge task" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
-            task_handle: handle.clone(),
-            recommended_action: item.recommended_action.clone(),
-            task_title: None,
-        })),
-        "inspect task" => {
-            let response = commands::inspect_task(context, handle).map_err(|error| {
-                let message = match command_error(error) {
-                    CliError::CommandFailed(message)
-                    | CliError::CommandFailedAfterStateChange(message)
-                    | CliError::JsonSerialization(message)
-                    | CliError::ContextLoad(message)
-                    | CliError::ContextSave(message) => message,
-                };
-                std::io::Error::other(message)
-            })?;
-            Ok(ajax_tui::ActionOutcome::Message(render_inspect_human(
-                &response,
-            )))
-        }
-        "reconcile" => {
-            let response = commands::reconcile_external(context, runner).map_err(|error| {
-                let message = match command_error(error) {
-                    CliError::CommandFailed(message)
-                    | CliError::CommandFailedAfterStateChange(message)
-                    | CliError::JsonSerialization(message)
-                    | CliError::ContextLoad(message)
-                    | CliError::ContextSave(message) => message,
-                };
-                std::io::Error::other(message)
-            })?;
-            *state_changed = response.tasks_changed > 0;
-            Ok(ajax_tui::ActionOutcome::Refresh {
-                repos: commands::list_repos(context),
-                tasks: commands::list_tasks(context, None),
-                review: commands::review_queue(context),
-                inbox: commands::inbox(context),
-            })
-        }
-        "new task" => Ok(ajax_tui::ActionOutcome::Message(
-            "select a project, then choose new task to enter a task name".to_string(),
-        )),
-        "status" => {
-            let task_count = commands::list_tasks(context, Some(handle)).tasks.len();
-            Ok(ajax_tui::ActionOutcome::Message(format!(
-                "{handle}: {task_count} task(s)"
-            )))
-        }
-        _ => Ok(ajax_tui::ActionOutcome::Message(format!(
-            "cockpit action is not configured: {}",
-            item.recommended_action
-        ))),
-    }
-}
-
-fn command_error_as_io(error: CommandError) -> std::io::Error {
-    let message = match command_error(error) {
-        CliError::CommandFailed(message)
-        | CliError::CommandFailedAfterStateChange(message)
-        | CliError::JsonSerialization(message)
-        | CliError::ContextLoad(message)
-        | CliError::ContextSave(message) => message,
-    };
-    std::io::Error::other(message)
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum PendingCockpitOutcome {
-    Exit(String),
-    ReturnToCockpit,
-}
-
-impl PendingCockpitOutcome {
-    #[cfg(test)]
-    fn contains(&self, needle: &str) -> bool {
-        match self {
-            PendingCockpitOutcome::Exit(output) => output.contains(needle),
-            PendingCockpitOutcome::ReturnToCockpit => false,
-        }
-    }
-}
-
-fn execute_pending_cockpit_action<R: CommandRunner>(
-    pending: &ajax_tui::PendingAction,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
-) -> Result<PendingCockpitOutcome, CliError> {
-    if pending.recommended_action == "new task" {
-        let title = pending.task_title.clone().ok_or_else(|| {
-            CliError::CommandFailed(
-                "new task title is required before cockpit can run workmux".to_string(),
-            )
-        })?;
-        let request = commands::NewTaskRequest {
-            repo: pending.task_handle.clone(),
-            title,
-            agent: "codex".to_string(),
-        };
-        let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-        let (outputs, task) = execute_new_task_plan(context, runner, &request, &plan, true)?;
-        *state_changed = true;
-        return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-            &outputs,
-            Some(&task.qualified_handle()),
-        )));
-    }
-
-    let plan = match pending.recommended_action.as_str() {
-        "check task" | "inspect test output" => {
-            commands::check_task_plan(context, &pending.task_handle)
-        }
-        "diff task" | "review diff" => commands::diff_task_plan(context, &pending.task_handle),
-        "merge task" => commands::merge_task_plan(context, &pending.task_handle),
-        "clean task" => commands::clean_task_plan(context, &pending.task_handle),
-        "open worktrunk" => commands::trunk_task_plan(context, &pending.task_handle),
-        "open task" | "inspect agent" | "monitor task" | "review branch" => {
-            commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach)
-        }
-        "reconcile" => {
-            let response = commands::reconcile_external(context, runner).map_err(command_error)?;
-            *state_changed = response.tasks_changed > 0;
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        action => {
-            return Err(CliError::CommandFailed(format!(
-                "unknown cockpit action: {action}"
-            )));
-        }
-    }
-    .map_err(command_error)?;
-    let outputs = commands::execute_plan(&plan, true, runner).map_err(command_error)?;
-    match pending.recommended_action.as_str() {
-        "merge task" => {
-            commands::mark_task_merged(context, &pending.task_handle).map_err(command_error)?;
-            *state_changed = true;
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        "clean task" => {
-            commands::mark_task_removed(context, &pending.task_handle).map_err(command_error)?;
-            *state_changed = true;
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        "check task" | "inspect test output" | "diff task" | "review diff" => {}
-        "open worktrunk" => {}
-        _ => {
-            commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
-            *state_changed = true;
-        }
-    }
-    if pending_action_returns_to_cockpit(&pending.recommended_action) {
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
-    }
-    Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-        &outputs, None,
-    )))
-}
-
-fn pending_action_returns_to_cockpit(action: &str) -> bool {
-    !matches!(
-        action,
-        "new task"
-            | "open task"
-            | "open worktrunk"
-            | "inspect agent"
-            | "monitor task"
-            | "review branch"
-    )
-}
-
 fn render_readonly_plan(
     plan: commands::CommandPlan,
     matches: &ArgMatches,
@@ -1094,14 +722,14 @@ fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, Cl
     Ok(commands::NewTaskRequest { repo, title, agent })
 }
 
-fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {
+pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {
     matches
         .get_one::<String>("task")
         .map(String::as_str)
         .ok_or_else(|| CliError::CommandFailed("task argument is required".to_string()))
 }
 
-fn command_error(error: CommandError) -> CliError {
+pub(crate) fn command_error(error: CommandError) -> CliError {
     match error {
         CommandError::TaskNotFound(task) => {
             CliError::CommandFailed(format!("task not found: {task}"))
@@ -1136,7 +764,9 @@ mod tests {
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId},
+        models::{
+            AgentClient, GitStatus, LifecycleStatus, RecommendedAction, SideFlag, Task, TaskId,
+        },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
     use std::path::Path;
@@ -1681,10 +1311,16 @@ mod tests {
 
         assert!(lib.contains("mod cli;"));
         assert!(lib.contains("mod context;"));
+        assert!(lib.contains("mod cockpit_actions;"));
+        assert!(lib.contains("mod dispatch;"));
         assert!(lib.contains("mod render;"));
+        assert!(lib.contains("mod supervise;"));
         assert!(crate_root.join("src/cli.rs").exists());
+        assert!(crate_root.join("src/cockpit_actions.rs").exists());
         assert!(crate_root.join("src/context.rs").exists());
+        assert!(crate_root.join("src/dispatch.rs").exists());
         assert!(crate_root.join("src/render.rs").exists());
+        assert!(crate_root.join("src/supervise.rs").exists());
     }
 
     #[test]
@@ -3340,6 +2976,57 @@ mod tests {
     }
 
     #[test]
+    fn task_command_operation_maps_cli_commands_and_cockpit_aliases() {
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("open"),
+            Some(super::TaskCommandOperation::Open)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("trunk"),
+            Some(super::TaskCommandOperation::Trunk)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("check"),
+            Some(super::TaskCommandOperation::Check)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("diff"),
+            Some(super::TaskCommandOperation::Diff)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("merge"),
+            Some(super::TaskCommandOperation::Merge)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("clean"),
+            Some(super::TaskCommandOperation::Clean)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("status"),
+            None
+        );
+
+        assert_eq!(
+            super::TaskCommandOperation::from_recommended_action(
+                RecommendedAction::InspectTestOutput
+            ),
+            Some(super::TaskCommandOperation::Check)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_recommended_action(RecommendedAction::ReviewDiff),
+            Some(super::TaskCommandOperation::Diff)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_recommended_action(RecommendedAction::InspectAgent),
+            Some(super::TaskCommandOperation::Open)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_recommended_action(RecommendedAction::Reconcile),
+            None
+        );
+    }
+
+    #[test]
     fn pending_cockpit_non_open_actions_return_to_ajax() {
         for action in ["check task", "inspect test output"] {
             let mut context = sample_context();
@@ -3420,6 +3107,35 @@ mod tests {
             super::PendingCockpitOutcome::ReturnToCockpit
         );
         assert!(!reconcile_state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_reconcile_preserves_prior_state_change() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut runner = PanicRunner;
+        let mut state_changed = true;
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web".to_string(),
+            recommended_action: "reconcile".to_string(),
+            task_title: None,
+        };
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert!(state_changed);
     }
 
     #[test]
@@ -4034,6 +3750,33 @@ mod tests {
             }
         }
         assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_reconcile_preserves_prior_state_change_when_no_tasks_change() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__project_action__web__reconcile"),
+            task_handle: "web".to_string(),
+            reason: "Reconcile".to_string(),
+            priority: 0,
+            recommended_action: "reconcile".to_string(),
+        };
+        let mut runner = PanicRunner;
+        let mut state_changed = true;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Refresh { .. }));
+        assert!(state_changed);
     }
 
     #[test]

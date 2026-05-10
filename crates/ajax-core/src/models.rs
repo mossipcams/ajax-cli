@@ -179,6 +179,22 @@ impl Task {
     pub fn side_flags(&self) -> impl Iterator<Item = SideFlag> + '_ {
         self.side_flags.iter().copied()
     }
+
+    pub fn mark_resource_missing(&mut self, flag: SideFlag) {
+        self.add_side_flag(flag);
+        if flag.is_missing_substrate() {
+            self.agent_status = AgentRuntimeStatus::Unknown;
+            self.remove_side_flag(SideFlag::AgentRunning);
+        }
+    }
+
+    pub fn has_missing_substrate(&self) -> bool {
+        self.side_flags().any(SideFlag::is_missing_substrate)
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|live_status| live_status.kind.is_missing_substrate())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -256,6 +272,29 @@ impl GitStatus {
     }
 }
 
+impl SideFlag {
+    pub fn is_missing_substrate(self) -> bool {
+        matches!(
+            self,
+            SideFlag::WorktrunkMissing
+                | SideFlag::TmuxMissing
+                | SideFlag::WorktreeMissing
+                | SideFlag::BranchMissing
+        )
+    }
+}
+
+impl LiveStatusKind {
+    pub fn is_missing_substrate(self) -> bool {
+        matches!(
+            self,
+            LiveStatusKind::WorktreeMissing
+                | LiveStatusKind::TmuxMissing
+                | LiveStatusKind::WorktrunkMissing
+        )
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TmuxStatus {
     pub exists: bool,
@@ -313,11 +352,82 @@ pub struct AttentionItem {
     pub recommended_action: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum RecommendedAction {
+    SelectProject,
+    NewTask,
+    Reconcile,
+    OpenTask,
+    OpenWorktrunk,
+    InspectTask,
+    InspectAgent,
+    InspectTestOutput,
+    MonitorTask,
+    CheckTask,
+    DiffTask,
+    ReviewDiff,
+    ReviewBranch,
+    MergeTask,
+    CleanTask,
+    Status,
+}
+
+impl RecommendedAction {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::SelectProject,
+            Self::NewTask,
+            Self::Reconcile,
+            Self::OpenTask,
+            Self::OpenWorktrunk,
+            Self::InspectTask,
+            Self::InspectAgent,
+            Self::InspectTestOutput,
+            Self::MonitorTask,
+            Self::CheckTask,
+            Self::DiffTask,
+            Self::ReviewDiff,
+            Self::ReviewBranch,
+            Self::MergeTask,
+            Self::CleanTask,
+            Self::Status,
+        ]
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SelectProject => "select project",
+            Self::NewTask => "new task",
+            Self::Reconcile => "reconcile",
+            Self::OpenTask => "open task",
+            Self::OpenWorktrunk => "open worktrunk",
+            Self::InspectTask => "inspect task",
+            Self::InspectAgent => "inspect agent",
+            Self::InspectTestOutput => "inspect test output",
+            Self::MonitorTask => "monitor task",
+            Self::CheckTask => "check task",
+            Self::DiffTask => "diff task",
+            Self::ReviewDiff => "review diff",
+            Self::ReviewBranch => "review branch",
+            Self::MergeTask => "merge task",
+            Self::CleanTask => "clean task",
+            Self::Status => "status",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|action| action.as_str() == label)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, Repo, SideFlag, Task, TaskId,
-        TmuxStatus, WorktrunkStatus,
+        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RecommendedAction, Repo, SideFlag,
+        Task, TaskId, TmuxStatus, WorktrunkStatus,
     };
 
     #[test]
@@ -365,6 +475,31 @@ mod tests {
     }
 
     #[test]
+    fn task_marks_and_detects_missing_substrate() {
+        let mut task = Task::new(
+            TaskId::new("task-3"),
+            "web",
+            "repair-cockpit",
+            "Repair cockpit",
+            "ajax/repair-cockpit",
+            "main",
+            "/tmp/worktrees/repair-cockpit",
+            "ajax-web-repair-cockpit",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+
+        task.agent_status = super::AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        task.mark_resource_missing(SideFlag::WorktreeMissing);
+
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task.has_missing_substrate());
+        assert_eq!(task.agent_status, super::AgentRuntimeStatus::Unknown);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+    }
+
+    #[test]
     fn repo_and_status_models_capture_external_reality() {
         let repo = Repo::new("web", "/Users/matt/projects/web", "main");
         let attempt = AgentAttempt::new(AgentClient::Codex, "tmux:%1");
@@ -389,5 +524,24 @@ mod tests {
         assert!(git.has_unpushed_work());
         assert!(tmux.exists);
         assert!(worktrunk.points_at_expected_path);
+    }
+
+    #[test]
+    fn recommended_actions_have_stable_unique_labels() {
+        let labels = RecommendedAction::all()
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(labels.len(), 16);
+        assert_eq!(labels[0], "select project");
+        assert_eq!(labels[1], "new task");
+        assert_eq!(labels[2], "reconcile");
+        for label in labels {
+            assert_eq!(
+                RecommendedAction::from_label(label).map(|action| action.as_str()),
+                Some(label)
+            );
+        }
     }
 }

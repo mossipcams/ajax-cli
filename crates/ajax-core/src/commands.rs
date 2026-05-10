@@ -857,13 +857,6 @@ pub fn sweep_cleanup_candidates<R: Registry>(context: &CommandContext<R>) -> Vec
         .collect()
 }
 
-fn has_missing_substrate_flag(task: &Task) -> bool {
-    task.has_side_flag(SideFlag::WorktrunkMissing)
-        || task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::WorktreeMissing)
-        || task.has_side_flag(SideFlag::BranchMissing)
-}
-
 pub fn trunk_task_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
@@ -927,7 +920,7 @@ fn count_active_tasks(tasks: &[&Task]) -> u32 {
 }
 
 fn is_operational_task(task: &Task) -> bool {
-    task.lifecycle_status != LifecycleStatus::Removed && !has_missing_substrate_flag(task)
+    task.lifecycle_status != LifecycleStatus::Removed && !task.has_missing_substrate()
 }
 
 fn task_summary(task: &Task) -> TaskSummary {

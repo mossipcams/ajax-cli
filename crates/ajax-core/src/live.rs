@@ -142,18 +142,18 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
 
     match observation.kind {
         LiveStatusKind::WorktreeMissing => {
-            mark_resource_missing(task, SideFlag::WorktreeMissing);
+            task.mark_resource_missing(SideFlag::WorktreeMissing);
         }
         LiveStatusKind::TmuxMissing => {
-            mark_resource_missing(task, SideFlag::TmuxMissing);
+            task.mark_resource_missing(SideFlag::TmuxMissing);
         }
         LiveStatusKind::WorktrunkMissing => {
-            mark_resource_missing(task, SideFlag::WorktrunkMissing);
+            task.mark_resource_missing(SideFlag::WorktrunkMissing);
         }
         LiveStatusKind::AgentRunning
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning => {
-            if has_missing_resource(task) {
+            if task.has_missing_substrate() {
                 task.agent_status = AgentRuntimeStatus::Unknown;
                 task.remove_side_flag(SideFlag::AgentRunning);
             } else {
@@ -238,23 +238,6 @@ fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
     }
 
     task.lifecycle_status = status;
-}
-
-fn mark_resource_missing(task: &mut Task, flag: SideFlag) {
-    task.agent_status = AgentRuntimeStatus::Unknown;
-    task.add_side_flag(flag);
-    task.remove_side_flag(SideFlag::AgentRunning);
-}
-
-fn has_missing_resource(task: &Task) -> bool {
-    [
-        SideFlag::WorktreeMissing,
-        SideFlag::TmuxMissing,
-        SideFlag::WorktrunkMissing,
-        SideFlag::BranchMissing,
-    ]
-    .into_iter()
-    .any(|flag| task.has_side_flag(flag))
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {

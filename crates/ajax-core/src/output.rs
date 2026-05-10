@@ -97,7 +97,7 @@ mod tests {
         CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
         OutputFormat, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     };
-    use crate::models::AttentionItem;
+    use crate::models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction};
 
     #[test]
     fn read_commands_serialize_as_json_contracts() {
@@ -117,7 +117,10 @@ mod tests {
                 title: "Fix login".to_string(),
                 lifecycle_status: "active".to_string(),
                 needs_attention: false,
-                live_status: None,
+                live_status: Some(LiveObservation::new(
+                    LiveStatusKind::WaitingForApproval,
+                    "waiting for approval",
+                )),
             }],
         };
         let inspect = InspectResponse {
@@ -157,22 +160,88 @@ mod tests {
             inbox: inbox.clone(),
         };
 
-        assert!(serde_json::to_string(&repos).unwrap().contains("\"repos\""));
-        assert!(serde_json::to_string(&tasks).unwrap().contains("\"tasks\""));
-        assert!(serde_json::to_string(&inspect)
-            .unwrap()
-            .contains("\"worktree_path\""));
-        assert!(serde_json::to_string(&inbox).unwrap().contains("\"items\""));
-        assert!(serde_json::to_string(&next).unwrap().contains("\"item\""));
-        assert!(serde_json::to_string(&reconcile)
-            .unwrap()
-            .contains("\"tasks_changed\""));
-        assert!(serde_json::to_string(&doctor)
-            .unwrap()
-            .contains("\"checks\""));
-        assert!(serde_json::to_string(&cockpit)
-            .unwrap()
-            .contains("\"review\""));
+        assert_eq!(
+            serde_json::to_value(&repos).unwrap(),
+            serde_json::json!({
+                "repos": [{
+                    "name": "web",
+                    "path": "/Users/matt/projects/web",
+                    "active_tasks": 2,
+                    "reviewable_tasks": 1,
+                    "cleanable_tasks": 0
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&tasks).unwrap(),
+            serde_json::json!({
+                "tasks": [{
+                    "id": "task-1",
+                    "qualified_handle": "web/fix-login",
+                    "title": "Fix login",
+                    "lifecycle_status": "active",
+                    "needs_attention": false,
+                    "live_status": {
+                        "kind": "WaitingForApproval",
+                        "summary": "waiting for approval"
+                    }
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&inspect).unwrap(),
+            serde_json::json!({
+                "task": tasks.tasks[0],
+                "branch": "ajax/fix-login",
+                "worktree_path": "/tmp/worktrees/web-fix-login",
+                "tmux_session": "ajax-web-fix-login",
+                "flags": ["dirty"]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&inbox).unwrap(),
+            serde_json::json!({
+                "items": [{
+                    "task_id": "task-1",
+                    "task_handle": "web/fix-login",
+                    "reason": "agent needs input",
+                    "priority": 10,
+                    "recommended_action": RecommendedAction::OpenTask.as_str()
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&next).unwrap(),
+            serde_json::json!({
+                "item": inbox.items[0]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&reconcile).unwrap(),
+            serde_json::json!({
+                "tasks_checked": 1,
+                "tasks_changed": 1
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&doctor).unwrap(),
+            serde_json::json!({
+                "checks": [{
+                    "name": "workmux",
+                    "ok": true,
+                    "message": "available"
+                }]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(&cockpit).unwrap(),
+            serde_json::json!({
+                "repos": repos,
+                "tasks": tasks,
+                "review": tasks,
+                "inbox": inbox
+            })
+        );
     }
 
     #[test]
