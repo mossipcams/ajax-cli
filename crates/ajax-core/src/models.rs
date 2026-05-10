@@ -373,25 +373,19 @@ pub enum RecommendedAction {
     Status,
 }
 
-const TASK_PICKER_MENU: [RecommendedAction; 8] = [
+const TASK_PICKER_MENU: [RecommendedAction; 5] = [
     RecommendedAction::OpenTask,
     RecommendedAction::DiffTask,
     RecommendedAction::CheckTask,
     RecommendedAction::MergeTask,
-    RecommendedAction::ReviewBranch,
-    RecommendedAction::OpenWorktrunk,
-    RecommendedAction::InspectTask,
     RecommendedAction::CleanTask,
 ];
 
-const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 8] = [
-    RecommendedAction::ReviewBranch,
+const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 5] = [
     RecommendedAction::OpenTask,
     RecommendedAction::DiffTask,
     RecommendedAction::CheckTask,
     RecommendedAction::MergeTask,
-    RecommendedAction::OpenWorktrunk,
-    RecommendedAction::InspectTask,
     RecommendedAction::CleanTask,
 ];
 
@@ -592,22 +586,16 @@ mod tests {
                 "diff task",
                 "check task",
                 "merge task",
-                "review branch",
-                "open worktrunk",
-                "inspect task",
                 "clean task",
             ]
         );
         assert_eq!(
             labels(true),
             vec![
-                "review branch",
                 "open task",
                 "diff task",
                 "check task",
                 "merge task",
-                "open worktrunk",
-                "inspect task",
                 "clean task",
             ]
         );

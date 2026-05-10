@@ -881,6 +881,14 @@ fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
+fn primary_accent() -> Color {
+    Color::Indexed(208)
+}
+
+fn secondary_accent() -> Color {
+    Color::LightYellow
+}
+
 fn render_ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Length(1),
@@ -898,14 +906,14 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut parts = vec![Span::styled(
         " Ajax",
         Style::default()
-            .fg(Color::LightCyan)
+            .fg(primary_accent())
             .add_modifier(Modifier::BOLD),
     )];
 
     let crumb_sep = || Span::styled(" > ", Style::default().fg(Color::DarkGray));
     let dot_sep = || Span::styled(" - ", Style::default().fg(Color::DarkGray));
     let crumb_style = Style::default()
-        .fg(Color::LightMagenta)
+        .fg(primary_accent())
         .add_modifier(Modifier::BOLD);
 
     match &app.view {
@@ -913,19 +921,19 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(dot_sep());
             parts.push(Span::styled(
                 format!("{} repos", app.repos.repos.len()),
-                Style::default().fg(Color::LightBlue),
+                Style::default().fg(secondary_accent()),
             ));
             parts.push(dot_sep());
             parts.push(Span::styled(
                 format!("{} tasks", app.tasks.tasks.len()),
-                Style::default().fg(Color::LightGreen),
+                Style::default().fg(primary_accent()),
             ));
             if !app.review.tasks.is_empty() {
                 parts.push(dot_sep());
                 parts.push(Span::styled(
                     format!("{} review", app.review.tasks.len()),
                     Style::default()
-                        .fg(Color::LightYellow)
+                        .fg(secondary_accent())
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -952,7 +960,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(Span::styled(
                 task.qualified_handle.clone(),
                 Style::default()
-                    .fg(Color::LightCyan)
+                    .fg(primary_accent())
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -962,14 +970,14 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(crumb_sep());
             parts.push(Span::styled(
                 "new task",
-                Style::default().fg(Color::LightGreen),
+                Style::default().fg(primary_accent()),
             ));
         }
         AppView::Help { .. } => {
             parts.push(crumb_sep());
             parts.push(Span::styled(
                 "help",
-                Style::default().fg(Color::LightYellow),
+                Style::default().fg(secondary_accent()),
             ));
         }
     }
@@ -999,18 +1007,21 @@ fn ajax_brand_spans() -> Vec<Span<'static>> {
     vec![
         Span::raw(" "),
         Span::styled("[", bracket),
-        Span::styled("A", Style::default().fg(Color::LightRed).add_modifier(bold)),
+        Span::styled(
+            "A",
+            Style::default().fg(primary_accent()).add_modifier(bold),
+        ),
         Span::styled(
             "J",
-            Style::default().fg(Color::LightYellow).add_modifier(bold),
+            Style::default().fg(secondary_accent()).add_modifier(bold),
         ),
         Span::styled(
             "A",
-            Style::default().fg(Color::LightGreen).add_modifier(bold),
+            Style::default().fg(primary_accent()).add_modifier(bold),
         ),
         Span::styled(
             "X",
-            Style::default().fg(Color::LightCyan).add_modifier(bold),
+            Style::default().fg(secondary_accent()).add_modifier(bold),
         ),
         Span::styled("]", bracket),
         Span::raw(" "),
@@ -1022,7 +1033,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::styled(
             format!(" {msg}"),
             Style::default()
-                .fg(Color::LightGreen)
+                .fg(primary_accent())
                 .add_modifier(Modifier::BOLD),
         )])
     } else {
@@ -1031,7 +1042,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(Span::styled(
                 key.to_string(),
                 Style::default()
-                    .fg(Color::LightYellow)
+                    .fg(secondary_accent())
                     .add_modifier(Modifier::BOLD),
             ));
             parts.push(Span::styled(
@@ -1116,17 +1127,17 @@ fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
     if status.contains("Active") {
         Span::styled(
             "*",
-            Style::default().fg(Color::LightGreen).add_modifier(bold),
+            Style::default().fg(primary_accent()).add_modifier(bold),
         )
     } else if status.contains("Reviewable") || status.contains("Mergeable") {
         Span::styled(
             "R",
-            Style::default().fg(Color::LightYellow).add_modifier(bold),
+            Style::default().fg(secondary_accent()).add_modifier(bold),
         )
     } else if status.contains("Error") || status.contains("Orphaned") {
         Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold))
     } else if status.contains("Waiting") {
-        Span::styled("~", Style::default().fg(Color::LightBlue))
+        Span::styled("~", Style::default().fg(secondary_accent()))
     } else {
         Span::styled(".", Style::default().fg(Color::DarkGray))
     }
@@ -1137,13 +1148,13 @@ fn task_handle_color(status: &str, needs_attention: bool) -> Color {
         return Color::LightRed;
     }
     if status.contains("Active") {
-        Color::LightGreen
+        primary_accent()
     } else if status.contains("Reviewable") || status.contains("Mergeable") {
-        Color::LightYellow
+        secondary_accent()
     } else if status.contains("Error") || status.contains("Orphaned") {
         Color::LightRed
     } else if status.contains("Waiting") {
-        Color::LightBlue
+        secondary_accent()
     } else {
         Color::Gray
     }
@@ -1161,14 +1172,14 @@ fn project_glyph(repo: &RepoSummary) -> Span<'static> {
         Span::styled(
             "R",
             Style::default()
-                .fg(Color::LightYellow)
+                .fg(secondary_accent())
                 .add_modifier(Modifier::BOLD),
         )
     } else if repo.active_tasks > 0 {
         Span::styled(
             "*",
             Style::default()
-                .fg(Color::LightGreen)
+                .fg(primary_accent())
                 .add_modifier(Modifier::BOLD),
         )
     } else {
@@ -1178,9 +1189,9 @@ fn project_glyph(repo: &RepoSummary) -> Span<'static> {
 
 fn project_name_color(repo: &RepoSummary) -> Color {
     if repo.reviewable_tasks > 0 {
-        Color::LightYellow
+        secondary_accent()
     } else if repo.active_tasks > 0 {
-        Color::LightGreen
+        primary_accent()
     } else {
         Color::Gray
     }
@@ -1190,9 +1201,9 @@ fn inbox_glyph(priority: u32) -> Span<'static> {
     let color = if priority < 20 {
         Color::LightRed
     } else if priority < 50 {
-        Color::LightYellow
+        secondary_accent()
     } else {
-        Color::LightCyan
+        primary_accent()
     };
     Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
@@ -1208,30 +1219,30 @@ struct ActionChrome {
 fn action_chrome(recommended_action: &str) -> ActionChrome {
     match RecommendedAction::from_label(recommended_action) {
         Some(RecommendedAction::NewTask) => {
-            ActionChrome::new("+", Color::LightGreen, Color::LightGreen, true)
+            ActionChrome::new("+", primary_accent(), primary_accent(), true)
         }
         Some(
             RecommendedAction::OpenTask
             | RecommendedAction::InspectAgent
             | RecommendedAction::MonitorTask,
-        ) => ActionChrome::new(">", Color::LightCyan, Color::LightCyan, true),
+        ) => ActionChrome::new(">", primary_accent(), primary_accent(), true),
         Some(RecommendedAction::OpenWorktrunk) => {
-            ActionChrome::new("W", Color::LightBlue, Color::LightBlue, true)
+            ActionChrome::new("W", primary_accent(), primary_accent(), true)
         }
         Some(RecommendedAction::InspectTask) => {
             ActionChrome::new("i", Color::Gray, Color::Gray, true)
         }
         Some(RecommendedAction::ReviewBranch) => {
-            ActionChrome::new("R", Color::LightYellow, Color::LightYellow, true)
+            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::MergeTask) => {
-            ActionChrome::new("M", Color::LightMagenta, Color::LightMagenta, true)
+            ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::DiffTask | RecommendedAction::ReviewDiff) => {
-            ActionChrome::new("D", Color::LightBlue, Color::LightGreen, true)
+            ActionChrome::new("D", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::CheckTask | RecommendedAction::InspectTestOutput) => {
-            ActionChrome::new("C", Color::LightGreen, Color::LightGreen, true)
+            ActionChrome::new("C", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::CleanTask) => {
             ActionChrome::new("X", Color::LightRed, Color::LightRed, true)
@@ -1285,9 +1296,9 @@ fn priority_accent(priority: u32) -> Color {
     if priority < 20 {
         Color::LightRed
     } else if priority < 50 {
-        Color::LightYellow
+        secondary_accent()
     } else {
-        Color::LightCyan
+        primary_accent()
     }
 }
 
@@ -1330,7 +1341,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                     Span::styled("  ->  ", arrow),
                     Span::styled(
                         item.recommended_action.clone(),
-                        Style::default().fg(Color::LightCyan).add_modifier(bold),
+                        Style::default().fg(primary_accent()).add_modifier(bold),
                     ),
                 ],
             )
@@ -1351,13 +1362,13 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             action_glyph("new task"),
             vec![Span::styled(
                 "start a new task",
-                Style::default().fg(Color::LightGreen).add_modifier(bold),
+                Style::default().fg(primary_accent()).add_modifier(bold),
             )],
         ),
         SelectableKind::Reconcile { .. } => render_row(
             action_glyph("reconcile"),
             vec![
-                Span::styled("reconcile", Style::default().fg(Color::Gray)),
+                Span::styled("reconcile", Style::default().fg(secondary_accent())),
                 Span::styled("  sync external state", dim),
             ],
         ),
@@ -1406,7 +1417,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
                         .fg(Color::White)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(display_title, Style::default().fg(Color::Cyan)),
+                Span::styled(display_title, Style::default().fg(primary_accent())),
             ],
         ));
         return (rows, sel_to_row);
@@ -1503,8 +1514,9 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, render_cockpit, render_ui, selectable_feed_rows, selectable_row_layout, App,
-        AppView, SelectableKind, TerminalModeCommand,
+        action_chrome, primary_accent, render_cockpit, render_ui, secondary_accent,
+        selectable_feed_rows, selectable_row_layout, App, AppView, SelectableKind,
+        TerminalModeCommand,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
@@ -1513,7 +1525,7 @@ mod tests {
         },
     };
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     fn sample_repos() -> ReposResponse {
         ReposResponse {
@@ -1550,6 +1562,12 @@ mod tests {
                 recommended_action: "open task".to_string(),
             }],
         }
+    }
+
+    #[test]
+    fn cockpit_palette_uses_orange_primary_and_light_yellow_secondary() {
+        assert_eq!(primary_accent(), Color::Indexed(208));
+        assert_eq!(secondary_accent(), Color::LightYellow);
     }
 
     #[test]
@@ -1647,6 +1665,39 @@ mod tests {
             .collect::<String>();
         assert_eq!(brand, "[AJAX]");
         assert_eq!(buffer[(79, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn cockpit_render_uses_orange_yellow_palette() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let colors = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.fg)
+            .collect::<Vec<_>>();
+        assert!(colors.contains(&primary_accent()));
+        assert!(colors.contains(&secondary_accent()));
+        for bad_color in [
+            Color::LightCyan,
+            Color::LightGreen,
+            Color::LightBlue,
+            Color::LightMagenta,
+        ] {
+            assert!(
+                !colors.contains(&bad_color),
+                "cockpit palette should not render old accent color {bad_color:?}"
+            );
+        }
     }
 
     #[test]
@@ -2280,6 +2331,12 @@ mod tests {
         for verb in ["open task", "diff task", "merge task", "clean task"] {
             assert!(content.contains(verb), "menu missing {verb}");
         }
+        for duplicate_entry in ["review branch", "open worktrunk", "inspect task"] {
+            assert!(
+                !content.contains(duplicate_entry),
+                "menu should collapse duplicate open-style action {duplicate_entry}"
+            );
+        }
     }
 
     #[test]
@@ -2360,22 +2417,16 @@ mod tests {
                 RecommendedAction::DiffTask.as_str(),
                 RecommendedAction::CheckTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
-                RecommendedAction::ReviewBranch.as_str(),
-                RecommendedAction::OpenWorktrunk.as_str(),
-                RecommendedAction::InspectTask.as_str(),
                 RecommendedAction::CleanTask.as_str(),
             ]
         );
         assert_eq!(
             review,
             vec![
-                RecommendedAction::ReviewBranch.as_str(),
                 RecommendedAction::OpenTask.as_str(),
                 RecommendedAction::DiffTask.as_str(),
                 RecommendedAction::CheckTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
-                RecommendedAction::OpenWorktrunk.as_str(),
-                RecommendedAction::InspectTask.as_str(),
                 RecommendedAction::CleanTask.as_str(),
             ]
         );
@@ -2389,6 +2440,20 @@ mod tests {
         {
             let chrome = action_chrome(action.as_str());
             assert_ne!(chrome.glyph, ".", "{action:?}");
+        }
+
+        let open = action_chrome(RecommendedAction::OpenTask.as_str());
+        assert_eq!(open.glyph_color, primary_accent());
+        assert_eq!(open.label_color, primary_accent());
+
+        for action in [
+            RecommendedAction::DiffTask,
+            RecommendedAction::CheckTask,
+            RecommendedAction::MergeTask,
+        ] {
+            let chrome = action_chrome(action.as_str());
+            assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
+            assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
         }
 
         for action in [
