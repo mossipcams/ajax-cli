@@ -15,6 +15,25 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
     if contains_any(
         &lower,
         &[
+            "test result: ok",
+            "tests passed",
+            "all pre-pr checks passed",
+            "successfully completed",
+            "task complete",
+            "all done",
+            "done",
+        ],
+    ) {
+        return LiveObservation::new(LiveStatusKind::Done, "done");
+    }
+
+    if looks_like_shell_prompt(trimmed) {
+        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
+    }
+
+    if contains_any(
+        &lower,
+        &[
             "do you want to proceed",
             "allow command",
             "approve",
@@ -28,7 +47,14 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 
     if contains_any(
         &lower,
-        &["login", "log in", "authenticate", "auth required"],
+        &[
+            "please login",
+            "please log in",
+            "log in to",
+            "login to continue",
+            "authenticate",
+            "auth required",
+        ],
     ) {
         return LiveObservation::new(LiveStatusKind::AuthRequired, "authentication required");
     }
@@ -86,25 +112,6 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         ],
     ) {
         return LiveObservation::new(LiveStatusKind::CommandFailed, "command failed");
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "test result: ok",
-            "tests passed",
-            "all pre-pr checks passed",
-            "successfully completed",
-            "task complete",
-            "all done",
-            "done",
-        ],
-    ) {
-        return LiveObservation::new(LiveStatusKind::Done, "done");
-    }
-
-    if looks_like_shell_prompt(trimmed) {
-        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
     }
 
     if contains_any(
@@ -433,6 +440,44 @@ matt@Matts-MacBook-Pro ajax-tech-debt %";
         let observation = classify_pane(pane);
 
         assert_eq!(observation.kind, LiveStatusKind::Done);
+    }
+
+    #[test]
+    fn pane_classifier_uses_later_success_over_stale_failure_history() {
+        let pane = "\
+Earlier command failed with exit code 101.
+I fixed the issue and reran the full suite.
+All pre-PR checks passed.
+matt@Matts-MacBook-Pro ajax-tech-debt %";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::Done);
+    }
+
+    #[test]
+    fn pane_classifier_uses_final_prompt_over_stale_approval_history() {
+        let pane = "\
+Do you want to proceed? y/n
+Approved and continued.
+No more work is running.
+matt@Matts-MacBook-Pro ajax-tech-debt %";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
+    }
+
+    #[test]
+    fn pane_classifier_does_not_treat_login_task_text_as_auth_required() {
+        let pane = "\
+Task: Fix login form alignment
+Review the button spacing.
+matt@Matts-MacBook-Pro ajax-fix-login %";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
     }
 
     #[test]
