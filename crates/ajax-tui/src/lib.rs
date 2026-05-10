@@ -982,7 +982,7 @@ fn action_glyph(recommended_action: &str) -> Span<'static> {
         "merge task" => ("⇄", Color::Yellow),
         "diff task" => ("◇", Color::DarkGray),
         "check task" => ("⊙", Color::DarkGray),
-        "clean task" => ("✕", Color::DarkGray),
+        "clean task" => ("✕", Color::Red),
         "repair task" => ("⚒", Color::DarkGray),
         "reconcile" => ("⟳", Color::DarkGray),
         "status" => ("?", Color::DarkGray),
@@ -1067,7 +1067,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
         } => {
             let primary = matches!(
                 recommended_action.as_str(),
-                "new task" | "open task" | "review branch" | "merge task"
+                "new task" | "open task" | "review branch" | "merge task" | "clean task"
             );
             let label_style = if primary {
                 Style::default().fg(Color::White)
@@ -1200,7 +1200,7 @@ mod tests {
         output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
     };
     use crossterm::event::{KeyCode, KeyModifiers};
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{backend::TestBackend, style::Color, Terminal};
 
     fn sample_repos() -> ReposResponse {
         ReposResponse {
@@ -1771,6 +1771,38 @@ mod tests {
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn project_clean_task_action_does_not_render_as_disabled() {
+        let app = app_in_project_view();
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width as usize;
+        let label: Vec<String> = "clean task".chars().map(|c| c.to_string()).collect();
+        let clean_cell = buffer
+            .content()
+            .chunks(width)
+            .find_map(|row| {
+                row.windows(label.len()).find_map(|cells| {
+                    cells
+                        .iter()
+                        .zip(label.iter())
+                        .all(|(cell, expected)| cell.symbol() == expected)
+                        .then_some(&cells[0])
+                })
+            })
+            .expect("project action menu should include clean task");
+
+        assert_ne!(
+            clean_cell.fg,
+            Color::DarkGray,
+            "clean task should not look disabled when workmux cleanup is available"
+        );
     }
 
     #[test]

@@ -755,6 +755,18 @@ fn tui_cockpit_action<R: CommandRunner>(
     let handle = &item.task_handle;
 
     match item.recommended_action.as_str() {
+        "clean task" => {
+            let plan = commands::clean_task_plan(context, handle).map_err(command_error_as_io)?;
+            commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
+            commands::mark_task_removed(context, handle).map_err(command_error_as_io)?;
+            *state_changed = true;
+            Ok(ajax_tui::ActionOutcome::Refresh {
+                repos: commands::list_repos(context),
+                tasks: commands::list_tasks(context, None),
+                review: commands::review_queue(context),
+                inbox: commands::inbox(context),
+            })
+        }
         "open task"
         | "open worktrunk"
         | "inspect agent"
@@ -765,7 +777,6 @@ fn tui_cockpit_action<R: CommandRunner>(
         | "review diff"
         | "review branch"
         | "merge task"
-        | "clean task"
         | "repair task"
         | "repair worktrunk" => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
@@ -818,6 +829,16 @@ fn tui_cockpit_action<R: CommandRunner>(
             item.recommended_action
         ))),
     }
+}
+
+fn command_error_as_io(error: CommandError) -> std::io::Error {
+    let message = match command_error(error) {
+        CliError::CommandFailed(message)
+        | CliError::JsonSerialization(message)
+        | CliError::ContextLoad(message)
+        | CliError::ContextSave(message) => message,
+    };
+    std::io::Error::other(message)
 }
 
 fn execute_pending_cockpit_action<R: CommandRunner>(
@@ -2230,7 +2251,6 @@ mod tests {
             ("web/fix-login", "check task"),
             ("web/fix-login", "diff task"),
             ("web/fix-login", "merge task"),
-            ("web/fix-login", "clean task"),
             ("web/fix-login", "repair task"),
             ("web/fix-login", "repair worktrunk"),
         ] {
@@ -2278,7 +2298,6 @@ mod tests {
             ("web/fix-login", "check task"),
             ("web/fix-login", "diff task"),
             ("web/fix-login", "merge task"),
-            ("web/fix-login", "clean task"),
             ("web/fix-login", "repair task"),
             ("web/fix-login", "repair worktrunk"),
             ("web", "new task"),
@@ -2303,6 +2322,20 @@ mod tests {
                 assert!(!message.contains("try: ajax"), "{action}: {message}");
                 assert!(!message.contains("run `ajax"), "{action}: {message}");
             }
+        }
+
+        let mut context = cleanable_context();
+        let item = cockpit_item("web/fix-login", "clean task");
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        if let ajax_tui::ActionOutcome::Message(message) = outcome {
+            assert!(!message.contains("try: ajax"), "clean task: {message}");
+            assert!(!message.contains("run `ajax"), "clean task: {message}");
         }
     }
 
@@ -2375,7 +2408,7 @@ mod tests {
             ("web/fix-login", "check task", Expected::Defer),
             ("web/fix-login", "diff task", Expected::Defer),
             ("web/fix-login", "merge task", Expected::Defer),
-            ("web/fix-login", "clean task", Expected::Defer),
+            ("web/fix-login", "clean task", Expected::Refresh),
             ("web/fix-login", "repair task", Expected::Defer),
             ("web/fix-login", "repair worktrunk", Expected::Defer),
             (
@@ -2397,7 +2430,11 @@ mod tests {
             ("web", "status", Expected::Message(&["web: 1 task(s)"])),
             ("web", "reconcile", Expected::Refresh),
         ] {
-            let mut context = sample_context();
+            let mut context = if action == "clean task" {
+                cleanable_context()
+            } else {
+                sample_context()
+            };
             let item = cockpit_item(handle, action);
             let mut runner = RecordingCommandRunner::default();
             let mut state_changed = false;
@@ -2451,9 +2488,15 @@ mod tests {
                         inbox,
                     } => {
                         assert_eq!(repos.repos.len(), 1, "{action}");
-                        assert_eq!(tasks.tasks.len(), 1, "{action}");
-                        assert_eq!(review.tasks.len(), 1, "{action}");
-                        assert!(!inbox.items.is_empty(), "{action}");
+                        if action == "clean task" {
+                            assert!(tasks.tasks.is_empty(), "{action}");
+                            assert!(review.tasks.is_empty(), "{action}");
+                            assert!(inbox.items.is_empty(), "{action}");
+                        } else {
+                            assert_eq!(tasks.tasks.len(), 1, "{action}");
+                            assert_eq!(review.tasks.len(), 1, "{action}");
+                            assert!(!inbox.items.is_empty(), "{action}");
+                        }
                         assert!(!runner.commands().is_empty(), "{action}");
                         assert!(state_changed, "{action}");
                     }
@@ -3172,6 +3215,58 @@ mod tests {
             }
         }
         assert!(!state_changed);
+    }
+
+    #[test]
+    fn cockpit_clean_action_runs_and_refreshes_inside_ajax() {
+        let mut context = cleanable_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__clean"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Clean task".to_string(),
+            priority: 0,
+            recommended_action: "clean task".to_string(),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        match outcome {
+            ajax_tui::ActionOutcome::Refresh {
+                repos,
+                tasks,
+                review,
+                inbox,
+            } => {
+                assert_eq!(repos.repos.len(), 1);
+                assert!(tasks.tasks.is_empty());
+                assert!(review.tasks.is_empty());
+                assert!(inbox.items.is_empty());
+            }
+            ajax_tui::ActionOutcome::Defer(_) => {
+                panic!("clean task should refresh Ajax instead of deferring out")
+            }
+            ajax_tui::ActionOutcome::Message(message) => {
+                panic!("clean task should run instead of showing message: {message}")
+            }
+        }
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+        assert!(state_changed);
     }
 
     #[test]
