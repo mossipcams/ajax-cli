@@ -61,7 +61,6 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
             return Ok(ajax_tui::ActionOutcome::Refresh {
                 repos: commands::list_repos(context),
                 tasks: commands::list_tasks(context, None),
-                review: commands::review_queue(context),
                 inbox: commands::inbox(context),
             });
         }
@@ -89,7 +88,6 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
             Ok(ajax_tui::ActionOutcome::Refresh {
                 repos: commands::list_repos(context),
                 tasks: commands::list_tasks(context, None),
-                review: commands::review_queue(context),
                 inbox: commands::inbox(context),
             })
         }

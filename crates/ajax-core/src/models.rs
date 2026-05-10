@@ -370,12 +370,6 @@ const TASK_PICKER_MENU: [RecommendedAction; 3] = [
     RecommendedAction::CleanTask,
 ];
 
-const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 3] = [
-    RecommendedAction::OpenTask,
-    RecommendedAction::MergeTask,
-    RecommendedAction::CleanTask,
-];
-
 impl RecommendedAction {
     pub const fn all() -> &'static [Self] {
         &[
@@ -408,12 +402,8 @@ impl RecommendedAction {
             .find(|action| action.as_str() == label)
     }
 
-    pub const fn task_picker_menu(is_review: bool) -> &'static [Self] {
-        if is_review {
-            &REVIEW_TASK_PICKER_MENU
-        } else {
-            &TASK_PICKER_MENU
-        }
+    pub const fn task_picker_menu() -> &'static [Self] {
+        &TASK_PICKER_MENU
     }
 }
 
@@ -541,15 +531,12 @@ mod tests {
 
     #[test]
     fn recommended_actions_define_task_picker_menus() {
-        let labels = |is_review| {
-            RecommendedAction::task_picker_menu(is_review)
-                .iter()
-                .map(|action| action.as_str())
-                .collect::<Vec<_>>()
-        };
+        let labels = RecommendedAction::task_picker_menu()
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
 
-        assert_eq!(labels(false), vec!["open task", "merge task", "clean task"]);
-        assert_eq!(labels(true), vec!["open task", "merge task", "clean task"]);
+        assert_eq!(labels, vec!["open task", "merge task", "clean task"]);
     }
 
     #[test]

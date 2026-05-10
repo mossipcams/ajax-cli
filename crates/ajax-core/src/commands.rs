@@ -335,7 +335,7 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
     CockpitResponse {
         repos: list_repos(context),
         tasks: list_tasks(context, None),
-        review: review_queue(context),
+        review: TasksResponse { tasks: vec![] },
         inbox: inbox(context),
     }
 }

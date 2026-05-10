@@ -156,7 +156,7 @@ mod tests {
         let cockpit = CockpitResponse {
             repos: repos.clone(),
             tasks: tasks.clone(),
-            review: tasks.clone(),
+            review: TasksResponse { tasks: vec![] },
             inbox: inbox.clone(),
         };
 
@@ -238,7 +238,7 @@ mod tests {
             serde_json::json!({
                 "repos": repos,
                 "tasks": tasks,
-                "review": tasks,
+                "review": { "tasks": [] },
                 "inbox": inbox
             })
         );

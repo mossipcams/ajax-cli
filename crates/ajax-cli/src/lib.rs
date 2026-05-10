@@ -425,7 +425,6 @@ fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
     ajax_tui::render_cockpit(
         &commands::list_repos(context),
         &commands::list_tasks(context, None),
-        &commands::review_queue(context),
         &commands::inbox(context),
     )
 }
@@ -521,7 +520,6 @@ fn render_matches_mut(
                 let pending = ajax_tui::run_interactive_with_flash_and_refresh(
                     commands::list_repos(context),
                     commands::list_tasks(context, None),
-                    commands::review_queue(context),
                     commands::inbox(context),
                     cockpit_flash.take(),
                     refresh_interval,
@@ -1105,10 +1103,7 @@ mod tests {
             parsed["tasks"]["tasks"][0]["qualified_handle"],
             "web/fix-login"
         );
-        assert_eq!(
-            parsed["review"]["tasks"][0]["qualified_handle"],
-            "web/fix-login"
-        );
+        assert_eq!(parsed["review"]["tasks"], serde_json::Value::Array(vec![]));
         assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
     }
 
@@ -2791,17 +2786,14 @@ mod tests {
                     ajax_tui::ActionOutcome::Refresh {
                         repos,
                         tasks,
-                        review,
                         inbox,
                     } => {
                         assert_eq!(repos.repos.len(), 1, "{action}");
                         if matches!(action, "clean task" | "reconcile") {
                             assert!(tasks.tasks.is_empty(), "{action}");
-                            assert!(review.tasks.is_empty(), "{action}");
                             assert!(inbox.items.is_empty(), "{action}");
                         } else {
                             assert_eq!(tasks.tasks.len(), 1, "{action}");
-                            assert_eq!(review.tasks.len(), 1, "{action}");
                             assert!(!inbox.items.is_empty(), "{action}");
                         }
                         assert!(!runner.commands().is_empty(), "{action}");
@@ -3503,12 +3495,10 @@ mod tests {
             ajax_tui::ActionOutcome::Refresh {
                 repos,
                 tasks,
-                review,
                 inbox,
             } => {
                 assert_eq!(repos.repos.len(), 1);
                 assert!(tasks.tasks.is_empty());
-                assert!(review.tasks.is_empty());
                 assert!(inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should refresh in cockpit"),
@@ -3547,12 +3537,10 @@ mod tests {
             ajax_tui::ActionOutcome::Refresh {
                 repos,
                 tasks,
-                review,
                 inbox,
             } => {
                 assert_eq!(repos.repos.len(), 1);
                 assert!(tasks.tasks.is_empty());
-                assert!(review.tasks.is_empty());
                 assert!(inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => {
@@ -3613,12 +3601,10 @@ mod tests {
             ajax_tui::ActionOutcome::Refresh {
                 repos,
                 tasks,
-                review,
                 inbox,
             } => {
                 assert_eq!(repos.repos.len(), 1);
                 assert!(tasks.tasks.is_empty());
-                assert!(review.tasks.is_empty());
                 assert!(inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => {

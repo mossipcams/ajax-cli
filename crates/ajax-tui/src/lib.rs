@@ -33,14 +33,12 @@ use std::{
 pub fn render_cockpit(
     repos: &ReposResponse,
     tasks: &TasksResponse,
-    review: &TasksResponse,
     inbox: &InboxResponse,
 ) -> String {
     let mut lines = vec![
         "Ajax Cockpit".to_string(),
         format!("Repos: {}", repos.repos.len()),
         format!("Tasks: {}", tasks.tasks.len()),
-        format!("Review: {}", review.tasks.len()),
         "Task Statuses".to_string(),
     ];
 
@@ -88,7 +86,6 @@ pub enum ActionOutcome {
     Refresh {
         repos: ReposResponse,
         tasks: TasksResponse,
-        review: TasksResponse,
         inbox: InboxResponse,
     },
     /// Exit the TUI — the CLI will run the deferred action.
@@ -134,10 +131,8 @@ enum AppView {
         repo: String,
     },
     /// Per-task action menu reached by selecting a task and pressing Enter.
-    /// `is_review` controls which action is listed first.
     TaskActions {
         task: TaskSummary,
-        is_review: bool,
         parent: Box<AppView>,
     },
     NewTaskInput {
@@ -204,7 +199,6 @@ fn build_selectables(
     repos: &ReposResponse,
     inbox: &InboxResponse,
     tasks: &TasksResponse,
-    review: &TasksResponse,
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
     match view {
@@ -215,12 +209,6 @@ fn build_selectables(
         }
         AppView::Project { repo } => {
             out.push(SelectableKind::NewTask { repo: repo.clone() });
-            let project_review_tasks = review
-                .tasks
-                .iter()
-                .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                .cloned()
-                .collect::<Vec<_>>();
             out.extend(
                 inbox
                     .items
@@ -234,28 +222,18 @@ fn build_selectables(
                     .tasks
                     .iter()
                     .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                    .filter(|task| {
-                        !project_review_tasks
-                            .iter()
-                            .any(|review_task| review_task.id == task.id)
-                    })
                     .cloned()
                     .map(SelectableKind::Task),
             );
-            out.extend(project_review_tasks.into_iter().map(SelectableKind::Task));
             out.push(SelectableKind::Reconcile { repo: repo.clone() });
         }
-        AppView::TaskActions {
-            task, is_review, ..
-        } => {
-            out.extend(
-                RecommendedAction::task_picker_menu(*is_review)
-                    .iter()
-                    .map(|action| SelectableKind::TaskAction {
-                        task: task.clone(),
-                        recommended_action: action.as_str().to_string(),
-                    }),
-            );
+        AppView::TaskActions { task, .. } => {
+            out.extend(RecommendedAction::task_picker_menu().iter().map(|action| {
+                SelectableKind::TaskAction {
+                    task: task.clone(),
+                    recommended_action: action.as_str().to_string(),
+                }
+            }));
         }
         AppView::NewTaskInput { .. } => {}
         AppView::Help { .. } => {}
@@ -268,7 +246,6 @@ fn build_selectables(
 pub struct App {
     repos: ReposResponse,
     tasks: TasksResponse,
-    review: TasksResponse,
     inbox: InboxResponse,
     view: AppView,
     selectables: Vec<SelectableKind>,
@@ -280,18 +257,12 @@ pub struct App {
 const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
 
 impl App {
-    pub fn new(
-        repos: ReposResponse,
-        tasks: TasksResponse,
-        review: TasksResponse,
-        inbox: InboxResponse,
-    ) -> Self {
+    pub fn new(repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) -> Self {
         let view = AppView::Projects;
-        let selectables = build_selectables(&view, &repos, &inbox, &tasks, &review);
+        let selectables = build_selectables(&view, &repos, &inbox, &tasks);
         Self {
             repos,
             tasks,
-            review,
             inbox,
             view,
             selectables,
@@ -414,7 +385,6 @@ impl App {
             SelectableKind::Task(task) => {
                 self.view = AppView::TaskActions {
                     task,
-                    is_review: false,
                     parent: Box::new(self.view.clone()),
                 };
                 self.selected = 0;
@@ -424,14 +394,13 @@ impl App {
                 None
             }
             SelectableKind::Inbox(item) => {
-                if let Some((task, is_review)) = self.find_task_for_handle(&item.task_handle) {
-                    let preselected = RecommendedAction::task_picker_menu(is_review)
+                if let Some(task) = self.find_task_for_handle(&item.task_handle) {
+                    let preselected = RecommendedAction::task_picker_menu()
                         .iter()
                         .position(|action| action.as_str() == item.recommended_action.as_str())
                         .unwrap_or(0);
                     self.view = AppView::TaskActions {
                         task,
-                        is_review,
                         parent: Box::new(self.view.clone()),
                     };
                     self.selected = preselected;
@@ -447,20 +416,12 @@ impl App {
         }
     }
 
-    fn find_task_for_handle(&self, handle: &str) -> Option<(TaskSummary, bool)> {
-        if let Some(task) = self
-            .review
-            .tasks
-            .iter()
-            .find(|task| task.qualified_handle == handle)
-        {
-            return Some((task.clone(), true));
-        }
+    fn find_task_for_handle(&self, handle: &str) -> Option<TaskSummary> {
         self.tasks
             .tasks
             .iter()
             .find(|task| task.qualified_handle == handle)
-            .map(|task| (task.clone(), false))
+            .cloned()
     }
 
     pub fn push_input_char(&mut self, character: char) {
@@ -487,28 +448,16 @@ impl App {
     }
 
     pub fn apply_refresh(&mut self, snapshot: CockpitResponse) {
-        self.reload(
-            snapshot.repos,
-            snapshot.tasks,
-            snapshot.review,
-            snapshot.inbox,
-        );
+        self.reload(snapshot.repos, snapshot.tasks, snapshot.inbox);
     }
 
     fn is_collecting_input(&self) -> bool {
         matches!(self.view, AppView::NewTaskInput { .. })
     }
 
-    fn reload(
-        &mut self,
-        repos: ReposResponse,
-        tasks: TasksResponse,
-        review: TasksResponse,
-        inbox: InboxResponse,
-    ) {
+    fn reload(&mut self, repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) {
         self.repos = repos;
         self.tasks = tasks;
-        self.review = review;
         self.inbox = inbox;
         self.rebuild_selectables();
         let max = self.selectables.len().saturating_sub(1);
@@ -516,13 +465,7 @@ impl App {
     }
 
     fn rebuild_selectables(&mut self) {
-        self.selectables = build_selectables(
-            &self.view,
-            &self.repos,
-            &self.inbox,
-            &self.tasks,
-            &self.review,
-        );
+        self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.tasks);
     }
 
     fn flash(&mut self, msg: String) {
@@ -572,17 +515,15 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
 pub fn run_interactive(
     repos: ReposResponse,
     tasks: TasksResponse,
-    review: TasksResponse,
     inbox: InboxResponse,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash(repos, tasks, review, inbox, None, on_action)
+    run_interactive_with_flash(repos, tasks, inbox, None, on_action)
 }
 
 pub fn run_interactive_with_flash(
     repos: ReposResponse,
     tasks: TasksResponse,
-    review: TasksResponse,
     inbox: InboxResponse,
     initial_flash: Option<String>,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
@@ -590,7 +531,6 @@ pub fn run_interactive_with_flash(
     run_interactive_with_flash_and_refresh(
         repos,
         tasks,
-        review,
         inbox,
         initial_flash,
         Duration::from_secs(1),
@@ -601,7 +541,6 @@ pub fn run_interactive_with_flash(
 pub fn run_interactive_with_flash_and_refresh(
     repos: ReposResponse,
     tasks: TasksResponse,
-    review: TasksResponse,
     inbox: InboxResponse,
     initial_flash: Option<String>,
     refresh_interval: Duration,
@@ -612,7 +551,7 @@ pub fn run_interactive_with_flash_and_refresh(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(repos, tasks, review, inbox);
+    let mut app = App::new(repos, tasks, inbox);
     if let Some(message) = initial_flash {
         app.flash(message);
     }
@@ -828,10 +767,9 @@ fn handle_action_result(
         Ok(ActionOutcome::Refresh {
             repos,
             tasks,
-            review,
             inbox,
         }) => {
-            app.reload(repos, tasks, review, inbox);
+            app.reload(repos, tasks, inbox);
             Ok(None)
         }
         Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
@@ -928,15 +866,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                 format!("{} tasks", app.tasks.tasks.len()),
                 Style::default().fg(primary_accent()),
             ));
-            if !app.review.tasks.is_empty() {
-                parts.push(dot_sep());
-                parts.push(Span::styled(
-                    format!("{} review", app.review.tasks.len()),
-                    Style::default()
-                        .fg(secondary_accent())
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
             if !app.inbox.items.is_empty() {
                 parts.push(dot_sep());
                 parts.push(Span::styled(
@@ -1168,14 +1097,7 @@ fn task_status_label(task: &TaskSummary) -> String {
 }
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
-    if repo.reviewable_tasks > 0 {
-        Span::styled(
-            "R",
-            Style::default()
-                .fg(secondary_accent())
-                .add_modifier(Modifier::BOLD),
-        )
-    } else if repo.active_tasks > 0 {
+    if repo.active_tasks > 0 {
         Span::styled(
             "*",
             Style::default()
@@ -1188,9 +1110,7 @@ fn project_glyph(repo: &RepoSummary) -> Span<'static> {
 }
 
 fn project_name_color(repo: &RepoSummary) -> Color {
-    if repo.reviewable_tasks > 0 {
-        secondary_accent()
-    } else if repo.active_tasks > 0 {
+    if repo.active_tasks > 0 {
         primary_accent()
     } else {
         Color::Gray
@@ -1289,9 +1209,6 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     let mut parts = Vec::new();
     if repo.active_tasks > 0 {
         parts.push(format!("{} active", repo.active_tasks));
-    }
-    if repo.reviewable_tasks > 0 {
-        parts.push(format!("{} review", repo.reviewable_tasks));
     }
     if parts.is_empty() {
         "idle".to_string()
@@ -1554,18 +1471,26 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_text_renderer_does_not_show_review_lane() {
+        let content = render_cockpit(
+            &sample_repos(),
+            &sample_tasks(),
+            &InboxResponse { items: vec![] },
+        );
+
+        assert!(!content.contains("Review:"));
+        assert!(!content.contains("review"));
+        assert!(content.contains("web/fix-login"));
+    }
+
+    #[test]
     fn task_rows_render_live_status_when_present() {
         let mut tasks = sample_tasks();
         tasks.tasks[0].live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
             "waiting for approval",
         ));
-        let mut app = App::new(
-            sample_repos(),
-            tasks,
-            TasksResponse { tasks: vec![] },
-            InboxResponse { items: vec![] },
-        );
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
         app.activate_selected();
 
         let content = render_to_string(80, 30, &app);
@@ -1580,7 +1505,6 @@ mod tests {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
-            TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
         app.select_next();
@@ -1607,12 +1531,7 @@ mod tests {
 
     #[test]
     fn cockpit_render_uses_single_cell_symbols() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -1631,12 +1550,7 @@ mod tests {
 
     #[test]
     fn cockpit_brand_renders_at_header_right_edge() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
 
@@ -1685,12 +1599,7 @@ mod tests {
 
     #[test]
     fn cockpit_render_uses_ascii_chrome_for_tmux_copy() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         let content = render_to_string(80, 30, &app);
 
@@ -1714,12 +1623,7 @@ mod tests {
     }
 
     fn app_in_project_view() -> App {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
         assert!(app.activate_selected().is_none());
         app
@@ -1730,22 +1634,17 @@ mod tests {
         let repos = sample_repos();
         let tasks = sample_tasks();
         let inbox = sample_inbox();
-        let rendered = render_cockpit(&repos, &tasks, &tasks, &inbox);
+        let rendered = render_cockpit(&repos, &tasks, &inbox);
         assert!(rendered.contains("Ajax Cockpit"));
         assert!(rendered.contains("Repos: 1"));
-        assert!(rendered.contains("Review: 1"));
+        assert!(!rendered.contains("Review:"));
         assert!(rendered.contains("web/fix-login: agent needs input -> open task"));
     }
 
     #[test]
     fn feed_inbox_appears_before_tasks() {
         // In the Project view, inbox rows precede task rows.
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask]. Drill into the project.
         app.select_next();
         app.activate_selected();
@@ -1775,7 +1674,7 @@ mod tests {
                 },
             ],
         };
-        let app = App::new(repos, sample_tasks(), sample_tasks(), sample_inbox());
+        let app = App::new(repos, sample_tasks(), sample_inbox());
 
         let content = render_to_string(80, 30, &app);
         let inbox_pos = content.find("agent needs input").unwrap();
@@ -1797,7 +1696,6 @@ mod tests {
         let app = App::new(
             sample_repos(),
             sample_tasks(),
-            TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
 
@@ -1813,7 +1711,6 @@ mod tests {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
-            TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
 
@@ -1828,13 +1725,7 @@ mod tests {
         }
         // Enter on a Task opens the per-task action menu (default first row = "open task").
         assert!(app.activate_selected().is_none());
-        assert!(matches!(
-            &app.view,
-            AppView::TaskActions {
-                is_review: false,
-                ..
-            }
-        ));
+        assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -1843,12 +1734,7 @@ mod tests {
 
     #[test]
     fn activating_project_opens_project_workflow() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask]. Skip the inbox to reach the project.
         app.select_next();
         assert!(app.activate_selected().is_none());
@@ -1861,12 +1747,7 @@ mod tests {
 
     #[test]
     fn top_level_back_stays_in_cockpit() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         assert!(!super::handle_back_key(&mut app));
         let content = render_to_string(80, 30, &app);
@@ -1876,12 +1757,7 @@ mod tests {
 
     #[test]
     fn top_level_backspace_stays_in_cockpit() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         assert!(super::is_back_key_event(
             KeyCode::Backspace,
@@ -1901,12 +1777,7 @@ mod tests {
             (KeyCode::Char('\u{7f}'), KeyModifiers::NONE),
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
-            let mut app = App::new(
-                sample_repos(),
-                sample_tasks(),
-                sample_tasks(),
-                sample_inbox(),
-            );
+            let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
             assert!(super::is_back_key_event(code, modifiers));
             assert!(!super::handle_back_key(&mut app));
@@ -1940,12 +1811,7 @@ mod tests {
 
     #[test]
     fn nested_back_returns_to_parent_without_exit() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
         app.activate_selected();
 
@@ -1956,12 +1822,7 @@ mod tests {
 
     #[test]
     fn nested_backspace_returns_to_parent_without_exit() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
         app.activate_selected();
 
@@ -2014,12 +1875,7 @@ mod tests {
 
     #[test]
     fn delete_is_not_a_cockpit_navigation_key() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
         app.activate_selected();
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
@@ -2041,12 +1897,7 @@ mod tests {
 
     #[test]
     fn delete_on_top_level_is_ignored_by_navigation() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let before = render_to_string(80, 30, &app);
 
         assert!(!super::is_back_key_event(
@@ -2083,12 +1934,7 @@ mod tests {
 
     #[test]
     fn delete_in_task_title_input_erases_without_closing_ajax() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
@@ -2124,12 +1970,7 @@ mod tests {
 
     #[test]
     fn nested_views_advertise_immediate_back_keys() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
         app.activate_selected();
 
@@ -2139,12 +1980,7 @@ mod tests {
 
     #[test]
     fn help_page_lists_cockpit_shortcuts() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         app.open_help();
 
@@ -2214,17 +2050,12 @@ mod tests {
 
     #[test]
     fn project_view_lists_new_task_first_then_tasks_then_reconcile() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, task]. Drill into the project.
         app.select_next();
         app.activate_selected();
 
-        // Project view should be: [NewTask, inbox, task, review, Reconcile].
+        // Project view should be: [NewTask, inbox, task, Reconcile].
         assert!(matches!(
             app.selectables.first(),
             Some(SelectableKind::NewTask { .. })
@@ -2251,7 +2082,6 @@ mod tests {
     fn project_view_shows_one_status_row_for_review_task() {
         let mut app = App::new(
             sample_repos(),
-            sample_tasks(),
             sample_tasks(),
             InboxResponse { items: vec![] },
         );
@@ -2285,7 +2115,6 @@ mod tests {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
-            TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
         // Projects view (no inbox, no review): [project, task]. Walk to the task.
@@ -2300,7 +2129,7 @@ mod tests {
         assert!(app.activate_selected().is_none());
         assert!(matches!(
             &app.view,
-            AppView::TaskActions { task, is_review: false, .. }
+            AppView::TaskActions { task, .. }
                 if task.qualified_handle == "web/fix-login"
         ));
 
@@ -2329,32 +2158,18 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_review_task_opens_task_actions_menu() {
+    fn empty_task_list_does_not_create_task_rows() {
         let mut app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
-            sample_tasks(),
             InboxResponse { items: vec![] },
         );
-        // Projects view: [project] only (review tasks aren't shown at top level).
         app.activate_selected();
-        // Project view: [NewTask, task, Reconcile]. Step to the task row.
-        app.select_next();
-        assert!(matches!(
-            app.selectables.get(app.selected),
-            Some(SelectableKind::Task(_))
-        ));
 
-        assert!(app.activate_selected().is_none());
-        assert!(matches!(
-            &app.view,
-            AppView::TaskActions {
-                is_review: false,
-                ..
-            }
-        ));
-        let item = app.selected_action().unwrap();
-        assert_eq!(item.recommended_action, "open task");
+        assert!(app
+            .selectables
+            .iter()
+            .all(|selectable| !matches!(selectable, SelectableKind::Task(_))));
     }
 
     #[test]
@@ -2390,25 +2205,13 @@ mod tests {
 
     #[test]
     fn task_action_menu_uses_core_action_catalog_labels() {
-        let non_review = RecommendedAction::task_picker_menu(false)
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-        let review = RecommendedAction::task_picker_menu(true)
+        let labels = RecommendedAction::task_picker_menu()
             .iter()
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
         assert_eq!(
-            non_review,
-            vec![
-                RecommendedAction::OpenTask.as_str(),
-                RecommendedAction::MergeTask.as_str(),
-                RecommendedAction::CleanTask.as_str(),
-            ]
-        );
-        assert_eq!(
-            review,
+            labels,
             vec![
                 RecommendedAction::OpenTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
@@ -2419,10 +2222,7 @@ mod tests {
 
     #[test]
     fn task_picker_actions_have_dedicated_render_metadata() {
-        for action in RecommendedAction::task_picker_menu(false)
-            .iter()
-            .chain(RecommendedAction::task_picker_menu(true))
-        {
+        for action in RecommendedAction::task_picker_menu() {
             let chrome = action_chrome(action.as_str());
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
@@ -2448,12 +2248,7 @@ mod tests {
                 recommended_action: "open task".to_string(),
             }],
         };
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            TasksResponse { tasks: vec![] },
-            inbox,
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), inbox);
         // Top-level Projects view: [inbox row, project, task]. Default selection is the inbox.
         assert!(matches!(
             app.selectables.get(app.selected),
@@ -2461,13 +2256,7 @@ mod tests {
         ));
 
         assert!(app.activate_selected().is_none());
-        assert!(matches!(
-            &app.view,
-            AppView::TaskActions {
-                is_review: false,
-                ..
-            }
-        ));
+        assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         let inbox = InboxResponse {
             items: vec![AttentionItem {
@@ -2478,12 +2267,7 @@ mod tests {
                 recommended_action: "merge task".to_string(),
             }],
         };
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            TasksResponse { tasks: vec![] },
-            inbox,
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), inbox);
         assert!(app.activate_selected().is_none());
         let item = app.selected_action().unwrap();
         assert_eq!(item.recommended_action, "merge task");
@@ -2561,7 +2345,7 @@ mod tests {
                 },
             ],
         };
-        let mut app = App::new(repos, tasks.clone(), tasks, inbox);
+        let mut app = App::new(repos, tasks.clone(), inbox);
         // Selectables: [inbox web, inbox api, project web, project api, NewTask].
         // Step past both inbox rows and the web project to land on the api project.
         app.select_next();
@@ -2579,12 +2363,7 @@ mod tests {
     #[test]
     fn project_new_task_row_opens_title_input() {
         // NewTask is the first selectable inside Project view.
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, task]. Drill into project.
         app.select_next();
         app.activate_selected();
@@ -2602,12 +2381,7 @@ mod tests {
 
     #[test]
     fn new_task_title_input_collects_text_before_pending_action() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects → drill into project; NewTask is selected = 0 in Project view.
         app.select_next();
         app.activate_selected();
@@ -2627,12 +2401,7 @@ mod tests {
 
     #[test]
     fn new_task_title_backspace_edits_then_returns_to_main_menu() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
@@ -2661,12 +2430,7 @@ mod tests {
 
     #[test]
     fn escape_from_new_task_input_returns_to_ajax_main_menu() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects = [inbox, project, task]. Drill into project, then activate NewTask.
         app.select_next();
         app.activate_selected();
@@ -2685,12 +2449,7 @@ mod tests {
 
     #[test]
     fn feed_inbox_items_render_handle_reason_and_action() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("agent needs input"));
@@ -2699,12 +2458,7 @@ mod tests {
 
     #[test]
     fn interactive_cockpit_renders_to_narrow_buffer() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let content = render_to_string(50, 24, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web/fix-login"));
@@ -2713,24 +2467,14 @@ mod tests {
 
     #[test]
     fn select_prev_clamps_at_zero() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_prev();
         assert_eq!(app.selected, 0);
     }
 
     #[test]
     fn select_next_walks_inbox_project_newtask_status() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, task].
         assert_eq!(app.selected, 0);
         app.select_next();
@@ -2748,12 +2492,7 @@ mod tests {
 
     #[test]
     fn select_at_feed_row_lands_on_correct_selectable() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Layout on Projects view (no headers, blank row between groups):
         //   0 blank (top breathing space)
         //   1 inbox     ← selectable 0
@@ -2791,7 +2530,6 @@ mod tests {
         let mut app = App::new(
             sample_repos(),
             TasksResponse { tasks: vec![] },
-            TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
         // Top-level holds only the project; drilling in always shows NewTask first.
@@ -2806,12 +2544,7 @@ mod tests {
 
     #[test]
     fn selected_action_for_inbox_uses_recommended_action() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask] — inbox is the initial selection.
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
@@ -2819,10 +2552,9 @@ mod tests {
     }
 
     #[test]
-    fn selected_action_for_review_task_uses_single_open_row() {
+    fn selected_action_for_task_uses_single_open_row() {
         let mut app = App::new(
             sample_repos(),
-            sample_tasks(),
             sample_tasks(),
             InboxResponse { items: vec![] },
         );
@@ -2837,16 +2569,10 @@ mod tests {
 
     #[test]
     fn reload_updates_app_data_and_clamps_selection() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.selected = 99;
         app.reload(
             sample_repos(),
-            TasksResponse { tasks: vec![] },
             TasksResponse { tasks: vec![] },
             InboxResponse { items: vec![] },
         );
@@ -2860,12 +2586,7 @@ mod tests {
 
     #[test]
     fn ensure_visible_scrolls_viewport_to_selected() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask] — walk to the bottom selectable.
         app.select_next();
         app.select_next();
@@ -2878,24 +2599,14 @@ mod tests {
 
     #[test]
     fn on_action_message_outcome_sets_flash() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.flash("done".to_string());
         assert!(app.flash.is_some());
     }
 
     #[test]
     fn action_errors_set_flash_and_stay_in_ajax() {
-        let mut app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            sample_tasks(),
-            sample_inbox(),
-        );
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         let pending = super::handle_action_result(
             &mut app,
