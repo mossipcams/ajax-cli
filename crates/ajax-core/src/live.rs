@@ -1,4 +1,6 @@
-use crate::models::{AgentRuntimeStatus, SideFlag, Task};
+use std::time::SystemTime;
+
+use crate::models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task};
 
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
@@ -136,6 +138,8 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 }
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
+    let refresh_activity = refreshes_activity(observation.kind);
+
     match observation.kind {
         LiveStatusKind::WorktreeMissing => {
             mark_resource_missing(task, SideFlag::WorktreeMissing);
@@ -155,12 +159,14 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
             } else {
                 task.agent_status = AgentRuntimeStatus::Running;
                 task.add_side_flag(SideFlag::AgentRunning);
+                update_live_lifecycle(task, LifecycleStatus::Active);
             }
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentDead);
         }
         LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
             task.agent_status = AgentRuntimeStatus::Waiting;
+            update_live_lifecycle(task, LifecycleStatus::Waiting);
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
@@ -170,11 +176,13 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
         | LiveStatusKind::CommandFailed
         | LiveStatusKind::Blocked => {
             task.agent_status = AgentRuntimeStatus::Blocked;
+            update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::MergeConflict => {
             task.agent_status = AgentRuntimeStatus::Blocked;
+            update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::Conflicted);
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
@@ -185,6 +193,7 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
         }
         LiveStatusKind::Done => {
             task.agent_status = AgentRuntimeStatus::Done;
+            update_live_lifecycle(task, LifecycleStatus::Reviewable);
             task.remove_side_flag(SideFlag::AgentRunning);
             task.remove_side_flag(SideFlag::NeedsInput);
         }
@@ -195,6 +204,40 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
     }
 
     task.live_status = Some(observation);
+    if refresh_activity {
+        task.last_activity_at = SystemTime::now();
+        task.remove_side_flag(SideFlag::Stale);
+    }
+}
+
+fn refreshes_activity(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::ShellIdle
+            | LiveStatusKind::CommandRunning
+            | LiveStatusKind::TestsRunning
+            | LiveStatusKind::AgentRunning
+            | LiveStatusKind::WaitingForApproval
+            | LiveStatusKind::WaitingForInput
+            | LiveStatusKind::Blocked
+            | LiveStatusKind::RateLimited
+            | LiveStatusKind::AuthRequired
+            | LiveStatusKind::MergeConflict
+            | LiveStatusKind::ContextLimit
+            | LiveStatusKind::CommandFailed
+            | LiveStatusKind::Done
+    )
+}
+
+fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Merged | LifecycleStatus::Cleanable | LifecycleStatus::Removed
+    ) {
+        return;
+    }
+
+    task.lifecycle_status = status;
 }
 
 fn mark_resource_missing(task: &mut Task, flag: SideFlag) {
@@ -337,5 +380,20 @@ mod tests {
         assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+    }
+
+    #[test]
+    fn active_live_observation_refreshes_activity_and_clears_stale() {
+        let mut task = base_task();
+        task.last_activity_at = std::time::SystemTime::UNIX_EPOCH;
+        task.add_side_flag(SideFlag::Stale);
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert!(!task.has_side_flag(SideFlag::Stale));
+        assert!(task.last_activity_at > std::time::SystemTime::UNIX_EPOCH);
     }
 }

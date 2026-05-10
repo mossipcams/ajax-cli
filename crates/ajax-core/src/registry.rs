@@ -4,7 +4,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::models::{LifecycleStatus, Task, TaskId};
+use crate::models::{LifecycleStatus, SideFlag, Task, TaskId};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +76,7 @@ impl Registry for InMemoryRegistry {
 
         task.lifecycle_status = status;
         task.last_activity_at = SystemTime::now();
+        task.remove_side_flag(SideFlag::Stale);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::LifecycleChanged,
@@ -379,7 +380,7 @@ mod tests {
         InMemoryRegistry, JsonRegistryStore, Registry, RegistryError, RegistryEventKind,
         RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
     };
-    use crate::models::{AgentClient, LifecycleStatus, Task, TaskId};
+    use crate::models::{AgentClient, LifecycleStatus, SideFlag, Task, TaskId};
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
         Task::new(
@@ -441,6 +442,21 @@ mod tests {
 
         let updated = registry.get_task(&TaskId::new("task-1")).unwrap();
         assert_eq!(updated.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    #[test]
+    fn lifecycle_updates_clear_stale_attention() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-1", "web", "fix-login");
+        task.add_side_flag(SideFlag::Stale);
+        registry.create_task(task).unwrap();
+
+        registry
+            .update_lifecycle(&TaskId::new("task-1"), LifecycleStatus::Active)
+            .unwrap();
+
+        let updated = registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!updated.has_side_flag(SideFlag::Stale));
     }
 
     #[test]

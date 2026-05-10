@@ -80,7 +80,12 @@ fn apply_git_flags(task: &mut Task, git_status: &GitStatus) {
         task.remove_side_flag(SideFlag::WorktreeMissing);
     }
 
-    if !git_status.branch_exists {
+    let on_expected_branch = git_status
+        .current_branch
+        .as_deref()
+        .is_some_and(|current_branch| current_branch == task.branch);
+
+    if !git_status.branch_exists || !on_expected_branch {
         mark_resource_missing(task, SideFlag::BranchMissing);
     } else {
         task.remove_side_flag(SideFlag::BranchMissing);
@@ -145,6 +150,7 @@ mod tests {
                 git_status: Some(GitStatus {
                     worktree_exists: false,
                     branch_exists: false,
+                    current_branch: None,
                     dirty: false,
                     ahead: 0,
                     behind: 0,
@@ -185,6 +191,7 @@ mod tests {
                 git_status: Some(GitStatus {
                     worktree_exists: false,
                     branch_exists: false,
+                    current_branch: None,
                     dirty: false,
                     ahead: 0,
                     behind: 0,
@@ -234,6 +241,7 @@ mod tests {
                 git_status: Some(GitStatus {
                     worktree_exists: true,
                     branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
                     dirty: true,
                     ahead: 1,
                     behind: 0,
@@ -251,6 +259,33 @@ mod tests {
         assert!(task.has_side_flag(SideFlag::Dirty));
         assert!(task.has_side_flag(SideFlag::Conflicted));
         assert!(task.has_side_flag(SideFlag::Unpushed));
+    }
+
+    #[test]
+    fn reconciliation_marks_branch_missing_when_git_is_on_wrong_branch() {
+        let mut task = base_task();
+        reconcile_task(
+            &mut task,
+            ReconciliationInput {
+                git_status: Some(GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("main".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                }),
+                tmux_status: None,
+                worktrunk_status: None,
+            },
+        );
+
+        assert!(task.has_side_flag(SideFlag::BranchMissing));
     }
 
     #[test]
@@ -340,6 +375,7 @@ mod tests {
                 git_status: Some(GitStatus {
                     worktree_exists: true,
                     branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
                     dirty: false,
                     ahead: 0,
                     behind: 0,

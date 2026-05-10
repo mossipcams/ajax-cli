@@ -364,6 +364,7 @@ impl GitAdapter {
         let mut status = GitStatus {
             worktree_exists: true,
             branch_exists: false,
+            current_branch: None,
             dirty: false,
             ahead: 0,
             behind: 0,
@@ -376,7 +377,9 @@ impl GitAdapter {
 
         for line in porcelain_branch_output.lines() {
             if let Some(branch_line) = line.strip_prefix("## ") {
-                status.branch_exists = !branch_line.starts_with("No commits yet");
+                status.current_branch = parse_current_branch(branch_line);
+                status.branch_exists =
+                    !branch_line.starts_with("No commits yet") && status.current_branch.is_some();
                 apply_branch_divergence(&mut status, branch_line);
                 continue;
             }
@@ -399,6 +402,19 @@ impl GitAdapter {
         status.unpushed_commits = status.ahead;
         status
     }
+}
+
+fn parse_current_branch(branch_line: &str) -> Option<String> {
+    if branch_line.starts_with("No commits yet") || branch_line.starts_with("HEAD ") {
+        return None;
+    }
+
+    let branch = branch_line
+        .split_once("...")
+        .map_or(branch_line, |(branch, _)| branch);
+    let branch = branch.split_once(' ').map_or(branch, |(branch, _)| branch);
+
+    (!branch.is_empty()).then(|| branch.to_string())
 }
 
 fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
@@ -701,6 +717,7 @@ mod tests {
 
         assert!(status.worktree_exists);
         assert!(status.branch_exists);
+        assert_eq!(status.current_branch.as_deref(), Some("ajax/fix-login"));
         assert!(status.dirty);
         assert_eq!(status.ahead, 2);
         assert_eq!(status.behind, 1);
@@ -716,6 +733,7 @@ mod tests {
 
         assert!(status.worktree_exists);
         assert!(status.branch_exists);
+        assert_eq!(status.current_branch.as_deref(), Some("main"));
         assert!(!status.dirty);
         assert_eq!(status.ahead, 0);
         assert_eq!(status.behind, 0);

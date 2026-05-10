@@ -238,6 +238,8 @@ impl AgentAttempt {
 pub struct GitStatus {
     pub worktree_exists: bool,
     pub branch_exists: bool,
+    #[serde(default)]
+    pub current_branch: Option<String>,
     pub dirty: bool,
     pub ahead: u32,
     pub behind: u32,
@@ -369,6 +371,7 @@ mod tests {
         let git = GitStatus {
             worktree_exists: true,
             branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
             dirty: false,
             ahead: 1,
             behind: 0,

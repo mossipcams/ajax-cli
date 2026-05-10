@@ -994,6 +994,7 @@ fn missing_git_status() -> crate::models::GitStatus {
     crate::models::GitStatus {
         worktree_exists: false,
         branch_exists: false,
+        current_branch: None,
         dirty: false,
         ahead: 0,
         behind: 0,
@@ -1103,6 +1104,7 @@ mod tests {
         cleanable.git_status = Some(GitStatus {
             worktree_exists: true,
             branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
             dirty: false,
             ahead: 0,
             behind: 0,
@@ -1581,6 +1583,36 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::WaitingForApproval)
         );
+    }
+
+    #[test]
+    fn reconcile_external_projects_done_live_status_into_review_queue() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "task complete\n"),
+        ]);
+
+        let response = reconcile_external(&mut context, &mut runner).unwrap();
+
+        assert_eq!(response.tasks_changed, 1);
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert_eq!(
+            list_tasks(&context, None).tasks[0].lifecycle_status,
+            "Reviewable"
+        );
+        assert_eq!(review_queue(&context).tasks.len(), 1);
     }
 
     #[test]

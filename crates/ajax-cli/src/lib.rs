@@ -415,6 +415,13 @@ fn render_matches_mut(
                 state_changed: response.tasks_changed > 0,
             })
         }
+        Some(("status", _)) => {
+            let changed = refresh_live_context(context, runner)?;
+            Ok(RenderedCommand {
+                output: render_response(commands::status(context), false, render_tasks_human)?,
+                state_changed: changed,
+            })
+        }
         Some(("open", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::open_task_plan(context, task, commands::OpenMode::Attach)
@@ -1068,6 +1075,7 @@ mod tests {
         cleanable.git_status = Some(GitStatus {
             worktree_exists: true,
             branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
             dirty: false,
             ahead: 0,
             behind: 0,
@@ -1314,6 +1322,36 @@ mod tests {
             parsed["inbox"]["items"][0]["reason"],
             "waiting for approval"
         );
+        assert_eq!(runner.commands.len(), 6);
+    }
+
+    #[test]
+    fn status_command_refreshes_live_state_before_rendering() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+
+        let output =
+            run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
+
+        assert!(output.contains("web/fix-login\tWaiting\tFix login"));
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .has_side_flag(SideFlag::NeedsInput));
         assert_eq!(runner.commands.len(), 6);
     }
 

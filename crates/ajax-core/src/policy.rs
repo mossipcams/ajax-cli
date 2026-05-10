@@ -119,6 +119,7 @@ mod tests {
         task.git_status = Some(GitStatus {
             worktree_exists: true,
             branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
             dirty: false,
             ahead: 0,
             behind: 0,
