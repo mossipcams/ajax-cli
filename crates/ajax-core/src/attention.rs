@@ -62,6 +62,9 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     let mut items = Vec::new();
 
     for flag in task.side_flags() {
+        if flag == SideFlag::AgentRunning && task_has_specific_running_live_status(task) {
+            continue;
+        }
         let (reason, priority, recommended_action) = attention_for_flag(flag);
         items.push(AttentionItem {
             task_id: task.id.clone(),
@@ -109,6 +112,17 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     }
 
     items
+}
+
+fn task_has_specific_running_live_status(task: &Task) -> bool {
+    matches!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(
+            LiveStatusKind::AgentRunning
+                | LiveStatusKind::CommandRunning
+                | LiveStatusKind::TestsRunning
+        )
+    )
 }
 
 fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) {
@@ -340,5 +354,21 @@ mod tests {
         let items = super::derive_attention_items(&[task]);
 
         assert!(items.is_empty());
+    }
+
+    #[test]
+    fn specific_running_live_status_suppresses_generic_running_attention() {
+        let mut task = task_with_flags("tech-debt", &[SideFlag::AgentRunning]);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TestsRunning,
+            "tests running",
+        ));
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert!(
+            items.iter().all(|item| item.reason != "agent is running"),
+            "specific live status should be enough without generic monitor attention: {items:?}"
+        );
     }
 }
