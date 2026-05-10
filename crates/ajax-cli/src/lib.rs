@@ -561,23 +561,33 @@ fn render_matches_mut(
             // Interactive TUI with full action support.
             let mut state_changed = false;
             state_changed |= refresh_live_context(context, runner)?;
-            let pending = ajax_tui::run_interactive(
-                commands::list_repos(context),
-                commands::list_tasks(context, None),
-                commands::review_queue(context),
-                commands::inbox(context),
-                |item| tui_cockpit_action(item, context, runner, &mut state_changed),
-            )
-            .map_err(|e| CliError::CommandFailed(e.to_string()))?;
-            let mut output = String::new();
-            if let Some(pending) = pending {
-                output =
-                    execute_pending_cockpit_action(&pending, context, runner, &mut state_changed)?;
+            loop {
+                let pending = ajax_tui::run_interactive(
+                    commands::list_repos(context),
+                    commands::list_tasks(context, None),
+                    commands::review_queue(context),
+                    commands::inbox(context),
+                    |item| tui_cockpit_action(item, context, runner, &mut state_changed),
+                )
+                .map_err(|e| CliError::CommandFailed(e.to_string()))?;
+                let Some(pending) = pending else {
+                    return Ok(RenderedCommand {
+                        output: String::new(),
+                        state_changed,
+                    });
+                };
+
+                match execute_pending_cockpit_action(&pending, context, runner, &mut state_changed)?
+                {
+                    PendingCockpitOutcome::Exit(output) => {
+                        return Ok(RenderedCommand {
+                            output,
+                            state_changed,
+                        });
+                    }
+                    PendingCockpitOutcome::ReturnToCockpit => {}
+                }
             }
-            Ok(RenderedCommand {
-                output,
-                state_changed,
-            })
         }
         _ => Ok(RenderedCommand {
             output: render_matches(matches, context)?,
@@ -841,12 +851,28 @@ fn command_error_as_io(error: CommandError) -> std::io::Error {
     std::io::Error::other(message)
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum PendingCockpitOutcome {
+    Exit(String),
+    ReturnToCockpit,
+}
+
+impl PendingCockpitOutcome {
+    #[cfg(test)]
+    fn contains(&self, needle: &str) -> bool {
+        match self {
+            PendingCockpitOutcome::Exit(output) => output.contains(needle),
+            PendingCockpitOutcome::ReturnToCockpit => false,
+        }
+    }
+}
+
 fn execute_pending_cockpit_action<R: CommandRunner>(
     pending: &ajax_tui::PendingAction,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
-) -> Result<String, CliError> {
+) -> Result<PendingCockpitOutcome, CliError> {
     if pending.recommended_action == "new task" {
         let title = pending.task_title.clone().ok_or_else(|| {
             CliError::CommandFailed(
@@ -861,10 +887,10 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
         let (outputs, task) = execute_new_task_plan(context, runner, &request, &plan, true)?;
         *state_changed = true;
-        return Ok(render_execution_outputs(
+        return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
             &outputs,
             Some(&task.qualified_handle()),
-        ));
+        )));
     }
 
     let plan = match pending.recommended_action.as_str() {
@@ -881,7 +907,9 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "reconcile" => {
             let response = commands::reconcile_external(context, runner).map_err(command_error)?;
             *state_changed = response.tasks_changed > 0;
-            return Ok(render_reconcile_human(&response));
+            return Ok(PendingCockpitOutcome::Exit(render_reconcile_human(
+                &response,
+            )));
         }
         _ => commands::open_task_plan(context, &pending.task_handle, commands::OpenMode::Attach),
     }
@@ -895,6 +923,7 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
         "clean task" => {
             commands::mark_task_removed(context, &pending.task_handle).map_err(command_error)?;
             *state_changed = true;
+            return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
         "check task"
         | "inspect test output"
@@ -908,7 +937,9 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
             *state_changed = true;
         }
     }
-    Ok(render_execution_outputs(&outputs, None))
+    Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
+        &outputs, None,
+    )))
 }
 
 fn render_or_execute_plan(
@@ -3083,7 +3114,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        super::execute_pending_cockpit_action(
+        let output = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
@@ -3091,6 +3122,7 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             runner.commands(),
             &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
