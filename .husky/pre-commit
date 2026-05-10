@@ -1,1 +1,3 @@
 npm run verify
+cargo build --release -p ajax-cli
+cargo install --path crates/ajax-cli --locked --force

@@ -24,11 +24,10 @@ fn deduplicate_attention_items(items: Vec<AttentionItem>) -> Vec<AttentionItem> 
     let mut deduplicated: Vec<AttentionItem> = Vec::new();
 
     for item in items {
-        if let Some(existing) = deduplicated.iter_mut().find(|existing| {
-            existing.task_id == item.task_id
-                && existing.reason == item.reason
-                && existing.recommended_action == item.recommended_action
-        }) {
+        if let Some(existing) = deduplicated
+            .iter_mut()
+            .find(|existing| equivalent_attention_item(existing, &item))
+        {
             if item.priority < existing.priority {
                 *existing = item;
             }
@@ -38,6 +37,20 @@ fn deduplicate_attention_items(items: Vec<AttentionItem>) -> Vec<AttentionItem> 
     }
 
     deduplicated
+}
+
+fn equivalent_attention_item(left: &AttentionItem, right: &AttentionItem) -> bool {
+    left.task_id == right.task_id
+        && left.recommended_action == right.recommended_action
+        && (left.reason == right.reason
+            || (operator_waiting_reason(&left.reason) && operator_waiting_reason(&right.reason)))
+}
+
+fn operator_waiting_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "agent needs input" | "agent is waiting" | "waiting for approval" | "waiting for input"
+    )
 }
 
 fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
@@ -246,6 +259,47 @@ mod tests {
         assert_eq!(items[0].reason, "agent is blocked");
         assert_eq!(items[0].priority, 12);
         assert_eq!(items[0].recommended_action, "inspect agent");
+    }
+
+    #[test]
+    fn equivalent_waiting_attention_collapses_to_one_open_task_item() {
+        let mut task = task_with_flags("tech-debt", &[SideFlag::NeedsInput]);
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(
+            items,
+            vec![AttentionItem {
+                task_id: TaskId::new("task-tech-debt"),
+                task_handle: "web/tech-debt".to_string(),
+                reason: "waiting for approval".to_string(),
+                priority: 5,
+                recommended_action: "open task".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn unrelated_open_task_reasons_remain_distinct() {
+        let task = task_with_flags(
+            "conflicted-input",
+            &[SideFlag::NeedsInput, SideFlag::Conflicted],
+        );
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.reason.as_str())
+                .collect::<Vec<_>>(),
+            vec!["agent needs input", "git conflicts detected"]
+        );
     }
 
     #[test]
