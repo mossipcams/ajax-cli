@@ -435,8 +435,44 @@ impl App {
                 self.rebuild_selectables();
                 None
             }
+            SelectableKind::Inbox(item) => {
+                if let Some((task, is_review)) = self.find_task_for_handle(&item.task_handle) {
+                    let preselected = task_action_list(is_review)
+                        .iter()
+                        .position(|action| *action == item.recommended_action.as_str())
+                        .unwrap_or(0);
+                    self.view = AppView::TaskActions {
+                        task,
+                        is_review,
+                        parent: Box::new(self.view.clone()),
+                    };
+                    self.selected = preselected;
+                    self.viewport_scroll = 0;
+                    self.flash = None;
+                    self.rebuild_selectables();
+                    None
+                } else {
+                    Some(SelectableKind::Inbox(item).as_action())
+                }
+            }
             selectable => Some(selectable.as_action()),
         }
+    }
+
+    fn find_task_for_handle(&self, handle: &str) -> Option<(TaskSummary, bool)> {
+        if let Some(task) = self
+            .review
+            .tasks
+            .iter()
+            .find(|task| task.qualified_handle == handle)
+        {
+            return Some((task.clone(), true));
+        }
+        self.tasks
+            .tasks
+            .iter()
+            .find(|task| task.qualified_handle == handle)
+            .map(|task| (task.clone(), false))
     }
 
     pub fn push_input_char(&mut self, character: char) {
@@ -810,90 +846,132 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut parts = vec![Span::styled(
         " Ajax",
         Style::default()
-            .fg(Color::Cyan)
+            .fg(Color::LightCyan)
             .add_modifier(Modifier::BOLD),
     )];
 
     let crumb_sep = || Span::styled(" > ", Style::default().fg(Color::DarkGray));
     let dot_sep = || Span::styled(" - ", Style::default().fg(Color::DarkGray));
+    let crumb_style = Style::default()
+        .fg(Color::LightMagenta)
+        .add_modifier(Modifier::BOLD);
 
     match &app.view {
         AppView::Projects => {
             parts.push(dot_sep());
             parts.push(Span::styled(
                 format!("{} repos", app.repos.repos.len()),
-                Style::default().fg(Color::White),
+                Style::default().fg(Color::LightBlue),
             ));
             parts.push(dot_sep());
             parts.push(Span::styled(
                 format!("{} tasks", app.tasks.tasks.len()),
-                Style::default().fg(Color::White),
+                Style::default().fg(Color::LightGreen),
             ));
             if !app.review.tasks.is_empty() {
                 parts.push(dot_sep());
                 parts.push(Span::styled(
                     format!("{} review", app.review.tasks.len()),
-                    Style::default().fg(Color::Yellow),
+                    Style::default()
+                        .fg(Color::LightYellow)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             if !app.inbox.items.is_empty() {
                 parts.push(dot_sep());
                 parts.push(Span::styled(
                     format!("{} inbox", app.inbox.items.len()),
-                    Style::default().fg(Color::Red),
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
         }
         AppView::Project { repo } => {
             parts.push(crumb_sep());
-            parts.push(Span::styled(
-                repo.clone(),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            parts.push(Span::styled(repo.clone(), crumb_style));
         }
         AppView::TaskActions { task, .. } => {
             if let Some(repo) = task_summary_repo(task) {
                 parts.push(crumb_sep());
-                parts.push(Span::styled(
-                    repo.to_string(),
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::BOLD),
-                ));
+                parts.push(Span::styled(repo.to_string(), crumb_style));
             }
             parts.push(crumb_sep());
             parts.push(Span::styled(
                 task.qualified_handle.clone(),
-                Style::default().fg(Color::Cyan),
+                Style::default()
+                    .fg(Color::LightCyan)
+                    .add_modifier(Modifier::BOLD),
             ));
         }
         AppView::NewTaskInput { repo, .. } => {
             parts.push(crumb_sep());
-            parts.push(Span::styled(
-                repo.clone(),
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD),
-            ));
+            parts.push(Span::styled(repo.clone(), crumb_style));
             parts.push(crumb_sep());
-            parts.push(Span::styled("new task", Style::default().fg(Color::Cyan)));
+            parts.push(Span::styled(
+                "new task",
+                Style::default().fg(Color::LightGreen),
+            ));
         }
         AppView::Help { .. } => {
             parts.push(crumb_sep());
-            parts.push(Span::styled("help", Style::default().fg(Color::Cyan)));
+            parts.push(Span::styled(
+                "help",
+                Style::default().fg(Color::LightYellow),
+            ));
         }
     }
 
-    frame.render_widget(Paragraph::new(Line::from(parts)), area);
+    if show_brand(&app.view) {
+        let brand = ajax_brand_spans();
+        let brand_width: u16 = brand.iter().map(|s| s.content.chars().count() as u16).sum();
+        let chunks =
+            Layout::horizontal([Constraint::Min(0), Constraint::Length(brand_width)]).split(area);
+        frame.render_widget(Paragraph::new(Line::from(parts)), chunks[0]);
+        frame.render_widget(Paragraph::new(Line::from(brand).right_aligned()), chunks[1]);
+    } else {
+        frame.render_widget(Paragraph::new(Line::from(parts)), area);
+    }
+}
+
+fn show_brand(view: &AppView) -> bool {
+    matches!(
+        view,
+        AppView::Projects | AppView::Project { .. } | AppView::TaskActions { .. }
+    )
+}
+
+fn ajax_brand_spans() -> Vec<Span<'static>> {
+    let bold = Modifier::BOLD;
+    let bracket = Style::default().fg(Color::DarkGray);
+    vec![
+        Span::raw(" "),
+        Span::styled("[", bracket),
+        Span::styled("A", Style::default().fg(Color::LightRed).add_modifier(bold)),
+        Span::styled(
+            "J",
+            Style::default().fg(Color::LightYellow).add_modifier(bold),
+        ),
+        Span::styled(
+            "A",
+            Style::default().fg(Color::LightGreen).add_modifier(bold),
+        ),
+        Span::styled(
+            "X",
+            Style::default().fg(Color::LightCyan).add_modifier(bold),
+        ),
+        Span::styled("]", bracket),
+        Span::raw(" "),
+    ]
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let content = if let Some((msg, _)) = &app.flash {
         Line::from(vec![Span::styled(
             format!(" {msg}"),
-            Style::default().fg(Color::Green),
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
         )])
     } else {
         let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
@@ -901,7 +979,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(Span::styled(
                 key.to_string(),
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(Color::LightYellow)
                     .add_modifier(Modifier::BOLD),
             ));
             parts.push(Span::styled(
@@ -979,19 +1057,43 @@ fn group_of(kind: &SelectableKind) -> &'static str {
 }
 
 fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
+    let bold = Modifier::BOLD;
     if needs_attention {
-        return Span::styled("!", Style::default().fg(Color::Red));
+        return Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold));
     }
     if status.contains("Active") {
-        Span::styled("*", Style::default().fg(Color::Green))
+        Span::styled(
+            "*",
+            Style::default().fg(Color::LightGreen).add_modifier(bold),
+        )
     } else if status.contains("Reviewable") || status.contains("Mergeable") {
-        Span::styled("R", Style::default().fg(Color::Yellow))
+        Span::styled(
+            "R",
+            Style::default().fg(Color::LightYellow).add_modifier(bold),
+        )
     } else if status.contains("Error") || status.contains("Orphaned") {
-        Span::styled("!", Style::default().fg(Color::Red))
+        Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold))
     } else if status.contains("Waiting") {
-        Span::styled("~", Style::default().fg(Color::Blue))
+        Span::styled("~", Style::default().fg(Color::LightBlue))
     } else {
         Span::styled(".", Style::default().fg(Color::DarkGray))
+    }
+}
+
+fn task_handle_color(status: &str, needs_attention: bool) -> Color {
+    if needs_attention {
+        return Color::LightRed;
+    }
+    if status.contains("Active") {
+        Color::LightGreen
+    } else if status.contains("Reviewable") || status.contains("Mergeable") {
+        Color::LightYellow
+    } else if status.contains("Error") || status.contains("Orphaned") {
+        Color::LightRed
+    } else if status.contains("Waiting") {
+        Color::LightBlue
+    } else {
+        Color::Gray
     }
 }
 
@@ -1004,50 +1106,74 @@ fn task_status_label(task: &TaskSummary) -> String {
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
     if repo.reviewable_tasks > 0 {
-        Span::styled("R", Style::default().fg(Color::Yellow))
+        Span::styled(
+            "R",
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::BOLD),
+        )
     } else if repo.active_tasks > 0 {
-        Span::styled("*", Style::default().fg(Color::Green))
+        Span::styled(
+            "*",
+            Style::default()
+                .fg(Color::LightGreen)
+                .add_modifier(Modifier::BOLD),
+        )
     } else {
         Span::styled(".", Style::default().fg(Color::DarkGray))
     }
 }
 
+fn project_name_color(repo: &RepoSummary) -> Color {
+    if repo.reviewable_tasks > 0 {
+        Color::LightYellow
+    } else if repo.active_tasks > 0 {
+        Color::LightGreen
+    } else {
+        Color::Gray
+    }
+}
+
 fn inbox_glyph(priority: u32) -> Span<'static> {
     let color = if priority < 20 {
-        Color::Red
+        Color::LightRed
     } else if priority < 50 {
-        Color::Yellow
+        Color::LightYellow
     } else {
-        Color::Cyan
+        Color::LightCyan
     };
-    Span::styled("!", Style::default().fg(color))
+    Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
 
 fn action_glyph(recommended_action: &str) -> Span<'static> {
-    let (glyph, color) = match recommended_action {
-        "new task" => ("+", Color::Green),
-        "open task" => (">", Color::Cyan),
-        "open worktrunk" => ("W", Color::Cyan),
-        "inspect task" => ("i", Color::DarkGray),
-        "review branch" => ("R", Color::Yellow),
-        "merge task" => ("M", Color::Yellow),
-        "diff task" => ("D", Color::DarkGray),
-        "check task" => ("C", Color::DarkGray),
-        "clean task" => ("X", Color::Red),
-        "reconcile" => ("@", Color::DarkGray),
-        "help" => ("?", Color::DarkGray),
-        _ => (".", Color::DarkGray),
+    let (glyph, color, bold) = match recommended_action {
+        "new task" => ("+", Color::LightGreen, true),
+        "open task" => (">", Color::LightCyan, true),
+        "open worktrunk" => ("W", Color::LightBlue, false),
+        "inspect task" => ("i", Color::Gray, false),
+        "review branch" => ("R", Color::LightYellow, true),
+        "merge task" => ("M", Color::LightMagenta, true),
+        "diff task" => ("D", Color::LightBlue, false),
+        "check task" => ("C", Color::LightGreen, false),
+        "clean task" => ("X", Color::LightRed, true),
+        "reconcile" => ("@", Color::DarkGray, false),
+        "help" => ("?", Color::LightYellow, false),
+        _ => (".", Color::DarkGray, false),
     };
-    Span::styled(glyph, Style::default().fg(color))
+    let mut style = Style::default().fg(color);
+    if bold {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    Span::styled(glyph, style)
 }
 
 fn priority_accent(priority: u32) -> Color {
     if priority < 20 {
-        Color::Red
+        Color::LightRed
     } else if priority < 50 {
-        Color::Yellow
+        Color::LightYellow
     } else {
-        Color::White
+        Color::LightCyan
     }
 }
 
@@ -1073,28 +1199,37 @@ fn render_row(glyph: Span<'static>, mut spans: Vec<Span<'static>>) -> ListItem<'
 }
 
 fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
-    let bold_white = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
+    let bold = Modifier::BOLD;
     let dim = Style::default().fg(Color::DarkGray);
-    let cyan = Style::default().fg(Color::Cyan);
+    let arrow = Style::default().fg(Color::DarkGray);
     match s {
-        SelectableKind::Inbox(item) => render_row(
-            inbox_glyph(item.priority),
-            vec![
-                Span::styled(format!("{:<22}", item.task_handle), bold_white),
-                Span::styled(
-                    item.reason.clone(),
-                    Style::default().fg(priority_accent(item.priority)),
-                ),
-                Span::styled("  ->  ", dim),
-                Span::styled(item.recommended_action.clone(), cyan),
-            ],
-        ),
+        SelectableKind::Inbox(item) => {
+            let accent = priority_accent(item.priority);
+            render_row(
+                inbox_glyph(item.priority),
+                vec![
+                    Span::styled(
+                        format!("{:<22}", item.task_handle),
+                        Style::default().fg(accent).add_modifier(bold),
+                    ),
+                    Span::styled(item.reason.clone(), Style::default().fg(accent)),
+                    Span::styled("  ->  ", arrow),
+                    Span::styled(
+                        item.recommended_action.clone(),
+                        Style::default().fg(Color::LightCyan).add_modifier(bold),
+                    ),
+                ],
+            )
+        }
         SelectableKind::Project(repo) => render_row(
             project_glyph(repo),
             vec![
-                Span::styled(format!("{:<20}", repo.name), bold_white),
+                Span::styled(
+                    format!("{:<20}", repo.name),
+                    Style::default()
+                        .fg(project_name_color(repo))
+                        .add_modifier(bold),
+                ),
                 Span::styled(project_subtitle(repo), dim),
             ],
         ),
@@ -1102,30 +1237,30 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             action_glyph("new task"),
             vec![Span::styled(
                 "start a new task",
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(Color::LightGreen).add_modifier(bold),
             )],
         ),
         SelectableKind::Reconcile { .. } => render_row(
             action_glyph("reconcile"),
             vec![
-                Span::styled("reconcile", Style::default().fg(Color::DarkGray)),
+                Span::styled("reconcile", Style::default().fg(Color::Gray)),
                 Span::styled("  sync external state", dim),
             ],
         ),
         SelectableKind::TaskAction {
             recommended_action, ..
         } => {
-            let destructive = recommended_action == "clean task";
-            let label_style = if destructive {
-                Style::default().fg(Color::Red)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
+            let label_style = match recommended_action.as_str() {
+                "clean task" => Style::default().fg(Color::LightRed).add_modifier(bold),
+                "review branch" => Style::default().fg(Color::LightYellow).add_modifier(bold),
+                "merge task" => Style::default().fg(Color::LightMagenta).add_modifier(bold),
+                "open task" => Style::default().fg(Color::LightCyan).add_modifier(bold),
+                "open worktrunk" => Style::default().fg(Color::LightBlue).add_modifier(bold),
+                "diff task" | "check task" => {
+                    Style::default().fg(Color::LightGreen).add_modifier(bold)
+                }
+                _ => Style::default().fg(Color::Gray).add_modifier(bold),
             };
-            let _ = cyan;
             render_row(
                 action_glyph(recommended_action),
                 vec![Span::styled(recommended_action.clone(), label_style)],
@@ -1136,7 +1271,9 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             vec![
                 Span::styled(
                     format!("{:<28}", t.qualified_handle),
-                    Style::default().fg(Color::White),
+                    Style::default()
+                        .fg(task_handle_color(&t.lifecycle_status, t.needs_attention))
+                        .add_modifier(bold),
                 ),
                 Span::styled(task_status_label(t), dim),
             ],
@@ -1146,7 +1283,9 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             vec![
                 Span::styled(
                     format!("{:<28}", t.qualified_handle),
-                    Style::default().fg(Color::White),
+                    Style::default()
+                        .fg(task_handle_color(&t.lifecycle_status, false))
+                        .add_modifier(bold),
                 ),
                 Span::styled(task_status_label(t), dim),
             ],
@@ -2018,6 +2157,61 @@ mod tests {
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.recommended_action, "open task");
+    }
+
+    #[test]
+    fn enter_on_inbox_row_opens_task_actions_with_recommendation_preselected() {
+        let inbox = InboxResponse {
+            items: vec![AttentionItem {
+                task_id: TaskId::new("task-1"),
+                task_handle: "web/fix-login".to_string(),
+                reason: "agent is running".to_string(),
+                priority: 90,
+                recommended_action: "monitor task".to_string(),
+            }],
+        };
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            inbox,
+        );
+        // Top-level Projects view: [inbox row, project, task]. Default selection is the inbox.
+        assert!(matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Inbox(_))
+        ));
+
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            AppView::TaskActions {
+                is_review: false,
+                ..
+            }
+        ));
+
+        // The recommended action ("monitor task" maps to "open task" group? no — list contains
+        // the literal verbs; "monitor task" is not in the menu, so fall back to first row).
+        // Pick a recommendation that *is* in the menu to verify preselection works.
+        let inbox = InboxResponse {
+            items: vec![AttentionItem {
+                task_id: TaskId::new("task-1"),
+                task_handle: "web/fix-login".to_string(),
+                reason: "review ready".to_string(),
+                priority: 30,
+                recommended_action: "merge task".to_string(),
+            }],
+        };
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            inbox,
+        );
+        assert!(app.activate_selected().is_none());
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.recommended_action, "merge task");
     }
 
     #[test]
