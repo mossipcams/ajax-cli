@@ -303,7 +303,7 @@ mod tests {
                     task_handle: "web/fix-login".to_string(),
                     reason: "tests failed".to_string(),
                     priority: 15,
-                    recommended_action: "inspect test output".to_string(),
+                    recommended_action: "open task".to_string(),
                 },
             ]
         );

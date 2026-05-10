@@ -6,11 +6,8 @@ use ajax_core::{
 };
 
 use crate::{
-    command_error,
-    dispatch::TaskCommandOperation,
-    execute_new_task_plan,
-    render::{render_execution_outputs, render_inspect_human},
-    CliError,
+    command_error, dispatch::TaskCommandOperation, execute_new_task_plan,
+    render::render_execution_outputs, CliError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -77,21 +74,6 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
     }
 
     match action {
-        Some(RecommendedAction::InspectTask) => {
-            let response = commands::inspect_task(context, handle).map_err(|error| {
-                let message = match command_error(error) {
-                    CliError::CommandFailed(message)
-                    | CliError::CommandFailedAfterStateChange(message)
-                    | CliError::JsonSerialization(message)
-                    | CliError::ContextLoad(message)
-                    | CliError::ContextSave(message) => message,
-                };
-                std::io::Error::other(message)
-            })?;
-            Ok(ajax_tui::ActionOutcome::Message(render_inspect_human(
-                &response,
-            )))
-        }
         Some(RecommendedAction::Reconcile) => {
             let response = commands::reconcile_external(context, runner).map_err(|error| {
                 let message = match command_error(error) {
@@ -184,7 +166,6 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
             Some(
                 RecommendedAction::NewTask
                 | RecommendedAction::SelectProject
-                | RecommendedAction::InspectTask
                 | RecommendedAction::Status,
             )
             | None => {

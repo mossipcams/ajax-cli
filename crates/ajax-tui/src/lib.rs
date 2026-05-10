@@ -1221,28 +1221,11 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         Some(RecommendedAction::NewTask) => {
             ActionChrome::new("+", primary_accent(), primary_accent(), true)
         }
-        Some(
-            RecommendedAction::OpenTask
-            | RecommendedAction::InspectAgent
-            | RecommendedAction::MonitorTask,
-        ) => ActionChrome::new(">", primary_accent(), primary_accent(), true),
-        Some(RecommendedAction::OpenWorktrunk) => {
-            ActionChrome::new("W", primary_accent(), primary_accent(), true)
-        }
-        Some(RecommendedAction::InspectTask) => {
-            ActionChrome::new("i", Color::Gray, Color::Gray, true)
-        }
-        Some(RecommendedAction::ReviewBranch) => {
-            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
+        Some(RecommendedAction::OpenTask) => {
+            ActionChrome::new(">", primary_accent(), primary_accent(), true)
         }
         Some(RecommendedAction::MergeTask) => {
             ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
-        }
-        Some(RecommendedAction::DiffTask | RecommendedAction::ReviewDiff) => {
-            ActionChrome::new("D", secondary_accent(), secondary_accent(), true)
-        }
-        Some(RecommendedAction::CheckTask | RecommendedAction::InspectTestOutput) => {
-            ActionChrome::new("C", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::CleanTask) => {
             ActionChrome::new("X", Color::LightRed, Color::LightRed, true)
@@ -2328,13 +2311,19 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("> web/fix-login"));
-        for verb in ["open task", "diff task", "merge task", "clean task"] {
+        for verb in ["open task", "merge task", "clean task"] {
             assert!(content.contains(verb), "menu missing {verb}");
         }
-        for duplicate_entry in ["review branch", "open worktrunk", "inspect task"] {
+        for hidden_entry in [
+            "diff task",
+            "check task",
+            "review branch",
+            "open worktrunk",
+            "inspect task",
+        ] {
             assert!(
-                !content.contains(duplicate_entry),
-                "menu should collapse duplicate open-style action {duplicate_entry}"
+                !content.contains(hidden_entry),
+                "menu should not render low-value task action {hidden_entry}"
             );
         }
     }
@@ -2414,8 +2403,6 @@ mod tests {
             non_review,
             vec![
                 RecommendedAction::OpenTask.as_str(),
-                RecommendedAction::DiffTask.as_str(),
-                RecommendedAction::CheckTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
                 RecommendedAction::CleanTask.as_str(),
             ]
@@ -2424,8 +2411,6 @@ mod tests {
             review,
             vec![
                 RecommendedAction::OpenTask.as_str(),
-                RecommendedAction::DiffTask.as_str(),
-                RecommendedAction::CheckTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
                 RecommendedAction::CleanTask.as_str(),
             ]
@@ -2446,25 +2431,10 @@ mod tests {
         assert_eq!(open.glyph_color, primary_accent());
         assert_eq!(open.label_color, primary_accent());
 
-        for action in [
-            RecommendedAction::DiffTask,
-            RecommendedAction::CheckTask,
-            RecommendedAction::MergeTask,
-        ] {
-            let chrome = action_chrome(action.as_str());
-            assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
-            assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
-        }
-
-        for action in [
-            RecommendedAction::InspectAgent,
-            RecommendedAction::InspectTestOutput,
-            RecommendedAction::MonitorTask,
-            RecommendedAction::ReviewDiff,
-        ] {
-            let chrome = action_chrome(action.as_str());
-            assert_ne!(chrome.glyph, ".", "{action:?}");
-        }
+        let action = RecommendedAction::MergeTask;
+        let chrome = action_chrome(action.as_str());
+        assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
+        assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
     }
 
     #[test]
@@ -2475,7 +2445,7 @@ mod tests {
                 task_handle: "web/fix-login".to_string(),
                 reason: "agent is running".to_string(),
                 priority: 90,
-                recommended_action: "monitor task".to_string(),
+                recommended_action: "open task".to_string(),
             }],
         };
         let mut app = App::new(
@@ -2499,9 +2469,6 @@ mod tests {
             }
         ));
 
-        // The recommended action ("monitor task" maps to "open task" group? no — list contains
-        // the literal verbs; "monitor task" is not in the menu, so fall back to first row).
-        // Pick a recommendation that *is* in the menu to verify preselection works.
         let inbox = InboxResponse {
             items: vec![AttentionItem {
                 task_id: TaskId::new("task-1"),

@@ -37,21 +37,12 @@ impl TaskCommandOperation {
 
     pub(crate) fn from_recommended_action(action: RecommendedAction) -> Option<Self> {
         match action {
-            RecommendedAction::CheckTask | RecommendedAction::InspectTestOutput => {
-                Some(Self::Check)
-            }
-            RecommendedAction::DiffTask | RecommendedAction::ReviewDiff => Some(Self::Diff),
             RecommendedAction::MergeTask => Some(Self::Merge),
             RecommendedAction::CleanTask => Some(Self::Clean),
-            RecommendedAction::OpenWorktrunk => Some(Self::Trunk),
-            RecommendedAction::OpenTask
-            | RecommendedAction::InspectAgent
-            | RecommendedAction::MonitorTask
-            | RecommendedAction::ReviewBranch => Some(Self::Open),
+            RecommendedAction::OpenTask => Some(Self::Open),
             RecommendedAction::SelectProject
             | RecommendedAction::NewTask
             | RecommendedAction::Reconcile
-            | RecommendedAction::InspectTask
             | RecommendedAction::Status => None,
         }
     }

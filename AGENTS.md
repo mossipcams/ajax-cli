@@ -35,6 +35,7 @@ is complete, then report the final validation results.
 - Never modify files in the `tests/` directory unless explicitly asked to.
 - Never delete or weaken test assertions.
 - When tests fail, fix the implementation, not the tests.
+- Do NOT keep legacy code. When adding new code always fully replace legacy code. It is not a migration.
 
 @/Users/matt/.codex/RTK.md
 

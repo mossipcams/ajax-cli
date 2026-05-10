@@ -359,32 +359,19 @@ pub enum RecommendedAction {
     NewTask,
     Reconcile,
     OpenTask,
-    OpenWorktrunk,
-    InspectTask,
-    InspectAgent,
-    InspectTestOutput,
-    MonitorTask,
-    CheckTask,
-    DiffTask,
-    ReviewDiff,
-    ReviewBranch,
     MergeTask,
     CleanTask,
     Status,
 }
 
-const TASK_PICKER_MENU: [RecommendedAction; 5] = [
+const TASK_PICKER_MENU: [RecommendedAction; 3] = [
     RecommendedAction::OpenTask,
-    RecommendedAction::DiffTask,
-    RecommendedAction::CheckTask,
     RecommendedAction::MergeTask,
     RecommendedAction::CleanTask,
 ];
 
-const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 5] = [
+const REVIEW_TASK_PICKER_MENU: [RecommendedAction; 3] = [
     RecommendedAction::OpenTask,
-    RecommendedAction::DiffTask,
-    RecommendedAction::CheckTask,
     RecommendedAction::MergeTask,
     RecommendedAction::CleanTask,
 ];
@@ -396,15 +383,6 @@ impl RecommendedAction {
             Self::NewTask,
             Self::Reconcile,
             Self::OpenTask,
-            Self::OpenWorktrunk,
-            Self::InspectTask,
-            Self::InspectAgent,
-            Self::InspectTestOutput,
-            Self::MonitorTask,
-            Self::CheckTask,
-            Self::DiffTask,
-            Self::ReviewDiff,
-            Self::ReviewBranch,
             Self::MergeTask,
             Self::CleanTask,
             Self::Status,
@@ -417,15 +395,6 @@ impl RecommendedAction {
             Self::NewTask => "new task",
             Self::Reconcile => "reconcile",
             Self::OpenTask => "open task",
-            Self::OpenWorktrunk => "open worktrunk",
-            Self::InspectTask => "inspect task",
-            Self::InspectAgent => "inspect agent",
-            Self::InspectTestOutput => "inspect test output",
-            Self::MonitorTask => "monitor task",
-            Self::CheckTask => "check task",
-            Self::DiffTask => "diff task",
-            Self::ReviewDiff => "review diff",
-            Self::ReviewBranch => "review branch",
             Self::MergeTask => "merge task",
             Self::CleanTask => "clean task",
             Self::Status => "status",
@@ -558,7 +527,7 @@ mod tests {
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels.len(), 16);
+        assert_eq!(labels.len(), 7);
         assert_eq!(labels[0], "select project");
         assert_eq!(labels[1], "new task");
         assert_eq!(labels[2], "reconcile");
@@ -579,25 +548,29 @@ mod tests {
                 .collect::<Vec<_>>()
         };
 
-        assert_eq!(
-            labels(false),
-            vec![
-                "open task",
-                "diff task",
-                "check task",
-                "merge task",
-                "clean task",
-            ]
-        );
-        assert_eq!(
-            labels(true),
-            vec![
-                "open task",
-                "diff task",
-                "check task",
-                "merge task",
-                "clean task",
-            ]
-        );
+        assert_eq!(labels(false), vec!["open task", "merge task", "clean task"]);
+        assert_eq!(labels(true), vec!["open task", "merge task", "clean task"]);
+    }
+
+    #[test]
+    fn recommended_actions_do_not_include_legacy_task_aliases() {
+        let labels = RecommendedAction::all()
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+
+        for legacy_label in [
+            "open worktrunk",
+            "inspect task",
+            "inspect agent",
+            "inspect test output",
+            "monitor task",
+            "check task",
+            "diff task",
+            "review diff",
+            "review branch",
+        ] {
+            assert!(!labels.contains(&legacy_label), "{legacy_label}");
+        }
     }
 }

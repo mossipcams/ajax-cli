@@ -128,21 +128,17 @@ fn task_has_specific_running_live_status(task: &Task) -> bool {
 fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) {
     match flag {
         SideFlag::NeedsInput => ("agent needs input", 10, RecommendedAction::OpenTask),
-        SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::InspectTestOutput),
-        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::InspectTask),
-        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::InspectTask),
-        SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::InspectTask),
-        SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::InspectTask),
+        SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::OpenTask),
+        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTask),
+        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTask),
+        SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::OpenTask),
+        SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::OpenTask),
         SideFlag::Conflicted => ("git conflicts detected", 40, RecommendedAction::OpenTask),
-        SideFlag::AgentDead => ("agent appears dead", 45, RecommendedAction::InspectAgent),
-        SideFlag::Dirty => ("worktree is dirty", 50, RecommendedAction::ReviewDiff),
-        SideFlag::Unpushed => (
-            "branch has unpushed work",
-            55,
-            RecommendedAction::ReviewBranch,
-        ),
-        SideFlag::Stale => ("task is stale", 60, RecommendedAction::InspectTask),
-        SideFlag::AgentRunning => ("agent is running", 90, RecommendedAction::MonitorTask),
+        SideFlag::AgentDead => ("agent appears dead", 45, RecommendedAction::OpenTask),
+        SideFlag::Dirty => ("worktree is dirty", 50, RecommendedAction::OpenTask),
+        SideFlag::Unpushed => ("branch has unpushed work", 55, RecommendedAction::OpenTask),
+        SideFlag::Stale => ("task is stale", 60, RecommendedAction::OpenTask),
+        SideFlag::AgentRunning => ("agent is running", 90, RecommendedAction::OpenTask),
     }
 }
 
@@ -159,20 +155,18 @@ fn attention_for_live_status(
         LiveStatusKind::AuthRequired => {
             Some(("authentication required", 7, RecommendedAction::OpenTask))
         }
-        LiveStatusKind::RateLimited => Some(("rate limited", 8, RecommendedAction::InspectAgent)),
+        LiveStatusKind::RateLimited => Some(("rate limited", 8, RecommendedAction::OpenTask)),
         LiveStatusKind::ContextLimit => {
-            Some(("context limit reached", 9, RecommendedAction::InspectAgent))
+            Some(("context limit reached", 9, RecommendedAction::OpenTask))
         }
         LiveStatusKind::MergeConflict => Some((
             "merge conflict needs attention",
             10,
             RecommendedAction::OpenTask,
         )),
-        LiveStatusKind::CommandFailed => {
-            Some(("command failed", 15, RecommendedAction::InspectAgent))
-        }
-        LiveStatusKind::CiFailed => Some(("ci failed", 11, RecommendedAction::InspectTestOutput)),
-        LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::InspectAgent)),
+        LiveStatusKind::CommandFailed => Some(("command failed", 15, RecommendedAction::OpenTask)),
+        LiveStatusKind::CiFailed => Some(("ci failed", 11, RecommendedAction::OpenTask)),
+        LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::OpenTask)),
         LiveStatusKind::WorktreeMissing
         | LiveStatusKind::TmuxMissing
         | LiveStatusKind::WorktrunkMissing => None,
@@ -190,12 +184,8 @@ fn attention_for_agent_status(
 ) -> Option<(&'static str, u32, RecommendedAction)> {
     match status {
         AgentRuntimeStatus::Waiting => Some(("agent is waiting", 10, RecommendedAction::OpenTask)),
-        AgentRuntimeStatus::Blocked => {
-            Some(("agent is blocked", 12, RecommendedAction::InspectAgent))
-        }
-        AgentRuntimeStatus::Dead => {
-            Some(("agent appears dead", 45, RecommendedAction::InspectAgent))
-        }
+        AgentRuntimeStatus::Blocked => Some(("agent is blocked", 12, RecommendedAction::OpenTask)),
+        AgentRuntimeStatus::Dead => Some(("agent appears dead", 45, RecommendedAction::OpenTask)),
         AgentRuntimeStatus::NotStarted
         | AgentRuntimeStatus::Running
         | AgentRuntimeStatus::Done
@@ -271,7 +261,7 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].reason, "agent is blocked");
         assert_eq!(items[0].priority, 12);
-        assert_eq!(items[0].recommended_action, "inspect agent");
+        assert_eq!(items[0].recommended_action, "open task");
     }
 
     #[test]
