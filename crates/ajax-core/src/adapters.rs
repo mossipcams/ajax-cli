@@ -170,8 +170,6 @@ impl WorkmuxAdapter {
             args: vec![
                 "add".to_string(),
                 task.branch.clone(),
-                "--prompt".to_string(),
-                task.title.clone(),
                 "--agent".to_string(),
                 task.agent.clone(),
                 "--background".to_string(),
@@ -468,8 +466,6 @@ mod tests {
                 [
                     "add",
                     "ajax/fix-login",
-                    "--prompt",
-                    "fix login",
                     "--agent",
                     "codex",
                     "--background",

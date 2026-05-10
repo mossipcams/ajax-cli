@@ -1623,8 +1623,6 @@ mod tests {
                 [
                     "add",
                     "ajax/fix-login",
-                    "--prompt",
-                    "fix login",
                     "--agent",
                     "codex",
                     "--background",
