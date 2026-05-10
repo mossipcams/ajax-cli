@@ -1627,7 +1627,8 @@ mod tests {
                     "fix login",
                     "--agent",
                     "codex",
-                    "--background"
+                    "--background",
+                    "--no-hooks"
                 ]
             )
             .with_cwd("/Users/matt/projects/web")]

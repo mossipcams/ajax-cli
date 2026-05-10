@@ -3,10 +3,10 @@ mod context;
 mod render;
 
 use ajax_core::{
-    adapters::{CommandRunner, ProcessCommandRunner},
+    adapters::{CommandOutput, CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
     output::{DoctorCheck, ReconcileResponse},
-    registry::InMemoryRegistry,
+    registry::{InMemoryRegistry, Registry},
 };
 use ajax_supervisor::codex::CodexAdapter;
 use clap::ArgMatches;
@@ -392,9 +392,13 @@ fn render_matches_mut(
                 });
             }
 
-            let outputs = commands::execute_plan(&plan, subcommand.get_flag("yes"), runner)
-                .map_err(command_error)?;
-            let task = commands::record_new_task(context, &request).map_err(command_error)?;
+            let (outputs, task) = execute_new_task_plan(
+                context,
+                runner,
+                &request,
+                &plan,
+                subcommand.get_flag("yes"),
+            )?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, Some(&task.qualified_handle())),
                 state_changed: true,
@@ -693,6 +697,35 @@ fn refresh_live_context<R: CommandRunner>(
     Ok(response.tasks_changed > 0)
 }
 
+fn execute_new_task_plan<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    request: &commands::NewTaskRequest,
+    plan: &commands::CommandPlan,
+    confirmed: bool,
+) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
+    let mut outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
+    let task = commands::record_new_task(context, request).map_err(command_error)?;
+    let open_plan = commands::open_task_plan(
+        context,
+        &task.qualified_handle(),
+        commands::OpenMode::Attach,
+    )
+    .map_err(command_error)?;
+    outputs.extend(commands::execute_plan(&open_plan, true, runner).map_err(command_error)?);
+    commands::mark_task_opened(context, &task.qualified_handle()).map_err(command_error)?;
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|candidate| candidate.id == task.id)
+        .cloned()
+        .unwrap_or(task);
+
+    Ok((outputs, task))
+}
+
 fn parse_u32_arg(matches: &ArgMatches, name: &str, default: u32) -> Result<u32, CliError> {
     let Some(value) = matches.get_one::<String>(name) else {
         return Ok(default);
@@ -805,8 +838,7 @@ fn execute_pending_cockpit_action<R: CommandRunner>(
             agent: "codex".to_string(),
         };
         let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-        let outputs = commands::execute_plan(&plan, true, runner).map_err(command_error)?;
-        let task = commands::record_new_task(context, &request).map_err(command_error)?;
+        let (outputs, task) = execute_new_task_plan(context, runner, &request, &plan, true)?;
         *state_changed = true;
         return Ok(render_execution_outputs(
             &outputs,
@@ -1604,7 +1636,7 @@ mod tests {
 
         assert!(output.contains("create task: fix login"));
         assert!(output.contains(
-            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --prompt fix login --agent codex --background)"
+            "(cd /Users/matt/projects/web && workmux add ajax/fix-login --prompt fix login --agent codex --background --no-hooks)"
         ));
     }
 
@@ -1816,7 +1848,27 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("recorded task: web/fix-login"));
-        assert_eq!(runner.commands().len(), 1);
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "workmux",
+                    [
+                        "add",
+                        "ajax/fix-login",
+                        "--prompt",
+                        "Fix login",
+                        "--agent",
+                        "codex",
+                        "--background",
+                        "--no-hooks"
+                    ]
+                )
+                .with_cwd("/Users/matt/projects/web"),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
+        );
         let recorded = context
             .registry
             .list_tasks()
@@ -1828,6 +1880,7 @@ mod tests {
             recorded.worktree_path.to_string_lossy(),
             "/Users/matt/projects/web__worktrees/ajax-fix-login"
         );
+        assert_eq!(recorded.lifecycle_status, LifecycleStatus::Active);
     }
 
     #[test]
@@ -2567,25 +2620,33 @@ mod tests {
         assert!(output.contains("recorded task: api/fix-login"));
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new(
-                "workmux",
-                [
-                    "add",
-                    "ajax/fix-login",
-                    "--prompt",
-                    "Fix login",
-                    "--agent",
-                    "codex",
-                    "--background"
-                ]
-            )
-            .with_cwd("/Users/matt/projects/api")]
+            &[
+                CommandSpec::new(
+                    "workmux",
+                    [
+                        "add",
+                        "ajax/fix-login",
+                        "--prompt",
+                        "Fix login",
+                        "--agent",
+                        "codex",
+                        "--background",
+                        "--no-hooks"
+                    ]
+                )
+                .with_cwd("/Users/matt/projects/api"),
+                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/api")
+            ]
         );
-        assert!(context
+        let task = context
             .registry
             .list_tasks()
             .iter()
-            .any(|task| task.qualified_handle() == "api/fix-login"));
+            .find(|task| task.qualified_handle() == "api/fix-login")
+            .cloned()
+            .expect("new task should be recorded");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert!(state_changed);
     }
 

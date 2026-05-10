@@ -451,12 +451,12 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&output), "");
     assert_eq!(
         stdout(&output),
-        "exit:0\nstdout:fake workmux add\nstderr:\nrecorded task: web/fix-login\n"
+        "exit:0\nstdout:fake workmux add\nstderr:\nexit:0\nstdout:fake workmux open\nstderr:\nrecorded task: web/fix-login\n"
     );
     assert_eq!(
         std::fs::read_to_string(&workmux_log).expect("fake workmux should record invocation"),
         format!(
-            "cwd={}\nargs=add ajax/fix-login --prompt Fix Login! --agent codex --background\n",
+            "cwd={0}\nargs=add ajax/fix-login --prompt Fix Login! --agent codex --background --no-hooks\ncwd={0}\nargs=open ajax/fix-login\n",
             fs::canonicalize(&repo_path)
                 .expect("managed repo path should canonicalize")
                 .display()
@@ -485,7 +485,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
                 "id": "web/fix-login",
                 "qualified_handle": "web/fix-login",
                 "title": "Fix Login!",
-                "lifecycle_status": "Provisioning",
+                "lifecycle_status": "Active",
                 "needs_attention": false,
                 "live_status": null
             }
