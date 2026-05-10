@@ -1097,13 +1097,16 @@ pub enum RegistryEventKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind,
-        RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
+        parse_agent_client, parse_agent_runtime_status, parse_lifecycle_status,
+        parse_live_status_kind, parse_registry_event_kind, parse_side_flag, InMemoryRegistry,
+        Registry, RegistryError, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
+        RegistryStore, SqliteRegistryStore,
     };
     use crate::models::{
         AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
         LiveStatusKind, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
     };
+    use rstest::rstest;
     use std::time::{Duration, SystemTime};
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
@@ -1179,6 +1182,95 @@ mod tests {
             .to_string(),
             "incompatible state schema: found 4, supported 2"
         );
+    }
+
+    #[rstest]
+    #[case("Claude", AgentClient::Claude)]
+    #[case("Codex", AgentClient::Codex)]
+    #[case("Other", AgentClient::Other)]
+    fn parses_agent_client_names(#[case] name: &str, #[case] expected: AgentClient) {
+        assert_parses_agent_client(name, expected);
+    }
+
+    fn assert_parses_agent_client(name: &str, expected: AgentClient) {
+        assert_eq!(parse_agent_client(name).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("Created", LifecycleStatus::Created)]
+    #[case("Provisioning", LifecycleStatus::Provisioning)]
+    #[case("Active", LifecycleStatus::Active)]
+    #[case("Waiting", LifecycleStatus::Waiting)]
+    #[case("Reviewable", LifecycleStatus::Reviewable)]
+    #[case("Mergeable", LifecycleStatus::Mergeable)]
+    #[case("Merged", LifecycleStatus::Merged)]
+    #[case("Cleanable", LifecycleStatus::Cleanable)]
+    #[case("Removed", LifecycleStatus::Removed)]
+    #[case("Orphaned", LifecycleStatus::Orphaned)]
+    #[case("Error", LifecycleStatus::Error)]
+    fn parses_lifecycle_status_names(#[case] name: &str, #[case] expected: LifecycleStatus) {
+        assert_eq!(parse_lifecycle_status(name).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("NotStarted", AgentRuntimeStatus::NotStarted)]
+    #[case("Running", AgentRuntimeStatus::Running)]
+    #[case("Waiting", AgentRuntimeStatus::Waiting)]
+    #[case("Blocked", AgentRuntimeStatus::Blocked)]
+    #[case("Dead", AgentRuntimeStatus::Dead)]
+    #[case("Done", AgentRuntimeStatus::Done)]
+    #[case("Unknown", AgentRuntimeStatus::Unknown)]
+    fn parses_agent_runtime_status_names(#[case] name: &str, #[case] expected: AgentRuntimeStatus) {
+        assert_eq!(parse_agent_runtime_status(name).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("Dirty", SideFlag::Dirty)]
+    #[case("AgentRunning", SideFlag::AgentRunning)]
+    #[case("AgentDead", SideFlag::AgentDead)]
+    #[case("NeedsInput", SideFlag::NeedsInput)]
+    #[case("TestsFailed", SideFlag::TestsFailed)]
+    #[case("TmuxMissing", SideFlag::TmuxMissing)]
+    #[case("WorktreeMissing", SideFlag::WorktreeMissing)]
+    #[case("WorktrunkMissing", SideFlag::WorktrunkMissing)]
+    #[case("BranchMissing", SideFlag::BranchMissing)]
+    #[case("Stale", SideFlag::Stale)]
+    #[case("Conflicted", SideFlag::Conflicted)]
+    #[case("Unpushed", SideFlag::Unpushed)]
+    fn parses_side_flag_names(#[case] name: &str, #[case] expected: SideFlag) {
+        assert_eq!(parse_side_flag(name).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("WorktreeMissing", LiveStatusKind::WorktreeMissing)]
+    #[case("TmuxMissing", LiveStatusKind::TmuxMissing)]
+    #[case("WorktrunkMissing", LiveStatusKind::WorktrunkMissing)]
+    #[case("ShellIdle", LiveStatusKind::ShellIdle)]
+    #[case("CommandRunning", LiveStatusKind::CommandRunning)]
+    #[case("TestsRunning", LiveStatusKind::TestsRunning)]
+    #[case("AgentRunning", LiveStatusKind::AgentRunning)]
+    #[case("WaitingForApproval", LiveStatusKind::WaitingForApproval)]
+    #[case("WaitingForInput", LiveStatusKind::WaitingForInput)]
+    #[case("Blocked", LiveStatusKind::Blocked)]
+    #[case("RateLimited", LiveStatusKind::RateLimited)]
+    #[case("AuthRequired", LiveStatusKind::AuthRequired)]
+    #[case("MergeConflict", LiveStatusKind::MergeConflict)]
+    #[case("CiFailed", LiveStatusKind::CiFailed)]
+    #[case("ContextLimit", LiveStatusKind::ContextLimit)]
+    #[case("CommandFailed", LiveStatusKind::CommandFailed)]
+    #[case("Done", LiveStatusKind::Done)]
+    #[case("Unknown", LiveStatusKind::Unknown)]
+    fn parses_live_status_kind_names(#[case] name: &str, #[case] expected: LiveStatusKind) {
+        assert_eq!(parse_live_status_kind(name).unwrap(), expected);
+    }
+
+    #[rstest]
+    #[case("TaskCreated", RegistryEventKind::TaskCreated)]
+    #[case("LifecycleChanged", RegistryEventKind::LifecycleChanged)]
+    #[case("UserNote", RegistryEventKind::UserNote)]
+    #[case("Reconciled", RegistryEventKind::Reconciled)]
+    fn parses_registry_event_kind_names(#[case] name: &str, #[case] expected: RegistryEventKind) {
+        assert_eq!(parse_registry_event_kind(name).unwrap(), expected);
     }
 
     #[test]

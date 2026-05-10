@@ -645,6 +645,12 @@ fn terminal_exit_commands() -> &'static [TerminalModeCommand] {
 
 // ── Event loop ────────────────────────────────────────────────────────────────
 
+enum EventLoopAction {
+    Continue,
+    Quit,
+    Pending(PendingAction),
+}
+
 fn run_event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -669,68 +675,85 @@ fn run_event_loop<B: Backend>(
             .map_err(|_| io::Error::other("terminal backend draw error"))?;
 
         if event::poll(Duration::from_millis(250))? {
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => match key.code {
-                    code if is_help_key_event(code, key.modifiers) => {
-                        app.open_help();
-                    }
-                    KeyCode::Esc => {
-                        handle_escape_key(app);
-                    }
-                    KeyCode::Enter if app.is_collecting_input() => {
-                        if let Some(pending) = app.submit_input() {
-                            return Ok(Some(pending));
-                        }
-                    }
-                    code if app.is_collecting_input()
-                        && is_input_delete_key(code, key.modifiers) =>
-                    {
-                        handle_back_key(app);
-                    }
-                    KeyCode::Char(character) if app.is_collecting_input() => {
-                        app.push_input_char(character);
-                    }
-                    KeyCode::Left if app.is_collecting_input() => {
-                        app.go_back();
-                    }
-                    KeyCode::Char('q') => return Ok(None),
-                    code if is_back_key_event(code, key.modifiers) => {
-                        handle_back_key(app);
-                    }
-                    KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
-                    KeyCode::Down | KeyCode::Char('j') => app.select_next(),
-                    KeyCode::Enter => {
-                        if let Some(item) = app.activate_selected() {
-                            if let Some(pending) =
-                                handle_action_result(app, handler.on_action(&item))?
-                            {
-                                return Ok(Some(pending));
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                Event::Mouse(mouse) => {
-                    // Layout: row 0 = header, last row = status bar, feed in between.
-                    let feed_top: usize = 1;
-                    let feed_bottom = height.saturating_sub(1);
-                    match mouse.kind {
-                        MouseEventKind::ScrollUp => app.select_prev(),
-                        MouseEventKind::ScrollDown => app.select_next(),
-                        MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
-                            let mouse_row = mouse.row as usize;
-                            if mouse_row >= feed_top && mouse_row < feed_bottom {
-                                let feed_row = mouse_row - feed_top + app.viewport_scroll;
-                                app.select_at_feed_row(feed_row);
-                            }
-                        }
-                        _ => {}
+            match handle_cockpit_event(app, event::read()?, height, &mut handler)? {
+                EventLoopAction::Continue => {}
+                EventLoopAction::Quit => return Ok(None),
+                EventLoopAction::Pending(pending) => return Ok(Some(pending)),
+            }
+        }
+    }
+}
+
+fn handle_cockpit_event<H: CockpitEventHandler + ?Sized>(
+    app: &mut App,
+    event: Event,
+    height: usize,
+    handler: &mut H,
+) -> io::Result<EventLoopAction> {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            handle_key_event(app, key.code, key.modifiers, handler)
+        }
+        Event::Mouse(mouse) => {
+            // Layout: row 0 = header, last row = status bar, feed in between.
+            let feed_top: usize = 1;
+            let feed_bottom = height.saturating_sub(1);
+            match mouse.kind {
+                MouseEventKind::ScrollUp => app.select_prev(),
+                MouseEventKind::ScrollDown => app.select_next(),
+                MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
+                    let mouse_row = mouse.row as usize;
+                    if mouse_row >= feed_top && mouse_row < feed_bottom {
+                        let feed_row = mouse_row - feed_top + app.viewport_scroll;
+                        app.select_at_feed_row(feed_row);
                     }
                 }
                 _ => {}
             }
+            Ok(EventLoopAction::Continue)
         }
+        _ => Ok(EventLoopAction::Continue),
     }
+}
+
+fn handle_key_event<H: CockpitEventHandler + ?Sized>(
+    app: &mut App,
+    code: KeyCode,
+    modifiers: KeyModifiers,
+    handler: &mut H,
+) -> io::Result<EventLoopAction> {
+    match code {
+        code if is_help_key_event(code, modifiers) => {
+            app.open_help();
+        }
+        KeyCode::Enter if app.is_collecting_input() => {
+            if let Some(pending) = app.submit_input() {
+                return Ok(EventLoopAction::Pending(pending));
+            }
+        }
+        code if app.is_collecting_input() && is_input_delete_key(code, modifiers) => {
+            handle_back_key(app);
+        }
+        KeyCode::Char(character) if app.is_collecting_input() => {
+            app.push_input_char(character);
+        }
+        KeyCode::Char('q') => return Ok(EventLoopAction::Quit),
+        code if is_back_key_event(code, modifiers) => {
+            handle_back_key(app);
+        }
+        KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::Enter => {
+            if let Some(item) = app.activate_selected() {
+                if let Some(pending) = handle_action_result(app, handler.on_action(&item))? {
+                    return Ok(EventLoopAction::Pending(pending));
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(EventLoopAction::Continue)
 }
 
 fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> bool {
@@ -787,10 +810,6 @@ fn handle_action_result(
 fn handle_back_key(app: &mut App) -> bool {
     app.go_back();
     false
-}
-
-fn handle_escape_key(app: &mut App) -> bool {
-    app.go_back()
 }
 
 fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
@@ -1420,9 +1439,10 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, primary_accent, render_cockpit, render_ui, secondary_accent,
-        selectable_feed_rows, selectable_row_layout, App, AppView, SelectableKind,
-        TerminalModeCommand,
+        action_chrome, handle_cockpit_event, primary_accent, render_cockpit, render_ui,
+        secondary_accent, selectable_feed_rows, selectable_row_layout, ActionOutcome, App, AppView,
+        CockpitEventHandler, EventLoopAction, PendingAction, SelectableKind, TerminalModeCommand,
+        FLASH_TICKS,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
@@ -1430,8 +1450,12 @@ mod tests {
             CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
         },
     };
-    use crossterm::event::{KeyCode, KeyModifiers};
+    use crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
+        MouseEvent, MouseEventKind,
+    };
     use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use rstest::rstest;
 
     fn sample_repos() -> ReposResponse {
         ReposResponse {
@@ -1455,6 +1479,21 @@ mod tests {
                 needs_attention: true,
                 live_status: None,
             }],
+        }
+    }
+
+    fn sample_tasks_with_count(count: usize) -> TasksResponse {
+        TasksResponse {
+            tasks: (0..count)
+                .map(|idx| TaskSummary {
+                    id: format!("task-{idx}"),
+                    qualified_handle: format!("web/task-{idx}"),
+                    title: format!("Task {idx}"),
+                    lifecycle_status: "Active".to_string(),
+                    needs_attention: false,
+                    live_status: None,
+                })
+                .collect(),
         }
     }
 
@@ -1633,6 +1672,460 @@ mod tests {
         app.select_next();
         assert!(app.activate_selected().is_none());
         app
+    }
+
+    fn app_in_project_view_with_task_count(count: usize) -> App {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks_with_count(count),
+            InboxResponse { items: vec![] },
+        );
+        app.activate_selected();
+        app
+    }
+
+    fn app_in_empty_new_task_input() -> App {
+        let mut app = app_in_project_view();
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+        ));
+        app
+    }
+
+    struct NoopHandler;
+
+    impl CockpitEventHandler for NoopHandler {
+        fn on_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+            Ok(ActionOutcome::Message("ignored".to_string()))
+        }
+    }
+
+    struct DeferHandler;
+
+    impl CockpitEventHandler for DeferHandler {
+        fn on_action(&mut self, item: &AttentionItem) -> std::io::Result<ActionOutcome> {
+            Ok(ActionOutcome::Defer(PendingAction {
+                task_handle: item.task_handle.clone(),
+                recommended_action: item.recommended_action.clone(),
+                task_title: None,
+            }))
+        }
+    }
+
+    fn handle_with_noop(app: &mut App, event: Event, height: usize) -> EventLoopAction {
+        let mut handler = NoopHandler;
+        handle_cockpit_event(app, event, height, &mut handler).unwrap()
+    }
+
+    #[rstest]
+    #[case(0, 0)]
+    #[case(1, 0)]
+    #[case(2, 1)]
+    fn select_prev_saturates_at_first_row(#[case] start_steps: usize, #[case] expected: usize) {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        for _ in 0..start_steps {
+            app.select_next();
+        }
+
+        app.select_prev();
+
+        assert_eq!(app.selected, expected);
+    }
+
+    #[rstest]
+    #[case::projects(AppView::Projects, false)]
+    #[case::project(AppView::Project { repo: String::new() }, false)]
+    #[case::new_task(
+        AppView::NewTaskInput {
+            repo: String::new(),
+            title: String::new()
+        },
+        true
+    )]
+    #[case::help(
+        AppView::Help {
+            previous: Box::new(AppView::Projects)
+        },
+        false
+    )]
+    fn collecting_input_matches_only_new_task_view(#[case] view: AppView, #[case] expected: bool) {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        app.view = view;
+
+        assert_eq!(app.is_collecting_input(), expected);
+    }
+
+    #[rstest]
+    #[case(0, Some(FLASH_TICKS))]
+    #[case(1, Some(FLASH_TICKS - 1))]
+    #[case(FLASH_TICKS, Some(0))]
+    #[case(FLASH_TICKS + 1, None)]
+    fn flash_expires_after_final_visible_tick(
+        #[case] ticks: u8,
+        #[case] expected_remaining: Option<u8>,
+    ) {
+        let mut app = app_in_empty_new_task_input();
+        assert!(app.submit_input().is_none());
+
+        for _ in 0..ticks {
+            app.tick_flash();
+        }
+
+        assert_eq!(
+            app.flash.as_ref().map(|(_, ticks)| *ticks),
+            expected_remaining
+        );
+    }
+
+    #[test]
+    fn ensure_visible_leaves_exact_bottom_boundary_stable() {
+        let mut app = app_in_project_view();
+        app.selected = 2;
+        app.viewport_scroll = selectable_row_layout(&app)[0].start;
+        let selected_range = selectable_row_layout(&app)[app.selected].clone();
+        let viewport_height = selected_range.end - app.viewport_scroll;
+
+        app.ensure_visible(viewport_height);
+
+        assert_eq!(app.viewport_scroll, selectable_row_layout(&app)[0].start);
+        assert_eq!(selected_range.end, app.viewport_scroll + viewport_height);
+    }
+
+    #[test]
+    fn ensure_visible_scrolls_up_and_down_to_selected_row() {
+        let mut app = app_in_project_view();
+        app.selected = 0;
+        app.viewport_scroll = selectable_row_layout(&app)[2].start;
+
+        app.ensure_visible(1);
+
+        assert_eq!(app.viewport_scroll, selectable_row_layout(&app)[0].start);
+
+        app.selected = 3;
+        app.ensure_visible(1);
+
+        let selected_range = selectable_row_layout(&app)[app.selected].clone();
+        assert_eq!(app.viewport_scroll, selected_range.end - 1);
+    }
+
+    #[test]
+    fn ensure_visible_uses_addition_for_viewport_bottom() {
+        let mut app = app_in_project_view_with_task_count(6);
+        let layout = selectable_row_layout(&app);
+        let (selected, selected_range) = layout
+            .iter()
+            .cloned()
+            .enumerate()
+            .find(|(_, range)| range.end == 6)
+            .expect("fixture should have a selectable ending at feed row 6");
+        app.selected = selected;
+        app.viewport_scroll = 3;
+
+        app.ensure_visible(2);
+
+        assert_eq!(app.viewport_scroll, selected_range.end - 2);
+    }
+
+    #[test]
+    fn ensure_visible_zero_height_never_scrolls() {
+        let mut app = app_in_project_view_with_task_count(6);
+        app.selected = app.selectables.len() - 1;
+        app.viewport_scroll = 3;
+
+        app.ensure_visible(0);
+
+        assert_eq!(app.viewport_scroll, 3);
+    }
+
+    #[test]
+    fn non_press_key_events_do_not_mutate_input_state() {
+        let mut app = app_in_empty_new_task_input();
+        let event = Event::Key(KeyEvent {
+            code: KeyCode::Char('x'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        });
+
+        let mut handler = NoopHandler;
+        let action = handle_cockpit_event(&mut app, event, 10, &mut handler).unwrap();
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(
+            matches!(&app.view, AppView::NewTaskInput { title, .. } if title.is_empty()),
+            "release events must not append editable input"
+        );
+    }
+
+    #[rstest]
+    #[case(KeyCode::Enter, None, true)]
+    #[case(KeyCode::Char('x'), None, false)]
+    #[case(KeyCode::Backspace, Some("a"), false)]
+    #[case(KeyCode::Delete, Some("a"), false)]
+    fn input_mode_keys_use_input_branches(
+        #[case] code: KeyCode,
+        #[case] initial_title: Option<&str>,
+        #[case] flashes_for_empty_submit: bool,
+    ) {
+        let mut app = app_in_empty_new_task_input();
+        if let Some(title) = initial_title {
+            for character in title.chars() {
+                app.push_input_char(character);
+            }
+        }
+
+        let mut handler = NoopHandler;
+        let action = handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.flash.is_some(), flashes_for_empty_submit);
+        match code {
+            KeyCode::Char('x') => {
+                assert!(matches!(&app.view, AppView::NewTaskInput { title, .. } if title == "x"));
+            }
+            KeyCode::Backspace | KeyCode::Delete => {
+                assert!(
+                    matches!(&app.view, AppView::NewTaskInput { title, .. } if title.is_empty())
+                );
+            }
+            KeyCode::Enter => {}
+            _ => unreachable!(),
+        }
+    }
+
+    #[rstest]
+    #[case(KeyCode::Char('?'), KeyModifiers::NONE)]
+    #[case(KeyCode::Char('/'), KeyModifiers::SHIFT)]
+    fn help_keys_open_help_view(#[case] code: KeyCode, #[case] modifiers: KeyModifiers) {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+
+        let action = handle_with_noop(&mut app, Event::Key(KeyEvent::new(code, modifiers)), 10);
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(app.view, AppView::Help { .. }));
+    }
+
+    #[test]
+    fn escape_key_returns_to_parent_view() {
+        let mut app = app_in_project_view();
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(app.view, AppView::Projects));
+    }
+
+    #[test]
+    fn quit_key_requests_event_loop_exit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Quit));
+    }
+
+    #[rstest]
+    #[case(KeyCode::Down, 0, 1)]
+    #[case(KeyCode::Char('j'), 0, 1)]
+    #[case(KeyCode::Up, 1, 0)]
+    #[case(KeyCode::Char('k'), 1, 0)]
+    fn navigation_keys_update_selection(
+        #[case] code: KeyCode,
+        #[case] start: usize,
+        #[case] expected: usize,
+    ) {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        app.selected = start;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, expected);
+    }
+
+    #[rstest]
+    #[case(KeyCode::Char('h'))]
+    #[case(KeyCode::Left)]
+    fn back_keys_return_to_parent_view(#[case] code: KeyCode) {
+        let mut app = app_in_project_view();
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(app.view, AppView::Projects));
+    }
+
+    #[test]
+    fn enter_on_task_action_delegates_to_handler() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        app.select_next();
+        assert!(app.activate_selected().is_none());
+        let mut handler = DeferHandler;
+
+        let action = handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            action,
+            EventLoopAction::Pending(PendingAction {
+                recommended_action,
+                ..
+            }) if recommended_action == "open task"
+        ));
+    }
+
+    #[rstest]
+    #[case(MouseEventKind::ScrollDown, 2)]
+    #[case(MouseEventKind::ScrollUp, 0)]
+    fn mouse_scroll_updates_selection(#[case] kind: MouseEventKind, #[case] expected: usize) {
+        let mut app = app_in_project_view();
+        app.selected = 1;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind,
+                column: 0,
+                row: 1,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, expected);
+    }
+
+    #[test]
+    fn mouse_click_selects_feed_row_inside_feed_bounds() {
+        let mut app = app_in_project_view();
+        let target = 2;
+        let target_feed_row = selectable_row_layout(&app)[target].start;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: (target_feed_row + 1) as u16,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, target);
+    }
+
+    #[test]
+    fn mouse_click_accounts_for_viewport_scroll_offset() {
+        let mut app = app_in_project_view_with_task_count(8);
+        let target = 5;
+        let target_feed_row = selectable_row_layout(&app)[target].start;
+        app.viewport_scroll = 2;
+        let mouse_row = (target_feed_row - app.viewport_scroll + 1) as u16;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: mouse_row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, target);
+    }
+
+    #[rstest]
+    #[case(0)]
+    #[case(9)]
+    fn mouse_click_outside_feed_bounds_is_ignored(#[case] row: u16) {
+        let mut app = app_in_project_view();
+        app.selected = 1;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn mouse_click_on_status_bar_is_ignored_even_when_scrolled() {
+        let mut app = app_in_project_view_with_task_count(12);
+        app.selected = 1;
+        app.viewport_scroll = 2;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 9,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, 1);
     }
 
     #[test]
@@ -2046,8 +2539,13 @@ mod tests {
 
         app.open_help();
         assert!(matches!(app.view, AppView::Help { .. }));
-        assert!(super::handle_escape_key(&mut app));
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            10,
+        );
 
+        assert!(matches!(action, EventLoopAction::Continue));
         let content = render_to_string(80, 30, &app);
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
         assert!(content.contains("> web"));

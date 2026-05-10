@@ -245,9 +245,10 @@ mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
+    use rstest::rstest;
     use tokio::sync::mpsc;
 
-    use super::{parse_codex_json_line, CodexAdapter};
+    use super::{mentions_approval, parse_codex_json_line, CodexAdapter};
 
     #[test]
     fn codex_json_lines_map_to_agent_events() {
@@ -277,6 +278,53 @@ mod tests {
                 text: "no approval needed".to_string()
             })
         );
+    }
+
+    #[rstest]
+    #[case("approval required")]
+    #[case("requires approval")]
+    #[case("waiting for approval")]
+    #[case("allow command")]
+    #[case("proceed?")]
+    fn approval_phrase_variants_are_detected(#[case] text: &str) {
+        assert_mentions_approval(text);
+    }
+
+    fn assert_mentions_approval(text: &str) {
+        assert!(mentions_approval(text), "{text:?} should request approval");
+    }
+
+    #[rstest]
+    #[case("no approval needed")]
+    #[case("approved automatically")]
+    #[case("continue without prompting")]
+    fn non_approval_phrases_are_not_detected(#[case] text: &str) {
+        assert!(
+            !mentions_approval(text),
+            "{text:?} should not request approval"
+        );
+    }
+
+    #[rstest]
+    #[case(r#"{"type":"error"}"#, "codex reported failure")]
+    #[case(r#"{"type":"failed","message":"tests failed"}"#, "tests failed")]
+    fn codex_failure_events_map_to_failed_agent_events(
+        #[case] line: &str,
+        #[case] expected_message: &str,
+    ) {
+        assert_eq!(
+            parse_codex_json_line(line),
+            Some(AgentEvent::Failed {
+                message: expected_message.to_string()
+            })
+        );
+    }
+
+    #[rstest]
+    #[case(r#"{"type":"completed"}"#)]
+    #[case(r#"{"type":"done"}"#)]
+    fn codex_completion_event_variants_complete(#[case] line: &str) {
+        assert_eq!(parse_codex_json_line(line), Some(AgentEvent::Completed));
     }
 
     #[test]

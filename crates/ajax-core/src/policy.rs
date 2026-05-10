@@ -101,6 +101,7 @@ mod tests {
     use crate::models::{
         AgentClient, GitStatus, SafetyClassification, SideFlag, Task, TaskId, TmuxStatus,
     };
+    use rstest::rstest;
 
     fn clean_merged_task() -> Task {
         let mut task = Task::new(
@@ -214,5 +215,153 @@ mod tests {
             .reasons
             .iter()
             .any(|reason| reason == "worktree is missing"));
+    }
+
+    #[derive(Clone, Copy)]
+    enum SafetyScenario {
+        GitWorktreeMissing,
+        FlagWorktreeMissing,
+        GitBranchMissing,
+        FlagBranchMissing,
+        GitConflicted,
+        FlagConflicted,
+        GitDirty,
+        GitUntracked,
+        FlagDirty,
+        GitUnmerged,
+        GitAhead,
+        GitUnpushedCommits,
+        FlagUnpushed,
+    }
+
+    fn apply_safety_scenario(task: &mut Task, scenario: SafetyScenario) {
+        match scenario {
+            SafetyScenario::GitWorktreeMissing => {
+                task.git_status.as_mut().unwrap().worktree_exists = false;
+            }
+            SafetyScenario::FlagWorktreeMissing => {
+                task.add_side_flag(SideFlag::WorktreeMissing);
+            }
+            SafetyScenario::GitBranchMissing => {
+                task.git_status.as_mut().unwrap().branch_exists = false;
+            }
+            SafetyScenario::FlagBranchMissing => {
+                task.add_side_flag(SideFlag::BranchMissing);
+            }
+            SafetyScenario::GitConflicted => {
+                task.git_status.as_mut().unwrap().conflicted = true;
+            }
+            SafetyScenario::FlagConflicted => {
+                task.add_side_flag(SideFlag::Conflicted);
+            }
+            SafetyScenario::GitDirty => {
+                task.git_status.as_mut().unwrap().dirty = true;
+            }
+            SafetyScenario::GitUntracked => {
+                task.git_status.as_mut().unwrap().untracked_files = 1;
+            }
+            SafetyScenario::FlagDirty => {
+                task.add_side_flag(SideFlag::Dirty);
+            }
+            SafetyScenario::GitUnmerged => {
+                task.git_status.as_mut().unwrap().merged = false;
+            }
+            SafetyScenario::GitAhead => {
+                task.git_status.as_mut().unwrap().ahead = 1;
+            }
+            SafetyScenario::GitUnpushedCommits => {
+                task.git_status.as_mut().unwrap().unpushed_commits = 1;
+            }
+            SafetyScenario::FlagUnpushed => {
+                task.add_side_flag(SideFlag::Unpushed);
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::git_worktree_missing(
+        SafetyScenario::GitWorktreeMissing,
+        SafetyClassification::Blocked,
+        "worktree is missing"
+    )]
+    #[case::flag_worktree_missing(
+        SafetyScenario::FlagWorktreeMissing,
+        SafetyClassification::Blocked,
+        "worktree is missing"
+    )]
+    #[case::git_branch_missing(
+        SafetyScenario::GitBranchMissing,
+        SafetyClassification::Blocked,
+        "branch is missing"
+    )]
+    #[case::flag_branch_missing(
+        SafetyScenario::FlagBranchMissing,
+        SafetyClassification::Blocked,
+        "branch is missing"
+    )]
+    #[case::git_conflicted(
+        SafetyScenario::GitConflicted,
+        SafetyClassification::Dangerous,
+        "working tree has conflicts"
+    )]
+    #[case::flag_conflicted(
+        SafetyScenario::FlagConflicted,
+        SafetyClassification::Dangerous,
+        "working tree has conflicts"
+    )]
+    #[case::git_dirty(
+        SafetyScenario::GitDirty,
+        SafetyClassification::NeedsConfirmation,
+        "working tree has local changes"
+    )]
+    #[case::git_untracked(
+        SafetyScenario::GitUntracked,
+        SafetyClassification::NeedsConfirmation,
+        "working tree has local changes"
+    )]
+    #[case::flag_dirty(
+        SafetyScenario::FlagDirty,
+        SafetyClassification::NeedsConfirmation,
+        "working tree has local changes"
+    )]
+    #[case::git_unmerged(
+        SafetyScenario::GitUnmerged,
+        SafetyClassification::NeedsConfirmation,
+        "branch is not merged"
+    )]
+    #[case::git_ahead(
+        SafetyScenario::GitAhead,
+        SafetyClassification::NeedsConfirmation,
+        "branch has unpushed commits"
+    )]
+    #[case::git_unpushed_commits(
+        SafetyScenario::GitUnpushedCommits,
+        SafetyClassification::NeedsConfirmation,
+        "branch has unpushed commits"
+    )]
+    #[case::flag_unpushed(
+        SafetyScenario::FlagUnpushed,
+        SafetyClassification::NeedsConfirmation,
+        "branch has unpushed commits"
+    )]
+    fn cleanup_safety_classifies_each_risk_signal_independently(
+        #[case] scenario: SafetyScenario,
+        #[case] expected: SafetyClassification,
+        #[case] expected_reason: &str,
+    ) {
+        let mut task = clean_merged_task();
+        apply_safety_scenario(&mut task, scenario);
+
+        let report = cleanup_safety(&task);
+
+        assert_eq!(report.classification, expected);
+        assert!(
+            report
+                .reasons
+                .iter()
+                .any(|reason| reason == expected_reason),
+            "missing reason {expected_reason:?} in {:?}",
+            report.reasons
+        );
     }
 }
