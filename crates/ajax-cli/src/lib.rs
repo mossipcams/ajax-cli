@@ -8,7 +8,7 @@ mod supervise;
 use ajax_core::{
     adapters::{CommandOutput, CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    output::DoctorCheck,
+    output::{CockpitResponse, DoctorCheck},
     registry::{InMemoryRegistry, Registry},
 };
 use clap::ArgMatches;
@@ -515,14 +515,21 @@ fn render_matches_mut(
             let mut state_changed = false;
             let mut cockpit_flash = None;
             state_changed |= refresh_live_context(context, runner)?;
+            let refresh_interval =
+                Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
             loop {
-                let pending = ajax_tui::run_interactive_with_flash(
+                let pending = ajax_tui::run_interactive_with_flash_and_refresh(
                     commands::list_repos(context),
                     commands::list_tasks(context, None),
                     commands::review_queue(context),
                     commands::inbox(context),
                     cockpit_flash.take(),
-                    |item| tui_cockpit_action(item, context, runner, &mut state_changed),
+                    refresh_interval,
+                    InteractiveCockpitHandler {
+                        context,
+                        runner,
+                        state_changed: &mut state_changed,
+                    },
                 )
                 .map_err(|e| CliError::CommandFailed(e.to_string()))?;
                 let Some(pending) = pending else {
@@ -616,6 +623,36 @@ fn refresh_live_context<R: CommandRunner>(
 ) -> Result<bool, CliError> {
     let response = commands::reconcile_external(context, runner).map_err(command_error)?;
     Ok(response.tasks_changed > 0)
+}
+
+fn refresh_cockpit_snapshot<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+) -> Result<CockpitResponse, CliError> {
+    *state_changed |= refresh_live_context(context, runner)?;
+    Ok(commands::cockpit(context))
+}
+
+struct InteractiveCockpitHandler<'a, R: CommandRunner> {
+    context: &'a mut CommandContext<InMemoryRegistry>,
+    runner: &'a mut R,
+    state_changed: &'a mut bool,
+}
+
+impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
+    fn on_action(
+        &mut self,
+        item: &ajax_core::models::AttentionItem,
+    ) -> std::io::Result<ajax_tui::ActionOutcome> {
+        tui_cockpit_action(item, self.context, self.runner, self.state_changed)
+    }
+
+    fn on_refresh(&mut self) -> std::io::Result<Option<CockpitResponse>> {
+        refresh_cockpit_snapshot(self.context, self.runner, self.state_changed)
+            .map(Some)
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
 }
 
 pub(crate) fn execute_new_task_plan<R: CommandRunner>(
@@ -1118,6 +1155,35 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_watch_renders_refreshed_live_status_in_frame() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+
+        let output = run_with_context_and_runner(
+            ["ajax", "cockpit", "--watch", "--iterations", "1"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(output.contains("web/fix-login\twaiting for approval\tFix login"));
+        assert_eq!(runner.commands.len(), 6);
+    }
+
+    #[test]
     fn status_command_refreshes_live_state_before_rendering() {
         let mut context = sample_context();
         let task = context
@@ -1175,6 +1241,37 @@ mod tests {
             parsed["tasks"][0]["live_status"]["kind"],
             "WaitingForApproval"
         );
+    }
+
+    #[test]
+    fn cockpit_refresh_snapshot_reconciles_live_state_and_reports_changes() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, ""),
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(1, ""),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+        let mut state_changed = false;
+
+        let snapshot =
+            super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+
+        assert!(state_changed);
+        assert_eq!(
+            snapshot.tasks.tasks[0].live_status.as_ref().unwrap().kind,
+            ajax_core::models::LiveStatusKind::WaitingForApproval
+        );
+        assert_eq!(snapshot.inbox.items[0].reason, "waiting for approval");
+        assert_eq!(runner.commands.len(), 6);
     }
 
     #[test]

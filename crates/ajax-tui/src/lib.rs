@@ -2,7 +2,9 @@
 
 use ajax_core::{
     models::{AttentionItem, RecommendedAction, TaskId},
-    output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
+    output::{
+        CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+    },
 };
 use crossterm::{
     event::{
@@ -20,7 +22,11 @@ use ratatui::{
     widgets::{Block, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
-use std::{io, ops::Range, time::Duration};
+use std::{
+    io,
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
@@ -35,8 +41,23 @@ pub fn render_cockpit(
         format!("Repos: {}", repos.repos.len()),
         format!("Tasks: {}", tasks.tasks.len()),
         format!("Review: {}", review.tasks.len()),
-        "Inbox".to_string(),
+        "Task Statuses".to_string(),
     ];
+
+    if tasks.tasks.is_empty() {
+        lines.push("no active tasks".to_string());
+    } else {
+        lines.extend(tasks.tasks.iter().map(|task| {
+            format!(
+                "{}\t{}\t{}",
+                task.qualified_handle,
+                task_status_label(task),
+                task.title
+            )
+        }));
+    }
+
+    lines.push("Inbox".to_string());
 
     if inbox.items.is_empty() {
         lines.push("no tasks need attention".to_string());
@@ -74,6 +95,14 @@ pub enum ActionOutcome {
     Defer(PendingAction),
     /// Show a brief status message then stay in the TUI.
     Message(String),
+}
+
+pub trait CockpitEventHandler {
+    fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome>;
+
+    fn on_refresh(&mut self) -> io::Result<Option<CockpitResponse>> {
+        Ok(None)
+    }
 }
 
 // ── Selectable items ──────────────────────────────────────────────────────────
@@ -473,6 +502,15 @@ impl App {
         })
     }
 
+    pub fn apply_refresh(&mut self, snapshot: CockpitResponse) {
+        self.reload(
+            snapshot.repos,
+            snapshot.tasks,
+            snapshot.review,
+            snapshot.inbox,
+        );
+    }
+
     fn is_collecting_input(&self) -> bool {
         matches!(self.view, AppView::NewTaskInput { .. })
     }
@@ -565,6 +603,26 @@ pub fn run_interactive_with_flash(
     initial_flash: Option<String>,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
+    run_interactive_with_flash_and_refresh(
+        repos,
+        tasks,
+        review,
+        inbox,
+        initial_flash,
+        Duration::from_secs(1),
+        ActionOnly { on_action },
+    )
+}
+
+pub fn run_interactive_with_flash_and_refresh(
+    repos: ReposResponse,
+    tasks: TasksResponse,
+    review: TasksResponse,
+    inbox: InboxResponse,
+    initial_flash: Option<String>,
+    refresh_interval: Duration,
+    handler: impl CockpitEventHandler,
+) -> io::Result<Option<PendingAction>> {
     let mut stdout = io::stdout();
     let mut terminal_mode = TerminalModeGuard::enter(&mut stdout)?;
     let backend = CrosstermBackend::new(stdout);
@@ -574,12 +632,25 @@ pub fn run_interactive_with_flash(
     if let Some(message) = initial_flash {
         app.flash(message);
     }
-    let result = run_event_loop(&mut terminal, &mut app, on_action);
+    let result = run_event_loop(&mut terminal, &mut app, handler, refresh_interval);
 
     terminal_mode.leave(terminal.backend_mut())?;
     terminal.show_cursor()?;
 
     result
+}
+
+struct ActionOnly<F> {
+    on_action: F,
+}
+
+impl<F> CockpitEventHandler for ActionOnly<F>
+where
+    F: FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+{
+    fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome> {
+        (self.on_action)(item)
+    }
 }
 
 struct TerminalModeGuard {
@@ -654,8 +725,10 @@ fn terminal_exit_commands() -> &'static [TerminalModeCommand] {
 fn run_event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
-    mut on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+    mut handler: impl CockpitEventHandler,
+    refresh_interval: Duration,
 ) -> io::Result<Option<PendingAction>> {
+    let mut last_refresh = Instant::now();
     loop {
         let height = terminal
             .size()
@@ -664,6 +737,9 @@ fn run_event_loop<B: Backend>(
         let feed_height = height.saturating_sub(2);
 
         app.tick_flash();
+        if should_refresh(&mut last_refresh, refresh_interval) {
+            handle_refresh_result(app, handler.on_refresh())?;
+        }
         app.ensure_visible(feed_height);
         terminal
             .draw(|f| render_ui(f, app))
@@ -702,7 +778,9 @@ fn run_event_loop<B: Backend>(
                     KeyCode::Down | KeyCode::Char('j') => app.select_next(),
                     KeyCode::Enter => {
                         if let Some(item) = app.activate_selected() {
-                            if let Some(pending) = handle_action_result(app, on_action(&item))? {
+                            if let Some(pending) =
+                                handle_action_result(app, handler.on_action(&item))?
+                            {
                                 return Ok(Some(pending));
                             }
                         }
@@ -728,6 +806,32 @@ fn run_event_loop<B: Backend>(
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> bool {
+    if refresh_interval.is_zero() || last_refresh.elapsed() < refresh_interval {
+        return false;
+    }
+
+    *last_refresh = Instant::now();
+    true
+}
+
+fn handle_refresh_result(
+    app: &mut App,
+    result: io::Result<Option<CockpitResponse>>,
+) -> io::Result<()> {
+    match result {
+        Ok(Some(snapshot)) => {
+            app.apply_refresh(snapshot);
+            Ok(())
+        }
+        Ok(None) => Ok(()),
+        Err(error) => {
+            app.flash(error.to_string());
+            Ok(())
         }
     }
 }
@@ -1432,7 +1536,9 @@ mod tests {
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
-        output::{InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse},
+        output::{
+            CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+        },
     };
     use crossterm::event::{KeyCode, KeyModifiers};
     use ratatui::{backend::TestBackend, Terminal};
@@ -1491,6 +1597,36 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
 
+        assert!(content.contains("web/fix-login"));
+        assert!(content.contains("waiting for approval"));
+        assert!(!content.contains("Active"));
+    }
+
+    #[test]
+    fn refresh_snapshot_updates_live_status_and_preserves_selection() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            TasksResponse { tasks: vec![] },
+            InboxResponse { items: vec![] },
+        );
+        app.select_next();
+        let selected_before = app.selected;
+        let mut refreshed_tasks = sample_tasks();
+        refreshed_tasks.tasks[0].live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+
+        app.apply_refresh(CockpitResponse {
+            repos: sample_repos(),
+            tasks: refreshed_tasks,
+            review: TasksResponse { tasks: vec![] },
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        assert_eq!(app.selected, selected_before);
+        let content = render_to_string(80, 30, &app);
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("waiting for approval"));
         assert!(!content.contains("Active"));

@@ -138,7 +138,9 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 }
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
+    let observation = reduce_task_live_observation(task, observation);
     let refresh_activity = refreshes_activity(observation.kind);
+    let has_missing_substrate_flag = has_missing_substrate_flag(task);
 
     match observation.kind {
         LiveStatusKind::WorktreeMissing => {
@@ -153,7 +155,7 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
         LiveStatusKind::AgentRunning
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning => {
-            if task.has_missing_substrate() {
+            if has_missing_substrate_flag {
                 task.agent_status = AgentRuntimeStatus::Unknown;
                 task.remove_side_flag(SideFlag::AgentRunning);
             } else {
@@ -208,6 +210,95 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
     }
+}
+
+fn reduce_task_live_observation(task: &Task, next: LiveObservation) -> LiveObservation {
+    if recovered_from_missing_substrate(task, next.kind) {
+        return next;
+    }
+
+    reduce_live_observation(task.live_status.as_ref(), next)
+}
+
+fn recovered_from_missing_substrate(task: &Task, next: LiveStatusKind) -> bool {
+    task.live_status
+        .as_ref()
+        .is_some_and(|status| status.kind.is_missing_substrate())
+        && !next.is_missing_substrate()
+        && !has_missing_substrate_flag(task)
+}
+
+fn has_missing_substrate_flag(task: &Task) -> bool {
+    task.side_flags().any(SideFlag::is_missing_substrate)
+}
+
+pub fn reduce_live_observation(
+    current: Option<&LiveObservation>,
+    next: LiveObservation,
+) -> LiveObservation {
+    let Some(current) = current else {
+        return next;
+    };
+
+    if next.kind.is_missing_substrate() {
+        return next;
+    }
+
+    if current.kind.is_missing_substrate() {
+        return current.clone();
+    }
+
+    if should_keep_current_status(current.kind, next.kind) {
+        return current.clone();
+    }
+
+    next
+}
+
+fn should_keep_current_status(current: LiveStatusKind, next: LiveStatusKind) -> bool {
+    if current == LiveStatusKind::Done {
+        return is_incidental_observation(next);
+    }
+
+    if is_waiting_status(current) {
+        return is_incidental_observation(next);
+    }
+
+    if is_failure_status(current) {
+        return is_incidental_observation(next);
+    }
+
+    false
+}
+
+fn is_waiting_status(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput
+    )
+}
+
+fn is_failure_status(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::AuthRequired
+            | LiveStatusKind::RateLimited
+            | LiveStatusKind::ContextLimit
+            | LiveStatusKind::CommandFailed
+            | LiveStatusKind::Blocked
+            | LiveStatusKind::MergeConflict
+    )
+}
+
+fn is_incidental_observation(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::ShellIdle
+            | LiveStatusKind::Unknown
+            | LiveStatusKind::AgentRunning
+            | LiveStatusKind::CommandRunning
+            | LiveStatusKind::TestsRunning
+    )
 }
 
 fn refreshes_activity(kind: LiveStatusKind) -> bool {
@@ -363,6 +454,89 @@ mod tests {
         assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+    }
+
+    #[test]
+    fn recovered_missing_resource_can_accept_new_live_status() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WorktreeMissing, "worktree missing"),
+        );
+        task.remove_side_flag(SideFlag::WorktreeMissing);
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+    }
+
+    #[test]
+    fn done_observation_is_not_downgraded_by_shell_idle() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Done, "done"),
+        );
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+    }
+
+    #[test]
+    fn waiting_observation_is_not_downgraded_by_incidental_activity() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+        );
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
+    fn failed_observation_is_not_downgraded_by_later_output() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CommandFailed, "command failed"),
+        );
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::CommandRunning, "command running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CommandFailed)
+        );
     }
 
     #[test]

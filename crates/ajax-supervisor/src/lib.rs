@@ -6,8 +6,10 @@ pub mod codex;
 pub mod process;
 pub mod renderer;
 pub mod repo;
+pub mod status;
 
 pub use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent, RepoEvent};
+pub use status::SupervisorStatusMachine;
 
 #[derive(Debug)]
 pub enum SupervisorError {
@@ -50,7 +52,9 @@ impl From<notify::Error> for SupervisorError {
 
 #[cfg(test)]
 mod tests {
-    use super::SupervisorError;
+    use ajax_core::models::LiveStatusKind;
+
+    use super::{AgentEvent, MonitorEvent, ProcessEvent, SupervisorError, SupervisorStatusMachine};
 
     #[test]
     fn supervisor_errors_have_operator_facing_display() {
@@ -61,6 +65,30 @@ mod tests {
         assert_eq!(
             SupervisorError::Json("expected value".to_string()).to_string(),
             "json error: expected value"
+        );
+    }
+
+    #[test]
+    fn supervisor_status_machine_reduces_monitor_event_sequences() {
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply(&MonitorEvent::Agent(AgentEvent::Completed));
+        status.apply(&MonitorEvent::Process(ProcessEvent::Stdout {
+            line: "late stdout".to_string(),
+        }));
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+
+        status.apply(&MonitorEvent::Process(ProcessEvent::Exited {
+            code: Some(1),
+        }));
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::CommandFailed)
         );
     }
 }
