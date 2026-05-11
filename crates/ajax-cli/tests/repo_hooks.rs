@@ -6,6 +6,7 @@ const REQUIRED_LOCAL_GATES: &[&str] = &[
     "cargo check --all-targets --all-features",
     "cargo clippy --all-targets --all-features -- -D warnings",
     "cargo nextest run --all-features",
+    "cargo test --doc",
 ];
 
 const REQUIRED_REMOTE_GATES: &[&str] = &[
