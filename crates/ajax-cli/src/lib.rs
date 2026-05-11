@@ -1,3 +1,4 @@
+mod attach;
 mod cli;
 mod cockpit_actions;
 mod context;
@@ -11,6 +12,7 @@ use ajax_core::{
     output::{CockpitResponse, DoctorCheck},
     registry::{InMemoryRegistry, Registry},
 };
+use attach::attach_task;
 use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
@@ -212,6 +214,9 @@ fn render_matches_with_paths(
                 .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
+        Some(("attach", _)) => Err(CliError::CommandFailed(
+            "attach requires mutable context and runner support".to_string(),
+        )),
         Some(("trunk", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::trunk_task_plan(context, task).map_err(command_error)?;
@@ -478,6 +483,14 @@ fn render_matches_mut(
                     render_tasks_human,
                 )?,
                 state_changed: changed,
+            })
+        }
+        Some(("attach", subcommand)) => {
+            let task = task_arg(subcommand)?;
+            attach_task(context, runner, task)?;
+            Ok(RenderedCommand {
+                output: String::new(),
+                state_changed: true,
             })
         }
         Some((name @ ("open" | "trunk" | "check" | "diff" | "merge" | "clean"), subcommand)) => {
@@ -795,7 +808,8 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         commands::CommandContext,
         config::{Config, ManagedRepo},
@@ -974,6 +988,7 @@ mod tests {
             vec!["ajax", "tasks"],
             vec!["ajax", "inspect", "web/fix-login"],
             vec!["ajax", "new"],
+            vec!["ajax", "attach", "web/fix-login"],
             vec!["ajax", "open", "web/fix-login"],
             vec!["ajax", "trunk", "web/fix-login"],
             vec!["ajax", "check", "web/fix-login"],
@@ -1640,8 +1655,50 @@ mod tests {
     }
 
     #[test]
+    fn attach_command_runs_tmux_attach_with_ctrl_q_detach_guard() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+
+        let output = run_with_context_and_runner(
+            ["ajax", "attach", "web/fix-login"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(output, "");
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Active
+        );
+    }
+
+    #[test]
+    fn read_only_attach_rejects_interactive_mode_before_command_execution() {
+        let error =
+            run_with_context(["ajax", "attach", "web/fix-login"], &sample_context()).unwrap_err();
+
+        assert!(matches!(error, CliError::CommandFailed(message)
+            if message.contains("attach requires mutable context and runner support")));
+    }
+
+    #[test]
     fn task_scoped_commands_require_explicit_task_handle() {
         for args in [
+            vec!["ajax", "attach"],
             vec!["ajax", "open"],
             vec!["ajax", "trunk"],
             vec!["ajax", "check"],
@@ -1680,6 +1737,8 @@ mod tests {
 
         assert!(readme.contains("native Rust cockpit"));
         assert!(readme.contains("ajax cockpit"));
+        assert!(readme.contains("ajax attach"));
+        assert!(readme.contains("Ctrl-q"));
         assert!(readme.contains("project-first workflow"));
         assert!(readme.contains("choose a project"));
         assert!(!readme.contains("Textual"));
@@ -2972,13 +3031,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
                 CommandSpec::new(
                     "workmux",
                     [
@@ -3170,16 +3222,9 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_installs_ajax_return_hotkey_before_opening_task() {
+    fn pending_cockpit_open_attaches_with_ctrl_q_detach_guard() {
         let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, ""),
-            output(0, ""),
-            output(0, ""),
-            output(0, "ajax:0\n"),
-            output(0, ""),
-            output(0, "opened\n"),
-        ]);
+        let mut runner = QueuedRunner::new(vec![output(0, ""), output(0, ""), output(0, "")]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
@@ -3195,53 +3240,30 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "bind-key",
-                        "A",
-                        "switch-client",
-                        "-t",
-                        "ajax:0",
-                        "\\;",
-                        "send-keys",
-                        "-t",
-                        "ajax:0",
-                        "ajax cockpit",
-                        "Enter"
-                    ]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
             ]
         );
         assert!(state_changed);
     }
 
     #[test]
-    fn pending_cockpit_open_continues_when_ajax_return_hotkey_probe_fails() {
+    fn pending_cockpit_open_cleans_up_detach_key_when_attach_fails() {
         let mut context = sample_context();
         let mut runner = QueuedRunner::new(vec![
-            output(0, ""),
-            output(0, ""),
             output(0, ""),
             CommandOutput {
                 status_code: 1,
                 stdout: String::new(),
-                stderr: "not in tmux".to_string(),
+                stderr: "attach failed".to_string(),
             },
-            output(0, "opened\n"),
+            output(0, ""),
         ]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
@@ -3250,34 +3272,30 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::execute_pending_cockpit_action(
+        let error = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert!(matches!(error, CliError::CommandFailed(message)
+            if message.contains("tmux exited with status 1") && message.contains("attach failed")));
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
             ]
         );
-        assert!(state_changed);
+        assert!(!state_changed);
     }
 
     #[test]
-    fn pending_cockpit_open_and_create_actions_exit_ajax() {
+    fn pending_cockpit_open_returns_to_ajax_after_attach_and_create_exits() {
         let action = "open task";
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
@@ -3296,7 +3314,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
 
         let mut context = CommandContext::new(
             Config {
@@ -3383,15 +3401,10 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
             ],
             "{action}"
         );
@@ -3560,15 +3573,10 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
-                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
             ]
         );
         assert_eq!(
