@@ -139,7 +139,8 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             agent: "codex".to_string(),
         };
         let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-        let (outputs, task) = execute_new_task_plan(context, runner, &request, &plan, true)?;
+        let (outputs, task) =
+            execute_new_task_plan(context, runner, &request, &plan, true, open_mode)?;
         *state_changed = true;
         return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
             &outputs,

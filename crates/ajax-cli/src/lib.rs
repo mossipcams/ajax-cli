@@ -462,6 +462,7 @@ fn render_matches_mut(
                 &request,
                 &plan,
                 subcommand.get_flag("yes"),
+                current_open_mode(),
             )?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, Some(&task.qualified_handle())),
@@ -743,10 +744,14 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     request: &commands::NewTaskRequest,
     plan: &commands::CommandPlan,
     confirmed: bool,
+    open_mode: commands::OpenMode,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
+    let mut outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
     let task = commands::record_new_task(context, request).map_err(command_error)?;
     commands::mark_task_opened(context, &task.qualified_handle()).map_err(command_error)?;
+    let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
+        .map_err(command_error)?;
+    outputs.extend(commands::execute_plan(&open_plan, true, runner).map_err(command_error)?);
 
     let task = context
         .registry
@@ -1070,6 +1075,15 @@ mod tests {
                 ],
             ),
         ]
+    }
+
+    fn expected_new_task_open_command(session: &str) -> CommandSpec {
+        match super::current_open_mode() {
+            OpenMode::Attach => CommandSpec::new("tmux", ["attach-session", "-t", session])
+                .with_mode(CommandMode::InheritStdio),
+            OpenMode::SwitchClient => CommandSpec::new("tmux", ["switch-client", "-t", session])
+                .with_mode(CommandMode::InheritStdio),
+        }
     }
 
     #[test]
@@ -2331,7 +2345,12 @@ mod tests {
                         "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
                         "Enter"
                     ]
-                )
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                expected_new_task_open_command("ajax-web-fix-login")
             ]
         );
         let recorded = context
@@ -2521,7 +2540,12 @@ mod tests {
                         "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
                         "Enter"
                     ]
-                )
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                expected_new_task_open_command("ajax-web-fix-login")
             ]
         );
         assert_eq!(
@@ -3496,7 +3520,12 @@ mod tests {
                         "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login 'Fix login'",
                         "Enter"
                     ]
-                )
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-api-fix-login:worktrunk"]
+                ),
+                expected_new_task_open_command("ajax-api-fix-login")
             ]
         );
         let task = context

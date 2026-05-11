@@ -147,6 +147,15 @@ case "$1" in
   send-keys)
     exit 0
     ;;
+  select-window)
+    exit 0
+    ;;
+  attach-session)
+    exit 0
+    ;;
+  switch-client)
+    exit 0
+    ;;
   *)
     printf 'unexpected tmux args: %s\n' "$*" >&2
     exit 2
@@ -506,7 +515,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&output), "");
     assert_eq!(
         stdout(&output),
-        "exit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
+        "exit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
     );
     let lifecycle_log = std::fs::read_to_string(&lifecycle_log)
         .expect("fake lifecycle tools should record invocation");
@@ -527,6 +536,11 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         "args=send-keys -t ajax-web-fix-login:worktrunk codex --cd {worktree} 'Fix Login!' Enter",
         worktree = worktree.display()
     )));
+    assert!(lifecycle_log.contains("args=select-window -t ajax-web-fix-login:worktrunk"));
+    assert!(
+        lifecycle_log.contains("args=attach-session -t ajax-web-fix-login")
+            || lifecycle_log.contains("args=switch-client -t ajax-web-fix-login")
+    );
     assert!(
         home.state_file().exists(),
         "ajax new --execute should create SQLite state at {}",
