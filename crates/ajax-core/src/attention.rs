@@ -58,9 +58,7 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     let mut items = Vec::new();
 
     for flag in task.side_flags() {
-        if flag == SideFlag::AgentRunning
-            && (task_has_specific_running_live_status(task) || task.has_missing_substrate())
-        {
+        if flag == SideFlag::AgentRunning {
             continue;
         }
         let (reason, priority, recommended_action) = attention_for_flag(flag);
@@ -110,17 +108,6 @@ fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
     }
 
     items
-}
-
-fn task_has_specific_running_live_status(task: &Task) -> bool {
-    matches!(
-        task.live_status.as_ref().map(|status| status.kind),
-        Some(
-            LiveStatusKind::AgentRunning
-                | LiveStatusKind::CommandRunning
-                | LiveStatusKind::TestsRunning
-        )
-    )
 }
 
 fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) {
@@ -400,6 +387,18 @@ mod tests {
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].reason, "worktree missing");
+    }
+
+    #[test]
+    fn agent_running_flag_alone_does_not_need_operator_attention() {
+        let task = task_with_flags("running-agent", &[SideFlag::AgentRunning]);
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert!(
+            items.is_empty(),
+            "agent running is operational state, not operator attention: {items:?}"
+        );
     }
 
     #[test]
