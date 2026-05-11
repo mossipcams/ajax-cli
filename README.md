@@ -52,7 +52,7 @@ default_branch = "main"
 
 [[test_commands]]
 repo = "web"
-command = "cargo test"
+command = "cargo nextest run --all-features"
 ```
 
 Each managed repo should have a matching test command so `ajax check` and
@@ -130,13 +130,16 @@ ajax trunk web/fix-login
 ajax check web/fix-login
 ajax diff web/fix-login
 ajax merge web/fix-login
+ajax cleanup web/fix-login
 ajax clean web/fix-login
+ajax remove web/fix-login
 ajax sweep
 ajax next
 ajax inbox
 ajax review
 ajax status
 ajax doctor
+ajax supervise --task web/fix-login --prompt "implement the approved plan"
 ajax cockpit
 ajax cockpit --watch
 ```
@@ -147,15 +150,18 @@ Commands that feed a UI should support JSON output:
 ajax repos --json
 ajax tasks --json
 ajax inspect web/fix-login --json
+ajax next --json
 ajax inbox --json
 ajax review --json
+ajax status --json
 ajax doctor --json
+ajax cockpit --json
 ```
 
 ## Native Rust Cockpit
 
-Cockpit is the primary Ajax operator experience. Render it through the `ajax`
-command:
+Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
+it through the `ajax` command:
 
 ```sh
 ajax cockpit
@@ -203,10 +209,11 @@ ajax-cli/
   crates/
     ajax-core/
     ajax-cli/
+    ajax-supervisor/
     ajax-tui/
 ```
 
-Planned core modules:
+Core modules:
 
 - `config`
 - `registry`
@@ -218,29 +225,24 @@ Planned core modules:
 - `adapters`
 - `output`
 
-## MVP Phases
+Additional crates keep the boundaries described in `architecture.md`:
 
-Phase 1 builds `ajax-core` and the Rust CLI contract Cockpit will rely on.
+- `ajax-cli` owns CLI parsing, command dispatch, context loading, process
+  execution wiring, and human/JSON rendering.
+- `ajax-core` owns models, registry state, policy, lifecycle decisions, live
+  status projection, attention, command plans, and output contracts.
+- `ajax-supervisor` owns supervised agent execution and live process status.
+- `ajax-tui` owns the Cockpit screen state, input, layout, and rendering.
 
-Phase 2 makes frontend workflows call `ajax` commands instead of lifecycle
-substrates directly.
-The native cockpit renders from `ajax-core` responses through `ajax-tui`.
+## Validation
 
-Phase 3 stabilizes JSON output contracts for UI consumption.
-Current JSON-backed commands include `repos`, `tasks`, `inspect`, `inbox`,
-`next`, `doctor`, and `status`.
+Before release-sensitive changes, run the strongest applicable local checks:
 
-Phase 4 makes the native Rust cockpit the primary operator experience over the
-same backend. The initial cockpit artifact is the `ajax-tui` crate plus
-`ajax cockpit`, which renders an operator dashboard from `ajax-core` responses.
-`ajax cockpit --watch` keeps refreshing cockpit frames while still keeping
-lifecycle orchestration out of the UI crate.
+```sh
+cargo fmt --check
+cargo check --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo nextest run --all-features
+```
 
-Phase 5 adds semi-agentic attention, review, and cleanup intelligence.
-The first attention layer derives prioritized structured inbox items with
-recommended actions from lifecycle state and side flags.
-
-Phase 6 replaces external lifecycle delegation with Ajax-owned native planning.
-Ajax now creates task worktrees with `git`, opens task sessions with `tmux`,
-launches the selected agent in `worktrunk`, and plans merge/cleanup through
-explicit Ajax policy.
+Use `scripts/smoke.sh` for the deterministic end-to-end smoke workflow.
