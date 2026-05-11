@@ -19,7 +19,9 @@ pub(crate) enum TaskCommandOperation {
     Check,
     Diff,
     Merge,
+    Cleanup,
     Clean,
+    Remove,
 }
 
 impl TaskCommandOperation {
@@ -30,7 +32,9 @@ impl TaskCommandOperation {
             "check" => Some(Self::Check),
             "diff" => Some(Self::Diff),
             "merge" => Some(Self::Merge),
+            "cleanup" => Some(Self::Cleanup),
             "clean" => Some(Self::Clean),
+            "remove" => Some(Self::Remove),
             _ => None,
         }
     }
@@ -38,7 +42,8 @@ impl TaskCommandOperation {
     pub(crate) fn from_recommended_action(action: RecommendedAction) -> Option<Self> {
         match action {
             RecommendedAction::MergeTask => Some(Self::Merge),
-            RecommendedAction::CleanTask => Some(Self::Clean),
+            RecommendedAction::CleanTask => Some(Self::Cleanup),
+            RecommendedAction::RemoveTask => Some(Self::Remove),
             RecommendedAction::OpenTask => Some(Self::Open),
             RecommendedAction::OpenTrunk => Some(Self::Trunk),
             RecommendedAction::SelectProject
@@ -67,7 +72,8 @@ impl TaskCommandOperation {
             Self::Check => commands::check_task_plan(context, task),
             Self::Diff => commands::diff_task_plan(context, task),
             Self::Merge => commands::merge_task_plan(context, task),
-            Self::Clean => commands::clean_task_plan(context, task),
+            Self::Cleanup | Self::Clean => commands::clean_task_plan(context, task),
+            Self::Remove => commands::remove_task_plan(context, task),
         }
     }
 
@@ -85,8 +91,12 @@ impl TaskCommandOperation {
                 commands::mark_task_merged(context, task)?;
                 Ok(true)
             }
-            Self::Clean => {
+            Self::Cleanup | Self::Clean => {
                 commands::mark_task_removed(context, task)?;
+                Ok(true)
+            }
+            Self::Remove => {
+                commands::mark_task_force_removed(context, task)?;
                 Ok(true)
             }
             Self::Trunk => {
@@ -98,7 +108,10 @@ impl TaskCommandOperation {
     }
 
     pub(crate) fn returns_to_cockpit_after_execute(self) -> bool {
-        matches!(self, Self::Check | Self::Diff | Self::Merge | Self::Clean)
+        matches!(
+            self,
+            Self::Check | Self::Diff | Self::Merge | Self::Cleanup | Self::Clean | Self::Remove
+        )
     }
 }
 
@@ -112,7 +125,11 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let task = task_arg(subcommand)?;
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
-    if operation == TaskCommandOperation::Clean && execute {
+    if matches!(
+        operation,
+        TaskCommandOperation::Cleanup | TaskCommandOperation::Clean
+    ) && execute
+    {
         commands::ensure_cleanup_git_status(context, task, runner).map_err(command_error)?;
     }
     let mut plan = operation
@@ -174,8 +191,11 @@ pub(crate) fn render_task_command<R: CommandRunner>(
         }
     }
 
-    if operation == TaskCommandOperation::Clean {
-        return execute_clean_plan(context, task, &plan, confirmed, runner);
+    if matches!(
+        operation,
+        TaskCommandOperation::Cleanup | TaskCommandOperation::Clean | TaskCommandOperation::Remove
+    ) {
+        return execute_teardown_plan(context, task, operation, &plan, confirmed, runner);
     }
 
     let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
@@ -219,9 +239,10 @@ fn merge_error_looks_conflicted(error: &CommandError) -> bool {
     )
 }
 
-fn execute_clean_plan<R: CommandRunner>(
+fn execute_teardown_plan<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     task: &str,
+    operation: TaskCommandOperation,
     plan: &commands::CommandPlan,
     confirmed: bool,
     runner: &mut R,
@@ -271,7 +292,11 @@ fn execute_clean_plan<R: CommandRunner>(
             })?;
     }
 
-    commands::mark_task_removed(context, task).map_err(command_error)?;
+    if operation == TaskCommandOperation::Remove {
+        commands::mark_task_force_removed(context, task).map_err(command_error)?;
+    } else {
+        commands::mark_task_removed(context, task).map_err(command_error)?;
+    }
     Ok(RenderedCommand {
         output: render_execution_outputs(&outputs, None),
         state_changed: true,

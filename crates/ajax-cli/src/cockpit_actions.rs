@@ -68,14 +68,20 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
     let action = RecommendedAction::from_label(item.recommended_action.as_str());
 
     if let Some(operation) = action.and_then(TaskCommandOperation::from_recommended_action) {
-        if operation == TaskCommandOperation::Clean {
+        if matches!(
+            operation,
+            TaskCommandOperation::Cleanup
+                | TaskCommandOperation::Clean
+                | TaskCommandOperation::Remove
+        ) {
             let plan = operation
                 .plan(context, handle)
                 .map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
-                return Ok(ajax_tui::ActionOutcome::Confirm(
-                    "press enter again to confirm clean task".to_string(),
-                ));
+                return Ok(ajax_tui::ActionOutcome::Confirm(format!(
+                    "press enter again to confirm {}",
+                    item.recommended_action
+                )));
             }
             commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
             let changed = operation

@@ -1331,6 +1331,9 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         Some(RecommendedAction::CleanTask) => {
             ActionChrome::new("X", danger_accent(), danger_accent(), true)
         }
+        Some(RecommendedAction::RemoveTask) => {
+            ActionChrome::new("!", danger_accent(), danger_accent(), true)
+        }
         Some(RecommendedAction::Status) => {
             ActionChrome::new("S", primary_accent(), primary_accent(), true)
         }
@@ -3049,6 +3052,7 @@ mod tests {
                 RecommendedAction::OpenTask.as_str(),
                 RecommendedAction::MergeTask.as_str(),
                 RecommendedAction::CleanTask.as_str(),
+                RecommendedAction::RemoveTask.as_str(),
             ]
         );
     }

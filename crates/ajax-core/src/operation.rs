@@ -9,6 +9,7 @@ pub enum TaskOperation {
     Diff,
     Merge,
     Clean,
+    Remove,
     Refresh,
     Recover,
 }
@@ -23,6 +24,7 @@ impl TaskOperation {
             Self::Diff => "diff",
             Self::Merge => "merge",
             Self::Clean => "clean",
+            Self::Remove => "remove",
             Self::Refresh => "refresh",
             Self::Recover => "recover",
         }
@@ -73,7 +75,10 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
         reasons.push("task worktree is missing".to_string());
     }
     if task.has_missing_substrate()
-        && !matches!(operation, TaskOperation::Check | TaskOperation::Diff)
+        && !matches!(
+            operation,
+            TaskOperation::Check | TaskOperation::Diff | TaskOperation::Remove
+        )
     {
         reasons.push("task has missing substrate".to_string());
     }
@@ -116,6 +121,7 @@ mod tests {
     #[case(TaskOperation::Diff, "diff")]
     #[case(TaskOperation::Merge, "merge")]
     #[case(TaskOperation::Clean, "clean")]
+    #[case(TaskOperation::Remove, "remove")]
     #[case(TaskOperation::Refresh, "refresh")]
     #[case(TaskOperation::Recover, "recover")]
     fn task_operation_labels_are_stable(#[case] operation: TaskOperation, #[case] label: &str) {

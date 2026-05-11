@@ -248,9 +248,19 @@ fn render_matches_with_paths(
             let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
+        Some(("cleanup", subcommand)) => {
+            let task = task_arg(subcommand)?;
+            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
+            render_readonly_plan(plan, subcommand)
+        }
         Some(("clean", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
+            render_readonly_plan(plan, subcommand)
+        }
+        Some(("remove", subcommand)) => {
+            let task = task_arg(subcommand)?;
+            let plan = commands::remove_task_plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("sweep", subcommand)) => {
@@ -475,7 +485,10 @@ fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some((name @ ("open" | "trunk" | "check" | "diff" | "merge" | "clean"), subcommand)) => {
+        Some((
+            name @ ("open" | "trunk" | "check" | "diff" | "merge" | "cleanup" | "clean" | "remove"),
+            subcommand,
+        )) => {
             let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
                 CliError::CommandFailed(format!("unsupported task command: {name}"))
             })?;
@@ -3491,6 +3504,157 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_execute_uses_safe_cleanup_path() {
+        let mut context = cleanable_context();
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "cleanup", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+    }
+
+    #[test]
+    fn remove_execute_requires_yes_before_running() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = run_with_context_and_runner(
+            ["ajax", "remove", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            super::CliError::CommandFailed("confirmation required; pass --yes".to_string())
+        );
+        assert!(runner.commands().is_empty());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+    }
+
+    #[test]
+    fn remove_execute_force_removes_task_resources() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "remove", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+    }
+
+    #[test]
     fn clean_execute_requires_yes_for_risky_task_without_running() {
         let mut context = cleanable_context();
         let task = context
@@ -4541,8 +4705,16 @@ mod tests {
             Some(super::TaskCommandOperation::Merge)
         );
         assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("cleanup"),
+            Some(super::TaskCommandOperation::Cleanup)
+        );
+        assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("clean"),
             Some(super::TaskCommandOperation::Clean)
+        );
+        assert_eq!(
+            super::TaskCommandOperation::from_cli_subcommand("remove"),
+            Some(super::TaskCommandOperation::Remove)
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("status"),
@@ -4559,7 +4731,7 @@ mod tests {
         );
         assert_eq!(
             super::TaskCommandOperation::from_recommended_action(RecommendedAction::CleanTask),
-            Some(super::TaskCommandOperation::Clean)
+            Some(super::TaskCommandOperation::Cleanup)
         );
         assert_eq!(RecommendedAction::from_label("reconcile"), None);
     }
@@ -4580,12 +4752,33 @@ mod tests {
             super::TaskCommandOperation::Check,
             super::TaskCommandOperation::Diff,
             super::TaskCommandOperation::Merge,
-            super::TaskCommandOperation::Clean,
+            super::TaskCommandOperation::Cleanup,
+            super::TaskCommandOperation::Remove,
         ] {
             assert!(
                 operation.returns_to_cockpit_after_execute(),
                 "{operation:?} should return to the task picker"
             );
+        }
+    }
+
+    #[test]
+    fn cleanup_and_remove_parse_as_distinct_executable_task_commands() {
+        for command in ["cleanup", "remove"] {
+            let matches = build_cli()
+                .try_get_matches_from(["ajax", command, "web/fix-login", "--execute", "--yes"])
+                .unwrap_or_else(|error| panic!("{command} should parse: {error}"));
+            let Some((name, subcommand)) = matches.subcommand() else {
+                panic!("{command} should parse as a subcommand");
+            };
+
+            assert_eq!(name, command);
+            assert_eq!(
+                subcommand.get_one::<String>("task").map(String::as_str),
+                Some("web/fix-login")
+            );
+            assert!(subcommand.get_flag("execute"));
+            assert!(subcommand.get_flag("yes"));
         }
     }
 
@@ -4616,6 +4809,107 @@ mod tests {
                 .unwrap()
                 .lifecycle_status,
             LifecycleStatus::Merged
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn cockpit_remove_action_requires_confirmation_before_running() {
+        let mut context = sample_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__remove"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Remove task".to_string(),
+            priority: 0,
+            recommended_action: "remove task".to_string(),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome =
+            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
+                .unwrap();
+
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
+            if message.contains("press enter again") && message.contains("remove task")));
+        assert!(runner.commands().is_empty());
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn confirmed_cockpit_remove_action_force_removes_and_refreshes_inside_ajax() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__remove"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Remove task".to_string(),
+            priority: 0,
+            recommended_action: "remove task".to_string(),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome = super::tui_cockpit_confirmed_action(
+            &item,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Refresh { .. }));
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
         );
         assert!(state_changed);
     }

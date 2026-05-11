@@ -21,7 +21,9 @@ pub fn build_cli() -> Command {
         .subcommand(executable_task_command("check"))
         .subcommand(executable_task_command("diff"))
         .subcommand(executable_task_command("merge"))
+        .subcommand(executable_task_command("cleanup"))
         .subcommand(executable_task_command("clean"))
+        .subcommand(executable_task_command("remove"))
         .subcommand(executable_command(
             json_command("sweep").about("Clean safe task environments across repos"),
         ))

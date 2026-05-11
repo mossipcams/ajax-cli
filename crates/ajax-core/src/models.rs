@@ -361,13 +361,15 @@ pub enum RecommendedAction {
     OpenTrunk,
     MergeTask,
     CleanTask,
+    RemoveTask,
     Status,
 }
 
-const TASK_PICKER_MENU: [RecommendedAction; 3] = [
+const TASK_PICKER_MENU: [RecommendedAction; 4] = [
     RecommendedAction::OpenTask,
     RecommendedAction::MergeTask,
     RecommendedAction::CleanTask,
+    RecommendedAction::RemoveTask,
 ];
 
 impl RecommendedAction {
@@ -379,6 +381,7 @@ impl RecommendedAction {
             Self::OpenTrunk,
             Self::MergeTask,
             Self::CleanTask,
+            Self::RemoveTask,
             Self::Status,
         ]
     }
@@ -391,6 +394,7 @@ impl RecommendedAction {
             Self::OpenTrunk => "open worktrunk",
             Self::MergeTask => "merge task",
             Self::CleanTask => "clean task",
+            Self::RemoveTask => "remove task",
             Self::Status => "status",
         }
     }
@@ -746,7 +750,7 @@ mod tests {
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels.len(), 7);
+        assert_eq!(labels.len(), 8);
         assert_eq!(labels[0], "select project");
         assert_eq!(labels[1], "new task");
         assert_eq!(labels[3], "open worktrunk");
@@ -766,7 +770,10 @@ mod tests {
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels, vec!["open task", "merge task", "clean task"]);
+        assert_eq!(
+            labels,
+            vec!["open task", "merge task", "clean task", "remove task"]
+        );
     }
 
     #[test]

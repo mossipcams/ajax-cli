@@ -16,7 +16,7 @@ use crate::{
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     },
     policy::cleanup_safety,
-    registry::{Registry, RegistryError},
+    registry::{Registry, RegistryError, RegistryEventKind},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -861,6 +861,25 @@ pub fn clean_task_plan<R: Registry>(
     Ok(plan)
 }
 
+pub fn remove_task_plan<R: Registry>(
+    context: &CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<CommandPlan, CommandError> {
+    let task = find_task(context, qualified_handle)?;
+    let mut plan = CommandPlan::new(format!("remove task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Remove)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
+    plan.requires_confirmation = true;
+    plan.commands = native_remove_commands(context, task)?;
+
+    Ok(plan)
+}
+
 pub fn ensure_cleanup_git_status<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
@@ -1019,6 +1038,28 @@ pub fn mark_task_removed<R: Registry>(
     update_task_lifecycle(context, qualified_handle, LifecycleStatus::Removed)
 }
 
+pub fn mark_task_force_removed<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task_id = find_task(context, qualified_handle)?.id.clone();
+    let Some(task) = context.registry.get_task_mut(&task_id) else {
+        return Err(CommandError::TaskNotFound(qualified_handle.to_string()));
+    };
+
+    task.lifecycle_status = LifecycleStatus::Removed;
+    task.last_activity_at = SystemTime::now();
+    task.remove_side_flag(SideFlag::Stale);
+    context
+        .registry
+        .record_event(
+            task_id,
+            RegistryEventKind::LifecycleChanged,
+            "lifecycle changed to Removed",
+        )
+        .map_err(CommandError::Registry)
+}
+
 pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPlan {
     let mut plan = CommandPlan::new("sweep cleanup");
 
@@ -1039,6 +1080,27 @@ fn native_cleanup_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
 ) -> Result<Vec<CommandSpec>, CommandError> {
+    native_teardown_commands(context, task, TeardownMode::Policy)
+}
+
+fn native_remove_commands<R: Registry>(
+    context: &CommandContext<R>,
+    task: &Task,
+) -> Result<Vec<CommandSpec>, CommandError> {
+    native_teardown_commands(context, task, TeardownMode::Force)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TeardownMode {
+    Policy,
+    Force,
+}
+
+fn native_teardown_commands<R: Registry>(
+    context: &CommandContext<R>,
+    task: &Task,
+    mode: TeardownMode,
+) -> Result<Vec<CommandSpec>, CommandError> {
     let repo_path = task_repo_path(context, task)
         .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
     let git = GitAdapter::new("git");
@@ -1058,13 +1120,14 @@ fn native_cleanup_commands<R: Registry>(
         .is_none_or(|status| status.worktree_exists)
     {
         let worktree_path = task.worktree_path.display().to_string();
-        let needs_force = task.git_status.as_ref().is_some_and(|status| {
-            status.dirty
-                || status.untracked_files > 0
-                || status.conflicted
-                || task.has_side_flag(SideFlag::Dirty)
-                || task.has_side_flag(SideFlag::Conflicted)
-        });
+        let needs_force = mode == TeardownMode::Force
+            || task.git_status.as_ref().is_some_and(|status| {
+                status.dirty
+                    || status.untracked_files > 0
+                    || status.conflicted
+                    || task.has_side_flag(SideFlag::Dirty)
+                    || task.has_side_flag(SideFlag::Conflicted)
+            });
         let command = if needs_force {
             git.force_remove_worktree(&repo_path, &worktree_path)
         } else {
@@ -1077,10 +1140,11 @@ fn native_cleanup_commands<R: Registry>(
         .as_ref()
         .is_none_or(|status| status.branch_exists)
     {
-        let needs_force = task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.merged);
+        let needs_force = mode == TeardownMode::Force
+            || task
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.merged);
         let command = if needs_force {
             git.force_delete_branch(&repo_path, &task.branch)
         } else {
@@ -1246,6 +1310,7 @@ fn task_actions(task: &Task) -> Vec<String> {
         (TaskOperation::Open, RecommendedAction::OpenTask),
         (TaskOperation::Merge, RecommendedAction::MergeTask),
         (TaskOperation::Clean, RecommendedAction::CleanTask),
+        (TaskOperation::Remove, RecommendedAction::RemoveTask),
     ]
     .into_iter()
     .filter(|(operation, _)| task_operation_eligibility(task, *operation).is_allowed())
@@ -1324,8 +1389,9 @@ mod tests {
     use super::{
         check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
         inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, open_task_plan, review_queue, status, sweep_cleanup_plan, task_from_new_request,
-        trunk_task_plan, CommandContext, CommandError, DoctorEnvironment, NewTaskRequest, OpenMode,
+        next, open_task_plan, remove_task_plan, review_queue, status, sweep_cleanup_plan,
+        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
+        NewTaskRequest, OpenMode,
     };
     use crate::{
         adapters::{
@@ -1881,7 +1947,10 @@ mod tests {
         let active = list_tasks(&context, None);
         assert_eq!(
             active.tasks[0].actions,
-            vec![RecommendedAction::OpenTask.as_str().to_string()]
+            vec![
+                RecommendedAction::OpenTask.as_str().to_string(),
+                RecommendedAction::RemoveTask.as_str().to_string(),
+            ]
         );
 
         context
@@ -1895,6 +1964,7 @@ mod tests {
             vec![
                 RecommendedAction::OpenTask.as_str().to_string(),
                 RecommendedAction::MergeTask.as_str().to_string(),
+                RecommendedAction::RemoveTask.as_str().to_string(),
             ]
         );
 
@@ -1909,6 +1979,7 @@ mod tests {
             vec![
                 RecommendedAction::OpenTask.as_str().to_string(),
                 RecommendedAction::CleanTask.as_str().to_string(),
+                RecommendedAction::RemoveTask.as_str().to_string(),
             ]
         );
     }
@@ -2906,6 +2977,94 @@ mod tests {
             plan.blocked_reasons,
             vec!["clean requires merged or cleanable lifecycle"]
         );
+    }
+
+    #[test]
+    fn remove_task_plan_force_removes_active_task_resources() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: task.tmux_session.clone(),
+        });
+
+        let plan = remove_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.requires_confirmation);
+        assert!(plan.blocked_reasons.is_empty());
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn cleanup_and_remove_plans_are_distinct() {
+        let mut context = context_with_cleanable_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+
+        let cleanup = clean_task_plan(&context, "web/fix-login").unwrap();
+        let remove = remove_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(!cleanup.requires_confirmation);
+        assert!(remove.requires_confirmation);
+        assert_ne!(cleanup.commands, remove.commands);
+        assert!(remove.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "--force")
+                && command.args.iter().any(|arg| arg == "worktree")
+        }));
+        assert!(remove.commands.iter().any(|command| {
+            command.program == "git" && command.args.iter().any(|arg| arg == "-D")
+        }));
     }
 
     #[test]
