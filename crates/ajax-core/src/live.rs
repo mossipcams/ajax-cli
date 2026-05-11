@@ -52,6 +52,7 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         &lower,
         &[
             "do you want to proceed",
+            "approve to proceed",
             "allow command",
             "approval request",
             "y/n",
@@ -575,6 +576,22 @@ matt@Matts-MacBook-Pro ajax-tech-debt %";
         let observation = classify_pane(pane);
 
         assert_eq!(observation.kind, LiveStatusKind::ShellIdle);
+    }
+
+    #[test]
+    fn pane_classifier_treats_plan_approval_prompt_as_waiting_for_approval() {
+        let pane = "\
+Task 1: Badge accessibility + duplication cleanup
+
+- Test to write: add failing Vitest coverage.
+- Code to implement: extract a small internal badge-rendering helper.
+- Verify: run rtk npm test -- badges.test.ts.
+
+Plan ready. Approve to proceed.";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
     }
 
     #[test]
