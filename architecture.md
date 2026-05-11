@@ -16,9 +16,10 @@ testable, and scriptable.
   responses.
 - `ajax-supervisor` owns supervised agent execution, process monitoring, and
   translation of live agent/process events into Ajax monitor events.
-- External tools remain durable substrates: `workmux` owns task/worktree/session
-  lifecycle, `tmux` owns interactive runtime, `git` owns repository truth, and
-  agent CLIs remain opaque workers.
+- External tools remain durable substrates: `git` owns repository truth,
+  branches, merges, and worktrees; `tmux` owns durable interactive runtime; and
+  agent CLIs remain opaque workers. Ajax owns task lifecycle planning, naming,
+  policy, reconciliation, and registry state.
 
 ## Architectural Direction
 

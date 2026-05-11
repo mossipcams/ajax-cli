@@ -26,7 +26,7 @@ use render::{
     render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
     render_tasks_human,
 };
-use std::time::Duration;
+use std::{ffi::OsStr, time::Duration};
 use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,6 +36,18 @@ pub enum CliError {
     JsonSerialization(String),
     ContextLoad(String),
     ContextSave(String),
+}
+
+fn current_open_mode() -> commands::OpenMode {
+    open_mode_from_tmux_env(std::env::var_os("TMUX").as_deref())
+}
+
+fn open_mode_from_tmux_env(tmux: Option<&OsStr>) -> commands::OpenMode {
+    if tmux.is_some_and(|value| !value.to_string_lossy().is_empty()) {
+        commands::OpenMode::SwitchClient
+    } else {
+        commands::OpenMode::Attach
+    }
 }
 
 impl std::fmt::Display for CliError {
@@ -208,7 +220,7 @@ fn render_matches_with_paths(
         }
         Some(("open", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::open_task_plan(context, task, commands::OpenMode::Attach)
+            let plan = commands::open_task_plan(context, task, current_open_mode())
                 .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
@@ -484,7 +496,7 @@ fn render_matches_mut(
             let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
                 CliError::CommandFailed(format!("unsupported task command: {name}"))
             })?;
-            render_task_command(operation, subcommand, context, runner)
+            render_task_command(operation, subcommand, context, runner, current_open_mode())
         }
         Some(("sweep", subcommand)) => {
             let plan = commands::sweep_cleanup_plan(context);
@@ -660,9 +672,7 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     plan: &commands::CommandPlan,
     confirmed: bool,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let mut outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
-    let open_plan = commands::new_task_open_plan(context, request).map_err(command_error)?;
-    outputs.extend(commands::execute_plan(&open_plan, true, runner).map_err(command_error)?);
+    let outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
     let task = commands::record_new_task(context, request).map_err(command_error)?;
     commands::mark_task_opened(context, &task.qualified_handle()).map_err(command_error)?;
 
@@ -795,9 +805,10 @@ mod tests {
     };
     use ajax_core::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
-        commands::CommandContext,
+        commands::{CommandContext, OpenMode},
         config::{Config, ManagedRepo},
         models::{
             AgentClient, GitStatus, LifecycleStatus, RecommendedAction, SideFlag, Task, TaskId,
@@ -829,6 +840,19 @@ mod tests {
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, registry)
+    }
+
+    #[test]
+    fn open_mode_uses_switch_client_only_inside_tmux() {
+        assert_eq!(super::open_mode_from_tmux_env(None), OpenMode::Attach);
+        assert_eq!(
+            super::open_mode_from_tmux_env(Some(std::ffi::OsStr::new(""))),
+            OpenMode::Attach
+        );
+        assert_eq!(
+            super::open_mode_from_tmux_env(Some(std::ffi::OsStr::new("/tmp/tmux-501/default,1,0"))),
+            OpenMode::SwitchClient
+        );
     }
 
     fn safe_merge_context() -> CommandContext<InMemoryRegistry> {
@@ -1136,7 +1160,6 @@ mod tests {
         context.registry.create_task(active).unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1160,7 +1183,7 @@ mod tests {
             parsed["inbox"]["items"][0]["reason"],
             "waiting for approval"
         );
-        assert_eq!(runner.commands.len(), 6);
+        assert_eq!(runner.commands.len(), 5);
     }
 
     #[test]
@@ -1174,7 +1197,6 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1189,7 +1211,7 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("web/fix-login\twaiting for approval\tFix login"));
-        assert_eq!(runner.commands.len(), 6);
+        assert_eq!(runner.commands.len(), 5);
     }
 
     #[test]
@@ -1203,7 +1225,6 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1219,7 +1240,7 @@ mod tests {
             .get_task(&TaskId::new("task-1"))
             .unwrap()
             .has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(runner.commands.len(), 6);
+        assert_eq!(runner.commands.len(), 5);
     }
 
     #[test]
@@ -1233,7 +1254,6 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1263,7 +1283,6 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1280,7 +1299,7 @@ mod tests {
             ajax_core::models::LiveStatusKind::WaitingForApproval
         );
         assert_eq!(snapshot.inbox.items[0].reason, "waiting for approval");
-        assert_eq!(runner.commands.len(), 6);
+        assert_eq!(runner.commands.len(), 5);
     }
 
     #[test]
@@ -1849,9 +1868,9 @@ mod tests {
         .unwrap();
 
         assert!(output.contains("create task: fix logout"));
-        assert!(output.contains(
-            "(cd /Users/matt/projects/web && workmux add ajax/fix-logout --agent codex --background --no-hooks)"
-        ));
+        assert!(output.contains("git -C /Users/matt/projects/web worktree add -b ajax/fix-logout /Users/matt/projects/web__worktrees/ajax-fix-logout main"));
+        assert!(output.contains("tmux new-session -d -s ajax-web-fix-logout -n worktrunk -c /Users/matt/projects/web__worktrees/ajax-fix-logout"));
+        assert!(output.contains("tmux send-keys -t ajax-web-fix-logout:worktrunk"));
     }
 
     #[test]
@@ -1897,8 +1916,46 @@ mod tests {
         let context = sample_context();
         let output = run_with_context(["ajax", "open", "web/fix-login"], &context).unwrap();
 
-        assert!(output.contains("(cd /Users/matt/projects/web && workmux open ajax/fix-login)"));
-        assert!(!output.contains("tmux attach-session -t ajax-web-fix-login"));
+        assert!(output.contains("tmux select-window -t ajax-web-fix-login:worktrunk"));
+        match super::current_open_mode() {
+            OpenMode::Attach => {
+                assert!(output.contains("tmux attach-session -t ajax-web-fix-login"));
+            }
+            OpenMode::SwitchClient => {
+                assert!(output.contains("tmux switch-client -t ajax-web-fix-login"));
+            }
+        }
+    }
+
+    #[test]
+    fn open_execute_switches_client_when_inside_tmux() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "open", "web/fix-login", "--execute"])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        super::render_task_command(
+            super::TaskCommandOperation::Open,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::SwitchClient,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
     }
 
     #[test]
@@ -1919,7 +1976,8 @@ mod tests {
             run_with_context(["ajax", "merge", "web/fix-login", "--json"], &context).unwrap();
 
         assert!(output.contains("\"requires_confirmation\": true"));
-        assert!(output.contains("workmux"));
+        assert!(output.contains("\"program\": \"git\""));
+        assert!(output.contains("\"merge\""));
     }
 
     #[test]
@@ -2098,19 +2156,41 @@ mod tests {
             runner.commands(),
             &[
                 CommandSpec::new(
-                    "workmux",
+                    "git",
                     [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
                         "add",
+                        "-b",
                         "ajax/fix-login",
-                        "--agent",
-                        "codex",
-                        "--background",
-                        "--no-hooks"
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "send-keys",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
+                        "Enter"
                     ]
                 )
-                .with_cwd("/Users/matt/projects/web"),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
             ]
         );
         let recorded = context
@@ -2128,7 +2208,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_rejects_existing_task_before_running_workmux() {
+    fn new_execute_rejects_existing_task_before_native_provisioning() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
 
@@ -2153,7 +2233,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_open_failure_does_not_record_task_state() {
+    fn new_execute_provisioning_failure_does_not_record_task_state() {
         let mut context = CommandContext::new(
             Config {
                 repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
@@ -2166,7 +2246,7 @@ mod tests {
             CommandOutput {
                 status_code: 42,
                 stdout: String::new(),
-                stderr: "open failed".to_string(),
+                stderr: "tmux failed".to_string(),
             },
         ]);
 
@@ -2186,25 +2266,37 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: open failed"));
+                if message == "command failed: tmux exited with status 42: tmux failed"));
         assert!(context.registry.list_tasks().is_empty());
         assert_eq!(
             runner.commands,
             vec![
                 CommandSpec::new(
-                    "workmux",
+                    "git",
                     [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
                         "add",
+                        "-b",
                         "ajax/fix-login",
-                        "--agent",
-                        "codex",
-                        "--background",
-                        "--no-hooks"
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login"
                     ]
                 )
-                .with_cwd("/Users/matt/projects/web"),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
             ]
         );
     }
@@ -2254,19 +2346,41 @@ mod tests {
             runner.commands(),
             &[
                 CommandSpec::new(
-                    "workmux",
+                    "git",
                     [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
                         "add",
+                        "-b",
                         "ajax/fix-login",
-                        "--agent",
-                        "codex",
-                        "--background",
-                        "--no-hooks"
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "send-keys",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
+                        "Enter"
                     ]
                 )
-                .with_cwd("/Users/matt/projects/web"),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
             ]
         );
         assert_eq!(
@@ -2280,7 +2394,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_requires_task_title_before_running_workmux() {
+    fn new_execute_requires_task_title_before_native_provisioning() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
 
@@ -2409,7 +2523,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web"));
+                if message == "command failed: git exited with status 42"));
         assert_eq!(
             context
                 .registry
@@ -2437,7 +2551,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(&error, super::CliError::CommandFailed(message)
-                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: merge failed"));
+                if message == "command failed: git exited with status 42: merge failed"));
         assert!(!error.to_string().contains("NonZeroExit"));
     }
 
@@ -2508,8 +2622,27 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
         assert_eq!(
@@ -2536,8 +2669,27 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
     }
 
@@ -2594,8 +2746,26 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
         assert_eq!(
@@ -2631,7 +2801,11 @@ mod tests {
         SqliteRegistryStore::new(&state_file)
             .save(&two_cleanable_tasks_context().registry)
             .unwrap();
-        let mut runner = QueuedRunner::new(vec![output(0, ""), output(2, "remove failed")]);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(0, ""),
+            output(2, "remove failed"),
+        ]);
 
         let error = run_with_context_paths_and_runner(
             ["ajax", "sweep", "--execute"],
@@ -2642,7 +2816,7 @@ mod tests {
         let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-        assert!(error.to_string().contains("workmux exited with status 2"));
+        assert!(error.to_string().contains("git exited with status 2"));
         assert_eq!(
             restored
                 .get_task(&TaskId::new("task-1"))
@@ -3085,19 +3259,41 @@ mod tests {
             runner.commands(),
             &[
                 CommandSpec::new(
-                    "workmux",
+                    "git",
                     [
+                        "-C",
+                        "/Users/matt/projects/api",
+                        "worktree",
                         "add",
+                        "-b",
                         "ajax/fix-login",
-                        "--agent",
-                        "codex",
-                        "--background",
-                        "--no-hooks"
+                        "/Users/matt/projects/api__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-api-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/api__worktrees/ajax-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "send-keys",
+                        "-t",
+                        "ajax-api-fix-login:worktrunk",
+                        "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login 'Fix login'",
+                        "Enter"
                     ]
                 )
-                .with_cwd("/Users/matt/projects/api"),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/api")
             ]
         );
         let task = context
@@ -3188,7 +3384,7 @@ mod tests {
     #[test]
     fn pending_cockpit_merge_and_reconcile_return_to_ajax() {
         let mut merge_context = safe_merge_context();
-        let mut merge_runner = QueuedRunner::new(vec![output(0, "merged\n")]);
+        let mut merge_runner = QueuedRunner::new(vec![output(0, ""), output(0, "merged\n")]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
@@ -3370,18 +3566,25 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        super::execute_pending_cockpit_action(
+        super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
+            OpenMode::Attach,
         )
         .unwrap();
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")],
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ],
             "{action}"
         );
         assert_eq!(
@@ -3491,12 +3694,14 @@ mod tests {
         assert!(matches!(
             error,
             super::CliError::CommandFailed(message)
-                if message == "command failed: workmux exited with status 42 in /Users/matt/projects/web: merge failed"
+                if message == "command failed: git exited with status 42: merge failed"
         ));
         assert_eq!(
             runner.commands,
-            &[CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[CommandSpec::new(
+                "git",
+                ["-C", "/Users/matt/projects/web", "switch", "main"]
+            )]
         );
         assert_eq!(
             context
@@ -3515,16 +3720,13 @@ mod tests {
 
         let outcome = super::handle_pending_cockpit_result(
             Err(CliError::CommandFailed(
-                "workmux exited with status 42".to_string(),
+                "git exited with status 42".to_string(),
             )),
             &mut cockpit_flash,
         );
 
         assert!(outcome.is_none());
-        assert_eq!(
-            cockpit_flash.as_deref(),
-            Some("workmux exited with status 42")
-        );
+        assert_eq!(cockpit_flash.as_deref(), Some("git exited with status 42"));
     }
 
     #[test]
@@ -3538,18 +3740,25 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        super::execute_pending_cockpit_action(
+        super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
+            OpenMode::Attach,
         )
         .unwrap();
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
         assert_eq!(
             context
@@ -3558,6 +3767,40 @@ mod tests {
                 .unwrap()
                 .lifecycle_status,
             LifecycleStatus::Active
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_action_switches_client_when_inside_tmux() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open task".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            OpenMode::SwitchClient,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
         assert!(state_changed);
     }
@@ -3583,8 +3826,19 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new("git", ["-C", "/Users/matt/projects/web", "switch", "main"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "merge",
+                        "--ff-only",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
         );
         assert_eq!(
             context
@@ -3620,8 +3874,26 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
         assert_eq!(
@@ -3778,8 +4050,26 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
         assert_eq!(
@@ -3818,7 +4108,6 @@ mod tests {
             .unwrap();
         let mut runner = QueuedRunner::new(vec![
             output(0, "other-session\n"),
-            output(0, ""),
             output(128, "fatal: not a git repository\n"),
         ]);
 
@@ -3836,15 +4125,6 @@ mod tests {
             runner.commands,
             vec![
                 CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-a",
-                        "-F",
-                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
                 CommandSpec::new(
                     "git",
                     [

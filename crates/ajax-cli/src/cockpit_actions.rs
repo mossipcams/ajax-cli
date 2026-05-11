@@ -129,10 +129,26 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
     runner: &mut R,
     state_changed: &mut bool,
 ) -> Result<PendingCockpitOutcome, CliError> {
+    execute_pending_cockpit_action_with_open_mode(
+        pending,
+        context,
+        runner,
+        state_changed,
+        crate::current_open_mode(),
+    )
+}
+
+pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
+    pending: &ajax_tui::PendingAction,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+    open_mode: commands::OpenMode,
+) -> Result<PendingCockpitOutcome, CliError> {
     if pending.recommended_action == RecommendedAction::NewTask.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
             CliError::CommandFailed(
-                "new task title is required before cockpit can run workmux".to_string(),
+                "new task title is required before cockpit can create the task".to_string(),
             )
         })?;
         let request = commands::NewTaskRequest {
@@ -177,7 +193,7 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
         }
     };
     let plan = operation
-        .plan(context, &pending.task_handle)
+        .plan_with_open_mode(context, &pending.task_handle, open_mode)
         .map_err(command_error)?;
     let outputs = commands::execute_plan(&plan, !plan.requires_confirmation, runner)
         .map_err(command_error)?;

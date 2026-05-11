@@ -26,6 +26,10 @@ tasks until finished, or otherwise continue through the full approved plan, do
 not stop after each task. Continue task-by-task with TDD until the approved plan
 is complete, then report the final validation results.
 
+Markdown-only documentation changes are exempt from the TDD requirement. For
+`.md`-only changes, still plan first, get approval, make the documentation
+change, and verify it with an appropriate read/search or formatting check.
+
 ## Rules
 - NEVER implement without failing test first
 - NEVER skip approval step
@@ -36,6 +40,9 @@ is complete, then report the final validation results.
 - Never delete or weaken test assertions.
 - When tests fail, fix the implementation, not the tests.
 - Do NOT keep legacy code. When adding new code always fully replace legacy code. It is not a migration.
+- After an approved architecture change plan is fully implemented, always update
+  `architecture.md` in the same work so the documented boundaries and direction
+  match the finished architecture.
 
 ## Workspace Hygiene
 
@@ -119,6 +126,11 @@ is complete, then report the final validation results.
 5. Do not delete failing tests unless they are obsolete and the reason is clear.
 6. Do not weaken assertions to make tests pass.
 7. Avoid time-dependent or network-dependent tests unless isolated behind mocks or fixtures.
+8. Prefer `cargo nextest run` as the default Rust test runner when it is
+   available; fall back to `cargo test` only when nextest is unavailable or a
+   project-specific command requires it.
+9. Use `rstest` when it makes tests clearer, especially for table-driven,
+   parameterized, or fixture-heavy Rust test cases.
 
 ## Required Validation
 
@@ -186,6 +198,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 Required command:
 
 ```sh
+cargo nextest run --all-features
+```
+
+If `cargo nextest` is unavailable, use:
+
+```sh
 cargo test --all-features
 ```
 
@@ -211,7 +229,7 @@ Recommended commands:
 
 ```sh
 cargo check --locked
-cargo test --locked
+cargo nextest run --locked
 ```
 
 ### Dependencies
@@ -230,7 +248,7 @@ Recommended minimum:
 ```sh
 cargo check --no-default-features
 cargo check --all-features
-cargo test --all-features
+cargo nextest run --all-features
 ```
 
 Only skip feature checks if the project explicitly documents why they are unsupported.

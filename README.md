@@ -1,9 +1,9 @@
 # Ajax
 
 Ajax is a native operator cockpit for isolated AI coding tasks. It is not a
-replacement for tmux, git worktrees, workmux, Claude, Codex, or future agent
-runtimes. Ajax sits above those tools and tracks what tasks exist, what state
-they are in, what needs attention, and which actions are safe to take.
+replacement for tmux, git, Claude, Codex, or future agent runtimes. Ajax sits
+above those tools and tracks what tasks exist, what state they are in, what
+needs attention, and which actions are safe to take.
 
 The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
 Cockpit is the primary operator experience; `ajax-core`, the CLI command
@@ -31,9 +31,9 @@ workspace:
 cargo install --path crates/ajax-cli
 ```
 
-Ajax expects `git`, `tmux`, `workmux`, and an agent CLI such as `codex` to be
-available on `PATH`. Run `ajax doctor` after installing to check the local
-operator environment.
+Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
+`PATH`. Run `ajax doctor` after installing to check the local operator
+environment.
 
 ## Configuration
 
@@ -94,12 +94,12 @@ scripts/smoke.sh
 
 ## Architecture
 
-Ajax owns orchestration, state, policy, attention, safety, workflow, and the
-operator experience. Existing tools keep owning the durable primitives:
+Ajax owns task lifecycle planning, orchestration, state, policy, attention,
+safety, workflow, and the operator experience. Existing tools keep owning the
+durable primitives:
 
-- `workmux` owns task, worktree, and session lifecycle.
+- `git` owns repository, branch, merge, and worktree reality.
 - `tmux` owns durable interactive runtime.
-- `git` owns repository, branch, and worktree reality.
 - `worktrunk` is treated as the stable home window inside every task session.
 - Claude, Codex, and other agent CLIs are opaque workers running inside task
   environments.
@@ -107,7 +107,7 @@ operator experience. Existing tools keep owning the durable primitives:
 The preferred flow is:
 
 ```text
-SSH or dev command -> ajax cockpit/CLI -> ajax-core -> workmux/tmux/git/agents
+SSH or dev command -> ajax cockpit/CLI -> ajax-core -> git/tmux/agents
 ```
 
 Rust owns the orchestration core because safety policy, reconciliation, command
@@ -190,7 +190,7 @@ worktrees separate:
 - Logs: `~/.local/state/ajax/logs`
 - Cache: `~/.cache/ajax`
 - Managed repos: for example `~/projects/api`, `~/projects/web`, `~/projects/infra`
-- Task worktrees: wherever `workmux` already puts them
+- Task worktrees: sibling directories such as `repo__worktrees/ajax-fix-login`
 
 The `ajax-cli` source repo should not be included in the default managed repo
 list at first.
@@ -240,6 +240,7 @@ Phase 5 adds semi-agentic attention, review, and cleanup intelligence.
 The first attention layer derives prioritized structured inbox items with
 recommended actions from lifecycle state and side flags.
 
-Phase 6 replaces `workmux` internals only if it becomes a real constraint.
-No replacement is implemented yet; `workmux` remains the lifecycle substrate
-behind the adapter boundary.
+Phase 6 replaces external lifecycle delegation with Ajax-owned native planning.
+Ajax now creates task worktrees with `git`, opens task sessions with `tmux`,
+launches the selected agent in `worktrunk`, and plans merge/cleanup through
+explicit Ajax policy.

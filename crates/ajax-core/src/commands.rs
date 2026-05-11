@@ -1,7 +1,7 @@
 use crate::{
     adapters::{
-        CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter,
-        WorkmuxAdapter, WorkmuxNewTask,
+        AgentAdapter, AgentLaunch, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+        GitAdapter, TmuxAdapter,
     },
     attention::derive_attention_items,
     config::Config,
@@ -24,7 +24,7 @@ use std::{
 };
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-const REQUIRED_TOOLS: [&str; 4] = ["git", "tmux", "workmux", "codex"];
+const REQUIRED_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
 
 pub struct CommandContext<R> {
     pub config: Config,
@@ -419,9 +419,6 @@ pub fn reconcile_external<R: Registry>(
     let sessions_output = runner
         .run(&tmux.list_sessions())
         .map_err(CommandError::CommandRun)?;
-    let all_windows_output = runner
-        .run(&tmux.list_all_windows())
-        .map_err(CommandError::CommandRun)?;
     let mut tasks_changed = 0;
 
     for task_id in &task_ids {
@@ -466,7 +463,6 @@ pub fn reconcile_external<R: Registry>(
             &worktree_path,
             &synthetic_windows_output,
         );
-        let global_window = find_workmux_window(&task_snapshot, &all_windows_output.stdout);
         let (tmux_status, worktrunk_status, capture_target) = if synthetic_tmux_status.exists
             && synthetic_worktrunk_status.exists
             && synthetic_worktrunk_status.points_at_expected_path
@@ -478,15 +474,6 @@ pub fn reconcile_external<R: Registry>(
                     task_snapshot.tmux_session.clone(),
                     task_snapshot.worktrunk_window.clone(),
                 )),
-            )
-        } else if let Some(window) = global_window {
-            (
-                crate::models::TmuxStatus::present(window.session_name.clone()),
-                crate::models::WorktrunkStatus::present(
-                    window.window_name.clone(),
-                    window.current_path.clone(),
-                ),
-                Some((window.session_name, window.window_name)),
             )
         } else {
             (synthetic_tmux_status, synthetic_worktrunk_status, None)
@@ -581,7 +568,6 @@ pub fn new_task_plan<R: Registry>(
         return Err(CommandError::RepoNotFound(request.repo));
     };
 
-    let workmux = WorkmuxAdapter::new("workmux");
     let handle = slugify_title(&request.title);
     let qualified_handle = format!("{}/{}", request.repo, handle);
     if context.registry.list_tasks().into_iter().any(|task| {
@@ -594,13 +580,30 @@ pub fn new_task_plan<R: Registry>(
     }
 
     let branch = format!("ajax/{handle}");
+    let worktree_path = ajax_worktree_path(&repo.path, &branch);
+    let worktree_path_string = worktree_path.display().to_string();
+    let tmux_session = format!("ajax-{}-{handle}", request.repo);
+    let git = GitAdapter::new("git");
+    let tmux = TmuxAdapter::new("tmux");
+    let agent = AgentAdapter::new(&request.agent);
+    let launch = agent.launch(&AgentLaunch {
+        worktree_path: worktree_path_string.clone(),
+        prompt: request.title.clone(),
+    });
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
-    plan.commands.push(workmux.add_task(&WorkmuxNewTask {
-        repo_path: repo.path.display().to_string(),
-        branch,
-        title: request.title,
-        agent: request.agent,
-    }));
+    plan.commands.push(git.add_worktree(
+        &repo.path.display().to_string(),
+        &worktree_path_string,
+        &branch,
+        &repo.default_branch,
+    ));
+    plan.commands.push(tmux.new_detached_worktrunk_session(
+        &tmux_session,
+        "worktrunk",
+        &worktree_path_string,
+    ));
+    plan.commands
+        .push(tmux.send_agent_command(&tmux_session, "worktrunk", &command_line(&launch)));
 
     Ok(plan)
 }
@@ -621,7 +624,7 @@ pub fn task_from_new_request<R: Registry>(
     let task_id = TaskId::new(format!("{}/{}", request.repo, handle));
     let branch = format!("ajax/{handle}");
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
-    let worktree_path = workmux_worktree_path(&repo.path, &branch);
+    let worktree_path = ajax_worktree_path(&repo.path, &branch);
 
     let mut task = Task::new(
         task_id,
@@ -640,7 +643,7 @@ pub fn task_from_new_request<R: Registry>(
     Ok(task)
 }
 
-fn workmux_worktree_path(repo_path: &std::path::Path, branch: &str) -> std::path::PathBuf {
+fn ajax_worktree_path(repo_path: &std::path::Path, branch: &str) -> std::path::PathBuf {
     let worktree_name = branch.replace('/', "-");
     let repo_dir = repo_path
         .file_name()
@@ -655,38 +658,23 @@ fn workmux_worktree_path(repo_path: &std::path::Path, branch: &str) -> std::path
         .join(worktree_name)
 }
 
-struct WorkmuxWindow {
-    session_name: String,
-    window_name: String,
-    current_path: String,
+fn command_line(command: &CommandSpec) -> String {
+    std::iter::once(command.program.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .map(shell_quote)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
-fn find_workmux_window(task: &Task, all_windows_output: &str) -> Option<WorkmuxWindow> {
-    let expected_path = task.worktree_path.to_string_lossy();
-    let workmux_window = workmux_window_name(&task.branch);
+fn shell_quote(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'/' | b'.'))
+    {
+        return value.to_string();
+    }
 
-    all_windows_output.lines().find_map(|line| {
-        let mut parts = line.splitn(3, '\t');
-        let session_name = parts.next()?;
-        let window_name = parts.next()?;
-        let current_path = parts.next()?;
-        if current_path != expected_path {
-            return None;
-        }
-        if window_name != task.worktrunk_window && window_name != workmux_window {
-            return None;
-        }
-
-        Some(WorkmuxWindow {
-            session_name: session_name.to_string(),
-            window_name: window_name.to_string(),
-            current_path: current_path.to_string(),
-        })
-    })
-}
-
-fn workmux_window_name(branch: &str) -> String {
-    format!("wm-{}", branch.replace('/', "-"))
+    format!("'{}'", value.replace('\'', r#"'\''"#))
 }
 
 pub fn record_new_task<R: Registry>(
@@ -711,34 +699,21 @@ pub fn record_new_task<R: Registry>(
 pub fn open_task_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
-    _mode: OpenMode,
+    mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let workmux = WorkmuxAdapter::new("workmux");
+    let tmux = TmuxAdapter::new("tmux");
     let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
-
-    plan.commands.push(command_in_task_repo(
-        context,
-        task,
-        workmux.open_task(&task.branch),
-    )?);
-
-    Ok(plan)
-}
-
-pub fn new_task_open_plan<R: Registry>(
-    context: &CommandContext<R>,
-    request: &NewTaskRequest,
-) -> Result<CommandPlan, CommandError> {
-    let task = task_from_new_request(context, request)?;
-    let workmux = WorkmuxAdapter::new("workmux");
-    let mut plan = CommandPlan::new(format!("open task: {}", task.qualified_handle()));
-
-    plan.commands.push(command_in_task_repo(
-        context,
-        &task,
-        workmux.open_task(&task.branch),
-    )?);
+    plan.commands
+        .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
+    match mode {
+        OpenMode::Attach => plan
+            .commands
+            .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window)),
+        OpenMode::SwitchClient => plan
+            .commands
+            .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+    };
 
     Ok(plan)
 }
@@ -755,15 +730,16 @@ pub fn merge_task_plan<R: Registry>(
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let workmux = WorkmuxAdapter::new("workmux");
+    let repo_path = task_repo_path(context, task)
+        .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
+    let git = GitAdapter::new("git");
     let mut plan = CommandPlan::new(format!("merge task: {qualified_handle}"));
 
     plan.requires_confirmation = task.side_flags().next().is_some();
-    plan.commands.push(command_in_task_repo(
-        context,
-        task,
-        workmux.merge_task(&task.branch),
-    )?);
+    plan.commands
+        .push(git.switch_branch(&repo_path, &task.base_branch));
+    plan.commands
+        .push(git.merge_branch(&repo_path, &task.branch));
 
     Ok(plan)
 }
@@ -780,18 +756,15 @@ pub fn clean_task_plan<R: Registry>(
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let workmux = WorkmuxAdapter::new("workmux");
     let safety = cleanup_safety(task);
     let mut plan = CommandPlan::new(format!("clean task: {qualified_handle}"));
 
     match safety.classification {
         SafetyClassification::Safe
         | SafetyClassification::NeedsConfirmation
-        | SafetyClassification::Dangerous => plan.commands.push(command_in_task_repo(
-            context,
-            task,
-            workmux.remove_task(&task.branch),
-        )?),
+        | SafetyClassification::Dangerous => {
+            plan.commands = native_cleanup_commands(context, task)?;
+        }
         SafetyClassification::Blocked => {
             plan.blocked_reasons = safety.reasons;
         }
@@ -848,7 +821,6 @@ pub fn mark_task_removed<R: Registry>(
 }
 
 pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPlan {
-    let workmux = WorkmuxAdapter::new("workmux");
     let mut plan = CommandPlan::new("sweep cleanup");
 
     plan.commands = context
@@ -857,16 +829,68 @@ pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPl
         .into_iter()
         .filter(|task| is_operational_task(task))
         .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
-        .map(|task| {
-            let command = workmux.remove_task(&task.branch);
-            match task_repo_path(context, task) {
-                Some(repo_path) => command.with_cwd(repo_path),
-                None => command,
-            }
-        })
+        .filter_map(|task| native_cleanup_commands(context, task).ok())
+        .flatten()
         .collect();
 
     plan
+}
+
+fn native_cleanup_commands<R: Registry>(
+    context: &CommandContext<R>,
+    task: &Task,
+) -> Result<Vec<CommandSpec>, CommandError> {
+    let repo_path = task_repo_path(context, task)
+        .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
+    let git = GitAdapter::new("git");
+    let tmux = TmuxAdapter::new("tmux");
+    let mut commands = Vec::new();
+
+    if task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists)
+    {
+        commands.push(tmux.kill_session(&task.tmux_session));
+    }
+    if task
+        .git_status
+        .as_ref()
+        .is_none_or(|status| status.worktree_exists)
+    {
+        let worktree_path = task.worktree_path.display().to_string();
+        let needs_force = task.git_status.as_ref().is_some_and(|status| {
+            status.dirty
+                || status.untracked_files > 0
+                || status.conflicted
+                || task.has_side_flag(SideFlag::Dirty)
+                || task.has_side_flag(SideFlag::Conflicted)
+        });
+        let command = if needs_force {
+            git.force_remove_worktree(&repo_path, &worktree_path)
+        } else {
+            git.remove_worktree(&repo_path, &worktree_path)
+        };
+        commands.push(command);
+    }
+    if task
+        .git_status
+        .as_ref()
+        .is_none_or(|status| status.branch_exists)
+    {
+        let needs_force = task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.merged);
+        let command = if needs_force {
+            git.force_delete_branch(&repo_path, &task.branch)
+        } else {
+            git.delete_branch(&repo_path, &task.branch)
+        };
+        commands.push(command);
+    }
+
+    Ok(commands)
 }
 
 pub fn sweep_cleanup_candidates<R: Registry>(context: &CommandContext<R>) -> Vec<String> {
@@ -885,14 +909,57 @@ pub fn trunk_task_plan<R: Registry>(
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let workmux = WorkmuxAdapter::new("workmux");
+    let tmux = TmuxAdapter::new("tmux");
     let mut plan = CommandPlan::new(format!("open worktrunk: {qualified_handle}"));
+    if task
+        .git_status
+        .as_ref()
+        .is_some_and(|status| !status.worktree_exists)
+    {
+        plan.blocked_reasons.push(format!(
+            "task worktree is missing: {}",
+            task.worktree_path.display()
+        ));
+        return Ok(plan);
+    }
 
-    plan.commands.push(command_in_task_repo(
-        context,
-        task,
-        workmux.open_task(&task.branch),
-    )?);
+    let tmux_session_exists = task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists);
+    if !tmux_session_exists {
+        plan.commands.push(tmux.new_detached_worktrunk_session(
+            &task.tmux_session,
+            &task.worktrunk_window,
+            &task.worktree_path.display().to_string(),
+        ));
+    } else if task
+        .worktrunk_status
+        .as_ref()
+        .is_some_and(|status| status.exists && !status.points_at_expected_path)
+    {
+        plan.commands
+            .push(tmux.kill_window(&task.tmux_session, &task.worktrunk_window));
+        plan.commands.push(tmux.ensure_worktrunk(
+            &task.tmux_session,
+            &task.worktrunk_window,
+            &task.worktree_path.display().to_string(),
+        ));
+    } else if task
+        .worktrunk_status
+        .as_ref()
+        .is_none_or(|status| !status.exists)
+    {
+        plan.commands.push(tmux.ensure_worktrunk(
+            &task.tmux_session,
+            &task.worktrunk_window,
+            &task.worktree_path.display().to_string(),
+        ));
+    }
+    plan.commands
+        .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
+    plan.commands
+        .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window));
 
     Ok(plan)
 }
@@ -976,16 +1043,6 @@ fn find_task<'a, R: Registry>(
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))
 }
 
-fn command_in_task_repo<R: Registry>(
-    context: &CommandContext<R>,
-    task: &Task,
-    command: CommandSpec,
-) -> Result<CommandSpec, CommandError> {
-    task_repo_path(context, task)
-        .map(|repo_path| command.with_cwd(repo_path))
-        .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))
-}
-
 fn task_repo_path<R: Registry>(context: &CommandContext<R>, task: &Task) -> Option<String> {
     context
         .config
@@ -1067,12 +1124,14 @@ mod tests {
     };
     use crate::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            RecordingCommandRunner,
         },
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, SideFlag, Task, TaskId,
+            TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry},
@@ -1124,6 +1183,10 @@ mod tests {
             unpushed_commits: 0,
             conflicted: false,
             last_commit: None,
+        });
+        cleanable.tmux_status = Some(crate::models::TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
         });
         context.registry = InMemoryRegistry::default();
         context.registry.create_task(cleanable).unwrap();
@@ -1435,9 +1498,8 @@ mod tests {
             TestCommand::new("web", "cargo test"),
             TestCommand::new("api", "cargo test"),
         ];
-        let environment =
-            DoctorEnvironment::from_available_tools(["git", "tmux", "workmux", "codex"])
-                .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
+        let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
+            .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
 
         let doctor = doctor_with_environment(&context, &environment);
         let status = status(&context);
@@ -1449,7 +1511,7 @@ mod tests {
     #[test]
     fn doctor_reports_required_tool_availability() {
         let context = context_with_tasks();
-        let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"]);
+        let environment = DoctorEnvironment::from_available_tools(["git", "tmux"]);
 
         let doctor = doctor_with_environment(&context, &environment);
 
@@ -1465,7 +1527,7 @@ mod tests {
             doctor
                 .checks
                 .iter()
-                .find(|check| check.name == "tool:workmux")
+                .find(|check| check.name == "tool:codex")
                 .map(|check| (check.ok, check.message.as_str())),
             Some((false, "not found on PATH"))
         );
@@ -1483,9 +1545,8 @@ mod tests {
             ..Config::default()
         };
         let context = CommandContext::new(config, InMemoryRegistry::default());
-        let environment =
-            DoctorEnvironment::from_available_tools(["git", "tmux", "workmux", "codex"])
-                .with_existing_paths(["/repos/web"]);
+        let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
+            .with_existing_paths(["/repos/web"]);
 
         let doctor = doctor_with_environment(&context, &environment);
 
@@ -1558,7 +1619,6 @@ mod tests {
         let mut context = context_with_tasks();
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(
                 0,
                 "## ajax/fix-login...origin/ajax/fix-login [ahead 1]\n M src/main.rs\n",
@@ -1576,15 +1636,6 @@ mod tests {
             runner.commands,
             vec![
                 CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-a",
-                        "-F",
-                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
                 CommandSpec::new(
                     "git",
                     [
@@ -1652,17 +1703,13 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_external_discovers_workmux_window_in_ssh_session() {
+    fn reconcile_external_uses_only_recorded_worktrunk_window() {
         let mut context = context_with_tasks();
         let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-ssh-dev-ttys010\n"),
-            output(
-                0,
-                "ajax-ssh-dev-ttys010\twm-ajax-fix-login\t/tmp/worktrees/web-fix-login\n",
-            ),
+            output(0, "ajax-web-fix-login\najax-ssh-dev-ttys010\n"),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
-            output(0, "codex is working on your task\n"),
+            output(0, ""),
         ]);
 
         let response = reconcile_external(&mut context, &mut runner).unwrap();
@@ -1670,16 +1717,13 @@ mod tests {
         assert_eq!(response.tasks_checked, 1);
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
         assert!(task.tmux_status.as_ref().unwrap().exists);
         assert_eq!(
             task.tmux_status.as_ref().unwrap().session_name,
-            "ajax-ssh-dev-ttys010"
+            "ajax-web-fix-login"
         );
-        assert_eq!(
-            task.worktrunk_status.as_ref().unwrap().window_name,
-            "wm-ajax-fix-login"
-        );
+        assert!(!task.worktrunk_status.as_ref().unwrap().exists);
     }
 
     #[test]
@@ -1687,7 +1731,6 @@ mod tests {
         let mut context = context_with_tasks();
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1717,7 +1760,6 @@ mod tests {
             .lifecycle_status = LifecycleStatus::Active;
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(1, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1742,7 +1784,6 @@ mod tests {
         let mut context = context_with_tasks();
         let mut runner = QueuedRunner::new(vec![
             output(0, "other-session\n"),
-            output(0, ""),
             output(128, "fatal: not a git repository\n"),
         ]);
 
@@ -1754,15 +1795,6 @@ mod tests {
             runner.commands,
             vec![
                 CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-a",
-                        "-F",
-                        "#{session_name}\t#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
                 CommandSpec::new(
                     "git",
                     [
@@ -1788,7 +1820,6 @@ mod tests {
         let mut context = context_with_tasks();
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, ""),
             output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
             output(0, ""),
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
@@ -1802,7 +1833,7 @@ mod tests {
     }
 
     #[test]
-    fn new_task_plan_validates_repo_and_calls_workmux_add() {
+    fn new_task_plan_validates_repo_and_builds_native_lifecycle() {
         let context = context_with_tasks();
 
         let plan = new_task_plan(
@@ -1818,18 +1849,44 @@ mod tests {
         assert!(!plan.requires_confirmation);
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new(
-                "workmux",
-                [
-                    "add",
-                    "ajax/fix-logout",
-                    "--agent",
-                    "codex",
-                    "--background",
-                    "--no-hooks"
-                ]
-            )
-            .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "add",
+                        "-b",
+                        "ajax/fix-logout",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-logout",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-logout"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "send-keys",
+                        "-t",
+                        "ajax-web-fix-logout:worktrunk",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout 'fix logout'",
+                        "Enter"
+                    ]
+                )
+            ]
         );
     }
 
@@ -1944,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    fn open_task_plan_routes_to_workmux_open_only() {
+    fn open_task_plan_targets_worktrunk_directly() {
         let context = context_with_tasks();
 
         let outside_tmux = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
@@ -1953,12 +2010,25 @@ mod tests {
 
         assert_eq!(
             outside_tmux.commands,
-            vec![CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
         assert_eq!(
-            inside_tmux.commands, outside_tmux.commands,
-            "workmux owns whether opening attaches or switches"
+            inside_tmux.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
     }
 
@@ -2036,13 +2106,24 @@ mod tests {
         assert!(plan.requires_confirmation);
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["merge", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new("git", ["-C", "/Users/matt/projects/web", "switch", "main"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "merge",
+                        "--ff-only",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
         );
     }
 
     #[test]
-    fn clean_plan_uses_policy_and_workmux_remove() {
+    fn clean_plan_uses_policy_and_native_cleanup() {
         let context = context_with_cleanable_task();
 
         let plan = clean_task_plan(&context, "web/fix-login").unwrap();
@@ -2052,8 +2133,67 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn confirmed_cleanup_deletes_existing_unmerged_branch() {
+        let mut context = context_with_cleanable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status.as_mut().unwrap().merged = false;
+        task.add_side_flag(SideFlag::NeedsInput);
+
+        let plan = clean_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
     }
@@ -2067,8 +2207,27 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
             ]
         );
     }
@@ -2089,15 +2248,128 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_reopens_workmux_without_guessing_tmux_window() {
+    fn trunk_task_plan_recreates_missing_tmux_session_with_worktrunk() {
         let context = context_with_tasks();
 
         let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
 
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+    }
+
+    #[test]
+    fn trunk_task_plan_repairs_worktrunk_when_tmux_session_exists() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/other".into(),
+            points_at_expected_path: false,
+        });
+
+        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-window",
+                        "-t",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+    }
+
+    #[test]
+    fn trunk_task_plan_creates_missing_worktrunk_when_tmux_session_exists() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: false,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: false,
+        });
+
+        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-window",
+                        "-t",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
     }
 
@@ -2109,7 +2381,7 @@ mod tests {
 
         let outputs = super::execute_plan(&plan, false, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs.len(), 2);
         assert_eq!(runner.commands(), plan.commands.as_slice());
     }
 
@@ -2130,8 +2402,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut plan = super::CommandPlan::new("blocked");
         plan.blocked_reasons.push("worktree is missing".to_string());
-        plan.commands
-            .push(CommandSpec::new("workmux", ["remove", "web/fix-login"]));
+        plan.commands.push(CommandSpec::new("git", ["status"]));
 
         let error = super::execute_plan(&plan, true, &mut runner).unwrap_err();
 
@@ -2147,14 +2418,14 @@ mod tests {
         let mut runner = QueuedRunner::new(vec![output(2, "nope")]);
         let mut plan = super::CommandPlan::new("failing");
         plan.commands
-            .push(CommandSpec::new("workmux", ["merge", "web/fix-login"]));
+            .push(CommandSpec::new("git", ["merge", "ajax/fix-login"]));
 
         let error = super::execute_plan(&plan, true, &mut runner).unwrap_err();
 
         assert_eq!(
             error,
             CommandError::CommandRun(CommandRunError::NonZeroExit {
-                program: "workmux".to_string(),
+                program: "git".to_string(),
                 status_code: 2,
                 stderr: String::new(),
                 cwd: None,
@@ -2167,8 +2438,7 @@ mod tests {
         let mut runner = QueuedRunner::new(vec![output(1, "Error: Not in a git repository\n")]);
         let mut plan = super::CommandPlan::new("failing");
         plan.commands.push(
-            CommandSpec::new("workmux", ["add", "ajax/task-123"])
-                .with_cwd("/Users/matt/Desktop/Projects/autodoctor"),
+            CommandSpec::new("git", ["status"]).with_cwd("/Users/matt/Desktop/Projects/autodoctor"),
         );
 
         let error = super::execute_plan(&plan, true, &mut runner).unwrap_err();
@@ -2176,7 +2446,7 @@ mod tests {
         assert_eq!(
             error,
             CommandError::CommandRun(CommandRunError::NonZeroExit {
-                program: "workmux".to_string(),
+                program: "git".to_string(),
                 status_code: 1,
                 stderr: String::new(),
                 cwd: Some("/Users/matt/Desktop/Projects/autodoctor".to_string()),

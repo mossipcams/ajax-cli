@@ -3231,14 +3231,14 @@ mod tests {
 
         let pending = super::handle_action_result(
             &mut app,
-            Err(std::io::Error::other("workmux exited with status 42")),
+            Err(std::io::Error::other("git exited with status 42")),
         )
         .unwrap();
 
         assert!(pending.is_none());
         assert_eq!(
             app.flash.as_ref().map(|(message, _)| message.as_str()),
-            Some("workmux exited with status 42")
+            Some("git exited with status 42")
         );
     }
 }

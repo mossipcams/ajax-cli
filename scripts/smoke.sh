@@ -27,7 +27,7 @@ REPO="$WORKDIR/repos/web"
 STATE="$WORKDIR/state/ajax.db"
 CONFIG="$WORKDIR/config.toml"
 BACKUP="$WORKDIR/state-backup.json"
-WORKTREE="$REPO/.ajax-worktrees/fix-login"
+WORKTREE="$WORKDIR/repos/web__worktrees/ajax-fix-login"
 mkdir -p "$FAKE_BIN" "$REPO" "$WORKTREE"
 
 cat >"$CONFIG" <<EOF_CONFIG
@@ -41,25 +41,11 @@ repo = "web"
 command = "true"
 EOF_CONFIG
 
-cat >"$FAKE_BIN/workmux" <<'EOF_WORKMUX'
-#!/usr/bin/env bash
-set -euo pipefail
-case "${1:-}" in
-  add|open|merge|remove)
-    exit 0
-    ;;
-  *)
-    echo "unexpected workmux command: $*" >&2
-    exit 2
-    ;;
-esac
-EOF_WORKMUX
-
 cat >"$FAKE_BIN/tmux" <<'EOF_TMUX'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
-  attach-session|switch-client|new-window)
+  attach-session|switch-client|select-window|kill-window|new-window|new-session|send-keys|kill-session)
     exit 0
     ;;
   list-sessions)
@@ -82,6 +68,21 @@ cat >"$FAKE_BIN/git" <<'EOF_GIT'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+  *" worktree add "*)
+    mkdir -p "$AJAX_SMOKE_WORKTREE"
+    ;;
+  *" worktree remove "*)
+    rm -rf "$AJAX_SMOKE_WORKTREE"
+    ;;
+  *" branch -d ajax/fix-login")
+    exit 0
+    ;;
+  *" switch main")
+    exit 0
+    ;;
+  *" merge --ff-only ajax/fix-login")
+    exit 0
+    ;;
   *" status --porcelain=v1 --branch"*)
     printf '## ajax/fix-login\n'
     ;;
@@ -105,7 +106,7 @@ printf '{"type":"started"}\n'
 printf '{"type":"completed"}\n'
 EOF_CODEX
 
-chmod +x "$FAKE_BIN/workmux" "$FAKE_BIN/tmux" "$FAKE_BIN/git" "$FAKE_BIN/codex"
+chmod +x "$FAKE_BIN/tmux" "$FAKE_BIN/git" "$FAKE_BIN/codex"
 
 export PATH="$FAKE_BIN:$PATH"
 export AJAX_CONFIG="$CONFIG"

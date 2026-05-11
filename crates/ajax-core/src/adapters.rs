@@ -176,70 +176,6 @@ impl CommandRunner for ProcessCommandRunner {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkmuxNewTask {
-    pub repo_path: String,
-    pub branch: String,
-    pub title: String,
-    pub agent: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct WorkmuxAdapter {
-    program: String,
-}
-
-impl WorkmuxAdapter {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-        }
-    }
-
-    pub fn add_task(&self, task: &WorkmuxNewTask) -> CommandSpec {
-        self.add_task_with_args(task, [])
-    }
-
-    pub fn add_task_open_if_exists(&self, task: &WorkmuxNewTask) -> CommandSpec {
-        self.add_task_with_args(task, ["--open-if-exists"])
-    }
-
-    pub fn open_task(&self, qualified_handle: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["open", qualified_handle])
-    }
-
-    pub fn merge_task(&self, qualified_handle: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["merge", qualified_handle])
-    }
-
-    pub fn remove_task(&self, qualified_handle: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["remove", "--force", qualified_handle])
-    }
-
-    fn add_task_with_args<const N: usize>(
-        &self,
-        task: &WorkmuxNewTask,
-        extra_args: [&str; N],
-    ) -> CommandSpec {
-        let mut args = vec![
-            "add".to_string(),
-            task.branch.clone(),
-            "--agent".to_string(),
-            task.agent.clone(),
-            "--background".to_string(),
-            "--no-hooks".to_string(),
-        ];
-        args.extend(extra_args.into_iter().map(str::to_string));
-
-        CommandSpec {
-            program: self.program.clone(),
-            args,
-            cwd: Some(task.repo_path.clone()),
-            mode: CommandMode::Capture,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmuxAdapter {
     program: String,
 }
@@ -261,11 +197,61 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
+    pub fn new_detached_worktrunk_session(
+        &self,
+        session: &str,
+        window: &str,
+        path: &str,
+    ) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["new-session", "-d", "-s", session, "-n", window, "-c", path],
+        )
+    }
+
     pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
         CommandSpec::new(
             &self.program,
             ["new-window", "-t", session, "-n", window, "-c", path],
         )
+    }
+
+    pub fn kill_window(&self, session: &str, window: &str) -> CommandSpec {
+        let target = tmux_window_target(session, window);
+        CommandSpec::new(&self.program, ["kill-window", "-t", &target])
+    }
+
+    pub fn select_window(&self, session: &str, window: &str) -> CommandSpec {
+        let target = tmux_window_target(session, window);
+        CommandSpec::new(&self.program, ["select-window", "-t", &target])
+    }
+
+    pub fn attach_window(&self, session: &str, _window: &str) -> CommandSpec {
+        self.attach_session(session)
+    }
+
+    pub fn switch_client_to_window(&self, session: &str, _window: &str) -> CommandSpec {
+        self.switch_client(session)
+    }
+
+    pub fn send_agent_command(&self, session: &str, window: &str, command: &str) -> CommandSpec {
+        let target = tmux_window_target(session, window);
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "send-keys".to_string(),
+                "-t".to_string(),
+                target,
+                command.to_string(),
+                "Enter".to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn kill_session(&self, session: &str) -> CommandSpec {
+        CommandSpec::new(&self.program, ["kill-session", "-t", session])
     }
 
     pub fn list_sessions(&self) -> CommandSpec {
@@ -281,18 +267,6 @@ impl TmuxAdapter {
                 session,
                 "-F",
                 "#{window_name}\t#{pane_current_path}",
-            ],
-        )
-    }
-
-    pub fn list_all_windows(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "list-windows",
-                "-a",
-                "-F",
-                "#{session_name}\t#{window_name}\t#{pane_current_path}",
             ],
         )
     }
@@ -353,6 +327,10 @@ impl TmuxAdapter {
     }
 }
 
+fn tmux_window_target(session: &str, window: &str) -> String {
+    format!("{session}:{window}")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitAdapter {
     program: String,
@@ -369,6 +347,102 @@ impl GitAdapter {
         CommandSpec::new(
             &self.program,
             ["-C", worktree_path, "status", "--porcelain=v1", "--branch"],
+        )
+    }
+
+    pub fn add_worktree(
+        &self,
+        repo_path: &str,
+        worktree_path: &str,
+        branch: &str,
+        start_point: &str,
+    ) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "-C".to_string(),
+                repo_path.to_string(),
+                "worktree".to_string(),
+                "add".to_string(),
+                "-b".to_string(),
+                branch.to_string(),
+                worktree_path.to_string(),
+                start_point.to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "-C".to_string(),
+                repo_path.to_string(),
+                "worktree".to_string(),
+                "remove".to_string(),
+                worktree_path.to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn force_remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "-C".to_string(),
+                repo_path.to_string(),
+                "worktree".to_string(),
+                "remove".to_string(),
+                "--force".to_string(),
+                worktree_path.to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "-C".to_string(),
+                repo_path.to_string(),
+                "branch".to_string(),
+                "-d".to_string(),
+                branch.to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn force_delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec {
+            program: self.program.clone(),
+            args: vec![
+                "-C".to_string(),
+                repo_path.to_string(),
+                "branch".to_string(),
+                "-D".to_string(),
+                branch.to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+        }
+    }
+
+    pub fn switch_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(&self.program, ["-C", repo_path, "switch", branch])
+    }
+
+    pub fn merge_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "merge", "--ff-only", branch],
         )
     }
 
@@ -507,64 +581,9 @@ impl AgentAdapter {
 mod tests {
     use super::{
         AgentAdapter, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
-        RecordingCommandRunner, TmuxAdapter, WorkmuxAdapter, WorkmuxNewTask,
+        RecordingCommandRunner, TmuxAdapter,
     };
     use crate::models::{TmuxStatus, WorktrunkStatus};
-
-    #[test]
-    fn workmux_adapter_builds_lifecycle_commands() {
-        let adapter = WorkmuxAdapter::new("workmux");
-        let new_task = WorkmuxNewTask {
-            repo_path: "/Users/matt/projects/web".to_string(),
-            branch: "ajax/fix-login".to_string(),
-            title: "fix login".to_string(),
-            agent: "codex".to_string(),
-        };
-
-        assert_eq!(
-            adapter.add_task(&new_task),
-            CommandSpec::new(
-                "workmux",
-                [
-                    "add",
-                    "ajax/fix-login",
-                    "--agent",
-                    "codex",
-                    "--background",
-                    "--no-hooks"
-                ]
-            )
-            .with_cwd("/Users/matt/projects/web")
-        );
-        assert_eq!(
-            adapter.open_task("web/fix-login"),
-            CommandSpec::new("workmux", ["open", "web/fix-login"])
-        );
-        assert_eq!(
-            adapter.add_task_open_if_exists(&new_task),
-            CommandSpec::new(
-                "workmux",
-                [
-                    "add",
-                    "ajax/fix-login",
-                    "--agent",
-                    "codex",
-                    "--background",
-                    "--no-hooks",
-                    "--open-if-exists"
-                ]
-            )
-            .with_cwd("/Users/matt/projects/web")
-        );
-        assert_eq!(
-            adapter.merge_task("web/fix-login"),
-            CommandSpec::new("workmux", ["merge", "web/fix-login"])
-        );
-        assert_eq!(
-            adapter.remove_task("web/fix-login"),
-            CommandSpec::new("workmux", ["remove", "--force", "web/fix-login"])
-        );
-    }
 
     #[test]
     fn tmux_adapter_builds_attach_switch_and_worktrunk_commands() {
@@ -581,6 +600,26 @@ mod tests {
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
+            adapter.new_detached_worktrunk_session(
+                "ajax-web-fix-login",
+                "worktrunk",
+                "/tmp/worktree"
+            ),
+            CommandSpec::new(
+                "tmux",
+                [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    "ajax-web-fix-login",
+                    "-n",
+                    "worktrunk",
+                    "-c",
+                    "/tmp/worktree"
+                ]
+            )
+        );
+        assert_eq!(
             adapter.ensure_worktrunk("ajax-web-fix-login", "worktrunk", "/tmp/worktree"),
             CommandSpec::new(
                 "tmux",
@@ -594,6 +633,46 @@ mod tests {
                     "/tmp/worktree"
                 ]
             )
+        );
+        assert_eq!(
+            adapter.kill_window("ajax-web-fix-login", "worktrunk"),
+            CommandSpec::new(
+                "tmux",
+                ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
+            )
+        );
+        assert_eq!(
+            adapter.select_window("ajax-web-fix-login", "worktrunk"),
+            CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            )
+        );
+        assert_eq!(
+            adapter.switch_client_to_window("ajax-web-fix-login", "worktrunk"),
+            CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                .with_mode(CommandMode::InheritStdio)
+        );
+        assert_eq!(
+            adapter.send_agent_command(
+                "ajax-web-fix-login",
+                "worktrunk",
+                "codex --cd /tmp/worktree"
+            ),
+            CommandSpec::new(
+                "tmux",
+                [
+                    "send-keys",
+                    "-t",
+                    "ajax-web-fix-login:worktrunk",
+                    "codex --cd /tmp/worktree",
+                    "Enter"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.kill_session("ajax-web-fix-login"),
+            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
         );
         assert_eq!(
             adapter.list_sessions(),
@@ -623,6 +702,109 @@ mod tests {
                     "ajax-web-fix-login:worktrunk",
                     "-S",
                     "-200"
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn git_adapter_builds_native_lifecycle_commands() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.add_worktree(
+                "/Users/matt/projects/web",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "ajax/fix-login",
+                "main"
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "ajax/fix-login",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                    "main"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.remove_worktree(
+                "/Users/matt/projects/web",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login"
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "remove",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.force_remove_worktree(
+                "/Users/matt/projects/web",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login"
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "remove",
+                    "--force",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.delete_branch("/Users/matt/projects/web", "ajax/fix-login"),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-d",
+                    "ajax/fix-login"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.force_delete_branch("/Users/matt/projects/web", "ajax/fix-login"),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-D",
+                    "ajax/fix-login"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.switch_branch("/Users/matt/projects/web", "main"),
+            CommandSpec::new("git", ["-C", "/Users/matt/projects/web", "switch", "main"])
+        );
+        assert_eq!(
+            adapter.merge_branch("/Users/matt/projects/web", "ajax/fix-login"),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "merge",
+                    "--ff-only",
+                    "ajax/fix-login"
                 ]
             )
         );
@@ -728,15 +910,10 @@ mod tests {
     #[test]
     fn recording_runner_captures_planned_commands_without_executing() {
         let mut runner = RecordingCommandRunner::default();
-        let output = runner
-            .run(&CommandSpec::new("workmux", ["open", "web/fix-login"]))
-            .unwrap();
+        let output = runner.run(&CommandSpec::new("git", ["status"])).unwrap();
 
         assert_eq!(output.status_code, 0);
-        assert_eq!(
-            runner.commands(),
-            &[CommandSpec::new("workmux", ["open", "web/fix-login"])]
-        );
+        assert_eq!(runner.commands(), &[CommandSpec::new("git", ["status"])]);
     }
 
     #[test]

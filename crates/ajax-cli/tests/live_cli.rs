@@ -71,7 +71,7 @@ impl IsolatedAjaxHome {
             .env("HOME", &self.root)
             .env("AJAX_CONFIG", &self.config_file)
             .env("AJAX_STATE", &self.state_file)
-            .env("AJAX_FAKE_WORKMUX_LOG", self.fake_workmux_log())
+            .env("AJAX_FAKE_LIFECYCLE_LOG", self.fake_lifecycle_log())
             .env("PATH", path)
             .output()
             .unwrap_or_else(|error| panic!("failed to run live ajax binary: {error}"))
@@ -94,7 +94,7 @@ impl IsolatedAjaxHome {
         });
     }
 
-    fn install_fake_workmux(&self) -> PathBuf {
+    fn install_fake_native_lifecycle_tools(&self) -> PathBuf {
         let fake_bin = self.fake_bin_dir();
         fs::create_dir_all(&fake_bin).unwrap_or_else(|error| {
             panic!(
@@ -102,12 +102,11 @@ impl IsolatedAjaxHome {
                 fake_bin.display()
             )
         });
-        let script = fake_bin.join("workmux");
-        fs::write(
-            &script,
+        self.write_executable(
+            "git",
             r#"#!/bin/sh
 {
-  printf 'cwd=%s\n' "$PWD"
+  printf 'tool=git\n'
   printf 'args='
   first=1
   for arg in "$@"; do
@@ -119,21 +118,64 @@ impl IsolatedAjaxHome {
     fi
   done
   printf '\n'
-} >> "$AJAX_FAKE_WORKMUX_LOG"
-printf 'fake workmux %s' "$1"
+} >> "$AJAX_FAKE_LIFECYCLE_LOG"
+case "$*" in
+  *" worktree add "*)
+    printf 'fake git worktree add'
+    ;;
+  *" switch main")
+    printf 'fake git switch'
+    ;;
+  *" merge --ff-only ajax/fix-login")
+    printf 'fake git merge'
+    ;;
+  *)
+    printf 'unexpected git args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
 "#,
-        )
-        .unwrap_or_else(|error| {
-            panic!("failed to write fake workmux {}: {error}", script.display())
-        });
-        let mut permissions = fs::metadata(&script)
-            .unwrap_or_else(|error| panic!("failed to stat fake workmux: {error}"))
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&script, permissions)
-            .unwrap_or_else(|error| panic!("failed to make fake workmux executable: {error}"));
+        );
+        self.write_executable(
+            "tmux",
+            r#"#!/bin/sh
+printf 'tool=tmux\nargs=%s\n' "$*" >> "$AJAX_FAKE_LIFECYCLE_LOG"
+case "$1" in
+  new-session)
+    exit 0
+    ;;
+  send-keys)
+    exit 0
+    ;;
+  *)
+    printf 'unexpected tmux args: %s\n' "$*" >&2
+    exit 2
+    ;;
+esac
+"#,
+        );
+        self.write_executable(
+            "codex",
+            r#"#!/bin/sh
+{
+  printf 'tool=codex\n'
+  printf 'args='
+  first=1
+  for arg in "$@"; do
+    if [ "$first" = 1 ]; then
+      first=0
+      printf '%s' "$arg"
+    else
+      printf ' %s' "$arg"
+    fi
+  done
+  printf '\n'
+} >> "$AJAX_FAKE_LIFECYCLE_LOG"
+printf 'fake codex'
+"#,
+        );
 
-        self.fake_workmux_log()
+        self.fake_lifecycle_log()
     }
 
     fn install_fake_live_status_tools(&self, session: &str, worktree_path: &Path, pane: &str) {
@@ -224,7 +266,10 @@ esac
             "Fix login",
             "ajax/fix-login",
             "main",
-            repo_path.join(".ajax-worktrees/fix-login"),
+            repo_path
+                .parent()
+                .unwrap_or(repo_path)
+                .join("web__worktrees/ajax-fix-login"),
             "ajax-web-fix-login",
             "worktrunk",
             AgentClient::Codex,
@@ -243,8 +288,8 @@ esac
         self.root.join("fake-bin")
     }
 
-    fn fake_workmux_log(&self) -> PathBuf {
-        self.root.join("workmux.log")
+    fn fake_lifecycle_log(&self) -> PathBuf {
+        self.root.join("lifecycle.log")
     }
 
     fn state_file(&self) -> &Path {
@@ -286,7 +331,10 @@ fn live_cockpit_json_refreshes_live_status_from_tmux_pane() {
         "#,
         repo_path.display()
     ));
-    let worktree_path = repo_path.join(".ajax-worktrees/fix-login");
+    let worktree_path = repo_path
+        .parent()
+        .unwrap()
+        .join("web__worktrees/ajax-fix-login");
     fs::create_dir_all(&worktree_path).unwrap_or_else(|error| {
         panic!(
             "failed to create fake task worktree {}: {error}",
@@ -420,7 +468,7 @@ fn live_cockpit_json_uses_isolated_empty_context_without_creating_state() {
 fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     let home = IsolatedAjaxHome::new("new-execute");
     let repo_path = home.create_managed_repo("web");
-    let workmux_log = home.install_fake_workmux();
+    let lifecycle_log = home.install_fake_native_lifecycle_tools();
     home.write_config(&format!(
         r#"
         [[repos]]
@@ -450,17 +498,27 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&output), "");
     assert_eq!(
         stdout(&output),
-        "exit:0\nstdout:fake workmux add\nstderr:\nexit:0\nstdout:fake workmux open\nstderr:\nrecorded task: web/fix-login\n"
+        "exit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
     );
-    assert_eq!(
-        std::fs::read_to_string(&workmux_log).expect("fake workmux should record invocation"),
-        format!(
-            "cwd={0}\nargs=add ajax/fix-login --agent codex --background --no-hooks\ncwd={0}\nargs=open ajax/fix-login\n",
-            fs::canonicalize(&repo_path)
-                .expect("managed repo path should canonicalize")
-                .display()
-        )
-    );
+    let lifecycle_log = std::fs::read_to_string(&lifecycle_log)
+        .expect("fake lifecycle tools should record invocation");
+    let worktree = repo_path
+        .parent()
+        .unwrap()
+        .join("web__worktrees/ajax-fix-login");
+    assert!(lifecycle_log.contains(&format!(
+        "args=-C {repo} worktree add -b ajax/fix-login {worktree} main",
+        repo = repo_path.display(),
+        worktree = worktree.display()
+    )));
+    assert!(lifecycle_log.contains(&format!(
+        "args=new-session -d -s ajax-web-fix-login -n worktrunk -c {worktree}",
+        worktree = worktree.display()
+    )));
+    assert!(lifecycle_log.contains(&format!(
+        "args=send-keys -t ajax-web-fix-login:worktrunk codex --cd {worktree} 'Fix Login!' Enter",
+        worktree = worktree.display()
+    )));
     assert!(
         home.state_file().exists(),
         "ajax new --execute should create SQLite state at {}",
@@ -493,10 +551,10 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
 }
 
 #[test]
-fn live_new_execute_requires_title_before_workmux_can_run() {
+fn live_new_execute_requires_title_before_lifecycle_tools_can_run() {
     let home = IsolatedAjaxHome::new("new-execute-missing-title");
     let repo_path = home.create_managed_repo("web");
-    let workmux_log = home.install_fake_workmux();
+    let lifecycle_log = home.install_fake_native_lifecycle_tools();
     home.write_config(&format!(
         r#"
         [[repos]]
@@ -516,8 +574,8 @@ fn live_new_execute_requires_title_before_workmux_can_run() {
     assert_eq!(stdout(&output), "");
     assert_eq!(stderr(&output), "task title is required; pass --title\n");
     assert!(
-        !workmux_log.exists(),
-        "workmux must not run until Ajax has a completed task title"
+        !lifecycle_log.exists(),
+        "lifecycle tools must not run until Ajax has a completed task title"
     );
     assert!(
         !home.state_file().exists(),
@@ -527,10 +585,10 @@ fn live_new_execute_requires_title_before_workmux_can_run() {
 }
 
 #[test]
-fn live_merge_execute_requires_yes_before_running_workmux_and_persists_success() {
+fn live_merge_execute_requires_yes_before_running_git_and_persists_success() {
     let home = IsolatedAjaxHome::new("merge-execute");
     let repo_path = home.create_managed_repo("web");
-    let workmux_log = home.install_fake_workmux();
+    let lifecycle_log = home.install_fake_native_lifecycle_tools();
     home.write_config(&format!(
         r#"
         [[repos]]
@@ -555,8 +613,8 @@ fn live_merge_execute_requires_yes_before_running_workmux_and_persists_success()
         stderr(&rejected)
     );
     assert!(
-        !workmux_log.exists(),
-        "workmux should not run before confirmation"
+        !lifecycle_log.exists(),
+        "git should not run before confirmation"
     );
 
     let merged = home.ajax_with_fake_tools(["merge", "web/fix-login", "--execute", "--yes"]);
@@ -569,15 +627,13 @@ fn live_merge_execute_requires_yes_before_running_workmux_and_persists_success()
     assert_eq!(stderr(&merged), "");
     assert_eq!(
         stdout(&merged),
-        "exit:0\nstdout:fake workmux merge\nstderr:\n"
+        "exit:0\nstdout:fake git switch\nstderr:\nexit:0\nstdout:fake git merge\nstderr:\n"
     );
     assert_eq!(
-        fs::read_to_string(&workmux_log).expect("fake workmux should record confirmed merge"),
+        fs::read_to_string(&lifecycle_log).expect("fake git should record confirmed merge"),
         format!(
-            "cwd={}\nargs=merge ajax/fix-login\n",
-            fs::canonicalize(&repo_path)
-                .expect("managed repo path should canonicalize")
-                .display()
+            "tool=git\nargs=-C {repo} switch main\ntool=git\nargs=-C {repo} merge --ff-only ajax/fix-login\n",
+            repo = repo_path.display()
         )
     );
 

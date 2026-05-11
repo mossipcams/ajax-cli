@@ -147,7 +147,7 @@ mod tests {
         };
         let doctor = DoctorResponse {
             checks: vec![DoctorCheck {
-                name: "workmux".to_string(),
+                name: "git".to_string(),
                 ok: true,
                 message: "available".to_string(),
             }],
@@ -236,7 +236,7 @@ mod tests {
             serde_json::to_value(&doctor).unwrap(),
             serde_json::json!({
                 "checks": [{
-                    "name": "workmux",
+                    "name": "git",
                     "ok": true,
                     "message": "available"
                 }]

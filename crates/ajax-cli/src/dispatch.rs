@@ -52,8 +52,17 @@ impl TaskCommandOperation {
         context: &CommandContext<R>,
         task: &str,
     ) -> Result<commands::CommandPlan, CommandError> {
+        self.plan_with_open_mode(context, task, commands::OpenMode::Attach)
+    }
+
+    pub(crate) fn plan_with_open_mode<R: Registry>(
+        self,
+        context: &CommandContext<R>,
+        task: &str,
+        open_mode: commands::OpenMode,
+    ) -> Result<commands::CommandPlan, CommandError> {
         match self {
-            Self::Open => commands::open_task_plan(context, task, commands::OpenMode::Attach),
+            Self::Open => commands::open_task_plan(context, task, open_mode),
             Self::Trunk => commands::trunk_task_plan(context, task),
             Self::Check => commands::check_task_plan(context, task),
             Self::Diff => commands::diff_task_plan(context, task),
@@ -94,9 +103,12 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     subcommand: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
+    open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
-    let plan = operation.plan(context, task).map_err(command_error)?;
+    let plan = operation
+        .plan_with_open_mode(context, task, open_mode)
+        .map_err(command_error)?;
     if !subcommand.get_flag("execute") {
         return Ok(RenderedCommand {
             output: render_plan(plan, subcommand.get_flag("json"))?,
