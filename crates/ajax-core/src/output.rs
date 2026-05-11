@@ -29,6 +29,8 @@ pub struct TaskSummary {
     pub lifecycle_status: String,
     pub needs_attention: bool,
     pub live_status: Option<LiveObservation>,
+    #[serde(default, skip_serializing)]
+    pub actions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -113,6 +115,7 @@ mod tests {
                     LiveStatusKind::WaitingForApproval,
                     "waiting for approval",
                 )),
+                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
             }],
         };
         let inspect = InspectResponse {

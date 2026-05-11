@@ -126,9 +126,10 @@ change, and verify it with an appropriate read/search or formatting check.
 5. Do not delete failing tests unless they are obsolete and the reason is clear.
 6. Do not weaken assertions to make tests pass.
 7. Avoid time-dependent or network-dependent tests unless isolated behind mocks or fixtures.
-8. Prefer `cargo nextest run` as the default Rust test runner when it is
-   available; fall back to `cargo test` only when nextest is unavailable or a
-   project-specific command requires it.
+8. Always use `cargo nextest run` instead of `cargo test` for Rust test
+   execution. The only exceptions are documentation checks or environments
+   where nextest is unavailable, in which case use the closest documented
+   fallback.
 9. Use `rstest` when it makes tests clearer, especially for table-driven,
    parameterized, or fixture-heavy Rust test cases.
 
@@ -140,7 +141,7 @@ Before considering work complete, run the strongest applicable set:
 cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo nextest run --all-features
 ```
 
 ## CI Rules
@@ -155,7 +156,7 @@ Required Rust checks:
 cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo nextest run --all-features
 ```
 
 If the project does not support `--all-features`, use the closest documented project-specific commands.

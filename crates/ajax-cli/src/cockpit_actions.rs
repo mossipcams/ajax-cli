@@ -45,6 +45,25 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
     runner: &mut R,
     state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
+    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, false)
+}
+
+pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
+    item: &ajax_core::models::AttentionItem,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+) -> std::io::Result<ajax_tui::ActionOutcome> {
+    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, true)
+}
+
+fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
+    item: &ajax_core::models::AttentionItem,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+    confirmed: bool,
+) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
     let action = RecommendedAction::from_label(item.recommended_action.as_str());
 
@@ -53,8 +72,12 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
             let plan = operation
                 .plan(context, handle)
                 .map_err(command_error_as_io)?;
-            commands::execute_plan(&plan, !plan.requires_confirmation, runner)
-                .map_err(command_error_as_io)?;
+            if plan.requires_confirmation && !confirmed {
+                return Ok(ajax_tui::ActionOutcome::Confirm(
+                    "press enter again to confirm clean task".to_string(),
+                ));
+            }
+            commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
             let changed = operation
                 .apply_after_execute(context, handle)
                 .map_err(command_error_as_io)?;
@@ -139,8 +162,14 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             agent: "codex".to_string(),
         };
         let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-        let (outputs, task) =
-            execute_new_task_plan(context, runner, &request, &plan, true, open_mode)?;
+        let (outputs, task) = execute_new_task_plan(
+            context, runner, &request, &plan, true, open_mode,
+        )
+        .inspect_err(|error| {
+            if error.state_changed() {
+                *state_changed = true;
+            }
+        })?;
         *state_changed = true;
         return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
             &outputs,

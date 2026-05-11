@@ -1,5 +1,5 @@
 use ajax_core::{
-    adapters::CommandRunner,
+    adapters::{CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError},
     models::RecommendedAction,
     registry::{InMemoryRegistry, Registry},
@@ -40,6 +40,7 @@ impl TaskCommandOperation {
             RecommendedAction::MergeTask => Some(Self::Merge),
             RecommendedAction::CleanTask => Some(Self::Clean),
             RecommendedAction::OpenTask => Some(Self::Open),
+            RecommendedAction::OpenTrunk => Some(Self::Trunk),
             RecommendedAction::SelectProject
             | RecommendedAction::NewTask
             | RecommendedAction::Status => None,
@@ -88,7 +89,11 @@ impl TaskCommandOperation {
                 commands::mark_task_removed(context, task)?;
                 Ok(true)
             }
-            Self::Trunk | Self::Check | Self::Diff => Ok(false),
+            Self::Trunk => {
+                commands::mark_task_trunk_repaired(context, task)?;
+                Ok(true)
+            }
+            Self::Check | Self::Diff => Ok(false),
         }
     }
 
@@ -105,26 +110,170 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
-    if operation == TaskCommandOperation::Clean && subcommand.get_flag("execute") {
+    let execute = subcommand.get_flag("execute");
+    let confirmed = subcommand.get_flag("yes");
+    if operation == TaskCommandOperation::Clean && execute {
         commands::ensure_cleanup_git_status(context, task, runner).map_err(command_error)?;
     }
-    let plan = operation
+    let mut plan = operation
         .plan_with_open_mode(context, task, open_mode)
         .map_err(command_error)?;
-    if !subcommand.get_flag("execute") {
+    if !execute {
         return Ok(RenderedCommand {
             output: render_plan(plan, subcommand.get_flag("json"))?,
             state_changed: false,
         });
     }
+    if operation == TaskCommandOperation::Merge
+        && plan.blocked_reasons.is_empty()
+        && (!plan.requires_confirmation || confirmed)
+        && merge_task_has_cached_git_evidence(context, task)
+    {
+        refresh_merge_evidence_if_available(context, task, runner);
+        plan = operation
+            .plan_with_open_mode(context, task, open_mode)
+            .map_err(command_error)?;
+    }
 
-    let outputs =
-        commands::execute_plan(&plan, subcommand.get_flag("yes"), runner).map_err(command_error)?;
+    if operation == TaskCommandOperation::Check {
+        commands::mark_task_check_started(context, task).map_err(command_error)?;
+        match commands::execute_plan(&plan, confirmed, runner) {
+            Ok(outputs) => {
+                commands::mark_task_check_succeeded(context, task).map_err(command_error)?;
+                return Ok(RenderedCommand {
+                    output: render_execution_outputs(&outputs, None),
+                    state_changed: true,
+                });
+            }
+            Err(error) => {
+                commands::mark_task_check_failed(context, task)
+                    .map_err(|mark_error| command_error(mark_error).after_state_change())?;
+                return Err(command_error(error).after_state_change());
+            }
+        }
+    }
+
+    if operation == TaskCommandOperation::Merge {
+        match commands::execute_plan(&plan, confirmed, runner) {
+            Ok(outputs) => {
+                commands::mark_task_merged(context, task).map_err(command_error)?;
+                return Ok(RenderedCommand {
+                    output: render_execution_outputs(&outputs, None),
+                    state_changed: true,
+                });
+            }
+            Err(error) => {
+                if matches!(error, CommandError::CommandRun(_)) {
+                    let conflicted = merge_error_looks_conflicted(&error);
+                    commands::mark_task_merge_failed(context, task, conflicted)
+                        .map_err(|mark_error| command_error(mark_error).after_state_change())?;
+                    return Err(command_error(error).after_state_change());
+                }
+                return Err(command_error(error));
+            }
+        }
+    }
+
+    if operation == TaskCommandOperation::Clean {
+        return execute_clean_plan(context, task, &plan, confirmed, runner);
+    }
+
+    let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
     let state_changed = operation
         .apply_after_execute(context, task)
         .map_err(command_error)?;
     Ok(RenderedCommand {
         output: render_execution_outputs(&outputs, None),
         state_changed,
+    })
+}
+
+fn merge_task_has_cached_git_evidence<R: Registry>(
+    context: &CommandContext<R>,
+    task: &str,
+) -> bool {
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|candidate| candidate.qualified_handle() == task)
+        .is_some_and(|candidate| candidate.git_status.is_some())
+}
+
+fn refresh_merge_evidence_if_available<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task: &str,
+    runner: &mut R,
+) {
+    // Merge still runs the fresh-evidence probe first when available; if the
+    // probe itself cannot run, the existing plan remains the operator-facing
+    // source of confirmation and execution errors.
+    let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false).is_ok();
+}
+
+fn merge_error_looks_conflicted(error: &CommandError) -> bool {
+    matches!(
+        error,
+        CommandError::CommandRun(CommandRunError::NonZeroExit { stderr, .. })
+            if stderr.to_ascii_lowercase().contains("conflict")
+    )
+}
+
+fn execute_clean_plan<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task: &str,
+    plan: &commands::CommandPlan,
+    confirmed: bool,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    if !plan.blocked_reasons.is_empty() {
+        return Err(command_error(CommandError::PlanBlocked(
+            plan.blocked_reasons.clone(),
+        )));
+    }
+    if plan.requires_confirmation && !confirmed {
+        return Err(command_error(CommandError::ConfirmationRequired));
+    }
+
+    let mut outputs = Vec::new();
+    let mut state_changed = false;
+    for command in &plan.commands {
+        let output = runner.run(command).map_err(|error| {
+            let cli_error = command_error(CommandError::CommandRun(error));
+            if state_changed {
+                cli_error.after_state_change()
+            } else {
+                cli_error
+            }
+        })?;
+        if output.status_code != 0 {
+            let cli_error = command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
+                program: command.program.clone(),
+                status_code: output.status_code,
+                stderr: output.stderr.clone(),
+                cwd: command.cwd.clone(),
+            }));
+            return Err(if state_changed {
+                cli_error.after_state_change()
+            } else {
+                cli_error
+            });
+        }
+        outputs.push(output);
+        state_changed |= commands::mark_task_cleanup_step_completed(context, task, command)
+            .map_err(|error| {
+                let cli_error = command_error(error);
+                if state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                }
+            })?;
+    }
+
+    commands::mark_task_removed(context, task).map_err(command_error)?;
+    Ok(RenderedCommand {
+        output: render_execution_outputs(&outputs, None),
+        state_changed: true,
     })
 }

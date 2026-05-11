@@ -57,6 +57,19 @@ Legacy JSON state is not migrated. This is a full rewrite of the durable state
 format, so pre-SQLite JSON snapshots at the state path should fail with a clear
 operator-facing error and can be removed to start with fresh SQLite state.
 
+Registry state records three separate kinds of truth:
+
+- Lifecycle status describes Ajax's current task state.
+- Substrate evidence records current external facts such as git, tmux, and
+  worktrunk state.
+- Operation/live status records what Ajax or a supervised agent is doing now or
+  what last failed.
+
+Lifecycle and substrate changes should go through registry-level helpers that
+record typed events. SQLite persists typed task fields and event rows directly;
+new operation fields or statuses must round-trip through that typed schema and
+unsupported schema versions must fail clearly.
+
 ## Command Execution
 
 Command planning should stay separate from command execution. `CommandSpec`
@@ -79,6 +92,18 @@ worktree before applying cleanup safety policy. That evidence is command-scoped
 bookkeeping, not reconciliation: it must not inspect or repair unrelated tmux
 state, recreate missing resources, or mutate live status outside the command's
 own safety decision.
+
+Merge and cleanup plans must use fresh evidence when their safety decision
+depends on git state. Risky or destructive plans must surface confirmation
+requirements in the command plan and must not execute without explicit operator
+confirmation. Cockpit actions use the same operation policy and confirmation
+state as CLI execution.
+
+A partial failure is recoverable state, not disappearance. If an operation
+successfully changes registry or substrate state and then a later step fails,
+Ajax preserves the completed updates, records visible failure status or
+attention, saves durable state, and keeps the affected task visible for
+operator recovery.
 
 ## CLI Organization
 

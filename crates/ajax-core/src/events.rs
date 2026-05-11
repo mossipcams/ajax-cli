@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     live::classify_pane,
-    models::{GitStatus, LiveObservation, LiveStatusKind},
+    models::{GitStatus, LiveObservation, LiveStatusKind, SideFlag},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -113,6 +113,55 @@ pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservati
     }
 }
 
+pub fn apply_monitor_event_to_task(task: &mut crate::models::Task, event: &MonitorEvent) -> bool {
+    let mut changed = false;
+    if let MonitorEvent::Repo(RepoEvent::GitSnapshot { status, .. }) = event {
+        apply_git_snapshot_to_task(task, status.clone());
+        changed = true;
+    }
+
+    let Some(observation) = live_observation_from_event(event) else {
+        return changed;
+    };
+
+    crate::live::apply_observation(task, observation);
+    true
+}
+
+fn apply_git_snapshot_to_task(task: &mut crate::models::Task, status: GitStatus) {
+    if status.worktree_exists {
+        task.remove_side_flag(SideFlag::WorktreeMissing);
+    } else {
+        task.add_side_flag(SideFlag::WorktreeMissing);
+    }
+
+    if status.branch_exists {
+        task.remove_side_flag(SideFlag::BranchMissing);
+    } else {
+        task.add_side_flag(SideFlag::BranchMissing);
+    }
+
+    if status.dirty || status.untracked_files > 0 {
+        task.add_side_flag(SideFlag::Dirty);
+    } else {
+        task.remove_side_flag(SideFlag::Dirty);
+    }
+
+    if status.conflicted {
+        task.add_side_flag(SideFlag::Conflicted);
+    } else {
+        task.remove_side_flag(SideFlag::Conflicted);
+    }
+
+    if status.has_unpushed_work() {
+        task.add_side_flag(SideFlag::Unpushed);
+    } else {
+        task.remove_side_flag(SideFlag::Unpushed);
+    }
+
+    task.git_status = Some(status);
+}
+
 fn classify_text_or_else(text: &str, fallback: LiveObservation) -> LiveObservation {
     let observation = classify_pane(text);
     if observation.kind == LiveStatusKind::Unknown {
@@ -126,8 +175,31 @@ fn classify_text_or_else(text: &str, fallback: LiveObservation) -> LiveObservati
 mod tests {
     use std::path::PathBuf;
 
-    use super::{live_observation_from_event, AgentEvent, MonitorEvent, ProcessEvent, RepoEvent};
-    use crate::models::{GitStatus, LiveStatusKind};
+    use super::{
+        apply_monitor_event_to_task, live_observation_from_event, AgentEvent, MonitorEvent,
+        ProcessEvent, RepoEvent,
+    };
+    use crate::models::{
+        AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag,
+        Task, TaskId,
+    };
+
+    fn task() -> Task {
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
 
     #[test]
     fn monitor_events_map_to_live_observations() {
@@ -249,5 +321,114 @@ mod tests {
         });
 
         assert_eq!(live_observation_from_event(&event), None);
+    }
+
+    #[test]
+    fn agent_monitor_events_apply_live_status_to_task() {
+        let mut task = task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Started {
+                agent: "codex".to_string(),
+            })
+        ));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert!(task.has_side_flag(SideFlag::AgentRunning));
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::WaitingForApproval {
+                command: Some("cargo test".to_string()),
+            })
+        ));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Completed)
+        ));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn process_failure_event_applies_command_failed_attention_state() {
+        let mut task = task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Process(ProcessEvent::Exited { code: Some(42) })
+        ));
+
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CommandFailed)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+
+        let attention = crate::attention::derive_attention_items(&[task]);
+        assert!(attention
+            .iter()
+            .any(|item| item.reason == "command failed" && item.task_handle == "web/fix-login"));
+    }
+
+    #[test]
+    fn git_snapshot_event_applies_task_evidence_and_attention_state() {
+        let mut task = task();
+        let status = GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 1,
+            behind: 0,
+            merged: false,
+            untracked_files: 2,
+            unpushed_commits: 1,
+            conflicted: true,
+            last_commit: Some("abc123".to_string()),
+        };
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Repo(RepoEvent::GitSnapshot {
+                worktree_path: PathBuf::from("/tmp/worktrees/web-fix-login"),
+                status: status.clone(),
+                diff_stat: "src/lib.rs | 2 +".to_string(),
+            })
+        ));
+
+        assert_eq!(task.git_status, Some(status));
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
+        assert!(task.has_side_flag(SideFlag::Dirty));
+        assert!(task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.has_side_flag(SideFlag::Unpushed));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::MergeConflict)
+        );
+
+        let attention = crate::attention::derive_attention_items(&[task]);
+        assert!(attention
+            .iter()
+            .any(|item| item.reason == "merge conflict needs attention"));
     }
 }

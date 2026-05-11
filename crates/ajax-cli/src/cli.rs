@@ -101,6 +101,7 @@ fn executable_command(command: Command) -> Command {
 fn supervise_command() -> Command {
     json_command("supervise")
         .about("Run Codex under the Ajax live supervisor")
+        .arg(Arg::new("task").long("task").value_name("REPO/HANDLE"))
         .arg(
             Arg::new("prompt")
                 .long("prompt")

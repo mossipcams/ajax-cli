@@ -6,10 +6,11 @@ mod render;
 mod supervise;
 
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunner, ProcessCommandRunner, TmuxAdapter},
+    adapters::{CommandOutput, CommandRunError, CommandRunner, ProcessCommandRunner, TmuxAdapter},
     commands::{self, CommandContext, CommandError},
+    events::apply_monitor_event_to_task,
     live::{self, LiveObservation, LiveStatusKind},
-    models::{LifecycleStatus, SideFlag},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, SideFlag, TmuxStatus, WorktrunkStatus},
     output::{CockpitResponse, DoctorCheck},
     registry::{InMemoryRegistry, Registry},
 };
@@ -18,7 +19,7 @@ pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
 use cockpit_actions::{
     execute_pending_cockpit_action, handle_pending_cockpit_result, tui_cockpit_action,
-    PendingCockpitOutcome,
+    tui_cockpit_confirmed_action, PendingCockpitOutcome,
 };
 pub use context::CliContextPaths;
 use context::{default_context_paths, load_context, save_context};
@@ -28,7 +29,9 @@ use render::{
     render_next_human, render_plan, render_repos_human, render_response, render_tasks_human,
 };
 use std::{ffi::OsStr, time::Duration};
+#[cfg(test)]
 use supervise::render_supervise_command;
+use supervise::supervise_command_output_and_events;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -118,7 +121,7 @@ pub fn run_with_context(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    render_matches(&matches, context)
+    render_snapshot_matches(&matches, context)
 }
 
 pub fn run_with_context_and_runner(
@@ -180,7 +183,7 @@ pub(crate) struct RenderedCommand {
     pub(crate) state_changed: bool,
 }
 
-fn render_matches(
+fn render_snapshot_matches(
     matches: &ArgMatches,
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<String, CliError> {
@@ -445,6 +448,9 @@ fn render_matches_mut(
     runner: &mut impl CommandRunner,
 ) -> Result<RenderedCommand, CliError> {
     match matches.subcommand() {
+        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "review" | "status"), _)) => {
+            render_refreshed_read_command(name, matches, context, runner)
+        }
         Some(("new", subcommand)) => {
             let request = new_task_request(subcommand)?;
             let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
@@ -469,17 +475,6 @@ fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some(("status", subcommand)) => {
-            let changed = refresh_live_context(context, runner)?;
-            Ok(RenderedCommand {
-                output: render_response(
-                    commands::status(context),
-                    subcommand.get_flag("json"),
-                    render_tasks_human,
-                )?,
-                state_changed: changed,
-            })
-        }
         Some((name @ ("open" | "trunk" | "check" | "diff" | "merge" | "clean"), subcommand)) => {
             let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
                 CliError::CommandFailed(format!("unsupported task command: {name}"))
@@ -502,12 +497,28 @@ fn render_matches_mut(
                 state_changed: !candidates.is_empty(),
             })
         }
-        Some(("supervise", subcommand)) => Ok(RenderedCommand {
-            output: render_supervise_command(subcommand)?,
-            state_changed: false,
-        }),
+        Some(("supervise", subcommand)) => {
+            let supervised_task = validate_supervised_task(context, subcommand)?;
+            let (output, events) = supervise_command_output_and_events(subcommand)?;
+            let mut state_changed = false;
+            if let Some(task_id) = supervised_task {
+                let task = context.registry.get_task_mut(&task_id).ok_or_else(|| {
+                    CliError::CommandFailed("supervised task disappeared".to_string())
+                })?;
+                for event in &events {
+                    state_changed |= apply_monitor_event_to_task(task, event);
+                }
+            }
+            Ok(RenderedCommand {
+                output,
+                state_changed,
+            })
+        }
         Some(("cockpit", subcommand)) => {
-            if subcommand.get_flag("json") || subcommand.get_flag("watch") {
+            if subcommand.get_flag("json") {
+                return render_refreshed_read_command("cockpit", matches, context, runner);
+            }
+            if subcommand.get_flag("watch") {
                 return render_live_cockpit_command(context, subcommand, runner);
             }
             // Interactive TUI with full action support.
@@ -556,10 +567,23 @@ fn render_matches_mut(
             }
         }
         _ => Ok(RenderedCommand {
-            output: render_matches(matches, context)?,
+            output: render_snapshot_matches(matches, context)?,
             state_changed: false,
         }),
     }
+}
+
+fn render_refreshed_read_command<R: CommandRunner>(
+    _name: &str,
+    matches: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let changed = refresh_live_context(context, runner)?;
+    Ok(RenderedCommand {
+        output: render_snapshot_matches(matches, context)?,
+        state_changed: changed,
+    })
 }
 
 fn render_matches_mut_with_paths(
@@ -631,10 +655,15 @@ fn refresh_live_context<R: CommandRunner>(
     }
 
     let tmux = TmuxAdapter::new("tmux");
-    let sessions_output = runner
-        .run(&tmux.list_sessions())
-        .map_err(|error| CliError::CommandFailed(error.to_string()))?
-        .stdout;
+    let sessions_command = tmux.list_sessions();
+    let sessions_output = match runner.run(&sessions_command) {
+        Ok(output) if output.status_code == 0 => output.stdout,
+        Ok(_output) => return Ok(false),
+        Err(_error) => return Ok(false),
+    };
+    if sessions_output.trim().is_empty() {
+        return Ok(false);
+    }
     let mut changed = false;
 
     for task_id in task_ids {
@@ -643,14 +672,21 @@ fn refresh_live_context<R: CommandRunner>(
         };
         let session_status =
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
-        changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
-
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            task.tmux_status = Some(session_status.clone());
-        }
 
         if !session_status.exists {
+            if task_snapshot
+                .tmux_status
+                .as_ref()
+                .is_some_and(|status| status.exists)
+            {
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    task.remove_side_flag(SideFlag::AgentRunning);
+                    changed = true;
+                }
+                continue;
+            }
             if let Some(task) = context.registry.get_task_mut(&task_id) {
+                task.add_side_flag(SideFlag::TmuxMissing);
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
@@ -659,11 +695,27 @@ fn refresh_live_context<R: CommandRunner>(
             }
             continue;
         }
+        changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
 
-        let windows_output = runner
-            .run(&tmux.list_windows(&task_snapshot.tmux_session))
-            .map_err(|error| CliError::CommandFailed(error.to_string()))?
-            .stdout;
+        if let Some(task) = context.registry.get_task_mut(&task_id) {
+            task.tmux_status = Some(session_status.clone());
+        }
+
+        let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
+        let windows_output = match runner.run(&windows_command) {
+            Ok(output) if output.status_code == 0 => output.stdout,
+            Ok(_) | Err(_) => {
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    task.add_side_flag(SideFlag::WorktrunkMissing);
+                    live::apply_observation(
+                        task,
+                        LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
+                    );
+                    changed = true;
+                }
+                continue;
+            }
+        };
         let worktrunk_status = TmuxAdapter::parse_worktrunk_status(
             &task_snapshot.worktrunk_window,
             &task_snapshot.worktree_path.display().to_string(),
@@ -682,6 +734,7 @@ fn refresh_live_context<R: CommandRunner>(
 
         if !worktrunk_status.exists {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
+                task.add_side_flag(SideFlag::WorktrunkMissing);
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
@@ -691,10 +744,21 @@ fn refresh_live_context<R: CommandRunner>(
             continue;
         }
 
-        let pane_output = runner
-            .run(&tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window))
-            .map_err(|error| CliError::CommandFailed(error.to_string()))?
-            .stdout;
+        let pane_command =
+            tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window);
+        let pane_output = match runner.run(&pane_command) {
+            Ok(output) if output.status_code == 0 => output.stdout,
+            Ok(_) | Err(_) => {
+                if let Some(task) = context.registry.get_task_mut(&task_id) {
+                    live::apply_observation(
+                        task,
+                        LiveObservation::new(LiveStatusKind::CommandFailed, "live refresh failed"),
+                    );
+                    changed = true;
+                }
+                continue;
+            }
+        };
         let observation = live::classify_pane(&pane_output);
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let previous = task.clone();
@@ -731,6 +795,13 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
         tui_cockpit_action(item, self.context, self.runner, self.state_changed)
     }
 
+    fn on_confirmed_action(
+        &mut self,
+        item: &ajax_core::models::AttentionItem,
+    ) -> std::io::Result<ajax_tui::ActionOutcome> {
+        tui_cockpit_confirmed_action(item, self.context, self.runner, self.state_changed)
+    }
+
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitResponse>> {
         refresh_cockpit_snapshot(self.context, self.runner, self.state_changed)
             .map(Some)
@@ -746,12 +817,46 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     confirmed: bool,
     open_mode: commands::OpenMode,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let mut outputs = commands::execute_plan(plan, confirmed, runner).map_err(command_error)?;
     let task = commands::record_new_task(context, request).map_err(command_error)?;
-    commands::mark_task_opened(context, &task.qualified_handle()).map_err(command_error)?;
+    if plan.requires_confirmation && !confirmed {
+        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
+    }
+    if !plan.blocked_reasons.is_empty() {
+        return Err(
+            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
+                .after_state_change(),
+        );
+    }
+
+    let mut outputs = Vec::new();
+    for (index, command) in plan.commands.iter().enumerate() {
+        let output = runner.run(command).map_err(|error| {
+            mark_new_task_provisioning_failed(context, &task.id);
+            command_error(CommandError::CommandRun(error)).after_state_change()
+        })?;
+        if output.status_code != 0 {
+            mark_new_task_provisioning_failed(context, &task.id);
+            return Err(
+                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
+                    program: command.program.clone(),
+                    status_code: output.status_code,
+                    stderr: output.stderr,
+                    cwd: command.cwd.clone(),
+                }))
+                .after_state_change(),
+            );
+        }
+        outputs.push(output);
+        mark_new_task_step_complete(context, &task.id, index);
+    }
+    commands::mark_task_opened(context, &task.qualified_handle())
+        .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
-        .map_err(command_error)?;
-    outputs.extend(commands::execute_plan(&open_plan, true, runner).map_err(command_error)?);
+        .map_err(|error| command_error(error).after_state_change())?;
+    outputs.extend(
+        commands::execute_plan(&open_plan, true, runner)
+            .map_err(|error| command_error(error).after_state_change())?,
+    );
 
     let task = context
         .registry
@@ -762,6 +867,71 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
         .unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+fn mark_new_task_provisioning_failed(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_id: &ajax_core::models::TaskId,
+) {
+    let _ = context
+        .registry
+        .update_lifecycle(task_id, LifecycleStatus::Error);
+    if let Some(task) = context.registry.get_task_mut(task_id) {
+        task.add_side_flag(SideFlag::NeedsInput);
+    }
+}
+
+fn mark_new_task_step_complete(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_id: &ajax_core::models::TaskId,
+    step_index: usize,
+) {
+    if step_index == 2 {
+        let _ = context
+            .registry
+            .update_lifecycle(task_id, LifecycleStatus::Active);
+    }
+
+    let Some(task) = context.registry.get_task_mut(task_id) else {
+        return;
+    };
+
+    match step_index {
+        0 => {
+            task.git_status = Some(GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some(task.branch.clone()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+            task.remove_side_flag(SideFlag::WorktreeMissing);
+            task.remove_side_flag(SideFlag::BranchMissing);
+        }
+        1 => {
+            task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
+            task.worktrunk_status = Some(WorktrunkStatus::present(
+                task.worktrunk_window.clone(),
+                task.worktree_path.clone(),
+            ));
+            task.remove_side_flag(SideFlag::TmuxMissing);
+            task.remove_side_flag(SideFlag::WorktrunkMissing);
+        }
+        2 => {
+            task.agent_attempts.push(AgentAttempt::new(
+                task.selected_agent,
+                task.worktree_path.display().to_string(),
+            ));
+            task.add_side_flag(SideFlag::AgentRunning);
+        }
+        _ => {}
+    }
 }
 
 fn execute_sweep_cleanup<R: CommandRunner>(
@@ -775,21 +945,61 @@ fn execute_sweep_cleanup<R: CommandRunner>(
 
     for candidate in candidates {
         let plan = commands::clean_task_plan(context, candidate).map_err(command_error)?;
-        match commands::execute_plan(&plan, confirmed, runner) {
-            Ok(mut command_outputs) => {
-                outputs.append(&mut command_outputs);
-                commands::mark_task_removed(context, candidate).map_err(command_error)?;
-                state_changed = true;
-            }
-            Err(error) => {
-                let cli_error = command_error(error);
+        if !plan.blocked_reasons.is_empty() {
+            let cli_error = command_error(CommandError::PlanBlocked(plan.blocked_reasons));
+            return Err(if state_changed {
+                cli_error.after_state_change()
+            } else {
+                cli_error
+            });
+        }
+        if plan.requires_confirmation && !confirmed {
+            let cli_error = command_error(CommandError::ConfirmationRequired);
+            return Err(if state_changed {
+                cli_error.after_state_change()
+            } else {
+                cli_error
+            });
+        }
+
+        for command in &plan.commands {
+            let output = runner.run(command).map_err(|error| {
+                let cli_error = command_error(CommandError::CommandRun(error));
+                if state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                }
+            })?;
+            if output.status_code != 0 {
+                let cli_error =
+                    command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
+                        program: command.program.clone(),
+                        status_code: output.status_code,
+                        stderr: output.stderr.clone(),
+                        cwd: command.cwd.clone(),
+                    }));
                 return Err(if state_changed {
                     cli_error.after_state_change()
                 } else {
                     cli_error
                 });
             }
+            outputs.push(output);
+            state_changed |= commands::mark_task_cleanup_step_completed(
+                context, candidate, command,
+            )
+            .map_err(|error| {
+                let cli_error = command_error(error);
+                if state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                }
+            })?;
         }
+        commands::mark_task_removed(context, candidate).map_err(command_error)?;
+        state_changed = true;
     }
 
     Ok(outputs)
@@ -849,6 +1059,29 @@ pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {
         .get_one::<String>("task")
         .map(String::as_str)
         .ok_or_else(|| CliError::CommandFailed("task argument is required".to_string()))
+}
+
+fn validate_supervised_task(
+    context: &CommandContext<InMemoryRegistry>,
+    matches: &ArgMatches,
+) -> Result<Option<ajax_core::models::TaskId>, CliError> {
+    let Some(qualified_handle) = matches.get_one::<String>("task").map(String::as_str) else {
+        return Ok(None);
+    };
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == qualified_handle)
+        .ok_or_else(|| CliError::CommandFailed(format!("task not found: {qualified_handle}")))?;
+    if task.lifecycle_status == LifecycleStatus::Removed {
+        return Err(CliError::CommandFailed(format!(
+            "task not found: {qualified_handle}"
+        )));
+    }
+
+    Ok(Some(task.id.clone()))
 }
 
 pub(crate) fn command_error(error: CommandError) -> CliError {
@@ -1017,6 +1250,10 @@ mod tests {
         }
     }
 
+    fn command_flow_runner(outputs: Vec<CommandOutput>) -> QueuedRunner {
+        QueuedRunner::new(outputs)
+    }
+
     impl CommandRunner for QueuedRunner {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             self.commands.push(command.clone());
@@ -1048,6 +1285,43 @@ mod tests {
             output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
             output(0, pane),
         ]
+    }
+
+    #[test]
+    fn command_flow_fixture_records_partial_success_before_failure() {
+        let mut plan = ajax_core::commands::CommandPlan::new("partial failure");
+        plan.commands.push(CommandSpec::new("git", ["status"]));
+        plan.commands.push(CommandSpec::new(
+            "tmux",
+            ["attach-session", "-t", "missing"],
+        ));
+        let mut runner = command_flow_runner(vec![
+            output(0, "clean"),
+            CommandOutput {
+                status_code: 7,
+                stdout: String::new(),
+                stderr: "missing session".to_string(),
+            },
+        ]);
+
+        let error = ajax_core::commands::execute_plan(&plan, true, &mut runner).unwrap_err();
+
+        assert_eq!(
+            error,
+            ajax_core::commands::CommandError::CommandRun(CommandRunError::NonZeroExit {
+                program: "tmux".to_string(),
+                status_code: 7,
+                stderr: "missing session".to_string(),
+                cwd: None,
+            })
+        );
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new("git", ["status"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "missing"]),
+            ]
+        );
     }
 
     fn tmux_live_commands() -> Vec<CommandSpec> {
@@ -1375,6 +1649,70 @@ mod tests {
     }
 
     #[test]
+    fn read_commands_share_live_refresh_contract() {
+        for args in [
+            vec!["ajax", "repos", "--json"],
+            vec!["ajax", "tasks", "--json"],
+            vec!["ajax", "inbox", "--json"],
+            vec!["ajax", "next", "--json"],
+            vec!["ajax", "review", "--json"],
+            vec!["ajax", "status", "--json"],
+            vec!["ajax", "cockpit", "--json"],
+        ] {
+            let mut context = sample_context();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.remove_side_flag(SideFlag::NeedsInput);
+            let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+
+            let output = run_with_context_and_runner(args.clone(), &mut context, &mut runner)
+                .unwrap_or_else(|error| panic!("{args:?} failed: {error}"));
+
+            assert!(!output.is_empty(), "{args:?} should render a response");
+            assert_eq!(runner.commands, tmux_live_commands(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn read_refresh_failure_keeps_task_visible_with_missing_tmux_attention() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![output(0, "other-session\n")]);
+
+        let output =
+            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(
+            parsed["tasks"][0]["live_status"]["summary"],
+            "tmux session missing"
+        );
+        assert!(task.has_side_flag(SideFlag::TmuxMissing));
+        assert_eq!(runner.commands, vec![tmux_live_commands()[0].clone()]);
+    }
+
+    #[test]
+    fn snapshot_only_read_dispatch_is_explicitly_named() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let snapshot_dispatch = ["fn render_", "snapshot_matches("].concat();
+
+        assert!(lib_source.contains(&snapshot_dispatch));
+        assert!(lib_source.contains("render_refreshed_read_command"));
+    }
+
+    #[test]
     fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
         let mut context = sample_context();
         let task = context
@@ -1423,7 +1761,14 @@ mod tests {
         assert!(state_changed);
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
         assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-        assert!(snapshot.tasks.tasks.is_empty());
+        assert_eq!(snapshot.tasks.tasks.len(), 1);
+        assert_eq!(
+            snapshot.tasks.tasks[0]
+                .live_status
+                .as_ref()
+                .map(|status| status.summary.as_str()),
+            Some("worktrunk missing")
+        );
     }
 
     #[test]
@@ -1563,6 +1908,150 @@ mod tests {
         let _ = std::fs::remove_file(fake_codex);
         assert!(error.to_string().contains("codex exited with status 42"));
         assert!(error.to_string().contains("stderr: auth expired"));
+    }
+
+    #[test]
+    fn supervise_with_task_requires_existing_visible_task() {
+        let fake_codex =
+            std::env::temp_dir().join(format!("ajax-cli-fake-codex-task-{}", std::process::id()));
+        std::fs::write(
+            &fake_codex,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+        let mut context = sample_context();
+        let mut runner = QueuedRunner::default();
+
+        let output = run_with_context_and_runner(
+            [
+                "ajax",
+                "supervise",
+                "--task",
+                "web/fix-login",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(output.contains("agent started: codex"));
+
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "supervise",
+                "--task",
+                "web/missing",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        let _ = std::fs::remove_file(fake_codex);
+        assert!(matches!(error, CliError::CommandFailed(message)
+                if message == "task not found: web/missing"));
+
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Removed;
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "supervise",
+                "--task",
+                "web/fix-login",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                "/path/that/should/not/run",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(matches!(error, CliError::CommandFailed(message)
+                if message == "task not found: web/fix-login"));
+    }
+
+    #[test]
+    fn supervise_with_task_persists_supervisor_state_to_sqlite() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-supervise-task-{}-{}",
+            std::process::id(),
+            "state"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        let fake_codex = directory.join("fake-codex");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+        SqliteRegistryStore::new(&state_file)
+            .save(&sample_context().registry)
+            .unwrap();
+        std::fs::write(
+            &fake_codex,
+            "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\nprintf '{\"type\":\"approval_request\",\"command\":\"cargo test\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_codex, permissions).unwrap();
+        let mut runner = QueuedRunner::default();
+
+        let output = run_with_context_paths_and_runner(
+            [
+                "ajax",
+                "supervise",
+                "--task",
+                "web/fix-login",
+                "--prompt",
+                "fix tests",
+                "--codex-bin",
+                &fake_codex.display().to_string(),
+            ],
+            &CliContextPaths::new(&config_file, &state_file),
+            &mut runner,
+        )
+        .unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(output.contains("waiting for approval: cargo test"));
+        let task = restored
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("task should persist");
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
     }
 
     #[test]
@@ -2365,6 +2854,11 @@ mod tests {
             "/Users/matt/projects/web__worktrees/ajax-fix-login"
         );
         assert_eq!(recorded.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(recorded.agent_attempts.len(), 1);
+        assert_eq!(
+            recorded.agent_attempts[0].launch_target,
+            "/Users/matt/projects/web__worktrees/ajax-fix-login"
+        );
     }
 
     #[test]
@@ -2393,7 +2887,7 @@ mod tests {
     }
 
     #[test]
-    fn new_execute_provisioning_failure_does_not_record_task_state() {
+    fn new_execute_provisioning_failure_records_visible_partial_state() {
         let mut context = CommandContext::new(
             Config {
                 repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
@@ -2425,9 +2919,21 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message == "command failed: tmux exited with status 42: tmux failed"));
-        assert!(context.registry.list_tasks().is_empty());
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: tmux exited with status 42: tmux failed")
+        );
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("provisioning task should remain visible");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
         assert_eq!(
             runner.commands,
             vec![
@@ -2459,6 +2965,50 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn new_execute_records_provisioning_task_before_first_command_failure() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 42,
+            stdout: String::new(),
+            stderr: "git failed".to_string(),
+        }]);
+
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 42: git failed")
+        );
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("provisioning task should be visible after first command failure");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(ajax_core::commands::inbox(&context).items.len(), 1);
     }
 
     #[test]
@@ -2628,6 +3178,68 @@ mod tests {
     }
 
     #[test]
+    fn new_execute_persists_state_when_open_after_create_fails() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-new-execute-{}-{}",
+            std::process::id(),
+            "open-failure"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            CommandOutput {
+                status_code: 42,
+                stdout: String::new(),
+                stderr: "attach failed".to_string(),
+            },
+        ]);
+
+        let error = run_with_context_paths_and_runner(
+            [
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &CliContextPaths::new(&config_file, &state_file),
+            &mut runner,
+        )
+        .unwrap_err();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: tmux exited with status 42: attach failed")
+        );
+        let task = restored
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("state-changing create error should persist task");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_attempts.len(), 1);
+    }
+
+    #[test]
     fn open_execute_marks_task_active() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
@@ -2645,7 +3257,7 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Active
+            LifecycleStatus::Reviewable
         );
     }
 
@@ -2676,9 +3288,9 @@ mod tests {
     }
 
     #[test]
-    fn failed_external_command_does_not_mutate_task_state() {
+    fn failed_merge_records_attention_without_lifecycle_change() {
         let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![output(42, "")]);
+        let mut runner = QueuedRunner::new(vec![output(0, ""), output(42, "")]);
 
         let error = run_with_context_and_runner(
             ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
@@ -2687,26 +3299,31 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message == "command failed: git exited with status 42"));
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 42")
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
         assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Reviewable
+            task.live_status
+                .as_ref()
+                .map(|status| (status.kind, status.summary.as_str())),
+            Some((LiveStatusKind::CommandFailed, "merge failed"))
         );
     }
 
     #[test]
     fn external_command_failure_uses_operator_facing_message() {
         let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![CommandOutput {
-            status_code: 42,
-            stdout: String::new(),
-            stderr: "merge failed".to_string(),
-        }]);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            CommandOutput {
+                status_code: 42,
+                stdout: String::new(),
+                stderr: "merge failed".to_string(),
+            },
+        ]);
 
         let error = run_with_context_and_runner(
             ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
@@ -2715,8 +3332,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(matches!(&error, super::CliError::CommandFailed(message)
-                if message == "command failed: git exited with status 42: merge failed"));
+        assert!(
+            matches!(&error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 42: merge failed")
+        );
         assert!(!error.to_string().contains("NonZeroExit"));
     }
 
@@ -2739,6 +3358,50 @@ mod tests {
                 .unwrap()
                 .lifecycle_status,
             LifecycleStatus::Merged
+        );
+    }
+
+    #[test]
+    fn merge_execute_refreshes_git_evidence_before_merge_commands() {
+        let mut context = sample_context();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands().first(),
+            Some(&CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/tmp/worktrees/web-fix-login",
+                    "status",
+                    "--porcelain=v1",
+                    "--branch"
+                ]
+            ))
         );
     }
 
@@ -2828,7 +3491,54 @@ mod tests {
     }
 
     #[test]
-    fn clean_execute_removes_risky_task_without_yes() {
+    fn clean_execute_requires_yes_for_risky_task_without_running() {
+        let mut context = cleanable_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        let git_status = task.git_status.as_mut().unwrap();
+        git_status.dirty = true;
+        git_status.merged = false;
+        git_status.unpushed_commits = 1;
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = run_with_context_and_runner(
+            ["ajax", "clean", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            super::CliError::CommandFailed("confirmation required; pass --yes".to_string())
+        );
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/tmp/worktrees/web-fix-login",
+                    "status",
+                    "--porcelain=v1",
+                    "--branch"
+                ]
+            )]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Cleanable
+        );
+    }
+
+    #[test]
+    fn clean_execute_removes_risky_task_with_yes() {
         let mut context = cleanable_context();
         let task = context
             .registry
@@ -2841,7 +3551,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute"],
+            ["ajax", "clean", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2850,6 +3560,16 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
                 CommandSpec::new(
                     "git",
                     [
@@ -2881,6 +3601,90 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Removed
         );
+    }
+
+    #[test]
+    fn clean_execute_partial_failure_after_tmux_kill_updates_tmux_evidence() {
+        let mut context = cleanable_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "## ajax/fix-login\n"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 2,
+                stdout: String::new(),
+                stderr: "remove failed".to_string(),
+            },
+        ]);
+
+        let error = run_with_context_and_runner(
+            ["ajax", "clean", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 2: remove failed")
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Cleanable);
+        assert_eq!(
+            task.tmux_status,
+            Some(TmuxStatus {
+                exists: false,
+                session_name: "ajax-web-fix-login".to_string(),
+            })
+        );
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
+    }
+
+    #[test]
+    fn clean_execute_partial_failure_after_worktree_remove_updates_git_evidence() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "## ajax/fix-login\n"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 2,
+                stdout: String::new(),
+                stderr: "branch delete failed".to_string(),
+            },
+        ]);
+
+        let error = run_with_context_and_runner(
+            ["ajax", "clean", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 2: branch delete failed")
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Cleanable);
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| { !status.worktree_exists && status.branch_exists }));
+        assert!(!ajax_core::commands::list_tasks(&context, None)
+            .tasks
+            .is_empty());
     }
 
     #[test]
@@ -2922,6 +3726,50 @@ mod tests {
     }
 
     #[test]
+    fn trunk_execute_clears_missing_tmux_and_worktrunk_flags() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.add_side_flag(SideFlag::WorktrunkMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: false,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: false,
+        });
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "trunk", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
+        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert_eq!(
+            task.tmux_status,
+            Some(TmuxStatus::present("ajax-web-fix-login"))
+        );
+        assert_eq!(
+            task.worktrunk_status,
+            Some(WorktrunkStatus::present(
+                "worktrunk",
+                "/tmp/worktrees/web-fix-login"
+            ))
+        );
+    }
+
+    #[test]
     fn check_execute_uses_injected_runner() {
         let mut context = sample_context();
         context.config.test_commands =
@@ -2940,6 +3788,70 @@ mod tests {
             &[CommandSpec::new("sh", ["-lc", "cargo test"])
                 .with_cwd("/tmp/worktrees/web-fix-login")]
         );
+    }
+
+    #[test]
+    fn check_execute_failure_records_tests_failed_attention_without_lifecycle_corruption() {
+        let mut context = sample_context();
+        context.config.test_commands =
+            vec![ajax_core::config::TestCommand::new("web", "cargo test")];
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 42,
+            stdout: String::new(),
+            stderr: "tests failed".to_string(),
+        }]);
+
+        let error = run_with_context_and_runner(
+            ["ajax", "check", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: sh exited with status 42 in /tmp/worktrees/web-fix-login: tests failed")
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert!(task.has_side_flag(SideFlag::TestsFailed));
+        assert_eq!(
+            task.live_status
+                .as_ref()
+                .map(|status| (status.kind, status.summary.as_str())),
+            Some((LiveStatusKind::CommandFailed, "check failed"))
+        );
+    }
+
+    #[test]
+    fn check_execute_success_promotes_active_task_to_reviewable() {
+        let mut context = sample_context();
+        context.config.test_commands =
+            vec![ajax_core::config::TestCommand::new("web", "cargo test")];
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TestsFailed);
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "check", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert!(!task.has_side_flag(SideFlag::TestsFailed));
+        assert!(task.live_status.is_none());
     }
 
     #[test]
@@ -3032,7 +3944,12 @@ mod tests {
         let mut runner = QueuedRunner::new(vec![
             output(0, ""),
             output(0, ""),
-            output(2, "remove failed"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 2,
+                stdout: String::new(),
+                stderr: "branch delete failed".to_string(),
+            },
         ]);
 
         let error = run_with_context_paths_and_runner(
@@ -3059,6 +3976,12 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
+        let failed_task = restored.get_task(&TaskId::new("task-2")).unwrap();
+        assert!(failed_task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(failed_task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| { !status.worktree_exists && status.branch_exists }));
     }
 
     #[test]
@@ -3133,6 +4056,9 @@ mod tests {
                 ajax_tui::ActionOutcome::Refresh { .. } => {
                     panic!("{action} should defer for execution instead of refreshing")
                 }
+                ajax_tui::ActionOutcome::Confirm(message) => {
+                    panic!("{action} should defer for execution instead of confirming: {message}")
+                }
             }
             assert!(!state_changed, "{action} should not mutate Ajax state");
         }
@@ -3186,7 +4112,6 @@ mod tests {
     fn removed_cockpit_task_actions_are_unknown() {
         let mut context = sample_context();
         for action in [
-            "open worktrunk",
             "inspect task",
             "inspect agent",
             "inspect test output",
@@ -3284,6 +4209,9 @@ mod tests {
                     ajax_tui::ActionOutcome::Message(message) => {
                         panic!("{action} should defer, got message: {message}");
                     }
+                    ajax_tui::ActionOutcome::Confirm(message) => {
+                        panic!("{action} should defer, got confirm: {message}");
+                    }
                     ajax_tui::ActionOutcome::Refresh { .. } => {
                         panic!("{action} should defer, got refresh");
                     }
@@ -3301,6 +4229,9 @@ mod tests {
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
                         panic!("{action} should render in cockpit, got defer");
+                    }
+                    ajax_tui::ActionOutcome::Confirm(message) => {
+                        panic!("{action} should render in cockpit, got confirm: {message}");
                     }
                     ajax_tui::ActionOutcome::Refresh { .. } => {
                         panic!("{action} should render in cockpit, got refresh");
@@ -3328,6 +4259,9 @@ mod tests {
                     }
                     ajax_tui::ActionOutcome::Message(message) => {
                         panic!("{action} should refresh, got message: {message}");
+                    }
+                    ajax_tui::ActionOutcome::Confirm(message) => {
+                        panic!("{action} should refresh, got confirm: {message}");
                     }
                 },
             }
@@ -3454,6 +4388,51 @@ mod tests {
         assert!(runner.commands.is_empty());
         assert!(context.registry.list_tasks().is_empty());
         assert!(!state_changed);
+    }
+
+    #[test]
+    fn failed_pending_new_task_action_marks_state_changed_for_cockpit_recovery() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web".to_string(),
+            recommended_action: "new task".to_string(),
+            task_title: Some("Fix login".to_string()),
+        };
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 42,
+            stdout: String::new(),
+            stderr: "git failed".to_string(),
+        }]);
+        let mut state_changed = false;
+
+        let error = crate::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            OpenMode::Attach,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: git exited with status 42: git failed")
+        );
+        assert!(state_changed);
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("failed cockpit create should leave a visible task");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(ajax_core::commands::inbox(&context).items.len(), 1);
     }
 
     #[test]
@@ -3723,7 +4702,6 @@ mod tests {
     #[test]
     fn pending_cockpit_removed_actions_are_rejected() {
         for action in [
-            "open worktrunk",
             "inspect agent",
             "inspect test output",
             "monitor task",
@@ -3756,7 +4734,54 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_alias_actions_run_open_plan_and_mark_active() {
+    fn pending_cockpit_open_worktrunk_runs_trunk_plan() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open worktrunk".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_alias_actions_run_open_plan_without_lifecycle_change() {
         let action = "open task";
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
@@ -3794,8 +4819,8 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Active,
-            "{action} should mark the task active"
+            LifecycleStatus::Reviewable,
+            "{action} should preserve the task lifecycle"
         );
         assert!(state_changed, "{action}");
     }
@@ -3931,7 +4956,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_action_runs_task_and_marks_active() {
+    fn pending_cockpit_open_action_runs_task_without_lifecycle_change() {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
@@ -3967,7 +4992,7 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Active
+            LifecycleStatus::Reviewable
         );
         assert!(state_changed);
     }
@@ -4132,8 +5157,13 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_clean_action_runs_and_refreshes_inside_ajax() {
+    fn cockpit_clean_action_requires_confirmation_before_running() {
         let mut context = cleanable_context();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::Dirty);
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__task_action__web_fix_login__clean"),
             task_handle: "web/fix-login".to_string(),
@@ -4147,6 +5177,41 @@ mod tests {
         let outcome =
             super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
                 .unwrap();
+
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
+            if message.contains("press enter again") && message.contains("clean task")));
+        assert!(runner.commands().is_empty());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Cleanable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn confirmed_cockpit_clean_action_runs_and_refreshes_inside_ajax() {
+        let mut context = cleanable_context();
+        let item = ajax_core::models::AttentionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__clean"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Clean task".to_string(),
+            priority: 0,
+            recommended_action: "clean task".to_string(),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let outcome = super::tui_cockpit_confirmed_action(
+            &item,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Refresh {
@@ -4163,6 +5228,9 @@ mod tests {
             }
             ajax_tui::ActionOutcome::Message(message) => {
                 panic!("clean task should run instead of showing message: {message}")
+            }
+            ajax_tui::ActionOutcome::Confirm(message) => {
+                panic!("confirmed clean task should run instead of confirming: {message}")
             }
         }
         assert_eq!(

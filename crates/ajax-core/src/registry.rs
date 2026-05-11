@@ -6,6 +6,9 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::lifecycle::{
+    validate_lifecycle_transition, LifecycleTransitionError, LifecycleTransitionReason,
+};
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
     LiveStatusKind, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
@@ -30,6 +33,21 @@ pub trait Registry {
         task_id: TaskId,
         kind: RegistryEventKind,
         message: impl Into<String>,
+    ) -> Result<(), RegistryError>;
+    fn update_git_status(
+        &mut self,
+        task_id: &TaskId,
+        status: GitStatus,
+    ) -> Result<(), RegistryError>;
+    fn update_tmux_status(
+        &mut self,
+        task_id: &TaskId,
+        status: Option<TmuxStatus>,
+    ) -> Result<(), RegistryError>;
+    fn update_worktrunk_status(
+        &mut self,
+        task_id: &TaskId,
+        status: Option<WorktrunkStatus>,
     ) -> Result<(), RegistryError>;
     fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent>;
 }
@@ -79,6 +97,13 @@ impl Registry for InMemoryRegistry {
             return Err(RegistryError::TaskNotFound(task_id.clone()));
         };
 
+        validate_lifecycle_transition(
+            task.lifecycle_status,
+            status,
+            LifecycleTransitionReason::Generic,
+        )
+        .map_err(RegistryError::InvalidLifecycleTransition)?;
+
         task.lifecycle_status = status;
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
@@ -103,6 +128,63 @@ impl Registry for InMemoryRegistry {
 
         self.events
             .push(RegistryEvent::new(task_id, kind, message.into()));
+
+        Ok(())
+    }
+
+    fn update_git_status(
+        &mut self,
+        task_id: &TaskId,
+        status: GitStatus,
+    ) -> Result<(), RegistryError> {
+        let Some(task) = self.tasks.get_mut(task_id) else {
+            return Err(RegistryError::TaskNotFound(task_id.clone()));
+        };
+
+        task.git_status = Some(status);
+        self.events.push(RegistryEvent::new(
+            task_id.clone(),
+            RegistryEventKind::SubstrateChanged,
+            "git evidence changed",
+        ));
+
+        Ok(())
+    }
+
+    fn update_tmux_status(
+        &mut self,
+        task_id: &TaskId,
+        status: Option<TmuxStatus>,
+    ) -> Result<(), RegistryError> {
+        let Some(task) = self.tasks.get_mut(task_id) else {
+            return Err(RegistryError::TaskNotFound(task_id.clone()));
+        };
+
+        task.tmux_status = status;
+        self.events.push(RegistryEvent::new(
+            task_id.clone(),
+            RegistryEventKind::SubstrateChanged,
+            "tmux evidence changed",
+        ));
+
+        Ok(())
+    }
+
+    fn update_worktrunk_status(
+        &mut self,
+        task_id: &TaskId,
+        status: Option<WorktrunkStatus>,
+    ) -> Result<(), RegistryError> {
+        let Some(task) = self.tasks.get_mut(task_id) else {
+            return Err(RegistryError::TaskNotFound(task_id.clone()));
+        };
+
+        task.worktrunk_status = status;
+        self.events.push(RegistryEvent::new(
+            task_id.clone(),
+            RegistryEventKind::SubstrateChanged,
+            "worktrunk evidence changed",
+        ));
 
         Ok(())
     }
@@ -992,6 +1074,7 @@ fn registry_event_kind_name(value: RegistryEventKind) -> &'static str {
     match value {
         RegistryEventKind::TaskCreated => "TaskCreated",
         RegistryEventKind::LifecycleChanged => "LifecycleChanged",
+        RegistryEventKind::SubstrateChanged => "SubstrateChanged",
         RegistryEventKind::UserNote => "UserNote",
     }
 }
@@ -1000,6 +1083,7 @@ fn parse_registry_event_kind(value: &str) -> Result<RegistryEventKind, RegistryS
     match value {
         "TaskCreated" => Ok(RegistryEventKind::TaskCreated),
         "LifecycleChanged" => Ok(RegistryEventKind::LifecycleChanged),
+        "SubstrateChanged" => Ok(RegistryEventKind::SubstrateChanged),
         "UserNote" => Ok(RegistryEventKind::UserNote),
         _ => Err(RegistrySnapshotError::Decode(format!(
             "unknown registry event kind: {value}"
@@ -1011,6 +1095,7 @@ fn parse_registry_event_kind(value: &str) -> Result<RegistryEventKind, RegistryS
 pub enum RegistryError {
     DuplicateTask(TaskId),
     TaskNotFound(TaskId),
+    InvalidLifecycleTransition(LifecycleTransitionError),
 }
 
 impl fmt::Display for RegistryError {
@@ -1022,6 +1107,11 @@ impl fmt::Display for RegistryError {
             Self::TaskNotFound(task_id) => {
                 write!(formatter, "task not found: {}", task_id.as_str())
             }
+            Self::InvalidLifecycleTransition(error) => write!(
+                formatter,
+                "invalid lifecycle transition: {:?} -> {:?} ({:?})",
+                error.from, error.to, error.reason
+            ),
         }
     }
 }
@@ -1088,6 +1178,7 @@ impl RegistryEvent {
 pub enum RegistryEventKind {
     TaskCreated,
     LifecycleChanged,
+    SubstrateChanged,
     UserNote,
 }
 
@@ -1264,6 +1355,7 @@ mod tests {
     #[rstest]
     #[case("TaskCreated", RegistryEventKind::TaskCreated)]
     #[case("LifecycleChanged", RegistryEventKind::LifecycleChanged)]
+    #[case("SubstrateChanged", RegistryEventKind::SubstrateChanged)]
     #[case("UserNote", RegistryEventKind::UserNote)]
     fn parses_registry_event_kind_names(#[case] name: &str, #[case] expected: RegistryEventKind) {
         assert_eq!(parse_registry_event_kind(name).unwrap(), expected);
@@ -1300,6 +1392,25 @@ mod tests {
     }
 
     #[test]
+    fn invalid_lifecycle_update_is_rejected_without_mutating_task() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-1", "web", "fix-login");
+        task.lifecycle_status = LifecycleStatus::Merged;
+        registry.create_task(task).unwrap();
+
+        let result = registry.update_lifecycle(&TaskId::new("task-1"), LifecycleStatus::Active);
+
+        assert!(result.is_err());
+        assert_eq!(
+            registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Merged
+        );
+    }
+
+    #[test]
     fn records_event_history_for_task_changes() {
         let mut registry = InMemoryRegistry::default();
         registry
@@ -1319,6 +1430,69 @@ mod tests {
         assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
         assert_eq!(events[1].kind, RegistryEventKind::UserNote);
         assert_eq!(events[1].message, "ready for review");
+    }
+
+    #[test]
+    fn lifecycle_updates_record_central_registry_events() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+
+        registry
+            .update_lifecycle(&TaskId::new("task-1"), LifecycleStatus::Active)
+            .unwrap();
+
+        let events = registry.events_for_task(&TaskId::new("task-1"));
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind, RegistryEventKind::LifecycleChanged);
+        assert_eq!(events[1].message, "lifecycle changed to Active");
+    }
+
+    #[test]
+    fn substrate_evidence_updates_record_central_registry_events() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+
+        registry
+            .update_git_status(
+                &TaskId::new("task-1"),
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        registry
+            .update_tmux_status(
+                &TaskId::new("task-1"),
+                Some(TmuxStatus::present("ajax-web-fix-login")),
+            )
+            .unwrap();
+        registry
+            .update_worktrunk_status(
+                &TaskId::new("task-1"),
+                Some(WorktrunkStatus::present("worktrunk", "/tmp/web")),
+            )
+            .unwrap();
+
+        let events = registry.events_for_task(&TaskId::new("task-1"));
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[1].kind, RegistryEventKind::SubstrateChanged);
+        assert_eq!(events[1].message, "git evidence changed");
+        assert_eq!(events[2].message, "tmux evidence changed");
+        assert_eq!(events[3].message, "worktrunk evidence changed");
     }
 
     #[test]
@@ -1564,6 +1738,54 @@ mod tests {
             events[1].occurred_at,
             SystemTime::UNIX_EPOCH + Duration::new(1_700_000_040, 222)
         );
+    }
+
+    #[test]
+    fn sqlite_registry_store_round_trips_substrate_events_and_evidence() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        registry
+            .update_git_status(
+                &TaskId::new("task-1"),
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: true,
+                    ahead: 1,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 1,
+                    unpushed_commits: 1,
+                    conflicted: false,
+                    last_commit: Some("abc123".to_string()),
+                },
+            )
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "substrate-event-round-trip"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let task = restored.get_task(&TaskId::new("task-1")).unwrap();
+        let events = restored.events_for_task(&TaskId::new("task-1"));
+
+        assert_eq!(
+            task.git_status
+                .as_ref()
+                .and_then(|status| status.last_commit.as_deref()),
+            Some("abc123")
+        );
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].kind, RegistryEventKind::SubstrateChanged);
+        assert_eq!(events[1].message, "git evidence changed");
     }
 
     #[test]

@@ -5,7 +5,12 @@ use crate::{
     },
     attention::derive_attention_items,
     config::Config,
-    models::{AgentClient, LifecycleStatus, SafetyClassification, SideFlag, Task, TaskId},
+    live::LiveStatusKind,
+    models::{
+        AgentClient, LifecycleStatus, LiveObservation, RecommendedAction, SafetyClassification,
+        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+    },
+    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     output::{
         CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
@@ -143,7 +148,7 @@ pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
                 .registry
                 .list_tasks()
                 .into_iter()
-                .filter(|task| task.repo == repo.name && is_operational_task(task))
+                .filter(|task| task.repo == repo.name && is_visible_task(task))
                 .collect();
 
             RepoSummary {
@@ -165,7 +170,7 @@ pub fn list_tasks<R: Registry>(context: &CommandContext<R>, repo: Option<&str>) 
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .filter(|task| repo.is_none_or(|repo_name| task.repo == repo_name))
         .map(task_summary)
         .collect();
@@ -178,7 +183,7 @@ pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .filter(|task| {
             matches!(
                 task.lifecycle_status,
@@ -221,7 +226,7 @@ pub fn inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .cloned()
         .collect::<Vec<_>>();
 
@@ -371,7 +376,7 @@ pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: Syste
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
     let mut tasks_changed = 0;
@@ -543,8 +548,35 @@ pub fn open_task_plan<R: Registry>(
     mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let tmux = TmuxAdapter::new("tmux");
+    let needs_trunk_repair = task.has_side_flag(SideFlag::TmuxMissing)
+        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists)
+        || task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| !status.exists || !status.points_at_expected_path);
+    let has_non_tmux_missing_substrate = task.has_side_flag(SideFlag::WorktreeMissing)
+        || task.has_side_flag(SideFlag::BranchMissing)
+        || task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists || !status.branch_exists);
+    if needs_trunk_repair && !has_non_tmux_missing_substrate {
+        return trunk_task_plan(context, qualified_handle);
+    }
+
     let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Open)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
+    let tmux = TmuxAdapter::new("tmux");
     plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
     match mode {
@@ -563,7 +595,90 @@ pub fn mark_task_opened<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
-    update_task_lifecycle(context, qualified_handle, LifecycleStatus::Active)
+    let _ = find_task(context, qualified_handle)?;
+    Ok(())
+}
+
+pub fn mark_task_trunk_repaired<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if let Some(task) = context.registry.get_task_mut(&task.id) {
+        task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            task.worktrunk_window.clone(),
+            task.worktree_path.clone(),
+        ));
+        task.remove_side_flag(SideFlag::TmuxMissing);
+        task.remove_side_flag(SideFlag::WorktrunkMissing);
+        if task.live_status.as_ref().is_some_and(|status| {
+            matches!(
+                status.kind,
+                LiveStatusKind::TmuxMissing | LiveStatusKind::WorktrunkMissing
+            )
+        }) {
+            task.live_status = None;
+        }
+    }
+    Ok(())
+}
+
+pub fn mark_task_check_started<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if let Some(task) = context.registry.get_task_mut(&task.id) {
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TestsRunning,
+            "check running",
+        ));
+        task.remove_side_flag(SideFlag::TestsFailed);
+    }
+    Ok(())
+}
+
+pub fn mark_task_check_succeeded<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Active | LifecycleStatus::Waiting
+    ) {
+        context
+            .registry
+            .update_lifecycle(&task.id, LifecycleStatus::Reviewable)
+            .map_err(CommandError::Registry)?;
+    }
+    if let Some(task) = context.registry.get_task_mut(&task.id) {
+        task.remove_side_flag(SideFlag::TestsFailed);
+        if task
+            .live_status
+            .as_ref()
+            .is_some_and(|status| status.kind == LiveStatusKind::TestsRunning)
+        {
+            task.live_status = None;
+        }
+    }
+    Ok(())
+}
+
+pub fn mark_task_check_failed<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if let Some(task) = context.registry.get_task_mut(&task.id) {
+        task.add_side_flag(SideFlag::TestsFailed);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "check failed",
+        ));
+    }
+    Ok(())
 }
 
 pub fn merge_task_plan<R: Registry>(
@@ -571,11 +686,27 @@ pub fn merge_task_plan<R: Registry>(
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
+    let mut plan = CommandPlan::new(format!("merge task: {qualified_handle}"));
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
+    ) {
+        let preflight_reasons = merge_preflight_blocked_reasons(task);
+        if !preflight_reasons.is_empty() {
+            plan.blocked_reasons = preflight_reasons;
+            return Ok(plan);
+        }
+    }
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Merge)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
     let repo_path = task_repo_path(context, task)
         .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
     let git = GitAdapter::new("git");
-    let mut plan = CommandPlan::new(format!("merge task: {qualified_handle}"));
-
     plan.requires_confirmation = task.side_flags().next().is_some();
     plan.commands
         .push(git.switch_branch(&repo_path, &task.base_branch));
@@ -585,6 +716,28 @@ pub fn merge_task_plan<R: Registry>(
     Ok(plan)
 }
 
+fn merge_preflight_blocked_reasons(task: &Task) -> Vec<String> {
+    let mut reasons = Vec::new();
+    if task.has_side_flag(SideFlag::Dirty)
+        || task.has_side_flag(SideFlag::Conflicted)
+        || task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.dirty || status.untracked_files > 0 || status.conflicted)
+    {
+        reasons.push("merge requires clean worktree evidence".to_string());
+    }
+    if task.has_side_flag(SideFlag::BranchMissing)
+        || task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.branch_exists)
+    {
+        reasons.push("task branch is missing".to_string());
+    }
+    reasons
+}
+
 pub fn mark_task_merged<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
@@ -592,18 +745,112 @@ pub fn mark_task_merged<R: Registry>(
     update_task_lifecycle(context, qualified_handle, LifecycleStatus::Merged)
 }
 
+pub fn mark_task_merge_failed<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    conflicted: bool,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if let Some(task) = context.registry.get_task_mut(&task.id) {
+        if conflicted {
+            task.add_side_flag(SideFlag::Conflicted);
+        }
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "merge failed",
+        ));
+    }
+    Ok(())
+}
+
+pub fn mark_task_cleanup_step_completed<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    command: &CommandSpec,
+) -> Result<bool, CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    let Some(task) = context.registry.get_task_mut(&task.id) else {
+        return Err(CommandError::TaskNotFound(qualified_handle.to_string()));
+    };
+
+    if command.program == "tmux"
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg == "kill-session")
+    {
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: task.tmux_session.clone(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: false,
+            window_name: task.worktrunk_window.clone(),
+            current_path: task.worktree_path.clone(),
+            points_at_expected_path: false,
+        });
+        task.remove_side_flag(SideFlag::TmuxMissing);
+        task.remove_side_flag(SideFlag::WorktrunkMissing);
+        return Ok(true);
+    }
+
+    if command.program == "git"
+        && command.args.iter().any(|arg| arg == "worktree")
+        && command.args.iter().any(|arg| arg == "remove")
+    {
+        if let Some(git_status) = task.git_status.as_mut() {
+            git_status.worktree_exists = false;
+            git_status.dirty = false;
+            git_status.untracked_files = 0;
+            git_status.conflicted = false;
+        }
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        task.remove_side_flag(SideFlag::Dirty);
+        task.remove_side_flag(SideFlag::Conflicted);
+        return Ok(true);
+    }
+
+    if command.program == "git"
+        && command.args.iter().any(|arg| arg == "branch")
+        && (command.args.iter().any(|arg| arg == "-d")
+            || command.args.iter().any(|arg| arg == "-D"))
+    {
+        if let Some(git_status) = task.git_status.as_mut() {
+            git_status.branch_exists = false;
+            git_status.current_branch = None;
+            git_status.ahead = 0;
+            git_status.behind = 0;
+            git_status.unpushed_commits = 0;
+        }
+        task.add_side_flag(SideFlag::BranchMissing);
+        task.remove_side_flag(SideFlag::Unpushed);
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
 pub fn clean_task_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    let safety = cleanup_safety(task);
     let mut plan = CommandPlan::new(format!("clean task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Clean)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
+    let safety = cleanup_safety(task);
 
     match safety.classification {
-        SafetyClassification::Safe
-        | SafetyClassification::NeedsConfirmation
-        | SafetyClassification::Dangerous => {
+        SafetyClassification::Safe => {
+            plan.commands = native_cleanup_commands(context, task)?;
+        }
+        SafetyClassification::NeedsConfirmation | SafetyClassification::Dangerous => {
+            plan.requires_confirmation = true;
             plan.commands = native_cleanup_commands(context, task)?;
         }
         SafetyClassification::Blocked => {
@@ -620,10 +867,19 @@ pub fn ensure_cleanup_git_status<R: Registry>(
     runner: &mut impl CommandRunner,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
-    if task.git_status.is_some() {
-        return Ok(());
-    }
+    let merged = task.lifecycle_status == LifecycleStatus::Merged
+        || task.lifecycle_status == LifecycleStatus::Cleanable
+        || task.git_status.as_ref().is_some_and(|status| status.merged);
+    refresh_git_evidence(context, qualified_handle, runner, merged)
+}
 
+pub fn refresh_git_evidence<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    runner: &mut impl CommandRunner,
+    merged: bool,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
     let git = GitAdapter::new("git");
     let output = runner
         .run(&git.status(&task.worktree_path.display().to_string()))
@@ -637,17 +893,69 @@ pub fn ensure_cleanup_git_status<R: Registry>(
         }));
     }
 
-    let merged = task.lifecycle_status == LifecycleStatus::Merged
-        || task.lifecycle_status == LifecycleStatus::Cleanable
-        || task.git_status.as_ref().is_some_and(|status| status.merged);
-    let git_status = GitAdapter::parse_status(&output.stdout, merged);
+    let has_branch_evidence = output.stdout.lines().any(|line| line.starts_with("## "));
+    let mut git_status = GitAdapter::parse_status(&output.stdout, merged);
+    if !has_branch_evidence && output.stdout.trim().is_empty() {
+        if let Some(previous) = task.git_status.as_ref() {
+            git_status = previous.clone();
+        } else {
+            return Ok(());
+        }
+    } else if !has_branch_evidence {
+        if let Some(previous) = task.git_status.as_ref() {
+            git_status.branch_exists = previous.branch_exists;
+            git_status
+                .current_branch
+                .clone_from(&previous.current_branch);
+        }
+    }
     let task = context
         .registry
         .get_task_mut(&task.id)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-    task.git_status = Some(git_status);
+    apply_git_evidence(task, git_status, has_branch_evidence);
 
     Ok(())
+}
+
+fn apply_git_evidence(
+    task: &mut Task,
+    git_status: crate::models::GitStatus,
+    has_branch_evidence: bool,
+) {
+    if git_status.worktree_exists {
+        task.remove_side_flag(SideFlag::WorktreeMissing);
+    } else {
+        task.add_side_flag(SideFlag::WorktreeMissing);
+    }
+
+    if has_branch_evidence {
+        if git_status.branch_exists {
+            task.remove_side_flag(SideFlag::BranchMissing);
+        } else {
+            task.add_side_flag(SideFlag::BranchMissing);
+        }
+    }
+
+    if git_status.dirty || git_status.untracked_files > 0 {
+        task.add_side_flag(SideFlag::Dirty);
+    } else {
+        task.remove_side_flag(SideFlag::Dirty);
+    }
+
+    if git_status.conflicted {
+        task.add_side_flag(SideFlag::Conflicted);
+    } else {
+        task.remove_side_flag(SideFlag::Conflicted);
+    }
+
+    if git_status.has_unpushed_work() {
+        task.add_side_flag(SideFlag::Unpushed);
+    } else {
+        task.remove_side_flag(SideFlag::Unpushed);
+    }
+
+    task.git_status = Some(git_status);
 }
 
 pub fn check_task_plan<R: Registry>(
@@ -655,6 +963,14 @@ pub fn check_task_plan<R: Registry>(
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
+    let mut plan = CommandPlan::new(format!("check task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Check)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
     let Some(test_command) = context
         .config
         .test_commands
@@ -666,7 +982,6 @@ pub fn check_task_plan<R: Registry>(
             task.repo
         )]));
     };
-    let mut plan = CommandPlan::new(format!("check task: {qualified_handle}"));
     plan.commands.push(
         CommandSpec::new("sh", ["-lc", test_command.command.as_str()])
             .with_cwd(task.worktree_path.display().to_string()),
@@ -681,6 +996,13 @@ pub fn diff_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("diff task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Diff)
+    {
+        plan.blocked_reasons = reasons;
+        return Ok(plan);
+    }
+
     let range = format!("{}...{}", task.base_branch, task.branch);
     plan.commands.push(
         CommandSpec::new("git", ["diff", "--stat", range.as_str()])
@@ -704,7 +1026,7 @@ pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPl
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
         .filter_map(|task| native_cleanup_commands(context, task).ok())
         .flatten()
@@ -775,7 +1097,7 @@ pub fn sweep_cleanup_candidates<R: Registry>(context: &CommandContext<R>) -> Vec
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| is_operational_task(task))
+        .filter(|task| is_visible_task(task))
         .filter(|task| cleanup_safety(task).classification == SafetyClassification::Safe)
         .map(Task::qualified_handle)
         .collect()
@@ -788,6 +1110,10 @@ pub fn trunk_task_plan<R: Registry>(
     let task = find_task(context, qualified_handle)?;
     let tmux = TmuxAdapter::new("tmux");
     let mut plan = CommandPlan::new(format!("open worktrunk: {qualified_handle}"));
+    if task.lifecycle_status == LifecycleStatus::Removed {
+        plan.blocked_reasons.push("task is removed".to_string());
+        return Ok(plan);
+    }
     if task
         .git_status
         .as_ref()
@@ -882,7 +1208,9 @@ fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
 fn count_active_tasks(tasks: &[&Task]) -> u32 {
     tasks
         .iter()
-        .filter(|task| task.lifecycle_status == LifecycleStatus::Active)
+        .filter(|task| {
+            task.lifecycle_status == LifecycleStatus::Active && !task.has_missing_substrate()
+        })
         .count() as u32
 }
 
@@ -893,8 +1221,8 @@ fn count_attention_items(tasks: &[&Task]) -> u32 {
         .sum()
 }
 
-fn is_operational_task(task: &Task) -> bool {
-    task.lifecycle_status != LifecycleStatus::Removed && !task.has_missing_substrate()
+fn is_visible_task(task: &Task) -> bool {
+    task.lifecycle_status != LifecycleStatus::Removed
 }
 
 fn task_summary(task: &Task) -> TaskSummary {
@@ -905,7 +1233,24 @@ fn task_summary(task: &Task) -> TaskSummary {
         lifecycle_status: format!("{:?}", task.lifecycle_status),
         needs_attention: !derive_attention_items(std::slice::from_ref(task)).is_empty(),
         live_status: task.live_status.clone(),
+        actions: task_actions(task),
     }
+}
+
+fn task_actions(task: &Task) -> Vec<String> {
+    if task.has_side_flag(SideFlag::TmuxMissing) || task.has_side_flag(SideFlag::WorktrunkMissing) {
+        return vec![RecommendedAction::OpenTrunk.as_str().to_string()];
+    }
+
+    [
+        (TaskOperation::Open, RecommendedAction::OpenTask),
+        (TaskOperation::Merge, RecommendedAction::MergeTask),
+        (TaskOperation::Clean, RecommendedAction::CleanTask),
+    ]
+    .into_iter()
+    .filter(|(operation, _)| task_operation_eligibility(task, *operation).is_allowed())
+    .map(|(_, action)| action.as_str().to_string())
+    .collect()
 }
 
 fn find_task<'a, R: Registry>(
@@ -990,13 +1335,14 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
-            AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId, TmuxStatus,
-            WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, RecommendedAction, SideFlag, Task, TaskId,
+            TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry},
     };
     use proptest::prelude::*;
+    use rstest::rstest;
 
     fn context_with_tasks() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -1462,6 +1808,21 @@ mod tests {
     }
 
     #[test]
+    fn repo_attention_count_includes_broken_visible_tasks() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let response = list_repos(&context);
+
+        assert_eq!(response.repos[0].attention_items, 1);
+    }
+
+    #[test]
     fn tasks_can_be_filtered_by_repo() {
         let context = context_with_tasks();
 
@@ -1472,6 +1833,21 @@ mod tests {
         assert_eq!(all_tasks.tasks.len(), 1);
         assert_eq!(web_tasks.tasks.len(), 1);
         assert_eq!(api_tasks.tasks.len(), 0);
+    }
+
+    #[test]
+    fn missing_substrate_tasks_remain_visible_in_task_lists() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::WorktreeMissing);
+
+        let response = list_tasks(&context, None);
+
+        assert_eq!(response.tasks.len(), 1);
+        assert_eq!(response.tasks[0].qualified_handle, "web/fix-login");
     }
 
     #[test]
@@ -1490,6 +1866,77 @@ mod tests {
         let response = list_tasks(&context, None);
 
         assert!(response.tasks[0].needs_attention);
+    }
+
+    #[test]
+    fn task_summaries_expose_lifecycle_aware_actions() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.lifecycle_status = LifecycleStatus::Active;
+
+        let active = list_tasks(&context, None);
+        assert_eq!(
+            active.tasks[0].actions,
+            vec![RecommendedAction::OpenTask.as_str().to_string()]
+        );
+
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Reviewable;
+        let reviewable = list_tasks(&context, None);
+        assert_eq!(
+            reviewable.tasks[0].actions,
+            vec![
+                RecommendedAction::OpenTask.as_str().to_string(),
+                RecommendedAction::MergeTask.as_str().to_string(),
+            ]
+        );
+
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Cleanable;
+        let cleanable = list_tasks(&context, None);
+        assert_eq!(
+            cleanable.tasks[0].actions,
+            vec![
+                RecommendedAction::OpenTask.as_str().to_string(),
+                RecommendedAction::CleanTask.as_str().to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn task_summaries_expose_trunk_repair_for_missing_tmux_evidence() {
+        for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
+            let mut context = context_with_tasks();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.add_side_flag(flag);
+
+            let response = list_tasks(&context, None);
+
+            assert_eq!(
+                response.tasks[0].actions,
+                vec![RecommendedAction::OpenTrunk.as_str().to_string()],
+                "{flag:?}"
+            );
+            assert_eq!(
+                inbox(&context).items[0].recommended_action,
+                RecommendedAction::OpenTrunk.as_str(),
+                "{flag:?}"
+            );
+        }
     }
 
     #[test]
@@ -1512,7 +1959,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_substrate_tasks_are_hidden_from_operational_summaries() {
+    fn missing_substrate_tasks_are_visible_but_not_actionable() {
         for flag in [
             SideFlag::WorktreeMissing,
             SideFlag::BranchMissing,
@@ -1520,20 +1967,21 @@ mod tests {
             SideFlag::WorktrunkMissing,
         ] {
             let mut context = context_with_tasks();
-            context
+            let task = context
                 .registry
                 .get_task_mut(&TaskId::new("task-1"))
-                .unwrap()
-                .add_side_flag(flag);
+                .unwrap();
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.add_side_flag(flag);
 
-            assert!(list_tasks(&context, None).tasks.is_empty(), "{flag:?}");
-            assert!(review_queue(&context).tasks.is_empty(), "{flag:?}");
-            assert!(inbox(&context).items.is_empty(), "{flag:?}");
-            assert!(cockpit(&context).tasks.tasks.is_empty(), "{flag:?}");
+            assert_eq!(list_tasks(&context, None).tasks.len(), 1, "{flag:?}");
+            assert_eq!(review_queue(&context).tasks.len(), 1, "{flag:?}");
+            assert_eq!(inbox(&context).items.len(), 1, "{flag:?}");
+            assert_eq!(cockpit(&context).tasks.tasks.len(), 1, "{flag:?}");
             assert_eq!(list_repos(&context).repos[0].active_tasks, 0, "{flag:?}");
             assert_eq!(
                 list_repos(&context).repos[0].reviewable_tasks,
-                0,
+                1,
                 "{flag:?}"
             );
         }
@@ -1985,6 +2433,64 @@ mod tests {
     }
 
     #[test]
+    fn open_task_plan_blocks_removed_tasks() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Removed;
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task is removed"]);
+    }
+
+    #[test]
+    fn direct_task_plans_block_removed_tasks() {
+        let mut context = context_with_test_command();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Removed;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+
+        let plans = [
+            open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap(),
+            merge_task_plan(&context, "web/fix-login").unwrap(),
+            clean_task_plan(&context, "web/fix-login").unwrap(),
+            check_task_plan(&context, "web/fix-login").unwrap(),
+            diff_task_plan(&context, "web/fix-login").unwrap(),
+        ];
+
+        for plan in plans {
+            assert!(plan.commands.is_empty(), "{}", plan.title);
+            assert!(
+                plan.blocked_reasons
+                    .iter()
+                    .any(|reason| reason == "task is removed"),
+                "{}: {:?}",
+                plan.title,
+                plan.blocked_reasons
+            );
+        }
+    }
+
+    #[test]
     fn check_task_plan_runs_configured_command_in_task_worktree() {
         let context = context_with_test_command();
 
@@ -1996,6 +2502,21 @@ mod tests {
             vec![CommandSpec::new("sh", ["-lc", "cargo test"])
                 .with_cwd("/tmp/worktrees/web-fix-login")]
         );
+    }
+
+    #[test]
+    fn check_task_plan_blocks_missing_worktree() {
+        let mut context = context_with_test_command();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::WorktreeMissing);
+
+        let plan = check_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task worktree is missing"]);
     }
 
     #[test]
@@ -2015,8 +2536,87 @@ mod tests {
     }
 
     #[test]
+    fn diff_task_plan_blocks_missing_worktree() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::WorktreeMissing);
+
+        let plan = diff_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task worktree is missing"]);
+    }
+
+    #[test]
+    fn trunk_task_plan_still_repairs_missing_tmux_flag() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::TmuxMissing);
+
+        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(!plan.commands.is_empty());
+        assert!(plan.blocked_reasons.is_empty());
+    }
+
+    #[test]
+    fn open_task_plan_routes_missing_tmux_to_trunk_repair() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = None;
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert_eq!(plan.title, "open worktrunk: web/fix-login");
+        assert!(plan.blocked_reasons.is_empty());
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+    }
+
+    #[test]
     fn lifecycle_transitions_update_registry_status() {
         let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Created;
 
         super::mark_task_opened(&mut context, "web/fix-login").unwrap();
         assert_eq!(
@@ -2025,9 +2625,14 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Active
+            LifecycleStatus::Created
         );
 
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Mergeable;
         super::mark_task_merged(&mut context, "web/fix-login").unwrap();
         assert_eq!(
             context
@@ -2038,6 +2643,11 @@ mod tests {
             LifecycleStatus::Merged
         );
 
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Cleanable;
         super::mark_task_removed(&mut context, "web/fix-login").unwrap();
         assert_eq!(
             context
@@ -2047,6 +2657,33 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Removed
         );
+    }
+
+    #[test]
+    fn mark_task_opened_preserves_existing_lifecycle() {
+        for status in [
+            LifecycleStatus::Reviewable,
+            LifecycleStatus::Merged,
+            LifecycleStatus::Cleanable,
+        ] {
+            let mut context = context_with_tasks();
+            context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status = status;
+
+            super::mark_task_opened(&mut context, "web/fix-login").unwrap();
+
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("task-1"))
+                    .unwrap()
+                    .lifecycle_status,
+                status
+            );
+        }
     }
 
     #[test]
@@ -2072,6 +2709,120 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn merge_task_plan_blocks_non_review_states() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+
+        let plan = merge_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(
+            plan.blocked_reasons,
+            vec!["merge requires reviewable or mergeable lifecycle"]
+        );
+    }
+
+    #[test]
+    fn merge_task_plan_allows_mergeable_tasks() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Mergeable;
+
+        let plan = merge_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(!plan.commands.is_empty());
+        assert!(plan.blocked_reasons.is_empty());
+    }
+
+    #[rstest]
+    #[case(
+        Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }),
+        None,
+        "merge requires clean worktree evidence"
+    )]
+    #[case(
+        Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: true,
+            last_commit: None,
+        }),
+        None,
+        "merge requires clean worktree evidence"
+    )]
+    #[case(
+        Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: false,
+            current_branch: None,
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }),
+        None,
+        "task branch is missing"
+    )]
+    #[case(None, Some(SideFlag::Dirty), "merge requires clean worktree evidence")]
+    #[case(
+        None,
+        Some(SideFlag::Conflicted),
+        "merge requires clean worktree evidence"
+    )]
+    #[case(None, Some(SideFlag::BranchMissing), "task branch is missing")]
+    fn merge_task_plan_blocks_risky_or_missing_branch_evidence(
+        #[case] git_status: Option<GitStatus>,
+        #[case] side_flag: Option<SideFlag>,
+        #[case] expected_reason: &str,
+    ) {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.git_status = git_status;
+        if let Some(side_flag) = side_flag {
+            task.add_side_flag(side_flag);
+        }
+
+        let plan = merge_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec![expected_reason]);
     }
 
     #[test]
@@ -2107,6 +2858,53 @@ mod tests {
                     ]
                 )
             ]
+        );
+    }
+
+    #[rstest]
+    #[case(SideFlag::Dirty)]
+    #[case(SideFlag::Conflicted)]
+    fn clean_plan_requires_confirmation_for_risky_cleanup(#[case] side_flag: SideFlag) {
+        let mut context = context_with_cleanable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(side_flag);
+        if let Some(git_status) = task.git_status.as_mut() {
+            match side_flag {
+                SideFlag::Dirty => {
+                    git_status.dirty = true;
+                }
+                SideFlag::Conflicted => {
+                    git_status.conflicted = true;
+                }
+                _ => {}
+            }
+        }
+
+        let plan = clean_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.requires_confirmation);
+        assert!(!plan.commands.is_empty());
+        assert!(plan.blocked_reasons.is_empty());
+    }
+
+    #[test]
+    fn clean_task_plan_blocks_non_cleanup_lifecycle() {
+        let mut context = context_with_cleanable_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+
+        let plan = clean_task_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(
+            plan.blocked_reasons,
+            vec!["clean requires merged or cleanable lifecycle"]
         );
     }
 
@@ -2154,6 +2952,132 @@ mod tests {
         assert!(task.tmux_status.is_none());
         assert!(task.worktrunk_status.is_none());
         assert!(task.live_status.is_none());
+    }
+
+    #[test]
+    fn cleanup_git_status_refreshes_even_when_cached_status_exists() {
+        let mut context = context_with_cleanable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status.as_mut().unwrap().dirty = true;
+        task.add_side_flag(SideFlag::Dirty);
+        let mut runner = QueuedRunner::new(vec![output(
+            0,
+            "## ajax/fix-login...origin/ajax/fix-login\n",
+        )]);
+
+        super::ensure_cleanup_git_status(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/tmp/worktrees/web-fix-login",
+                    "status",
+                    "--porcelain=v1",
+                    "--branch"
+                ]
+            )]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.git_status.as_ref().unwrap().dirty);
+        assert!(!task.has_side_flag(SideFlag::Dirty));
+    }
+
+    #[test]
+    fn git_evidence_refresh_parses_status_and_side_flags() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = None;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![output(
+            0,
+            "## ajax/fix-login...origin/ajax/fix-login [ahead 2]\nUU src/lib.rs\n?? notes.md\n",
+        )]);
+
+        super::refresh_git_evidence(&mut context, "web/fix-login", &mut runner, false).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert!(git_status.worktree_exists);
+        assert!(git_status.branch_exists);
+        assert_eq!(git_status.current_branch.as_deref(), Some("ajax/fix-login"));
+        assert!(git_status.dirty);
+        assert!(git_status.conflicted);
+        assert_eq!(git_status.untracked_files, 1);
+        assert_eq!(git_status.unpushed_commits, 2);
+        assert!(task.has_side_flag(SideFlag::Dirty));
+        assert!(task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.has_side_flag(SideFlag::Unpushed));
+    }
+
+    #[test]
+    fn git_evidence_refresh_clears_recovered_missing_worktree_and_branch_flags() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        task.add_side_flag(SideFlag::BranchMissing);
+        let mut runner = QueuedRunner::new(vec![output(
+            0,
+            "## ajax/fix-login...origin/ajax/fix-login\n",
+        )]);
+
+        super::refresh_git_evidence(&mut context, "web/fix-login", &mut runner, false).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn git_evidence_refresh_preserves_unresolved_missing_flags() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::BranchMissing);
+        let mut runner = QueuedRunner::new(vec![output(0, "## HEAD (no branch)\n")]);
+
+        super::refresh_git_evidence(&mut context, "web/fix-login", &mut runner, false).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn failed_git_evidence_refresh_preserves_existing_missing_flags() {
+        let mut context = context_with_tasks();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .add_side_flag(SideFlag::WorktreeMissing);
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 128,
+            stdout: String::new(),
+            stderr: "not a git repository".to_string(),
+        }]);
+
+        let result = super::refresh_git_evidence(&mut context, "web/fix-login", &mut runner, false);
+
+        assert!(result.is_err());
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .has_side_flag(SideFlag::WorktreeMissing));
     }
 
     #[test]

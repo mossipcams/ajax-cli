@@ -1,9 +1,17 @@
-use ajax_supervisor::{spawn_monitor, MonitorConfig};
+use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent};
 use clap::ArgMatches;
 
 use crate::CliError;
 
+#[cfg(test)]
 pub(crate) fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
+    let (output, _) = supervise_command_output_and_events(matches)?;
+    Ok(output)
+}
+
+pub(crate) fn supervise_command_output_and_events(
+    matches: &ArgMatches,
+) -> Result<(String, Vec<MonitorEvent>), CliError> {
     let prompt = matches
         .get_one::<String>("prompt")
         .cloned()
@@ -43,20 +51,22 @@ pub(crate) fn render_supervise_command(matches: &ArgMatches) -> Result<String, C
     }
 
     if json {
-        events
+        let output = events
             .iter()
             .map(|event| {
                 serde_json::to_string(event)
                     .map_err(|error| CliError::JsonSerialization(error.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
-            .map(|lines| lines.join("\n"))
+            .map(|lines| lines.join("\n"))?;
+        Ok((output, events))
     } else {
-        Ok(events
+        let output = events
             .iter()
             .map(ajax_supervisor::renderer::render_event_log_line)
             .collect::<Vec<_>>()
-            .join("\n"))
+            .join("\n");
+        Ok((output, events))
     }
 }
 

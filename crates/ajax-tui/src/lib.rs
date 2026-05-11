@@ -90,12 +90,18 @@ pub enum ActionOutcome {
     },
     /// Exit the TUI — the CLI will run the deferred action.
     Defer(PendingAction),
+    /// Ask for a second explicit activation before running a risky action.
+    Confirm(String),
     /// Show a brief status message then stay in the TUI.
     Message(String),
 }
 
 pub trait CockpitEventHandler {
     fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome>;
+
+    fn on_confirmed_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome> {
+        self.on_action(item)
+    }
 
     fn on_refresh(&mut self) -> io::Result<Option<CockpitResponse>> {
         Ok(None)
@@ -216,12 +222,14 @@ fn build_selectables(
             );
         }
         AppView::TaskActions { task, .. } => {
-            out.extend(RecommendedAction::task_picker_menu().iter().map(|action| {
-                SelectableKind::TaskAction {
-                    task: task.clone(),
-                    recommended_action: action.as_str().to_string(),
-                }
-            }));
+            out.extend(
+                task.actions
+                    .iter()
+                    .map(|action| SelectableKind::TaskAction {
+                        task: task.clone(),
+                        recommended_action: action.clone(),
+                    }),
+            );
         }
         AppView::NewTaskInput { .. } => {}
         AppView::Help { .. } => {}
@@ -240,6 +248,7 @@ pub struct App {
     selected: usize,
     viewport_scroll: usize,
     flash: Option<(String, u8)>,
+    pending_confirmation: Option<AttentionItem>,
 }
 
 const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
@@ -257,6 +266,7 @@ impl App {
             selected: 0,
             viewport_scroll: 0,
             flash: None,
+            pending_confirmation: None,
         }
     }
 
@@ -303,6 +313,7 @@ impl App {
         self.view = AppView::Projects;
         self.selected = 0;
         self.viewport_scroll = 0;
+        self.pending_confirmation = None;
         self.rebuild_selectables();
         true
     }
@@ -314,6 +325,7 @@ impl App {
             self.view = *previous.clone();
             self.selected = 0;
             self.viewport_scroll = 0;
+            self.pending_confirmation = None;
             self.rebuild_selectables();
             return true;
         }
@@ -322,6 +334,7 @@ impl App {
             self.view = *parent.clone();
             self.selected = 0;
             self.viewport_scroll = 0;
+            self.pending_confirmation = None;
             self.rebuild_selectables();
             return true;
         }
@@ -347,6 +360,7 @@ impl App {
         self.selected = 0;
         self.viewport_scroll = 0;
         self.flash = None;
+        self.pending_confirmation = None;
         self.rebuild_selectables();
     }
 
@@ -356,6 +370,7 @@ impl App {
                 self.view = AppView::Project { repo: repo.name };
                 self.selected = 0;
                 self.viewport_scroll = 0;
+                self.pending_confirmation = None;
                 self.rebuild_selectables();
                 None
             }
@@ -367,6 +382,7 @@ impl App {
                 self.selected = 0;
                 self.viewport_scroll = 0;
                 self.flash = None;
+                self.pending_confirmation = None;
                 self.rebuild_selectables();
                 None
             }
@@ -378,14 +394,16 @@ impl App {
                 self.selected = 0;
                 self.viewport_scroll = 0;
                 self.flash = None;
+                self.pending_confirmation = None;
                 self.rebuild_selectables();
                 None
             }
             SelectableKind::Inbox(item) => {
                 if let Some(task) = self.find_task_for_handle(&item.task_handle) {
-                    let preselected = RecommendedAction::task_picker_menu()
+                    let preselected = task
+                        .actions
                         .iter()
-                        .position(|action| action.as_str() == item.recommended_action.as_str())
+                        .position(|action| action == &item.recommended_action)
                         .unwrap_or(0);
                     self.view = AppView::TaskActions {
                         task,
@@ -394,6 +412,7 @@ impl App {
                     self.selected = preselected;
                     self.viewport_scroll = 0;
                     self.flash = None;
+                    self.pending_confirmation = None;
                     self.rebuild_selectables();
                     None
                 } else {
@@ -447,6 +466,7 @@ impl App {
         self.repos = repos;
         self.tasks = tasks;
         self.inbox = inbox;
+        self.pending_confirmation = None;
         self.rebuild_selectables();
         let max = self.selectables.len().saturating_sub(1);
         self.selected = self.selected.min(max);
@@ -458,6 +478,10 @@ impl App {
 
     fn flash(&mut self, msg: String) {
         self.flash = Some((msg, FLASH_TICKS));
+    }
+
+    fn has_pending_confirmation(&self, item: &AttentionItem) -> bool {
+        self.pending_confirmation.as_ref() == Some(item)
     }
 
     fn tick_flash(&mut self) {
@@ -733,7 +757,20 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
         KeyCode::Enter => {
             if let Some(item) = app.activate_selected() {
-                if let Some(pending) = handle_action_result(app, handler.on_action(&item))? {
+                let confirmed = app.has_pending_confirmation(&item);
+                let result = if confirmed {
+                    app.pending_confirmation = None;
+                    handler.on_confirmed_action(&item)
+                } else {
+                    let result = handler.on_action(&item);
+                    if let Ok(ActionOutcome::Confirm(_)) = &result {
+                        app.pending_confirmation = Some(item.clone());
+                    } else {
+                        app.pending_confirmation = None;
+                    }
+                    result
+                };
+                if let Some(pending) = handle_action_result(app, result)? {
                     return Ok(EventLoopAction::Pending(pending));
                 }
             }
@@ -784,6 +821,10 @@ fn handle_action_result(
             Ok(None)
         }
         Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
+        Ok(ActionOutcome::Confirm(message)) => {
+            app.flash(message);
+            Ok(None)
+        }
         Ok(ActionOutcome::Message(message)) => {
             app.flash(message);
             Ok(None)
@@ -1192,6 +1233,9 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         Some(RecommendedAction::OpenTask) => {
             ActionChrome::new(">", primary_accent(), primary_accent(), true)
         }
+        Some(RecommendedAction::OpenTrunk) => {
+            ActionChrome::new("T", primary_accent(), primary_accent(), true)
+        }
         Some(RecommendedAction::MergeTask) => {
             ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
         }
@@ -1518,6 +1562,7 @@ mod tests {
                 lifecycle_status: "Active".to_string(),
                 needs_attention: true,
                 live_status: None,
+                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
             }],
         }
     }
@@ -1532,6 +1577,7 @@ mod tests {
                     lifecycle_status: "Active".to_string(),
                     needs_attention: false,
                     live_status: None,
+                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
                 })
                 .collect(),
         }
@@ -1792,6 +1838,26 @@ mod tests {
                 recommended_action: item.recommended_action.clone(),
                 task_title: None,
             }))
+        }
+    }
+
+    #[derive(Default)]
+    struct ConfirmHandler {
+        asked: usize,
+        confirmed: usize,
+    }
+
+    impl CockpitEventHandler for ConfirmHandler {
+        fn on_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+            self.asked += 1;
+            Ok(ActionOutcome::Confirm(
+                "press enter again to confirm".to_string(),
+            ))
+        }
+
+        fn on_confirmed_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+            self.confirmed += 1;
+            Ok(ActionOutcome::Message("confirmed".to_string()))
         }
     }
 
@@ -2723,9 +2789,9 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("> web/fix-login"));
-        for verb in ["open task", "merge task", "clean task"] {
-            assert!(content.contains(verb), "menu missing {verb}");
-        }
+        assert!(content.contains("open task"));
+        assert!(!content.contains("merge task"));
+        assert!(!content.contains("clean task"));
         for hidden_entry in [
             "diff task",
             "check task",
@@ -2859,7 +2925,13 @@ mod tests {
                 recommended_action: "merge task".to_string(),
             }],
         };
-        let mut app = App::new(sample_repos(), sample_tasks(), inbox);
+        let mut tasks = sample_tasks();
+        tasks.tasks[0].lifecycle_status = "Reviewable".to_string();
+        tasks.tasks[0].actions = vec![
+            RecommendedAction::OpenTask.as_str().to_string(),
+            RecommendedAction::MergeTask.as_str().to_string(),
+        ];
+        let mut app = App::new(sample_repos(), tasks, inbox);
         assert!(app.activate_selected().is_none());
         let item = app.selected_action().unwrap();
         assert_eq!(item.recommended_action, "merge task");
@@ -2908,6 +2980,7 @@ mod tests {
                     lifecycle_status: "Active".to_string(),
                     needs_attention: true,
                     live_status: None,
+                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
                 },
                 TaskSummary {
                     id: "task-2".to_string(),
@@ -2916,6 +2989,7 @@ mod tests {
                     lifecycle_status: "Active".to_string(),
                     needs_attention: false,
                     live_status: None,
+                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
                 },
             ],
         };
@@ -3211,5 +3285,40 @@ mod tests {
             app.flash.as_ref().map(|(message, _)| message.as_str()),
             Some("git exited with status 42")
         );
+    }
+
+    #[test]
+    fn task_action_confirmation_requires_second_activation() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        let mut handler = ConfirmHandler::default();
+
+        let first = handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+        assert!(matches!(first, EventLoopAction::Continue));
+        assert_eq!(handler.asked, 1);
+        assert_eq!(handler.confirmed, 0);
+        assert_eq!(
+            app.flash.as_ref().map(|(message, _)| message.as_str()),
+            Some("press enter again to confirm")
+        );
+
+        let second = handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+        assert!(matches!(second, EventLoopAction::Continue));
+        assert_eq!(handler.asked, 1);
+        assert_eq!(handler.confirmed, 1);
     }
 }

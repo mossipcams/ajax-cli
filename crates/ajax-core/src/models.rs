@@ -358,6 +358,7 @@ pub enum RecommendedAction {
     SelectProject,
     NewTask,
     OpenTask,
+    OpenTrunk,
     MergeTask,
     CleanTask,
     Status,
@@ -375,6 +376,7 @@ impl RecommendedAction {
             Self::SelectProject,
             Self::NewTask,
             Self::OpenTask,
+            Self::OpenTrunk,
             Self::MergeTask,
             Self::CleanTask,
             Self::Status,
@@ -386,6 +388,7 @@ impl RecommendedAction {
             Self::SelectProject => "select project",
             Self::NewTask => "new task",
             Self::OpenTask => "open task",
+            Self::OpenTrunk => "open worktrunk",
             Self::MergeTask => "merge task",
             Self::CleanTask => "clean task",
             Self::Status => "status",
@@ -477,6 +480,40 @@ mod tests {
             "worktrunk",
             AgentClient::Codex,
         )
+    }
+
+    fn lifecycle_task_fixture(status: LifecycleStatus) -> Task {
+        let mut task = Task::new(
+            TaskId::new(format!("task-{status:?}")),
+            "web",
+            format!("{status:?}").to_ascii_lowercase(),
+            format!("{status:?} task"),
+            format!("ajax/{status:?}").to_ascii_lowercase(),
+            "main",
+            format!("/tmp/worktrees/{status:?}").to_ascii_lowercase(),
+            format!("ajax-web-{status:?}").to_ascii_lowercase(),
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = status;
+        task
+    }
+
+    #[test]
+    fn lifecycle_fixture_builders_create_representative_states() {
+        let provisioning = lifecycle_task_fixture(LifecycleStatus::Provisioning);
+        let active = lifecycle_task_fixture(LifecycleStatus::Active);
+        let reviewable = lifecycle_task_fixture(LifecycleStatus::Reviewable);
+        let cleanable = lifecycle_task_fixture(LifecycleStatus::Cleanable);
+        let removed = lifecycle_task_fixture(LifecycleStatus::Removed);
+        let error = lifecycle_task_fixture(LifecycleStatus::Error);
+
+        assert_eq!(provisioning.lifecycle_status, LifecycleStatus::Provisioning);
+        assert_eq!(active.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(reviewable.lifecycle_status, LifecycleStatus::Reviewable);
+        assert_eq!(cleanable.lifecycle_status, LifecycleStatus::Cleanable);
+        assert_eq!(removed.lifecycle_status, LifecycleStatus::Removed);
+        assert_eq!(error.lifecycle_status, LifecycleStatus::Error);
     }
 
     #[test]
@@ -709,9 +746,10 @@ mod tests {
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels.len(), 6);
+        assert_eq!(labels.len(), 7);
         assert_eq!(labels[0], "select project");
         assert_eq!(labels[1], "new task");
+        assert_eq!(labels[3], "open worktrunk");
         assert!(!labels.contains(&"reconcile"));
         for label in labels {
             assert_eq!(
@@ -739,7 +777,6 @@ mod tests {
             .collect::<Vec<_>>();
 
         for legacy_label in [
-            "open worktrunk",
             "inspect task",
             "inspect agent",
             "inspect test output",

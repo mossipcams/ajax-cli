@@ -1,6 +1,9 @@
 use std::time::SystemTime;
 
-use crate::models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task};
+use crate::{
+    lifecycle::{validate_lifecycle_transition, LifecycleTransitionReason},
+    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
+};
 
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
@@ -408,10 +411,13 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 }
 
 fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
-    if matches!(
+    if validate_lifecycle_transition(
         task.lifecycle_status,
-        LifecycleStatus::Merged | LifecycleStatus::Cleanable | LifecycleStatus::Removed
-    ) {
+        status,
+        LifecycleTransitionReason::OperationResult,
+    )
+    .is_err()
+    {
         return;
     }
 
@@ -742,6 +748,21 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CommandFailed)
         );
+    }
+
+    #[test]
+    fn live_lifecycle_updates_ignore_invalid_transition_edges() {
+        let mut task = base_task();
+        task.lifecycle_status = crate::models::LifecycleStatus::Error;
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+        );
+
+        assert_eq!(task.lifecycle_status, crate::models::LifecycleStatus::Error);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
     }
 
     #[test]

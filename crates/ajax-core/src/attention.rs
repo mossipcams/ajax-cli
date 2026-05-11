@@ -55,14 +55,12 @@ fn operator_waiting_reason(reason: &str) -> bool {
 }
 
 fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
-    if task.has_missing_substrate() {
-        return Vec::new();
-    }
-
     let mut items = Vec::new();
 
     for flag in task.side_flags() {
-        if flag == SideFlag::AgentRunning && task_has_specific_running_live_status(task) {
+        if flag == SideFlag::AgentRunning
+            && (task_has_specific_running_live_status(task) || task.has_missing_substrate())
+        {
             continue;
         }
         let (reason, priority, recommended_action) = attention_for_flag(flag);
@@ -129,8 +127,8 @@ fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) 
     match flag {
         SideFlag::NeedsInput => ("agent needs input", 10, RecommendedAction::OpenTask),
         SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::OpenTask),
-        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTask),
-        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTask),
+        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTrunk),
+        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTrunk),
         SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::OpenTask),
         SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::OpenTask),
         SideFlag::Conflicted => ("git conflicts detected", 40, RecommendedAction::OpenTask),
@@ -167,9 +165,15 @@ fn attention_for_live_status(
         LiveStatusKind::CommandFailed => Some(("command failed", 15, RecommendedAction::OpenTask)),
         LiveStatusKind::CiFailed => Some(("ci failed", 11, RecommendedAction::OpenTask)),
         LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::OpenTask)),
-        LiveStatusKind::WorktreeMissing
-        | LiveStatusKind::TmuxMissing
-        | LiveStatusKind::WorktrunkMissing => None,
+        LiveStatusKind::WorktreeMissing => {
+            Some(("worktree missing", 30, RecommendedAction::OpenTask))
+        }
+        LiveStatusKind::TmuxMissing => {
+            Some(("tmux session missing", 25, RecommendedAction::OpenTrunk))
+        }
+        LiveStatusKind::WorktrunkMissing => {
+            Some(("worktrunk missing", 20, RecommendedAction::OpenTrunk))
+        }
         LiveStatusKind::ShellIdle
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning
@@ -241,6 +245,13 @@ mod tests {
                     recommended_action: "open task".to_string(),
                 },
                 AttentionItem {
+                    task_id: TaskId::new("task-broken"),
+                    task_handle: "web/broken".to_string(),
+                    reason: "worktrunk missing".to_string(),
+                    priority: 20,
+                    recommended_action: "open worktrunk".to_string(),
+                },
+                AttentionItem {
                     task_id: TaskId::new("task-merged-task"),
                     task_handle: "web/merged-task".to_string(),
                     reason: "task is cleanable".to_string(),
@@ -306,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_resource_attention_is_suppressed() {
+    fn missing_worktree_attention_is_visible() {
         let mut task = task_with_flags("missing-worktree", &[SideFlag::WorktreeMissing]);
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WorktreeMissing,
@@ -315,11 +326,43 @@ mod tests {
 
         let items = super::derive_attention_items(&[task]);
 
-        assert!(items.is_empty());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reason, "worktree missing");
+        assert_eq!(items[0].priority, 30);
+        assert_eq!(items[0].recommended_action, "open task");
     }
 
     #[test]
-    fn broken_resource_flags_do_not_create_attention() {
+    fn live_missing_tmux_attention_is_visible_without_side_flag() {
+        let mut task = task_with_flags("missing-tmux", &[]);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux session missing",
+        ));
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reason, "tmux session missing");
+        assert_eq!(items[0].priority, 25);
+    }
+
+    #[test]
+    fn matching_flag_and_live_missing_evidence_deduplicates_attention() {
+        let mut task = task_with_flags("missing-tmux", &[SideFlag::TmuxMissing]);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux session missing",
+        ));
+
+        let items = super::derive_attention_items(&[task]);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reason, "tmux session missing");
+    }
+
+    #[test]
+    fn broken_resource_flags_create_attention() {
         let task = task_with_flags(
             "broken",
             &[
@@ -332,7 +375,18 @@ mod tests {
 
         let items = super::derive_attention_items(&[task]);
 
-        assert!(items.is_empty());
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.reason.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "worktrunk missing",
+                "tmux session missing",
+                "worktree missing",
+                "branch missing",
+            ]
+        );
     }
 
     #[test]
@@ -344,7 +398,8 @@ mod tests {
 
         let items = super::derive_attention_items(&[task]);
 
-        assert!(items.is_empty());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reason, "worktree missing");
     }
 
     #[test]
