@@ -2973,10 +2973,6 @@ mod tests {
             runner.commands(),
             &[
                 CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new(
                     "workmux",
                     [
                         "add",
@@ -3167,115 +3163,6 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_installs_ajax_return_hotkey_before_opening_task() {
-        let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax:0\n"),
-            output(0, ""),
-            output(0, ""),
-            output(0, ""),
-            output(0, "opened\n"),
-        ]);
-        let mut state_changed = false;
-        let pending = ajax_tui::PendingAction {
-            task_handle: "web/fix-login".to_string(),
-            recommended_action: "open task".to_string(),
-            task_title: None,
-        };
-
-        let outcome = super::execute_pending_cockpit_action(
-            &pending,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
-
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
-        assert_eq!(
-            runner.commands,
-            vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "bind-key",
-                        "-T",
-                        "ajax-return",
-                        "a",
-                        "switch-client",
-                        "-t",
-                        "ajax:0"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "bind-key",
-                        "-T",
-                        "ajax-return",
-                        "Any",
-                        "send-keys",
-                        "/",
-                        "#{key}"
-                    ]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
-            ]
-        );
-        assert!(state_changed);
-    }
-
-    #[test]
-    fn pending_cockpit_open_continues_when_ajax_return_hotkey_probe_fails() {
-        let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![
-            CommandOutput {
-                status_code: 1,
-                stdout: String::new(),
-                stderr: "not in tmux".to_string(),
-            },
-            output(0, "opened\n"),
-        ]);
-        let mut state_changed = false;
-        let pending = ajax_tui::PendingAction {
-            task_handle: "web/fix-login".to_string(),
-            recommended_action: "open task".to_string(),
-            task_title: None,
-        };
-
-        let outcome = super::execute_pending_cockpit_action(
-            &pending,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
-
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
-        assert_eq!(
-            runner.commands,
-            vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
-            ]
-        );
-        assert!(state_changed);
-    }
-
-    #[test]
     fn pending_cockpit_open_and_create_actions_exit_ajax() {
         let action = "open task";
         let mut context = sample_context();
@@ -3381,14 +3268,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
-            ],
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")],
             "{action}"
         );
         assert_eq!(
@@ -3555,14 +3436,8 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[
-                CommandSpec::new(
-                    "tmux",
-                    ["display-message", "-p", "#{session_name}:#{window_index}"]
-                ),
-                CommandSpec::new("workmux", ["open", "ajax/fix-login"])
-                    .with_cwd("/Users/matt/projects/web")
-            ]
+            &[CommandSpec::new("workmux", ["open", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
         );
         assert_eq!(
             context

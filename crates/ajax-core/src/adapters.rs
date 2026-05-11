@@ -261,50 +261,6 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
-    pub fn current_client_target(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["display-message", "-p", "#{session_name}:#{window_index}"],
-        )
-    }
-
-    pub fn bind_ajax_return_prefix(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"],
-        )
-    }
-
-    pub fn bind_ajax_return_key(&self, target: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "bind-key",
-                "-T",
-                "ajax-return",
-                "a",
-                "switch-client",
-                "-t",
-                target,
-            ],
-        )
-    }
-
-    pub fn bind_ajax_return_fallback(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "bind-key",
-                "-T",
-                "ajax-return",
-                "Any",
-                "send-keys",
-                "/",
-                "#{key}",
-            ],
-        )
-    }
-
     pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
         CommandSpec::new(
             &self.program,
@@ -685,56 +641,6 @@ mod tests {
             CommandMode::InheritStdio
         );
         assert_eq!(adapter.list_sessions().mode, CommandMode::Capture);
-    }
-
-    #[test]
-    fn tmux_adapter_builds_ajax_return_hotkey_commands() {
-        let adapter = TmuxAdapter::new("tmux");
-
-        assert_eq!(
-            adapter.current_client_target(),
-            CommandSpec::new(
-                "tmux",
-                ["display-message", "-p", "#{session_name}:#{window_index}"]
-            )
-        );
-        assert_eq!(
-            adapter.bind_ajax_return_prefix(),
-            CommandSpec::new(
-                "tmux",
-                ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"]
-            )
-        );
-        assert_eq!(
-            adapter.bind_ajax_return_key("ajax:0"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "bind-key",
-                    "-T",
-                    "ajax-return",
-                    "a",
-                    "switch-client",
-                    "-t",
-                    "ajax:0"
-                ]
-            )
-        );
-        assert_eq!(
-            adapter.bind_ajax_return_fallback(),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "bind-key",
-                    "-T",
-                    "ajax-return",
-                    "Any",
-                    "send-keys",
-                    "/",
-                    "#{key}"
-                ]
-            )
-        );
     }
 
     #[test]
