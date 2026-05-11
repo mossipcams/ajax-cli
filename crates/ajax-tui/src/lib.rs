@@ -23,6 +23,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::{
+    collections::HashSet,
     io,
     ops::Range,
     time::{Duration, Instant},
@@ -198,9 +199,22 @@ fn build_selectables(
     let mut out = Vec::new();
     match view {
         AppView::Projects => {
+            let inbox_task_handles = inbox
+                .items
+                .iter()
+                .filter(|item| is_waiting_for_input(&item.reason))
+                .map(|item| item.task_handle.as_str())
+                .collect::<HashSet<_>>();
             out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
-            out.extend(tasks.tasks.iter().cloned().map(SelectableKind::Task));
+            out.extend(
+                tasks
+                    .tasks
+                    .iter()
+                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
+                    .cloned()
+                    .map(SelectableKind::Task),
+            );
         }
         AppView::Project { repo } => {
             out.push(SelectableKind::NewTask { repo: repo.clone() });
@@ -1136,6 +1150,12 @@ fn group_of(kind: &SelectableKind) -> &'static str {
 
 fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
     let bold = Modifier::BOLD;
+    if is_waiting_for_input(status) {
+        return Span::styled(
+            "~",
+            Style::default().fg(secondary_accent()).add_modifier(bold),
+        );
+    }
     if needs_attention {
         return Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold));
     }
@@ -1159,6 +1179,9 @@ fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
 }
 
 fn task_handle_color(status: &str, needs_attention: bool) -> Color {
+    if is_waiting_for_input(status) {
+        return secondary_accent();
+    }
     if needs_attention {
         return Color::LightRed;
     }
@@ -1182,6 +1205,10 @@ fn task_status_label(task: &TaskSummary) -> String {
         .unwrap_or_else(|| task.lifecycle_status.clone())
 }
 
+fn is_waiting_for_input(status: &str) -> bool {
+    status == "WaitingForInput" || status.eq_ignore_ascii_case("waiting for input")
+}
+
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
     if repo.active_tasks > 0 {
         Span::styled(
@@ -1203,15 +1230,25 @@ fn project_name_color(repo: &RepoSummary) -> Color {
     }
 }
 
-fn inbox_glyph(priority: u32) -> Span<'static> {
-    let color = if priority < 20 {
+fn inbox_glyph(color: Color) -> Span<'static> {
+    Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
+}
+
+fn inbox_item_accent(item: &AttentionItem) -> Color {
+    if is_waiting_for_input(&item.reason) {
+        return secondary_accent();
+    }
+    priority_accent(item.priority)
+}
+
+fn priority_accent(priority: u32) -> Color {
+    if priority < 20 {
         Color::LightRed
     } else if priority < 50 {
         secondary_accent()
     } else {
         primary_accent()
-    };
-    Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1287,16 +1324,6 @@ fn action_label_style(recommended_action: &str) -> Style {
     action_chrome(recommended_action).label_style()
 }
 
-fn priority_accent(priority: u32) -> Color {
-    if priority < 20 {
-        Color::LightRed
-    } else if priority < 50 {
-        secondary_accent()
-    } else {
-        primary_accent()
-    }
-}
-
 fn project_subtitle(repo: &RepoSummary) -> String {
     let mut parts = Vec::new();
     if repo.active_tasks > 0 {
@@ -1330,9 +1357,9 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
     let arrow = Style::default().fg(Color::DarkGray);
     match s {
         SelectableKind::Inbox(item) => {
-            let accent = priority_accent(item.priority);
+            let accent = inbox_item_accent(item);
             render_row(
-                inbox_glyph(item.priority),
+                inbox_glyph(accent),
                 vec![
                     Span::styled(
                         format!("{:<22}", item.task_handle),
@@ -1375,18 +1402,21 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                 action_label_style(recommended_action),
             )],
         ),
-        SelectableKind::Task(t) => render_row(
-            task_glyph(&t.lifecycle_status, t.needs_attention),
-            vec![
-                Span::styled(
-                    format!("{:<28}", t.qualified_handle),
-                    Style::default()
-                        .fg(task_handle_color(&t.lifecycle_status, t.needs_attention))
-                        .add_modifier(bold),
-                ),
-                Span::styled(task_status_label(t), dim),
-            ],
-        ),
+        SelectableKind::Task(t) => {
+            let status = task_status_label(t);
+            render_row(
+                task_glyph(&status, t.needs_attention),
+                vec![
+                    Span::styled(
+                        format!("{:<28}", t.qualified_handle),
+                        Style::default()
+                            .fg(task_handle_color(&status, t.needs_attention))
+                            .add_modifier(bold),
+                    ),
+                    Span::styled(status, dim),
+                ],
+            )
+        }
     }
 }
 
@@ -1508,10 +1538,10 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, handle_cockpit_event, primary_accent, render_cockpit, render_ui,
-        secondary_accent, selectable_feed_rows, selectable_row_layout, ActionOutcome, App, AppView,
-        CockpitEventHandler, EventLoopAction, PendingAction, SelectableKind, TerminalModeCommand,
-        FLASH_TICKS,
+        action_chrome, handle_cockpit_event, inbox_item_accent, primary_accent, render_cockpit,
+        render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout, task_glyph,
+        task_handle_color, ActionOutcome, App, AppView, CockpitEventHandler, EventLoopAction,
+        PendingAction, SelectableKind, TerminalModeCommand, FLASH_TICKS,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
@@ -1629,6 +1659,18 @@ mod tests {
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("waiting for approval"));
         assert!(!content.contains("Active"));
+    }
+
+    #[test]
+    fn waiting_for_input_task_attention_uses_yellow_chrome() {
+        assert_eq!(
+            task_glyph("WaitingForInput", true).style.fg,
+            Some(secondary_accent())
+        );
+        assert_eq!(
+            task_handle_color("WaitingForInput", true),
+            secondary_accent()
+        );
     }
 
     #[test]
@@ -2381,6 +2423,47 @@ mod tests {
     }
 
     #[test]
+    fn main_page_deduplicates_tasks_already_shown_in_inbox() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse {
+                items: vec![AttentionItem {
+                    task_id: TaskId::new("task-1"),
+                    task_handle: "web/fix-login".to_string(),
+                    reason: "waiting for input".to_string(),
+                    priority: 6,
+                    recommended_action: "open task".to_string(),
+                }],
+            },
+        );
+
+        let task_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| {
+                matches!(
+                    selectable,
+                    SelectableKind::Task(task) if task.qualified_handle == "web/fix-login"
+                )
+            })
+            .count();
+        let inbox_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| {
+                matches!(
+                    selectable,
+                    SelectableKind::Inbox(item) if item.task_handle == "web/fix-login"
+                )
+            })
+            .count();
+
+        assert_eq!(inbox_rows, 1);
+        assert_eq!(task_rows, 0);
+    }
+
+    #[test]
     fn activating_project_opens_project_workflow() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask]. Skip the inbox to reach the project.
@@ -3120,6 +3203,19 @@ mod tests {
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("agent needs input"));
         assert!(content.contains("open task"));
+    }
+
+    #[test]
+    fn waiting_for_input_inbox_items_use_yellow_chrome() {
+        let item = AttentionItem {
+            task_id: TaskId::new("task-1"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "waiting for input".to_string(),
+            priority: 6,
+            recommended_action: "open task".to_string(),
+        };
+
+        assert_eq!(inbox_item_accent(&item), secondary_accent());
     }
 
     #[test]
