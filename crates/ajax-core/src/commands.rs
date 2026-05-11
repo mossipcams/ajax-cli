@@ -667,6 +667,10 @@ fn command_line(command: &CommandSpec) -> String {
 }
 
 fn shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+
     if value
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'/' | b'.'))
@@ -1136,6 +1140,7 @@ mod tests {
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry},
     };
+    use proptest::prelude::*;
 
     fn context_with_tasks() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -1228,6 +1233,347 @@ mod tests {
             status_code,
             stdout: stdout.to_string(),
             stderr: String::new(),
+        }
+    }
+
+    fn shell_words(command: &str) -> Vec<String> {
+        let mut words = Vec::new();
+        let mut current = String::new();
+        let mut chars = command.chars().peekable();
+        let mut in_single_quotes = false;
+        let mut word_started = false;
+
+        while let Some(character) = chars.next() {
+            match character {
+                '\'' => {
+                    word_started = true;
+                    in_single_quotes = !in_single_quotes;
+                }
+                '\\' if !in_single_quotes => {
+                    word_started = true;
+                    if let Some(escaped) = chars.next() {
+                        current.push(escaped);
+                    } else {
+                        current.push(character);
+                    }
+                }
+                ' ' if !in_single_quotes => {
+                    if word_started {
+                        words.push(std::mem::take(&mut current));
+                        word_started = false;
+                    }
+                }
+                _ => {
+                    word_started = true;
+                    current.push(character);
+                }
+            }
+        }
+
+        if word_started {
+            words.push(current);
+        }
+
+        words
+    }
+
+    proptest! {
+        #[test]
+        fn native_new_task_agent_command_preserves_generated_title(
+            title in "[^\\x00]{0,80}"
+        ) {
+            let context = CommandContext::new(
+                Config {
+                    repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+                    ..Config::default()
+                },
+                InMemoryRegistry::default(),
+            );
+            let plan = new_task_plan(
+                &context,
+                NewTaskRequest {
+                    repo: "web".to_string(),
+                    title: title.clone(),
+                    agent: "codex".to_string(),
+                },
+            )
+            .unwrap();
+
+            let send_keys = &plan.commands[2];
+            let worktree_path = plan.commands[0].args[6].clone();
+
+            prop_assert_eq!(send_keys.program.as_str(), "tmux");
+            prop_assert_eq!(send_keys.args[0].as_str(), "send-keys");
+            prop_assert_eq!(
+                shell_words(&send_keys.args[3]),
+                vec![
+                    "codex".to_string(),
+                    "--cd".to_string(),
+                    worktree_path,
+                    title,
+                ]
+            );
+        }
+
+        #[test]
+        fn native_cleanup_commands_reflect_generated_resource_and_risk_status(
+            tmux_exists in any::<bool>(),
+            dirty in any::<bool>(),
+            conflicted in any::<bool>(),
+            side_dirty in any::<bool>(),
+            side_conflicted in any::<bool>(),
+            untracked_files in 0u32..4,
+            merged in any::<bool>()
+        ) {
+            let mut context = context_with_cleanable_task();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            let git_status = task.git_status.as_mut().unwrap();
+            git_status.dirty = dirty;
+            git_status.conflicted = conflicted;
+            git_status.untracked_files = untracked_files;
+            git_status.merged = merged;
+            task.tmux_status = Some(TmuxStatus {
+                exists: tmux_exists,
+                session_name: task.tmux_session.clone(),
+            });
+            if side_dirty {
+                task.add_side_flag(SideFlag::Dirty);
+            }
+            if side_conflicted {
+                task.add_side_flag(SideFlag::Conflicted);
+            }
+
+            let plan = clean_task_plan(&context, "web/fix-login").unwrap();
+            let expected_force_worktree =
+                dirty || conflicted || side_dirty || side_conflicted || untracked_files > 0;
+            let expected_worktree_args: Vec<String> = if expected_force_worktree {
+                vec![
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "remove",
+                    "--force",
+                    "/tmp/worktrees/web-fix-login",
+                ]
+            } else {
+                vec![
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "remove",
+                    "/tmp/worktrees/web-fix-login",
+                ]
+            }
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            let expected_branch_args: Vec<String> = if merged {
+                vec![
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-d",
+                    "ajax/fix-login",
+                ]
+            } else {
+                vec![
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-D",
+                    "ajax/fix-login",
+                ]
+            }
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+            let has_expected_worktree_command = plan
+                .commands
+                .iter()
+                .any(|command| command.program == "git" && command.args == expected_worktree_args);
+            let has_expected_branch_command = plan
+                .commands
+                .iter()
+                .any(|command| command.program == "git" && command.args == expected_branch_args);
+
+            prop_assert!(plan.blocked_reasons.is_empty());
+            prop_assert_eq!(
+                plan.commands
+                    .iter()
+                    .any(|command| command.args == vec!["kill-session", "-t", "ajax-web-fix-login"]),
+                tmux_exists
+            );
+            prop_assert!(has_expected_worktree_command);
+            prop_assert!(has_expected_branch_command);
+        }
+
+        #[test]
+        fn trunk_plan_repairs_generated_tmux_and_worktrunk_states(
+            worktree_exists in any::<bool>(),
+            tmux_exists in any::<bool>(),
+            worktrunk_exists in any::<bool>(),
+            points_at_expected_path in any::<bool>()
+        ) {
+            let mut context = context_with_tasks();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.git_status = Some(GitStatus {
+                worktree_exists,
+                branch_exists: true,
+                current_branch: Some("ajax/fix-login".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+            task.tmux_status = Some(TmuxStatus {
+                exists: tmux_exists,
+                session_name: task.tmux_session.clone(),
+            });
+            task.worktrunk_status = Some(WorktrunkStatus {
+                exists: worktrunk_exists,
+                window_name: task.worktrunk_window.clone(),
+                current_path: if points_at_expected_path {
+                    task.worktree_path.clone()
+                } else {
+                    "/tmp/other-worktree".into()
+                },
+                points_at_expected_path,
+            });
+
+            let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+
+            if !worktree_exists {
+                prop_assert!(plan.commands.is_empty());
+                prop_assert_eq!(
+                    plan.blocked_reasons,
+                    vec!["task worktree is missing: /tmp/worktrees/web-fix-login"]
+                );
+                return Ok(());
+            }
+
+            prop_assert!(plan.blocked_reasons.is_empty());
+            prop_assert_eq!(
+                &plan.commands[plan.commands.len() - 2..],
+                &[
+                    CommandSpec::new(
+                        "tmux",
+                        ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                    ),
+                    CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                        .with_mode(CommandMode::InheritStdio),
+                ]
+            );
+
+            let repair_commands = &plan.commands[..plan.commands.len() - 2];
+            if !tmux_exists {
+                prop_assert_eq!(
+                    repair_commands,
+                    &[CommandSpec::new(
+                        "tmux",
+                        [
+                            "new-session",
+                            "-d",
+                            "-s",
+                            "ajax-web-fix-login",
+                            "-n",
+                            "worktrunk",
+                            "-c",
+                            "/tmp/worktrees/web-fix-login",
+                        ],
+                    )]
+                );
+            } else if worktrunk_exists && !points_at_expected_path {
+                prop_assert_eq!(
+                    repair_commands,
+                    &[
+                        CommandSpec::new(
+                            "tmux",
+                            ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
+                        ),
+                        CommandSpec::new(
+                            "tmux",
+                            [
+                                "new-window",
+                                "-t",
+                                "ajax-web-fix-login",
+                                "-n",
+                                "worktrunk",
+                                "-c",
+                                "/tmp/worktrees/web-fix-login",
+                            ],
+                        ),
+                    ]
+                );
+            } else if !worktrunk_exists {
+                prop_assert_eq!(
+                    repair_commands,
+                    &[CommandSpec::new(
+                        "tmux",
+                        [
+                            "new-window",
+                            "-t",
+                            "ajax-web-fix-login",
+                            "-n",
+                            "worktrunk",
+                            "-c",
+                            "/tmp/worktrees/web-fix-login",
+                        ],
+                    )]
+                );
+            } else {
+                prop_assert!(repair_commands.is_empty());
+            }
+        }
+
+        #[test]
+        fn stale_reconciliation_uses_seven_day_boundary(
+            seconds_before_boundary in 0u64..(7 * 24 * 60 * 60)
+        ) {
+            let last_activity = std::time::SystemTime::UNIX_EPOCH;
+            let stale_after = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+            let mut before_context = context_with_tasks();
+            before_context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap()
+                .last_activity_at = last_activity;
+            let before_changed = mark_stale_tasks(
+                &mut before_context,
+                last_activity + std::time::Duration::from_secs(seconds_before_boundary),
+            );
+
+            prop_assert_eq!(before_changed, 0);
+            prop_assert!(!before_context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .has_side_flag(SideFlag::Stale));
+
+            let mut boundary_context = context_with_tasks();
+            boundary_context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap()
+                .last_activity_at = last_activity;
+            let boundary_changed =
+                mark_stale_tasks(&mut boundary_context, last_activity + stale_after);
+
+            prop_assert_eq!(boundary_changed, 1);
+            prop_assert!(boundary_context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .has_side_flag(SideFlag::Stale));
         }
     }
 

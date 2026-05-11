@@ -584,6 +584,16 @@ mod tests {
         RecordingCommandRunner, TmuxAdapter,
     };
     use crate::models::{TmuxStatus, WorktrunkStatus};
+    use proptest::prelude::*;
+
+    fn safe_token() -> impl Strategy<Value = String> {
+        "[A-Za-z0-9_.-]{1,32}"
+    }
+
+    fn safe_path() -> impl Strategy<Value = String> {
+        prop::collection::vec("[A-Za-z0-9_.-]{1,16}", 1..6)
+            .prop_map(|segments| format!("/{}", segments.join("/")))
+    }
 
     #[test]
     fn tmux_adapter_builds_attach_switch_and_worktrunk_commands() {
@@ -705,6 +715,126 @@ mod tests {
                 ]
             )
         );
+    }
+
+    proptest! {
+        #[test]
+        fn tmux_adapter_targets_generated_worktrunk_inputs(
+            session in safe_token(),
+            window in safe_token(),
+            path in safe_path(),
+            command in "[^\\x00]{0,80}"
+        ) {
+            let adapter = TmuxAdapter::new("tmux");
+            let target = format!("{session}:{window}");
+
+            prop_assert_eq!(
+                adapter.new_detached_worktrunk_session(&session, &window, &path),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        session.as_str(),
+                        "-n",
+                        window.as_str(),
+                        "-c",
+                        path.as_str(),
+                    ],
+                )
+            );
+            prop_assert_eq!(
+                adapter.ensure_worktrunk(&session, &window, &path),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-window",
+                        "-t",
+                        session.as_str(),
+                        "-n",
+                        window.as_str(),
+                        "-c",
+                        path.as_str(),
+                    ],
+                )
+            );
+            prop_assert_eq!(
+                adapter.select_window(&session, &window).args,
+                vec!["select-window", "-t", target.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.kill_window(&session, &window).args,
+                vec!["kill-window", "-t", target.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.capture_pane(&session, &window).args,
+                vec!["capture-pane", "-p", "-t", target.as_str(), "-S", "-200"]
+            );
+            prop_assert_eq!(
+                adapter.send_agent_command(&session, &window, &command).args,
+                vec!["send-keys", "-t", target.as_str(), command.as_str(), "Enter"]
+            );
+        }
+
+        #[test]
+        fn git_adapter_native_lifecycle_commands_preserve_generated_inputs(
+            repo_path in safe_path(),
+            worktree_path in safe_path(),
+            branch_suffix in safe_token(),
+            start_point in safe_token()
+        ) {
+            let adapter = GitAdapter::new("git");
+            let branch = format!("ajax/{branch_suffix}");
+
+            prop_assert_eq!(
+                adapter.add_worktree(&repo_path, &worktree_path, &branch, &start_point),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        repo_path.as_str(),
+                        "worktree",
+                        "add",
+                        "-b",
+                        branch.as_str(),
+                        worktree_path.as_str(),
+                        start_point.as_str(),
+                    ],
+                )
+            );
+            prop_assert_eq!(
+                adapter.remove_worktree(&repo_path, &worktree_path).args,
+                vec!["-C", repo_path.as_str(), "worktree", "remove", worktree_path.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.force_remove_worktree(&repo_path, &worktree_path).args,
+                vec![
+                    "-C",
+                    repo_path.as_str(),
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path.as_str(),
+                ]
+            );
+            prop_assert_eq!(
+                adapter.delete_branch(&repo_path, &branch).args,
+                vec!["-C", repo_path.as_str(), "branch", "-d", branch.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.force_delete_branch(&repo_path, &branch).args,
+                vec!["-C", repo_path.as_str(), "branch", "-D", branch.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.switch_branch(&repo_path, &start_point).args,
+                vec!["-C", repo_path.as_str(), "switch", start_point.as_str()]
+            );
+            prop_assert_eq!(
+                adapter.merge_branch(&repo_path, &branch).args,
+                vec!["-C", repo_path.as_str(), "merge", "--ff-only", branch.as_str()]
+            );
+        }
     }
 
     #[test]
