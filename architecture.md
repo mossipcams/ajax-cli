@@ -73,6 +73,13 @@ Ajax needs more than one execution style:
 
 Avoid treating all external commands as captured subprocesses.
 
+Destructive commands may collect the substrate evidence they require at their
+own command boundary. For example, cleanup may capture `git status` for the task
+worktree before applying cleanup safety policy. That evidence is command-scoped
+bookkeeping, not reconciliation: it must not inspect or repair unrelated tmux
+state, recreate missing resources, or mutate live status outside the command's
+own safety decision.
+
 ## CLI Organization
 
 `ajax-cli` should stay thin, but it should not grow into a single catch-all file.

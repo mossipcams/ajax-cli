@@ -2569,6 +2569,69 @@ mod tests {
     }
 
     #[test]
+    fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Merged;
+        task.git_status = None;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
+            output(0, ""),
+            output(0, ""),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "clean", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task.git_status.as_ref().is_some_and(|status| status.merged));
+    }
+
+    #[test]
     fn clean_execute_removes_risky_task_without_yes() {
         let mut context = cleanable_context();
         let task = context

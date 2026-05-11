@@ -105,6 +105,9 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
+    if operation == TaskCommandOperation::Clean && subcommand.get_flag("execute") {
+        commands::ensure_cleanup_git_status(context, task, runner).map_err(command_error)?;
+    }
     let plan = operation
         .plan_with_open_mode(context, task, open_mode)
         .map_err(command_error)?;

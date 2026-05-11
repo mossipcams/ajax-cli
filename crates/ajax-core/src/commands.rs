@@ -614,6 +614,42 @@ pub fn clean_task_plan<R: Registry>(
     Ok(plan)
 }
 
+pub fn ensure_cleanup_git_status<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    runner: &mut impl CommandRunner,
+) -> Result<(), CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    if task.git_status.is_some() {
+        return Ok(());
+    }
+
+    let git = GitAdapter::new("git");
+    let output = runner
+        .run(&git.status(&task.worktree_path.display().to_string()))
+        .map_err(CommandError::CommandRun)?;
+    if output.status_code != 0 {
+        return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
+            program: "git".to_string(),
+            status_code: output.status_code,
+            stderr: output.stderr,
+            cwd: None,
+        }));
+    }
+
+    let merged = task.lifecycle_status == LifecycleStatus::Merged
+        || task.lifecycle_status == LifecycleStatus::Cleanable
+        || task.git_status.as_ref().is_some_and(|status| status.merged);
+    let git_status = GitAdapter::parse_status(&output.stdout, merged);
+    let task = context
+        .registry
+        .get_task_mut(&task.id)
+        .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
+    task.git_status = Some(git_status);
+
+    Ok(())
+}
+
 pub fn check_task_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
@@ -2072,6 +2108,52 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn cleanup_git_status_bookkeeping_updates_only_cleanup_evidence() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Merged;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.git_status = None;
+        task.tmux_status = None;
+        task.worktrunk_status = None;
+        let mut runner = QueuedRunner::new(vec![output(
+            0,
+            "## ajax/fix-login...origin/ajax/fix-login\n",
+        )]);
+
+        super::ensure_cleanup_git_status(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/tmp/worktrees/web-fix-login",
+                    "status",
+                    "--porcelain=v1",
+                    "--branch"
+                ]
+            )]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Merged);
+        assert!(task.git_status.as_ref().is_some_and(|status| {
+            status.worktree_exists
+                && status.branch_exists
+                && status.merged
+                && !status.dirty
+                && status.untracked_files == 0
+        }));
+        assert!(task.tmux_status.is_none());
+        assert!(task.worktrunk_status.is_none());
+        assert!(task.live_status.is_none());
     }
 
     #[test]
