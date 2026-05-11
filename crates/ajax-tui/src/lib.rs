@@ -1,9 +1,5 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-pub mod app;
-pub mod input;
-pub mod render;
-
 use ajax_core::{
     models::{AttentionItem, RecommendedAction, TaskId},
     output::{
@@ -1520,6 +1516,19 @@ mod tests {
                 reviewable_tasks: 1,
                 cleanable_tasks: 0,
             }],
+        }
+    }
+
+    #[test]
+    fn active_tui_api_does_not_export_legacy_cockpit_facades() {
+        let lib = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+
+        for legacy_module in ["app", "input", "render"] {
+            let legacy_export = ["pub mod ", legacy_module, ";"].concat();
+            assert!(!lib.contains(&legacy_export));
         }
     }
 
