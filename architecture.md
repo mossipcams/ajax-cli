@@ -1,16 +1,19 @@
 # Ajax Architecture
 
-Ajax is a CLI-first orchestration layer for isolated AI coding tasks. The core
-product is the `ajax` command and its typed Rust orchestration library,
-`ajax-core`; frontends are shells over the same backend contract.
+Ajax is a native operator cockpit for isolated AI coding tasks. Cockpit is the
+primary operator surface; the `ajax` command, JSON contract, and typed Rust
+orchestration library, `ajax-core`, exist to make that surface deterministic,
+testable, and scriptable.
 
 ## System Boundaries
 
 - `ajax-core` owns task models, orchestration decisions, policy, attention,
   reconciliation, command plans, and output contracts.
 - `ajax-cli` owns argument parsing, context loading/saving, command dispatch,
-  human rendering, JSON rendering, and process execution wiring.
-- `ajax-tui` is the native Rust cockpit surface over `ajax-core` responses.
+  human rendering, JSON rendering, and process execution wiring for Cockpit and
+  scripts.
+- `ajax-tui` is the primary native Rust operator surface over `ajax-core`
+  responses.
 - `ajax-supervisor` owns supervised agent execution, process monitoring, and
   translation of live agent/process events into Ajax monitor events.
 - External tools remain durable substrates: `workmux` owns task/worktree/session
@@ -19,16 +22,17 @@ product is the `ajax` command and its typed Rust orchestration library,
 
 ## Architectural Direction
 
-Keep the current Rust core plus CLI JSON contract. This is the right boundary
-for a tool that needs deterministic policy, testable reconciliation, and
-scriptable command output.
+Keep the current Rust core plus CLI JSON contract behind Cockpit. This is the
+right boundary for a tool that needs deterministic policy, testable
+reconciliation, and scriptable command output while still centering the operator
+experience in the native cockpit.
 
 Do not rewrite Ajax into a different application framework. Prefer small
 boundary improvements:
 
 - Keep `clap` for the command surface.
 - Keep `serde` response structs as the frontend contract.
-- Keep the cockpit native to Rust so Ajax has one install/runtime path.
+- Keep Cockpit native to Rust so Ajax has one install/runtime path.
 - Keep Ratatui as the current interactive TUI foundation.
 
 ## Persistence
@@ -37,8 +41,8 @@ The runtime state path is documented as `~/.local/state/ajax/ajax.db`, and the
 current durable registry store is SQLite via `SqliteRegistryStore`.
 
 Prefer `rusqlite` for this project because Ajax is local, synchronous, and
-CLI-first. Avoid `sqlx` unless Ajax later needs async database access or a
-larger server-style persistence model.
+Cockpit-first over a CLI/JSON backend. Avoid `sqlx` unless Ajax later needs
+async database access or a larger server-style persistence model.
 
 The persistence boundary is:
 
@@ -85,12 +89,14 @@ Preserve those helpers unless a task explicitly changes them.
 
 ## Cockpit Guidance
 
-The native Rust cockpit is an operator view, not the orchestration engine. It
+Cockpit is the primary operator surface, not the orchestration engine. It
 should:
 
 - Call `ajax cockpit --json` or other JSON-backed commands.
 - Treat missing or malformed backend data as a recoverable startup/rendering
   issue.
+- Present attention, review, safety, and command-plan decisions as first-class
+  operator workflows.
 - Keep layout behavior tested through layout functions and JSON contracts, not
   brittle source-string assertions.
 - Avoid taking dependencies on internal Rust model details outside the JSON

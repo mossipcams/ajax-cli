@@ -1,14 +1,14 @@
-# Ajax CLI
+# Ajax
 
-Ajax CLI is a CLI-first orchestration layer for isolated AI coding tasks. It is
-not a replacement for tmux, git worktrees, workmux, Claude, Codex, or future
-operator dashboards. Ajax sits above those tools and tracks what tasks exist,
-what state they are in, what needs attention, and which actions are safe to
-take.
+Ajax is a native operator cockpit for isolated AI coding tasks. It is not a
+replacement for tmux, git worktrees, workmux, Claude, Codex, or future agent
+runtimes. Ajax sits above those tools and tracks what tasks exist, what state
+they are in, what needs attention, and which actions are safe to take.
 
 The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
-The CLI is the product core; the native Rust cockpit is an operator view over
-the same backend instead of the place where orchestration logic lives.
+Cockpit is the primary operator experience; `ajax-core`, the CLI command
+surface, and the JSON contracts exist to make that experience deterministic,
+testable, and scriptable.
 
 ## Install
 
@@ -107,15 +107,16 @@ operator experience. Existing tools keep owning the durable primitives:
 The preferred flow is:
 
 ```text
-SSH or dev command -> ajax CLI/TUI -> ajax-core -> workmux/tmux/git/agents
+SSH or dev command -> ajax cockpit/CLI -> ajax-core -> workmux/tmux/git/agents
 ```
 
 Rust owns the orchestration core because safety policy, reconciliation, command
 dispatch, and task state benefit from explicit types and testable decisions.
+Cockpit owns the operator workflow over those typed decisions.
 
 ## Command Surface
 
-The initial CLI surface is intentionally stable and scriptable:
+The CLI surface backs Cockpit and remains intentionally stable and scriptable:
 
 ```sh
 ajax repos
@@ -153,18 +154,23 @@ ajax doctor --json
 
 ## Native Rust Cockpit
 
-Render the native Rust cockpit through the `ajax` command:
+Cockpit is the primary Ajax operator experience. Render it through the `ajax`
+command:
 
 ```sh
 ajax cockpit
 ```
 
-The cockpit uses a project-first workflow modeled after the earlier gum flow:
-choose a project, choose an action, then choose the task when that action needs
-one. Project actions include creating a task, opening or reviewing a task,
-running checks, viewing diffs, merging, cleaning, reconciling, and
-showing project status. The frontend remains a Rust shell over the same
-`ajax-core` command and JSON contracts.
+Cockpit is the place to decide what needs attention, what is safe to do next,
+and which command plan should run. It uses a project-first workflow modeled
+after the earlier gum flow: choose a project, choose an action, then choose the
+task when that action needs one. Project actions include creating a task,
+opening or reviewing a task, running checks, viewing diffs, merging, cleaning,
+reconciling, and showing project status.
+
+The cockpit remains a Rust operator surface over `ajax-core` command and JSON
+contracts. Orchestration logic stays in the core so Cockpit can be tested,
+scripted, and recovered without becoming the source of truth.
 
 Use watch mode when you want repeated cockpit frames:
 
@@ -214,7 +220,7 @@ Planned core modules:
 
 ## MVP Phases
 
-Phase 1 builds `ajax-core` and the Rust CLI.
+Phase 1 builds `ajax-core` and the Rust CLI contract Cockpit will rely on.
 
 Phase 2 makes frontend workflows call `ajax` commands instead of lifecycle
 substrates directly.
@@ -224,11 +230,11 @@ Phase 3 stabilizes JSON output contracts for UI consumption.
 Current JSON-backed commands include `repos`, `tasks`, `inspect`, `inbox`,
 `next`, `doctor`, and `reconcile`.
 
-Phase 4 adds a persistent native Rust cockpit over the same backend.
-The initial cockpit artifact is the `ajax-tui` crate plus `ajax cockpit`, which
-renders an operator dashboard from `ajax-core` responses. `ajax cockpit --watch`
-keeps refreshing cockpit frames while still keeping lifecycle orchestration out
-of the UI crate.
+Phase 4 makes the native Rust cockpit the primary operator experience over the
+same backend. The initial cockpit artifact is the `ajax-tui` crate plus
+`ajax cockpit`, which renders an operator dashboard from `ajax-core` responses.
+`ajax cockpit --watch` keeps refreshing cockpit frames while still keeping
+lifecycle orchestration out of the UI crate.
 
 Phase 5 adds semi-agentic attention, review, and cleanup intelligence.
 The first attention layer derives prioritized structured inbox items with
