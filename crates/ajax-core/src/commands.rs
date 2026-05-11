@@ -785,19 +785,13 @@ pub fn clean_task_plan<R: Registry>(
     let mut plan = CommandPlan::new(format!("clean task: {qualified_handle}"));
 
     match safety.classification {
-        SafetyClassification::Safe => plan.commands.push(command_in_task_repo(
+        SafetyClassification::Safe
+        | SafetyClassification::NeedsConfirmation
+        | SafetyClassification::Dangerous => plan.commands.push(command_in_task_repo(
             context,
             task,
             workmux.remove_task(&task.branch),
         )?),
-        SafetyClassification::NeedsConfirmation | SafetyClassification::Dangerous => {
-            plan.requires_confirmation = true;
-            plan.commands.push(command_in_task_repo(
-                context,
-                task,
-                workmux.remove_task(&task.branch),
-            )?);
-        }
         SafetyClassification::Blocked => {
             plan.blocked_reasons = safety.reasons;
         }

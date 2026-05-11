@@ -2486,6 +2486,41 @@ mod tests {
     }
 
     #[test]
+    fn clean_execute_removes_risky_task_without_yes() {
+        let mut context = cleanable_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        let git_status = task.git_status.as_mut().unwrap();
+        git_status.dirty = true;
+        git_status.merged = false;
+        git_status.unpushed_commits = 1;
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            ["ajax", "clean", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
+                .with_cwd("/Users/matt/projects/web")]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+    }
+
+    #[test]
     fn trunk_execute_uses_injected_runner() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
