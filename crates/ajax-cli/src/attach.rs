@@ -19,9 +19,10 @@ pub(crate) fn attach_task<R: CommandRunner>(
     if let Some(origin_session) =
         current_session.filter(|session| session != &response.tmux_session)
     {
+        let return_channel = ajax_return_channel(&origin_session, &response.tmux_session);
         outputs.push(run_required(
             runner,
-            &tmux.bind_ajax_return_to_session_key(&origin_session),
+            &tmux.bind_ajax_return_to_session_key(&origin_session, &return_channel),
         )?);
         match run_required(runner, &tmux.switch_client(&response.tmux_session)) {
             Ok(output) => outputs.push(output),
@@ -30,6 +31,10 @@ pub(crate) fn attach_task<R: CommandRunner>(
                 return Err(error);
             }
         }
+        outputs.push(run_required(
+            runner,
+            &tmux.wait_for_ajax_return(&return_channel),
+        )?);
         commands::mark_task_opened(context, qualified_handle).map_err(command_error)?;
         return Ok(outputs);
     }
@@ -92,4 +97,22 @@ fn detect_current_session<R: CommandRunner>(runner: &mut R, tmux: &TmuxAdapter) 
         return None;
     }
     Some(session.to_string())
+}
+
+fn ajax_return_channel(origin_session: &str, task_session: &str) -> String {
+    format!(
+        "ajax-return-{}-{}",
+        sanitize_tmux_channel_part(origin_session),
+        sanitize_tmux_channel_part(task_session)
+    )
+}
+
+fn sanitize_tmux_channel_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => character,
+            _ => '-',
+        })
+        .collect()
 }
