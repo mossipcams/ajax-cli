@@ -1,22 +1,6 @@
 use crate::models::{AttentionItem, LiveObservation};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OutputFormat {
-    Human,
-    Json,
-}
-
-impl OutputFormat {
-    pub fn from_json_flag(json: bool) -> Self {
-        if json {
-            Self::Json
-        } else {
-            Self::Human
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReposResponse {
     pub repos: Vec<RepoSummary>,
@@ -108,8 +92,8 @@ pub struct CockpitResponse {
 mod tests {
     use super::{
         CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
-        InspectResponse, NextResponse, OutputFormat, ReconcileResponse, RepoSummary, ReposResponse,
-        TaskSummary, TasksResponse,
+        InspectResponse, NextResponse, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary,
+        TasksResponse,
     };
     use crate::models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction};
 
@@ -279,8 +263,13 @@ mod tests {
     }
 
     #[test]
-    fn output_format_distinguishes_human_and_json() {
-        assert_eq!(OutputFormat::from_json_flag(true), OutputFormat::Json);
-        assert_eq!(OutputFormat::from_json_flag(false), OutputFormat::Human);
+    fn output_contracts_do_not_keep_unused_format_wrapper() {
+        let output_source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/output.rs"),
+        )
+        .unwrap();
+        let wrapper_name = ["Output", "Format"].concat();
+
+        assert!(!output_source.contains(&wrapper_name));
     }
 }
