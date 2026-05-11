@@ -256,10 +256,6 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
-    pub fn current_session(&self) -> CommandSpec {
-        CommandSpec::new(&self.program, ["display-message", "-p", "#S"])
-    }
-
     pub fn switch_client(&self, session: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["switch-client", "-t", session])
             .with_mode(CommandMode::InheritStdio)
@@ -267,26 +263,6 @@ impl TmuxAdapter {
 
     pub fn bind_ajax_detach_key(&self) -> CommandSpec {
         CommandSpec::new(&self.program, ["bind-key", "-n", "C-q", "detach-client"])
-    }
-
-    pub fn bind_ajax_return_to_session_key(&self, session: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "bind-key".to_string(),
-                "-n".to_string(),
-                "C-q".to_string(),
-                "switch-client".to_string(),
-                "-t".to_string(),
-                session.to_string(),
-                "\\;".to_string(),
-                "unbind-key".to_string(),
-                "-n".to_string(),
-                "C-q".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
     }
 
     pub fn unbind_ajax_detach_key(&self) -> CommandSpec {
@@ -680,30 +656,8 @@ mod tests {
         let adapter = TmuxAdapter::new("tmux");
 
         assert_eq!(
-            adapter.current_session(),
-            CommandSpec::new("tmux", ["display-message", "-p", "#S"])
-        );
-        assert_eq!(
             adapter.bind_ajax_detach_key(),
             CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"])
-        );
-        assert_eq!(
-            adapter.bind_ajax_return_to_session_key("ajax-cockpit"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "bind-key",
-                    "-n",
-                    "C-q",
-                    "switch-client",
-                    "-t",
-                    "ajax-cockpit",
-                    "\\;",
-                    "unbind-key",
-                    "-n",
-                    "C-q"
-                ]
-            )
         );
         assert_eq!(
             adapter.unbind_ajax_detach_key(),
