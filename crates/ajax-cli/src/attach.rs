@@ -14,6 +14,25 @@ pub(crate) fn attach_task<R: CommandRunner>(
     let response = commands::inspect_task(context, qualified_handle).map_err(command_error)?;
     let tmux = TmuxAdapter::new("tmux");
     let mut outputs = Vec::new();
+    let current_session = detect_current_session(runner, &tmux);
+
+    if let Some(origin_session) =
+        current_session.filter(|session| session != &response.tmux_session)
+    {
+        outputs.push(run_required(
+            runner,
+            &tmux.bind_ajax_return_to_session_key(&origin_session),
+        )?);
+        match run_required(runner, &tmux.switch_client(&response.tmux_session)) {
+            Ok(output) => outputs.push(output),
+            Err(error) => {
+                run_required(runner, &tmux.unbind_ajax_detach_key())?;
+                return Err(error);
+            }
+        }
+        commands::mark_task_opened(context, qualified_handle).map_err(command_error)?;
+        return Ok(outputs);
+    }
 
     outputs.push(run_required(runner, &tmux.bind_ajax_detach_key())?);
     let attach_result = run_required(runner, &tmux.attach_session(&response.tmux_session));
@@ -58,4 +77,19 @@ fn run_required<R: CommandRunner>(
         )));
     }
     Ok(output)
+}
+
+fn detect_current_session<R: CommandRunner>(runner: &mut R, tmux: &TmuxAdapter) -> Option<String> {
+    let output = match runner.run(&tmux.current_session()) {
+        Ok(output) => output,
+        Err(_error) => return None,
+    };
+    if output.status_code != 0 {
+        return None;
+    }
+    let session = output.stdout.trim();
+    if session.is_empty() {
+        return None;
+    }
+    Some(session.to_string())
 }

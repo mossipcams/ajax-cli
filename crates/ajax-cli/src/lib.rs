@@ -1670,6 +1670,7 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3224,7 +3225,12 @@ mod tests {
     #[test]
     fn pending_cockpit_open_attaches_with_ctrl_q_detach_guard() {
         let mut context = sample_context();
-        let mut runner = QueuedRunner::new(vec![output(0, ""), output(0, ""), output(0, "")]);
+        let mut runner = QueuedRunner::new(vec![
+            output(1, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+        ]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
@@ -3244,6 +3250,7 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3254,9 +3261,60 @@ mod tests {
     }
 
     #[test]
+    fn pending_cockpit_open_inside_tmux_switches_back_to_ajax_session() {
+        let mut context = sample_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-cockpit\n"),
+            output(0, ""),
+            output(0, ""),
+        ]);
+        let mut state_changed = false;
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open task".to_string(),
+            task_title: None,
+        };
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "bind-key",
+                        "-n",
+                        "C-q",
+                        "switch-client",
+                        "-t",
+                        "ajax-cockpit",
+                        "\\;",
+                        "unbind-key",
+                        "-n",
+                        "C-q"
+                    ]
+                ),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
     fn pending_cockpit_open_cleans_up_detach_key_when_attach_fails() {
         let mut context = sample_context();
         let mut runner = QueuedRunner::new(vec![
+            output(1, ""),
             output(0, ""),
             CommandOutput {
                 status_code: 1,
@@ -3285,6 +3343,7 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3401,6 +3460,7 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3573,6 +3633,7 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
