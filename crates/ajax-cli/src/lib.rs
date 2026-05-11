@@ -1698,7 +1698,12 @@ mod tests {
         let license = std::fs::read_to_string(root.join("LICENSE")).unwrap();
 
         assert!(!workspace_manifest.contains("https://github.com/example/ajax-cli"));
-        assert!(workspace_manifest.contains("repository = \"https://github.com/"));
+        assert!(
+            workspace_manifest.contains("repository = \"https://github.com/mossipcams/ajax-cli\"")
+        );
+        assert!(workspace_manifest.contains("version = \"0.1.0\""));
+        assert!(workspace_manifest.contains("[workspace.lints.rust]"));
+        assert!(workspace_manifest.contains("unsafe_op_in_unsafe_fn = \"deny\""));
         assert!(license.contains("MIT License"));
         assert!(readme.contains("## Install"));
         assert!(readme.contains("## Configuration"));
@@ -1710,6 +1715,74 @@ mod tests {
     }
 
     #[test]
+    fn workspace_members_inherit_metadata_lints_and_dependencies() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+        assert!(workspace_manifest.contains("[workspace.dependencies]"));
+        for dependency in [
+            "ajax-core",
+            "ajax-supervisor",
+            "ajax-tui",
+            "serde",
+            "serde_json",
+            "tokio",
+            "rstest",
+        ] {
+            assert!(
+                workspace_manifest.contains(&format!("{dependency} = ")),
+                "workspace manifest should centralize {dependency}"
+            );
+        }
+
+        for crate_name in ["ajax-cli", "ajax-core", "ajax-supervisor", "ajax-tui"] {
+            let manifest =
+                std::fs::read_to_string(root.join(format!("crates/{crate_name}/Cargo.toml")))
+                    .unwrap();
+
+            assert!(manifest.contains("version.workspace = true"));
+            assert!(manifest.contains("[lints]"));
+            assert!(manifest.contains("workspace = true"));
+
+            for repeated_dependency in ["serde_json", "rstest"] {
+                assert!(
+                    !manifest.contains(&format!("{repeated_dependency} = \"")),
+                    "{crate_name} should inherit {repeated_dependency} from the workspace"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_style_files_document_repo_hygiene() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let clippy = std::fs::read_to_string(root.join("clippy.toml")).unwrap();
+        let rustfmt = std::fs::read_to_string(root.join("rustfmt.toml")).unwrap();
+        let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
+        let style = std::fs::read_to_string(root.join("STYLE.md")).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+
+        assert!(clippy.contains("doc-valid-idents"));
+        assert!(rustfmt.contains("edition = \"2021\""));
+        assert!(toolchain.contains("channel = \"1.88.0\""));
+        assert!(style.contains("Workspace Hygiene"));
+        assert!(style.contains("runtime behavior"));
+        assert!(agents.contains("Workspace Hygiene"));
+
+        for boundary in [
+            "ajax-cli = CLI parsing, dispatch, rendering, context loading",
+            "ajax-core = models, policy, reconciliation, registry",
+            "ajax-supervisor = process supervision",
+            "ajax-tui = Cockpit screen state, input, layout, rendering",
+        ] {
+            assert!(
+                agents.contains(boundary),
+                "AGENTS.md should document boundary: {boundary}"
+            );
+        }
+    }
+
+    #[test]
     fn tui_dependency_uses_audit_clean_ratatui_feature_set() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let tui_manifest =
@@ -1717,7 +1790,7 @@ mod tests {
         let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
         let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
 
-        assert!(tui_manifest.contains("version = \"0.30\""));
+        assert!(workspace_manifest.contains("ratatui = { version = \"0.30\""));
         assert!(tui_manifest.contains("default-features = false"));
         assert!(tui_manifest.contains("\"crossterm\""));
         assert!(tui_manifest.contains("\"underline-color\""));

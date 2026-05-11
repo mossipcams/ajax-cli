@@ -37,6 +37,17 @@ is complete, then report the final validation results.
 - When tests fail, fix the implementation, not the tests.
 - Do NOT keep legacy code. When adding new code always fully replace legacy code. It is not a migration.
 
+## Workspace Hygiene
+
+- Root `Cargo.toml` owns shared package metadata, dependency versions, and lint policy.
+- Member crates use workspace dependency and lint inheritance where practical.
+- Preserve crate boundaries:
+  - `ajax-cli = CLI parsing, dispatch, rendering, context loading`
+  - `ajax-core = models, policy, reconciliation, registry`
+  - `ajax-supervisor = process supervision`
+  - `ajax-tui = Cockpit screen state, input, layout, rendering`
+- Keep cleanup work behavior-neutral unless the task explicitly asks for a runtime change.
+
 @/Users/matt/.codex/RTK.md
 
 # Strict Rust Rules for Agentic Coding

@@ -1,0 +1,11 @@
+doc-valid-idents = [
+    "Ajax",
+    "CLI",
+    "Cockpit",
+    "JSON",
+    "Ratatui",
+    "SQLite",
+    "TUI",
+    "Tokio",
+    "workmux",
+]
