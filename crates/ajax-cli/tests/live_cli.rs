@@ -319,7 +319,7 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn live_cockpit_json_uses_recorded_state_without_repair_refresh() {
+fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
     let home = IsolatedAjaxHome::new("cockpit-live-status");
     let repo_path = home.create_managed_repo("web");
     home.write_config(&format!(
@@ -358,15 +358,18 @@ fn live_cockpit_json_uses_recorded_state_without_repair_refresh() {
     assert_eq!(stderr(&output), "");
     let body: Value =
         serde_json::from_str(&stdout(&output)).expect("ajax cockpit --json should emit valid JSON");
-    assert!(body["tasks"]["tasks"][0]["live_status"].is_null());
+    assert_eq!(
+        body["tasks"]["tasks"][0]["live_status"]["summary"],
+        "waiting for approval"
+    );
     assert!(body["inbox"]["items"]
         .as_array()
         .unwrap()
         .iter()
-        .all(|item| {
+        .any(|item| {
             item["reason"]
                 .as_str()
-                .is_none_or(|reason| reason != "waiting for approval")
+                .is_some_and(|reason| reason == "waiting for approval")
         }));
 }
 
