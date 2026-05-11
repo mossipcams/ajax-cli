@@ -886,11 +886,23 @@ fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 fn primary_accent() -> Color {
-    Color::Indexed(208)
+    bucket_color(StatusBucket::Active)
 }
 
 fn secondary_accent() -> Color {
-    Color::LightYellow
+    bucket_color(StatusBucket::NeedsYou)
+}
+
+fn danger_accent() -> Color {
+    bucket_color(StatusBucket::Stuck)
+}
+
+fn muted_text() -> Color {
+    bucket_color(StatusBucket::Idle)
+}
+
+fn subtle_text() -> Color {
+    Color::Indexed(240)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -999,8 +1011,8 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             .add_modifier(Modifier::BOLD),
     )];
 
-    let crumb_sep = || Span::styled(" > ", Style::default().fg(Color::DarkGray));
-    let dot_sep = || Span::styled(" - ", Style::default().fg(Color::DarkGray));
+    let crumb_sep = || Span::styled(" > ", Style::default().fg(subtle_text()));
+    let dot_sep = || Span::styled(" - ", Style::default().fg(subtle_text()));
     let crumb_style = Style::default()
         .fg(primary_accent())
         .add_modifier(Modifier::BOLD);
@@ -1022,7 +1034,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                 parts.push(Span::styled(
                     format!("{} inbox", app.inbox.items.len()),
                     Style::default()
-                        .fg(Color::LightRed)
+                        .fg(danger_accent())
                         .add_modifier(Modifier::BOLD),
                 ));
                 if let Some(next) = app.inbox.items.first() {
@@ -1030,7 +1042,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                     parts.push(Span::styled(
                         format!("next {}", next.task_handle),
                         Style::default()
-                            .fg(Color::LightRed)
+                            .fg(danger_accent())
                             .add_modifier(Modifier::BOLD),
                     ));
                 }
@@ -1061,7 +1073,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                 parts.push(Span::styled(
                     format!("{cleanable_tasks} clean"),
                     Style::default()
-                        .fg(Color::LightRed)
+                        .fg(danger_accent())
                         .add_modifier(Modifier::BOLD),
                 ));
             }
@@ -1122,7 +1134,7 @@ fn show_brand(view: &AppView) -> bool {
 
 fn ajax_brand_spans() -> Vec<Span<'static>> {
     let bold = Modifier::BOLD;
-    let bracket = Style::default().fg(Color::DarkGray);
+    let bracket = Style::default().fg(subtle_text());
     vec![
         Span::raw(" "),
         Span::styled("[", bracket),
@@ -1166,12 +1178,12 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
             ));
             parts.push(Span::styled(
                 format!(" {label}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(subtle_text()),
             ));
             if !last {
                 parts.push(Span::styled(
                     "   ".to_string(),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(subtle_text()),
                 ));
             }
         };
@@ -1210,7 +1222,7 @@ fn empty_state(text: &str) -> ListItem<'static> {
     ListItem::new(Line::from(vec![Span::styled(
         format!("   {text}"),
         Style::default()
-            .fg(Color::DarkGray)
+            .fg(subtle_text())
             .add_modifier(Modifier::ITALIC),
     )]))
 }
@@ -1271,7 +1283,7 @@ fn project_glyph(repo: &RepoSummary) -> Span<'static> {
                 .add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled(".", Style::default().fg(Color::DarkGray))
+        Span::styled(".", Style::default().fg(subtle_text()))
     }
 }
 
@@ -1279,7 +1291,7 @@ fn project_name_color(repo: &RepoSummary) -> Color {
     if repo.active_tasks > 0 {
         primary_accent()
     } else {
-        Color::Gray
+        muted_text()
     }
 }
 
@@ -1296,7 +1308,7 @@ fn inbox_item_accent(item: &AttentionItem) -> Color {
 
 fn priority_accent(priority: u32) -> Color {
     if priority < 20 {
-        Color::LightRed
+        danger_accent()
     } else if priority < 50 {
         secondary_accent()
     } else {
@@ -1330,7 +1342,7 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
             ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
         }
         Some(RecommendedAction::CleanTask) => {
-            ActionChrome::new("X", Color::LightRed, Color::LightRed, true)
+            ActionChrome::new("X", danger_accent(), danger_accent(), true)
         }
         Some(RecommendedAction::Status) => {
             ActionChrome::new("S", primary_accent(), primary_accent(), true)
@@ -1338,7 +1350,7 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         None if recommended_action == "help" => {
             ActionChrome::new("?", Color::LightYellow, Color::White, true)
         }
-        _ => ActionChrome::new(".", Color::DarkGray, Color::Gray, false),
+        _ => ActionChrome::new(".", subtle_text(), muted_text(), false),
     }
 }
 
@@ -1406,8 +1418,8 @@ fn render_row(glyph: Span<'static>, mut spans: Vec<Span<'static>>) -> ListItem<'
 
 fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
     let bold = Modifier::BOLD;
-    let dim = Style::default().fg(Color::DarkGray);
-    let arrow = Style::default().fg(Color::DarkGray);
+    let dim = Style::default().fg(subtle_text());
+    let arrow = Style::default().fg(subtle_text());
     match s {
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
@@ -1520,10 +1532,10 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             ),
         ] {
             rows.push(render_row(
-                Span::styled(".", Style::default().fg(Color::DarkGray)),
+                Span::styled(".", Style::default().fg(subtle_text())),
                 vec![
                     Span::styled(format!("{key:<18}"), Style::default().fg(Color::Yellow)),
-                    Span::styled(label.to_string(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(label.to_string(), Style::default().fg(subtle_text())),
                 ],
             ));
         }
@@ -1675,9 +1687,9 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_palette_uses_orange_primary_and_light_yellow_secondary() {
-        assert_eq!(primary_accent(), Color::Indexed(208));
-        assert_eq!(secondary_accent(), Color::LightYellow);
+    fn cockpit_palette_maps_accents_to_status_buckets() {
+        assert_eq!(primary_accent(), bucket_color(StatusBucket::Active));
+        assert_eq!(secondary_accent(), bucket_color(StatusBucket::NeedsYou));
     }
 
     #[test]
