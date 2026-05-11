@@ -1,7 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use ajax_core::{
-    models::{AttentionItem, RecommendedAction, TaskId},
+    models::{AttentionItem, LiveStatusKind, RecommendedAction, TaskId},
     output::{
         CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     },
@@ -893,6 +893,91 @@ fn secondary_accent() -> Color {
     Color::LightYellow
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusBucket {
+    Active,
+    NeedsYou,
+    Stuck,
+    Done,
+    Idle,
+    Missing,
+}
+
+fn bucket_color(bucket: StatusBucket) -> Color {
+    match bucket {
+        StatusBucket::Active => Color::Indexed(45),
+        StatusBucket::NeedsYou => Color::Indexed(214),
+        StatusBucket::Stuck => Color::Indexed(203),
+        StatusBucket::Done => Color::Indexed(78),
+        StatusBucket::Idle => Color::Indexed(244),
+        StatusBucket::Missing => Color::Indexed(131),
+    }
+}
+
+fn bucket_glyph(bucket: StatusBucket) -> &'static str {
+    match bucket {
+        StatusBucket::Active => "▸",
+        StatusBucket::NeedsYou => "?",
+        StatusBucket::Stuck => "!",
+        StatusBucket::Done => "✓",
+        StatusBucket::Idle => "·",
+        StatusBucket::Missing => "×",
+    }
+}
+
+fn live_bucket(kind: &LiveStatusKind) -> StatusBucket {
+    match kind {
+        LiveStatusKind::AgentRunning
+        | LiveStatusKind::CommandRunning
+        | LiveStatusKind::TestsRunning => StatusBucket::Active,
+        LiveStatusKind::WaitingForApproval
+        | LiveStatusKind::WaitingForInput
+        | LiveStatusKind::AuthRequired => StatusBucket::NeedsYou,
+        LiveStatusKind::Blocked
+        | LiveStatusKind::MergeConflict
+        | LiveStatusKind::CiFailed
+        | LiveStatusKind::CommandFailed
+        | LiveStatusKind::RateLimited
+        | LiveStatusKind::ContextLimit => StatusBucket::Stuck,
+        LiveStatusKind::Done => StatusBucket::Done,
+        LiveStatusKind::ShellIdle | LiveStatusKind::Unknown => StatusBucket::Idle,
+        LiveStatusKind::WorktreeMissing
+        | LiveStatusKind::TmuxMissing
+        | LiveStatusKind::WorktrunkMissing => StatusBucket::Missing,
+    }
+}
+
+fn lifecycle_bucket(lifecycle: &str) -> StatusBucket {
+    if lifecycle.contains("Error") || lifecycle.contains("Orphaned") {
+        StatusBucket::Stuck
+    } else if lifecycle.contains("Reviewable")
+        || lifecycle.contains("Mergeable")
+        || lifecycle.contains("Waiting")
+    {
+        StatusBucket::NeedsYou
+    } else if lifecycle.contains("Merged") || lifecycle.contains("Cleanable") {
+        StatusBucket::Done
+    } else if lifecycle.contains("Active") || lifecycle.contains("Provisioning") {
+        StatusBucket::Active
+    } else {
+        StatusBucket::Idle
+    }
+}
+
+fn task_bucket(task: &TaskSummary) -> StatusBucket {
+    let primary = task
+        .live_status
+        .as_ref()
+        .map(|obs| live_bucket(&obs.kind))
+        .unwrap_or_else(|| lifecycle_bucket(&task.lifecycle_status));
+    match (primary, task.needs_attention) {
+        (StatusBucket::Idle | StatusBucket::Active | StatusBucket::Done, true) => {
+            StatusBucket::NeedsYou
+        }
+        (bucket, _) => bucket,
+    }
+}
+
 fn render_ui(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Length(1),
@@ -1152,54 +1237,18 @@ fn group_of(kind: &SelectableKind) -> &'static str {
     }
 }
 
-fn task_glyph(status: &str, needs_attention: bool) -> Span<'static> {
-    let bold = Modifier::BOLD;
-    if is_waiting_for_input(status) {
-        return Span::styled(
-            "~",
-            Style::default().fg(secondary_accent()).add_modifier(bold),
-        );
-    }
-    if needs_attention {
-        return Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold));
-    }
-    if status.contains("Active") {
-        Span::styled(
-            "*",
-            Style::default().fg(primary_accent()).add_modifier(bold),
-        )
-    } else if status.contains("Reviewable") || status.contains("Mergeable") {
-        Span::styled(
-            "R",
-            Style::default().fg(secondary_accent()).add_modifier(bold),
-        )
-    } else if status.contains("Error") || status.contains("Orphaned") {
-        Span::styled("!", Style::default().fg(Color::LightRed).add_modifier(bold))
-    } else if status.contains("Waiting") {
-        Span::styled("~", Style::default().fg(secondary_accent()))
-    } else {
-        Span::styled(".", Style::default().fg(Color::DarkGray))
-    }
+fn task_glyph(task: &TaskSummary) -> Span<'static> {
+    let bucket = task_bucket(task);
+    Span::styled(
+        bucket_glyph(bucket),
+        Style::default()
+            .fg(bucket_color(bucket))
+            .add_modifier(Modifier::BOLD),
+    )
 }
 
-fn task_handle_color(status: &str, needs_attention: bool) -> Color {
-    if is_waiting_for_input(status) {
-        return secondary_accent();
-    }
-    if needs_attention {
-        return Color::LightRed;
-    }
-    if status.contains("Active") {
-        primary_accent()
-    } else if status.contains("Reviewable") || status.contains("Mergeable") {
-        secondary_accent()
-    } else if status.contains("Error") || status.contains("Orphaned") {
-        Color::LightRed
-    } else if status.contains("Waiting") {
-        secondary_accent()
-    } else {
-        Color::Gray
-    }
+fn task_handle_color(task: &TaskSummary) -> Color {
+    bucket_color(task_bucket(task))
 }
 
 fn task_status_label(task: &TaskSummary) -> String {
@@ -1406,21 +1455,16 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                 action_label_style(recommended_action),
             )],
         ),
-        SelectableKind::Task(t) => {
-            let status = task_status_label(t);
-            render_row(
-                task_glyph(&status, t.needs_attention),
-                vec![
-                    Span::styled(
-                        format!("{:<28}", t.qualified_handle),
-                        Style::default()
-                            .fg(task_handle_color(&status, t.needs_attention))
-                            .add_modifier(bold),
-                    ),
-                    Span::styled(status, dim),
-                ],
-            )
-        }
+        SelectableKind::Task(t) => render_row(
+            task_glyph(t),
+            vec![
+                Span::styled(
+                    format!("{:<28}", t.qualified_handle),
+                    Style::default().fg(task_handle_color(t)).add_modifier(bold),
+                ),
+                Span::styled(task_status_label(t), dim),
+            ],
+        ),
     }
 }
 
@@ -1542,10 +1586,11 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, handle_cockpit_event, inbox_item_accent, primary_accent, render_cockpit,
-        render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout, task_glyph,
-        task_handle_color, ActionOutcome, App, AppView, CockpitEventHandler, EventLoopAction,
-        PendingAction, SelectableKind, TerminalModeCommand, FLASH_TICKS,
+        action_chrome, bucket_color, handle_cockpit_event, inbox_item_accent, primary_accent,
+        render_cockpit, render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout,
+        task_bucket, task_glyph, task_handle_color, ActionOutcome, App, AppView,
+        CockpitEventHandler, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
+        TerminalModeCommand, FLASH_TICKS,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
@@ -1666,14 +1711,23 @@ mod tests {
     }
 
     #[test]
-    fn waiting_for_input_task_attention_uses_yellow_chrome() {
+    fn waiting_for_input_task_attention_uses_needs_you_chrome() {
+        let mut tasks = sample_tasks();
+        tasks.tasks[0].live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        tasks.tasks[0].needs_attention = true;
+        let task = &tasks.tasks[0];
+
+        assert_eq!(task_bucket(task), StatusBucket::NeedsYou);
         assert_eq!(
-            task_glyph("WaitingForInput", true).style.fg,
-            Some(secondary_accent())
+            task_glyph(task).style.fg,
+            Some(bucket_color(StatusBucket::NeedsYou))
         );
         assert_eq!(
-            task_handle_color("WaitingForInput", true),
-            secondary_accent()
+            task_handle_color(task),
+            bucket_color(StatusBucket::NeedsYou)
         );
     }
 
