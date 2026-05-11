@@ -993,7 +993,6 @@ fn registry_event_kind_name(value: RegistryEventKind) -> &'static str {
         RegistryEventKind::TaskCreated => "TaskCreated",
         RegistryEventKind::LifecycleChanged => "LifecycleChanged",
         RegistryEventKind::UserNote => "UserNote",
-        RegistryEventKind::Reconciled => "Reconciled",
     }
 }
 
@@ -1002,7 +1001,6 @@ fn parse_registry_event_kind(value: &str) -> Result<RegistryEventKind, RegistryS
         "TaskCreated" => Ok(RegistryEventKind::TaskCreated),
         "LifecycleChanged" => Ok(RegistryEventKind::LifecycleChanged),
         "UserNote" => Ok(RegistryEventKind::UserNote),
-        "Reconciled" => Ok(RegistryEventKind::Reconciled),
         _ => Err(RegistrySnapshotError::Decode(format!(
             "unknown registry event kind: {value}"
         ))),
@@ -1091,7 +1089,6 @@ pub enum RegistryEventKind {
     TaskCreated,
     LifecycleChanged,
     UserNote,
-    Reconciled,
 }
 
 #[cfg(test)]
@@ -1268,7 +1265,6 @@ mod tests {
     #[case("TaskCreated", RegistryEventKind::TaskCreated)]
     #[case("LifecycleChanged", RegistryEventKind::LifecycleChanged)]
     #[case("UserNote", RegistryEventKind::UserNote)]
-    #[case("Reconciled", RegistryEventKind::Reconciled)]
     fn parses_registry_event_kind_names(#[case] name: &str, #[case] expected: RegistryEventKind) {
         assert_eq!(parse_registry_event_kind(name).unwrap(), expected);
     }
@@ -1533,7 +1529,7 @@ mod tests {
         });
         registry.events.push(RegistryEvent {
             task_id: TaskId::new("task-1"),
-            kind: RegistryEventKind::Reconciled,
+            kind: RegistryEventKind::LifecycleChanged,
             message: "second".to_string(),
             occurred_at: SystemTime::UNIX_EPOCH + Duration::new(1_700_000_040, 222),
         });
@@ -1562,7 +1558,7 @@ mod tests {
             events[0].occurred_at,
             SystemTime::UNIX_EPOCH + Duration::new(1_700_000_030, 111)
         );
-        assert_eq!(events[1].kind, RegistryEventKind::Reconciled);
+        assert_eq!(events[1].kind, RegistryEventKind::LifecycleChanged);
         assert_eq!(events[1].message, "second");
         assert_eq!(
             events[1].occurred_at,

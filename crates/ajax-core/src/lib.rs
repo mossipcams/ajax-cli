@@ -9,7 +9,6 @@ pub mod live;
 pub mod models;
 pub mod output;
 pub mod policy;
-pub mod reconcile;
 pub mod registry;
 
 #[cfg(test)]
@@ -34,5 +33,16 @@ mod tests {
 
         let duplicate_contract_export = ["pub mod ", "cockpit", ";"].concat();
         assert!(!lib.contains(&duplicate_contract_export));
+    }
+
+    #[test]
+    fn crate_root_does_not_export_reconcile_module() {
+        let lib = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+
+        let reconcile_export = ["pub mod ", "reconcile", ";"].concat();
+        assert!(!lib.contains(&reconcile_export));
     }
 }

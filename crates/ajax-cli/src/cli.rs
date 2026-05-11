@@ -31,7 +31,6 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("status").about("Show Ajax status"))
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
-        .subcommand(json_command("reconcile").about("Compare registry state with external reality"))
         .subcommand(supervise_command())
         .subcommand(cockpit_command())
 }

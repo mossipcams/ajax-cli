@@ -2,8 +2,8 @@ use ajax_core::{
     adapters::CommandOutput,
     commands,
     output::{
-        DoctorResponse, InboxResponse, InspectResponse, NextResponse, ReconcileResponse,
-        ReposResponse, TaskSummary, TasksResponse,
+        DoctorResponse, InboxResponse, InspectResponse, NextResponse, ReposResponse, TaskSummary,
+        TasksResponse,
     },
 };
 use serde::Serialize;
@@ -101,13 +101,6 @@ pub(crate) fn render_next_human(response: &NextResponse) -> String {
         .as_ref()
         .map(render_attention_item_human)
         .unwrap_or_else(|| "no tasks need attention".to_string())
-}
-
-pub(crate) fn render_reconcile_human(response: &ReconcileResponse) -> String {
-    format!(
-        "checked:{} changed:{}",
-        response.tasks_checked, response.tasks_changed
-    )
 }
 
 pub(crate) fn render_doctor_human(response: &DoctorResponse) -> String {

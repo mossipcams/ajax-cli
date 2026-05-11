@@ -8,7 +8,7 @@ testable, and scriptable.
 ## System Boundaries
 
 - `ajax-core` owns task models, orchestration decisions, policy, attention,
-  reconciliation, command plans, and output contracts.
+  live status projection, command plans, and output contracts.
 - `ajax-cli` owns argument parsing, context loading/saving, command dispatch,
   human rendering, JSON rendering, and process execution wiring for Cockpit and
   scripts.
@@ -19,13 +19,13 @@ testable, and scriptable.
 - External tools remain durable substrates: `git` owns repository truth,
   branches, merges, and worktrees; `tmux` owns durable interactive runtime; and
   agent CLIs remain opaque workers. Ajax owns task lifecycle planning, naming,
-  policy, reconciliation, and registry state.
+  policy, live status projection, and registry state.
 
 ## Architectural Direction
 
 Keep the current Rust core plus CLI JSON contract behind Cockpit. This is the
-right boundary for a tool that needs deterministic policy, testable
-reconciliation, and scriptable command output while still centering the operator
+right boundary for a tool that needs deterministic policy, event-driven runtime
+state, and scriptable command output while still centering the operator
 experience in the native cockpit.
 
 Do not rewrite Ajax into a different application framework. Prefer small

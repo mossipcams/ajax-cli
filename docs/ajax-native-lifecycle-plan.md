@@ -8,7 +8,7 @@ Ajax should own task lifecycle end to end:
 - create and open tmux sessions
 - ensure the `worktrunk` window points at the task worktree
 - launch the selected agent inside the task runtime
-- record and reconcile task state
+- record task state from Ajax-owned lifecycle and live supervisor events
 - check, diff, merge, clean, and sweep tasks through Ajax policy
 - expose deterministic command plans and Cockpit JSON for every operator action
 
@@ -17,7 +17,7 @@ External tools remain primitives:
 - `git` owns repository, branch, merge, and worktree truth.
 - `tmux` owns durable terminal sessions, windows, and panes.
 - Agent CLIs remain opaque workers.
-- Ajax owns naming, planning, registry state, policy, recovery, and Cockpit
+- Ajax owns naming, planning, registry state, policy, live status, and Cockpit
   workflows.
 
 This is not a compatibility migration. Replace `workmux` lifecycle behavior
@@ -190,11 +190,11 @@ Verify:
 cargo test -p ajax-core trunk_task_plan
 ```
 
-### 8. Remove Workmux Window Reconciliation
+### 8. Remove Legacy Workmux Window Discovery
 
 Test to write:
 
-- Reconciliation uses only the recorded Ajax session and `worktrunk` window.
+- Live status uses only the recorded Ajax session and `worktrunk` window.
 - Legacy `wm-*` windows are not discovered as substitutes.
 
 Code to implement:
@@ -206,7 +206,7 @@ Code to implement:
 Verify:
 
 ```sh
-cargo test -p ajax-core reconcile_external
+cargo test -p ajax-core live
 ```
 
 ### 9. Replace Merge Planning
@@ -243,7 +243,7 @@ Code to implement:
 
 - Remove `workmux remove`.
 - Reuse cleanup safety as the gate.
-- Skip commands for resources known missing from reconciled state.
+- Skip commands for resources known missing from live state.
 
 Verify:
 

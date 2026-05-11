@@ -23,8 +23,7 @@ use context::{default_context_paths, load_context, save_context};
 use dispatch::{render_task_command, TaskCommandOperation};
 use render::{
     render_doctor_human, render_execution_outputs, render_inbox_human, render_inspect_human,
-    render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
-    render_tasks_human,
+    render_next_human, render_plan, render_repos_human, render_response, render_tasks_human,
 };
 use std::{ffi::OsStr, time::Duration};
 use supervise::render_supervise_command;
@@ -281,9 +280,6 @@ fn render_matches_with_paths(
         ),
         Some(("state", subcommand)) => render_state_command(context, subcommand),
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
-        Some(("reconcile", _)) => Err(CliError::CommandFailed(
-            "reconcile requires mutable context and runner support".to_string(),
-        )),
         Some(("supervise", _)) => Err(CliError::CommandFailed(
             "supervise requires mutable context and runner support".to_string(),
         )),
@@ -470,17 +466,6 @@ fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some(("reconcile", subcommand)) => {
-            let response = commands::reconcile_external(context, runner).map_err(command_error)?;
-            Ok(RenderedCommand {
-                output: render_response(
-                    response.clone(),
-                    subcommand.get_flag("json"),
-                    render_reconcile_human,
-                )?,
-                state_changed: response.tasks_changed > 0,
-            })
-        }
         Some(("status", subcommand)) => {
             let changed = refresh_live_context(context, runner)?;
             Ok(RenderedCommand {
@@ -628,11 +613,10 @@ fn render_live_cockpit_command<R: CommandRunner>(
 }
 
 fn refresh_live_context<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
+    _context: &mut CommandContext<InMemoryRegistry>,
+    _runner: &mut R,
 ) -> Result<bool, CliError> {
-    let response = commands::reconcile_external(context, runner).map_err(command_error)?;
-    Ok(response.tasks_changed > 0)
+    Ok(false)
 }
 
 fn refresh_cockpit_snapshot<R: CommandRunner>(
@@ -1010,13 +994,19 @@ mod tests {
             vec!["ajax", "review"],
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
-            vec!["ajax", "reconcile"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
             assert!(matches.is_ok(), "{args:?} should parse");
         }
+    }
+
+    #[test]
+    fn command_surface_excludes_reconcile() {
+        let matches = build_cli().try_get_matches_from(["ajax", "reconcile"]);
+
+        assert!(matches.is_err());
     }
 
     #[test]
@@ -1146,7 +1136,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_json_refreshes_live_worktree_status_from_tmux_pane() {
+    fn cockpit_json_uses_recorded_live_status_without_repair() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -1175,19 +1165,13 @@ mod tests {
             parsed["tasks"]["tasks"][0]["qualified_handle"],
             "web/fix-login"
         );
-        assert_eq!(
-            parsed["tasks"]["tasks"][0]["live_status"]["kind"],
-            "WaitingForApproval"
-        );
-        assert_eq!(
-            parsed["inbox"]["items"][0]["reason"],
-            "waiting for approval"
-        );
-        assert_eq!(runner.commands.len(), 5);
+        assert!(parsed["tasks"]["tasks"][0]["live_status"].is_null());
+        assert!(parsed["inbox"]["items"].as_array().unwrap().is_empty());
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
-    fn cockpit_watch_renders_refreshed_live_status_in_frame() {
+    fn cockpit_watch_renders_recorded_live_status_in_frame() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -1210,12 +1194,12 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output.contains("web/fix-login\twaiting for approval\tFix login"));
-        assert_eq!(runner.commands.len(), 5);
+        assert!(output.contains("web/fix-login\tActive\tFix login"));
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
-    fn status_command_refreshes_live_state_before_rendering() {
+    fn status_command_renders_recorded_live_state() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -1234,17 +1218,17 @@ mod tests {
         let output =
             run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
 
-        assert!(output.contains("web/fix-login\tWaiting\tFix login"));
-        assert!(context
+        assert!(output.contains("web/fix-login\tActive\tFix login"));
+        assert!(!context
             .registry
             .get_task(&TaskId::new("task-1"))
             .unwrap()
             .has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(runner.commands.len(), 5);
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
-    fn status_command_renders_json_after_refreshing_live_state() {
+    fn status_command_renders_json_from_recorded_live_state() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -1266,14 +1250,12 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
-        assert_eq!(
-            parsed["tasks"][0]["live_status"]["kind"],
-            "WaitingForApproval"
-        );
+        assert!(parsed["tasks"][0]["live_status"].is_null());
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
-    fn cockpit_refresh_snapshot_reconciles_live_state_and_reports_changes() {
+    fn cockpit_refresh_snapshot_reports_recorded_state_without_repair() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -1293,13 +1275,10 @@ mod tests {
         let snapshot =
             super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
 
-        assert!(state_changed);
-        assert_eq!(
-            snapshot.tasks.tasks[0].live_status.as_ref().unwrap().kind,
-            ajax_core::models::LiveStatusKind::WaitingForApproval
-        );
-        assert_eq!(snapshot.inbox.items[0].reason, "waiting for approval");
-        assert_eq!(runner.commands.len(), 5);
+        assert!(!state_changed);
+        assert_eq!(snapshot.tasks.tasks[0].live_status, None);
+        assert!(snapshot.inbox.items.is_empty());
+        assert!(runner.commands.is_empty());
     }
 
     #[test]
@@ -1525,20 +1504,10 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_command_supports_json_output() {
+    fn reconcile_command_is_not_supported() {
         let matches = build_cli().try_get_matches_from(["ajax", "reconcile", "--json"]);
 
-        assert!(matches.is_ok());
-    }
-
-    #[test]
-    fn readonly_context_rejects_reconcile_instead_of_reporting_synthetic_success() {
-        let context = sample_context();
-
-        let error = run_with_context(["ajax", "reconcile", "--json"], &context).unwrap_err();
-
-        assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("reconcile requires mutable context and runner support")));
+        assert!(matches.is_err());
     }
 
     #[test]
@@ -1790,7 +1759,7 @@ mod tests {
 
         for boundary in [
             "ajax-cli = CLI parsing, dispatch, rendering, context loading",
-            "ajax-core = models, policy, reconciliation, registry",
+            "ajax-core = models, policy, live status, registry",
             "ajax-supervisor = process supervision",
             "ajax-tui = Cockpit screen state, input, layout, rendering",
         ] {
@@ -3027,7 +2996,6 @@ mod tests {
                 Expected::Message(&["select a project", "new task"]),
             ),
             ("web", "status", Expected::Message(&["web: 1 task(s)"])),
-            ("web", "reconcile", Expected::Refresh),
         ] {
             let mut context = if action == "clean task" {
                 cleanable_context()
@@ -3086,7 +3054,7 @@ mod tests {
                         inbox,
                     } => {
                         assert_eq!(repos.repos.len(), 1, "{action}");
-                        if matches!(action, "clean task" | "reconcile") {
+                        if action == "clean task" {
                             assert!(tasks.tasks.is_empty(), "{action}");
                             assert!(inbox.items.is_empty(), "{action}");
                         } else {
@@ -3350,10 +3318,7 @@ mod tests {
             super::TaskCommandOperation::from_recommended_action(RecommendedAction::CleanTask),
             Some(super::TaskCommandOperation::Clean)
         );
-        assert_eq!(
-            super::TaskCommandOperation::from_recommended_action(RecommendedAction::Reconcile),
-            None
-        );
+        assert_eq!(RecommendedAction::from_label("reconcile"), None);
     }
 
     #[test]
@@ -3382,7 +3347,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_merge_and_reconcile_return_to_ajax() {
+    fn pending_cockpit_merge_returns_to_ajax() {
         let mut merge_context = safe_merge_context();
         let mut merge_runner = QueuedRunner::new(vec![output(0, ""), output(0, "merged\n")]);
         let mut state_changed = false;
@@ -3410,39 +3375,10 @@ mod tests {
             LifecycleStatus::Merged
         );
         assert!(state_changed);
-
-        let mut reconcile_context = CommandContext::new(
-            Config {
-                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
-                ..Config::default()
-            },
-            InMemoryRegistry::default(),
-        );
-        let mut reconcile_runner = PanicRunner;
-        let mut reconcile_state_changed = false;
-        let reconcile_pending = ajax_tui::PendingAction {
-            task_handle: "web".to_string(),
-            recommended_action: "reconcile".to_string(),
-            task_title: None,
-        };
-
-        let reconcile_outcome = super::execute_pending_cockpit_action(
-            &reconcile_pending,
-            &mut reconcile_context,
-            &mut reconcile_runner,
-            &mut reconcile_state_changed,
-        )
-        .unwrap();
-
-        assert_eq!(
-            reconcile_outcome,
-            super::PendingCockpitOutcome::ReturnToCockpit
-        );
-        assert!(!reconcile_state_changed);
     }
 
     #[test]
-    fn pending_cockpit_reconcile_preserves_prior_state_change() {
+    fn pending_cockpit_reconcile_is_unknown() {
         let mut context = CommandContext::new(
             Config {
                 repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
@@ -3458,15 +3394,16 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::execute_pending_cockpit_action(
+        let error = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert!(matches!(error, super::CliError::CommandFailed(message)
+            if message == "unknown cockpit action: reconcile"));
         assert!(state_changed);
     }
 
@@ -3908,7 +3845,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_reconcile_action_runs_and_refreshes_cockpit() {
+    fn cockpit_reconcile_action_is_unknown() {
         let mut context = sample_context();
         let item = ajax_core::models::AttentionItem {
             task_id: TaskId::new("__project_action__web__reconcile"),
@@ -3924,93 +3861,10 @@ mod tests {
             super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
                 .unwrap();
 
-        match outcome {
-            ajax_tui::ActionOutcome::Refresh {
-                repos,
-                tasks,
-                inbox,
-            } => {
-                assert_eq!(repos.repos.len(), 1);
-                assert!(tasks.tasks.is_empty());
-                assert!(inbox.items.is_empty());
-            }
-            ajax_tui::ActionOutcome::Defer(_) => panic!("reconcile should refresh in cockpit"),
-            ajax_tui::ActionOutcome::Message(message) => {
-                panic!("reconcile should run instead of showing message: {message}")
-            }
-        }
-        assert!(!runner.commands().is_empty());
-        assert!(state_changed);
-    }
-
-    #[test]
-    fn cockpit_reconcile_refreshes_without_runner_when_no_tasks_exist() {
-        let mut context = CommandContext::new(
-            Config {
-                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
-                ..Config::default()
-            },
-            InMemoryRegistry::default(),
-        );
-        let item = ajax_core::models::AttentionItem {
-            task_id: TaskId::new("__project_action__web__reconcile"),
-            task_handle: "web".to_string(),
-            reason: "Reconcile".to_string(),
-            priority: 0,
-            recommended_action: "reconcile".to_string(),
-        };
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
-
-        match outcome {
-            ajax_tui::ActionOutcome::Refresh {
-                repos,
-                tasks,
-                inbox,
-            } => {
-                assert_eq!(repos.repos.len(), 1);
-                assert!(tasks.tasks.is_empty());
-                assert!(inbox.items.is_empty());
-            }
-            ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("reconcile should refresh instead of deferring")
-            }
-            ajax_tui::ActionOutcome::Message(message) => {
-                panic!("reconcile should run instead of showing message: {message}")
-            }
-        }
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Message(message)
+            if message == "cockpit action is not configured: reconcile"));
+        assert!(runner.commands().is_empty());
         assert!(!state_changed);
-    }
-
-    #[test]
-    fn cockpit_reconcile_preserves_prior_state_change_when_no_tasks_change() {
-        let mut context = CommandContext::new(
-            Config {
-                repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
-                ..Config::default()
-            },
-            InMemoryRegistry::default(),
-        );
-        let item = ajax_core::models::AttentionItem {
-            task_id: TaskId::new("__project_action__web__reconcile"),
-            task_handle: "web".to_string(),
-            reason: "Reconcile".to_string(),
-            priority: 0,
-            recommended_action: "reconcile".to_string(),
-        };
-        let mut runner = PanicRunner;
-        let mut state_changed = true;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
-
-        assert!(matches!(outcome, ajax_tui::ActionOutcome::Refresh { .. }));
-        assert!(state_changed);
     }
 
     #[test]
@@ -4084,9 +3938,9 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_saves_registry_snapshot_when_task_changes() {
+    fn removed_reconcile_command_does_not_touch_registry_snapshot() {
         let directory = std::env::temp_dir().join(format!(
-            "ajax-cli-reconcile-{}-{}",
+            "ajax-cli-removed-reconcile-{}-{}",
             std::process::id(),
             "state"
         ));
@@ -4111,35 +3965,23 @@ mod tests {
             output(128, "fatal: not a git repository\n"),
         ]);
 
-        let output = run_with_context_paths_and_runner(
+        let error = run_with_context_paths_and_runner(
             ["ajax", "reconcile", "--json"],
             &CliContextPaths::new(&config_file, &state_file),
             &mut runner,
         )
-        .unwrap();
+        .unwrap_err();
         let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-        assert!(output.contains("\"tasks_changed\": 1"));
+        assert!(matches!(error, CliError::CommandFailed(message)
+            if message.contains("unrecognized subcommand 'reconcile'")));
+        assert!(runner.commands.is_empty());
+        let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(!restored_task.has_side_flag(SideFlag::WorktreeMissing));
         assert_eq!(
-            runner.commands,
-            vec![
-                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "status",
-                        "--porcelain=v1",
-                        "--branch"
-                    ]
-                ),
-            ]
+            restored.list_tasks().len(),
+            sample_context().registry.list_tasks().len()
         );
-        assert!(restored
-            .list_tasks()
-            .iter()
-            .any(|task| task.has_side_flag(SideFlag::WorktreeMissing)));
     }
 }

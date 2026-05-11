@@ -51,12 +51,6 @@ pub struct NextResponse {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct ReconcileResponse {
-    pub tasks_checked: u32,
-    pub tasks_changed: u32,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct DoctorResponse {
     pub checks: Vec<DoctorCheck>,
 }
@@ -92,8 +86,7 @@ pub struct CockpitResponse {
 mod tests {
     use super::{
         CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
-        InspectResponse, NextResponse, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary,
-        TasksResponse,
+        InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     };
     use crate::models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction};
 
@@ -140,10 +133,6 @@ mod tests {
         };
         let next = NextResponse {
             item: Some(inbox.items[0].clone()),
-        };
-        let reconcile = ReconcileResponse {
-            tasks_checked: 1,
-            tasks_changed: 1,
         };
         let doctor = DoctorResponse {
             checks: vec![DoctorCheck {
@@ -223,13 +212,6 @@ mod tests {
             serde_json::to_value(&next).unwrap(),
             serde_json::json!({
                 "item": inbox.items[0]
-            })
-        );
-        assert_eq!(
-            serde_json::to_value(&reconcile).unwrap(),
-            serde_json::json!({
-                "tasks_checked": 1,
-                "tasks_changed": 1
             })
         );
         assert_eq!(

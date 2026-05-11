@@ -5,15 +5,12 @@ use crate::{
     },
     attention::derive_attention_items,
     config::Config,
-    live::{apply_observation, classify_pane},
     models::{AgentClient, LifecycleStatus, SafetyClassification, SideFlag, Task, TaskId},
     output::{
         CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
-        InspectResponse, NextResponse, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary,
-        TasksResponse,
+        InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     },
     policy::cleanup_safety,
-    reconcile::{reconcile_task, reconcile_task_filesystem, ReconciliationInput},
     registry::{Registry, RegistryError},
 };
 use serde::{Deserialize, Serialize};
@@ -367,166 +364,6 @@ fn cockpit_summary(
         reviewable_tasks: review.tasks.len() as u32,
         cleanable_tasks: repos.repos.iter().map(|repo| repo.cleanable_tasks).sum(),
     }
-}
-
-pub fn reconcile_filesystem<R: Registry>(context: &mut CommandContext<R>) -> ReconcileResponse {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| is_operational_task(task))
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    let mut tasks_changed = 0;
-
-    for task_id in &task_ids {
-        if let Some(task) = context.registry.get_task_mut(task_id) {
-            let already_missing = task.has_side_flag(SideFlag::WorktreeMissing);
-            reconcile_task_filesystem(task);
-            if !already_missing && task.has_side_flag(SideFlag::WorktreeMissing) {
-                tasks_changed += 1;
-            }
-        }
-    }
-    tasks_changed += mark_stale_tasks(context, SystemTime::now());
-
-    ReconcileResponse {
-        tasks_checked: task_ids.len() as u32,
-        tasks_changed,
-    }
-}
-
-pub fn reconcile_external<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-) -> Result<ReconcileResponse, CommandError> {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| is_operational_task(task))
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    if task_ids.is_empty() {
-        return Ok(ReconcileResponse {
-            tasks_checked: 0,
-            tasks_changed: 0,
-        });
-    }
-
-    let tmux = TmuxAdapter::new("tmux");
-    let git = GitAdapter::new("git");
-    let sessions_output = runner
-        .run(&tmux.list_sessions())
-        .map_err(CommandError::CommandRun)?;
-    let mut tasks_changed = 0;
-
-    for task_id in &task_ids {
-        let Some(task_snapshot) = context.registry.get_task(task_id).cloned() else {
-            continue;
-        };
-        let worktree_path = task_snapshot.worktree_path.display().to_string();
-        let git_output = runner
-            .run(&git.status(&worktree_path))
-            .map_err(CommandError::CommandRun)?;
-        let git_status = if git_output.status_code == 0 {
-            let status = GitAdapter::parse_status(&git_output.stdout, false);
-            let merged = if status.branch_exists {
-                runner
-                    .run(&git.merge_base_is_ancestor(
-                        &worktree_path,
-                        &task_snapshot.branch,
-                        &task_snapshot.base_branch,
-                    ))
-                    .map_err(CommandError::CommandRun)?
-                    .status_code
-                    == 0
-            } else {
-                false
-            };
-            GitAdapter::parse_status(&git_output.stdout, merged)
-        } else {
-            missing_git_status()
-        };
-        let synthetic_tmux_status =
-            TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output.stdout);
-        let synthetic_windows_output = if synthetic_tmux_status.exists {
-            runner
-                .run(&tmux.list_windows(&task_snapshot.tmux_session))
-                .map_err(CommandError::CommandRun)?
-                .stdout
-        } else {
-            String::new()
-        };
-        let synthetic_worktrunk_status = TmuxAdapter::parse_worktrunk_status(
-            &task_snapshot.worktrunk_window,
-            &worktree_path,
-            &synthetic_windows_output,
-        );
-        let (tmux_status, worktrunk_status, capture_target) = if synthetic_tmux_status.exists
-            && synthetic_worktrunk_status.exists
-            && synthetic_worktrunk_status.points_at_expected_path
-        {
-            (
-                synthetic_tmux_status,
-                synthetic_worktrunk_status,
-                Some((
-                    task_snapshot.tmux_session.clone(),
-                    task_snapshot.worktrunk_window.clone(),
-                )),
-            )
-        } else {
-            (synthetic_tmux_status, synthetic_worktrunk_status, None)
-        };
-        let live_observation = if !git_status.worktree_exists {
-            Some(crate::models::LiveObservation::new(
-                crate::models::LiveStatusKind::WorktreeMissing,
-                "worktree missing",
-            ))
-        } else if !tmux_status.exists {
-            Some(crate::models::LiveObservation::new(
-                crate::models::LiveStatusKind::TmuxMissing,
-                "tmux session missing",
-            ))
-        } else if !worktrunk_status.exists || !worktrunk_status.points_at_expected_path {
-            Some(crate::models::LiveObservation::new(
-                crate::models::LiveStatusKind::WorktrunkMissing,
-                "worktrunk missing or pointed at the wrong path",
-            ))
-        } else if let Some((session_name, window_name)) = capture_target {
-            let pane_output = runner
-                .run(&tmux.capture_pane(&session_name, &window_name))
-                .map_err(CommandError::CommandRun)?;
-            Some(classify_pane(&pane_output.stdout))
-        } else {
-            None
-        };
-
-        if let Some(task) = context.registry.get_task_mut(task_id) {
-            let before = task.clone();
-            reconcile_task(
-                task,
-                ReconciliationInput {
-                    git_status: Some(git_status),
-                    tmux_status: Some(tmux_status),
-                    worktrunk_status: Some(worktrunk_status),
-                },
-            );
-            if let Some(observation) = live_observation {
-                apply_observation(task, observation);
-            }
-
-            if task != &before {
-                tasks_changed += 1;
-            }
-        }
-    }
-    tasks_changed += mark_stale_tasks(context, SystemTime::now());
-
-    Ok(ReconcileResponse {
-        tasks_checked: task_ids.len() as u32,
-        tasks_changed,
-    })
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
@@ -1068,22 +905,6 @@ fn update_task_lifecycle<R: Registry>(
         .map_err(CommandError::Registry)
 }
 
-fn missing_git_status() -> crate::models::GitStatus {
-    crate::models::GitStatus {
-        worktree_exists: false,
-        branch_exists: false,
-        current_branch: None,
-        dirty: false,
-        ahead: 0,
-        behind: 0,
-        merged: false,
-        untracked_files: 0,
-        unpushed_commits: 0,
-        conflicted: false,
-        last_commit: None,
-    }
-}
-
 fn slugify_title(title: &str) -> String {
     let mut slug = String::new();
     let mut previous_was_dash = false;
@@ -1122,9 +943,8 @@ mod tests {
     use super::{
         check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
         inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, open_task_plan, reconcile_external, reconcile_filesystem, review_queue, status,
-        sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext, CommandError,
-        DoctorEnvironment, NewTaskRequest, OpenMode,
+        next, open_task_plan, review_queue, status, sweep_cleanup_plan, task_from_new_request,
+        trunk_task_plan, CommandContext, CommandError, DoctorEnvironment, NewTaskRequest, OpenMode,
     };
     use crate::{
         adapters::{
@@ -1134,8 +954,8 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
-            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, SideFlag, Task, TaskId,
-            TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId, TmuxStatus,
+            WorktrunkStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry},
@@ -1536,7 +1356,7 @@ mod tests {
         }
 
         #[test]
-        fn stale_reconciliation_uses_seven_day_boundary(
+        fn stale_task_marking_uses_seven_day_boundary(
             seconds_before_boundary in 0u64..(7 * 24 * 60 * 60)
         ) {
             let last_activity = std::time::SystemTime::UNIX_EPOCH;
@@ -1681,23 +1501,6 @@ mod tests {
                 "{flag:?}"
             );
         }
-    }
-
-    #[test]
-    fn reconcile_external_skips_removed_tasks() {
-        let mut context = context_with_tasks();
-        context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap()
-            .lifecycle_status = LifecycleStatus::Removed;
-        let mut runner = QueuedRunner::default();
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_checked, 0);
-        assert_eq!(response.tasks_changed, 0);
-        assert!(runner.commands.is_empty());
     }
 
     #[test]
@@ -1923,22 +1726,7 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_filesystem_marks_missing_worktrees_in_registry() {
-        let mut context = context_with_tasks();
-
-        let response = reconcile_filesystem(&mut context);
-
-        assert_eq!(response.tasks_checked, 1);
-        assert_eq!(response.tasks_changed, 1);
-        assert!(context
-            .registry
-            .list_tasks()
-            .iter()
-            .any(|task| task.has_side_flag(SideFlag::WorktreeMissing)));
-    }
-
-    #[test]
-    fn stale_reconciliation_marks_inactive_old_tasks() {
+    fn stale_task_marking_marks_inactive_old_tasks() {
         let mut context = context_with_tasks();
         let old_activity = std::time::SystemTime::UNIX_EPOCH;
         context
@@ -1958,224 +1746,6 @@ mod tests {
             .get_task(&TaskId::new("task-1"))
             .unwrap()
             .has_side_flag(SideFlag::Stale));
-    }
-
-    #[test]
-    fn reconcile_external_updates_task_from_git_and_tmux_discovery() {
-        let mut context = context_with_tasks();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\n"),
-            output(
-                0,
-                "## ajax/fix-login...origin/ajax/fix-login [ahead 1]\n M src/main.rs\n",
-            ),
-            output(1, ""),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
-            output(0, "codex is working on your task\n"),
-        ]);
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_checked, 1);
-        assert_eq!(response.tasks_changed, 1);
-        assert_eq!(
-            runner.commands,
-            vec![
-                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "status",
-                        "--porcelain=v1",
-                        "--branch"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "merge-base",
-                        "--is-ancestor",
-                        "ajax/fix-login",
-                        "main"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "list-windows",
-                        "-t",
-                        "ajax-web-fix-login",
-                        "-F",
-                        "#{window_name}\t#{pane_current_path}"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "capture-pane",
-                        "-p",
-                        "-t",
-                        "ajax-web-fix-login:worktrunk",
-                        "-S",
-                        "-200"
-                    ]
-                ),
-            ]
-        );
-
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert!(task.has_side_flag(SideFlag::Dirty));
-        assert!(task.has_side_flag(SideFlag::Unpushed));
-        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
-        assert!(task.git_status.as_ref().unwrap().dirty);
-        assert!(task.tmux_status.as_ref().unwrap().exists);
-        assert!(
-            task.worktrunk_status
-                .as_ref()
-                .unwrap()
-                .points_at_expected_path
-        );
-        assert!(!task.git_status.as_ref().unwrap().merged);
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::AgentRunning)
-        );
-    }
-
-    #[test]
-    fn reconcile_external_uses_only_recorded_worktrunk_window() {
-        let mut context = context_with_tasks();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\najax-ssh-dev-ttys010\n"),
-            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
-            output(1, ""),
-            output(0, ""),
-        ]);
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_checked, 1);
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-        assert!(task.tmux_status.as_ref().unwrap().exists);
-        assert_eq!(
-            task.tmux_status.as_ref().unwrap().session_name,
-            "ajax-web-fix-login"
-        );
-        assert!(!task.worktrunk_status.as_ref().unwrap().exists);
-    }
-
-    #[test]
-    fn reconcile_external_marks_live_approval_waiting_from_worktrunk_pane() {
-        let mut context = context_with_tasks();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\n"),
-            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
-            output(1, ""),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
-            output(0, "Allow command `npm test`? y/n\n"),
-        ]);
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_checked, 1);
-        assert_eq!(response.tasks_changed, 1);
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForApproval)
-        );
-    }
-
-    #[test]
-    fn reconcile_external_projects_done_live_status_into_review_queue() {
-        let mut context = context_with_tasks();
-        context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap()
-            .lifecycle_status = LifecycleStatus::Active;
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\n"),
-            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
-            output(1, ""),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
-            output(0, "task complete\n"),
-        ]);
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_changed, 1);
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
-        assert_eq!(
-            list_tasks(&context, None).tasks[0].lifecycle_status,
-            "Reviewable"
-        );
-        assert_eq!(review_queue(&context).tasks.len(), 1);
-    }
-
-    #[test]
-    fn reconcile_external_marks_missing_resources_when_git_and_tmux_are_absent() {
-        let mut context = context_with_tasks();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "other-session\n"),
-            output(128, "fatal: not a git repository\n"),
-        ]);
-
-        let response = reconcile_external(&mut context, &mut runner).unwrap();
-
-        assert_eq!(response.tasks_checked, 1);
-        assert_eq!(response.tasks_changed, 1);
-        assert_eq!(
-            runner.commands,
-            vec![
-                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/tmp/worktrees/web-fix-login",
-                        "status",
-                        "--porcelain=v1",
-                        "--branch"
-                    ]
-                ),
-            ]
-        );
-
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
-        assert!(task.has_side_flag(SideFlag::BranchMissing));
-        assert!(task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-    }
-
-    #[test]
-    fn reconcile_external_marks_branch_merged_from_merge_base() {
-        let mut context = context_with_tasks();
-        let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-web-fix-login\n"),
-            output(0, "## ajax/fix-login...origin/ajax/fix-login\n"),
-            output(0, ""),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
-            output(0, "task complete\n"),
-        ]);
-
-        reconcile_external(&mut context, &mut runner).unwrap();
-
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert!(task.git_status.as_ref().unwrap().merged);
     }
 
     #[test]

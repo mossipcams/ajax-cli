@@ -50,7 +50,7 @@ change, and verify it with an appropriate read/search or formatting check.
 - Member crates use workspace dependency and lint inheritance where practical.
 - Preserve crate boundaries:
   - `ajax-cli = CLI parsing, dispatch, rendering, context loading`
-  - `ajax-core = models, policy, reconciliation, registry`
+  - `ajax-core = models, policy, live status, registry`
   - `ajax-supervisor = process supervision`
   - `ajax-tui = Cockpit screen state, input, layout, rendering`
 - Keep cleanup work behavior-neutral unless the task explicitly asks for a runtime change.

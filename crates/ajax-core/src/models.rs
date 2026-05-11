@@ -357,7 +357,6 @@ pub struct AttentionItem {
 pub enum RecommendedAction {
     SelectProject,
     NewTask,
-    Reconcile,
     OpenTask,
     MergeTask,
     CleanTask,
@@ -375,7 +374,6 @@ impl RecommendedAction {
         &[
             Self::SelectProject,
             Self::NewTask,
-            Self::Reconcile,
             Self::OpenTask,
             Self::MergeTask,
             Self::CleanTask,
@@ -387,7 +385,6 @@ impl RecommendedAction {
         match self {
             Self::SelectProject => "select project",
             Self::NewTask => "new task",
-            Self::Reconcile => "reconcile",
             Self::OpenTask => "open task",
             Self::MergeTask => "merge task",
             Self::CleanTask => "clean task",
@@ -712,10 +709,10 @@ mod tests {
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels.len(), 7);
+        assert_eq!(labels.len(), 6);
         assert_eq!(labels[0], "select project");
         assert_eq!(labels[1], "new task");
-        assert_eq!(labels[2], "reconcile");
+        assert!(!labels.contains(&"reconcile"));
         for label in labels {
             assert_eq!(
                 RecommendedAction::from_label(label).map(|action| action.as_str()),

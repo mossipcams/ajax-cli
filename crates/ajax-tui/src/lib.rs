@@ -111,10 +111,6 @@ enum SelectableKind {
     NewTask {
         repo: String,
     },
-    /// Project-level admin action row (currently only reconcile).
-    Reconcile {
-        repo: String,
-    },
     Inbox(AttentionItem),
     Task(TaskSummary),
     /// Action row inside the per-task action menu.
@@ -164,13 +160,6 @@ impl SelectableKind {
                 reason: "create a new task".to_string(),
                 priority: 0,
                 recommended_action: RecommendedAction::NewTask.as_str().to_string(),
-            },
-            SelectableKind::Reconcile { repo } => AttentionItem {
-                task_id: TaskId::new(format!("__reconcile__{repo}")),
-                task_handle: repo.clone(),
-                reason: "reconcile external state".to_string(),
-                priority: 0,
-                recommended_action: RecommendedAction::Reconcile.as_str().to_string(),
             },
             SelectableKind::Inbox(item) => item.clone(),
             SelectableKind::Task(t) => AttentionItem {
@@ -225,7 +214,6 @@ fn build_selectables(
                     .cloned()
                     .map(SelectableKind::Task),
             );
-            out.push(SelectableKind::Reconcile { repo: repo.clone() });
         }
         AppView::TaskActions { task, .. } => {
             out.extend(RecommendedAction::task_picker_menu().iter().map(|action| {
@@ -1102,7 +1090,6 @@ fn group_of(kind: &SelectableKind) -> &'static str {
         SelectableKind::Project(_) => "projects",
         SelectableKind::Task(_) => "tasks",
         SelectableKind::TaskAction { .. } => "task-actions",
-        SelectableKind::Reconcile { .. } => "admin",
     }
 }
 
@@ -1210,9 +1197,6 @@ fn action_chrome(recommended_action: &str) -> ActionChrome {
         }
         Some(RecommendedAction::CleanTask) => {
             ActionChrome::new("X", Color::LightRed, Color::LightRed, true)
-        }
-        Some(RecommendedAction::Reconcile) => {
-            ActionChrome::new("@", Color::DarkGray, Color::Gray, false)
         }
         Some(RecommendedAction::Status) => {
             ActionChrome::new("S", primary_accent(), primary_accent(), true)
@@ -1337,13 +1321,6 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
                 "start a new task",
                 Style::default().fg(primary_accent()).add_modifier(bold),
             )],
-        ),
-        SelectableKind::Reconcile { .. } => render_row(
-            action_glyph("reconcile"),
-            vec![
-                Span::styled("reconcile", Style::default().fg(secondary_accent())),
-                Span::styled("  sync external state", dim),
-            ],
         ),
         SelectableKind::TaskAction {
             recommended_action, ..
@@ -1907,7 +1884,7 @@ mod tests {
 
         assert_eq!(app.viewport_scroll, selectable_row_layout(&app)[0].start);
 
-        app.selected = 3;
+        app.selected = 2;
         app.ensure_visible(1);
 
         let selected_range = selectable_row_layout(&app)[app.selected].clone();
@@ -2659,20 +2636,16 @@ mod tests {
     }
 
     #[test]
-    fn project_view_lists_new_task_first_then_tasks_then_reconcile() {
+    fn project_view_lists_new_task_first_then_tasks() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, task]. Drill into the project.
         app.select_next();
         app.activate_selected();
 
-        // Project view should be: [NewTask, inbox, task, Reconcile].
+        // Project view should be: [NewTask, inbox, task].
         assert!(matches!(
             app.selectables.first(),
             Some(SelectableKind::NewTask { .. })
-        ));
-        assert!(matches!(
-            app.selectables.last(),
-            Some(SelectableKind::Reconcile { .. })
         ));
         // No action wall — only one task-style row in the middle is dispatched
         // on Enter and that's a Task or Review (not a project-action verb).
@@ -2685,7 +2658,7 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("start a new task"));
-        assert!(content.contains("reconcile"));
+        assert!(!content.contains("reconcile"));
     }
 
     #[test]
@@ -2785,7 +2758,7 @@ mod tests {
     #[test]
     fn task_actions_back_returns_to_parent_view() {
         let mut app = app_in_project_view();
-        // Project view: [NewTask, inbox, task, Reconcile].
+        // Project view: [NewTask, inbox, task].
         // Step past NewTask + inbox to the task status row.
         app.select_next();
         app.select_next();
@@ -2893,17 +2866,15 @@ mod tests {
     }
 
     #[test]
-    fn reconcile_row_dispatches_immediately() {
-        let mut app = app_in_project_view();
-        // Reconcile is the last selectable on Project view.
-        app.selected = app.selectables.len() - 1;
-        assert!(matches!(
-            app.selectables.get(app.selected),
-            Some(SelectableKind::Reconcile { .. })
-        ));
-        let item = app.activate_selected().unwrap();
-        assert_eq!(item.task_handle, "web");
-        assert_eq!(item.recommended_action, "reconcile");
+    fn project_view_has_no_reconcile_action() {
+        let app = app_in_project_view();
+
+        assert!(app
+            .selectables
+            .iter()
+            .all(|selectable| !matches!(selectable, SelectableKind::TaskAction { .. })));
+        assert!(render_to_string(80, 30, &app).contains("start a new task"));
+        assert!(!render_to_string(80, 30, &app).contains("reconcile"));
     }
 
     #[test]
@@ -3181,7 +3152,7 @@ mod tests {
         );
         // Projects view (no inbox): [project, task]. Drill into the project.
         app.activate_selected();
-        // Project view (no inbox): [NewTask, task, Reconcile]. Step past NewTask.
+        // Project view (no inbox): [NewTask, task]. Step past NewTask.
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");

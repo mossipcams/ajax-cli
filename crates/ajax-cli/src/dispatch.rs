@@ -42,7 +42,6 @@ impl TaskCommandOperation {
             RecommendedAction::OpenTask => Some(Self::Open),
             RecommendedAction::SelectProject
             | RecommendedAction::NewTask
-            | RecommendedAction::Reconcile
             | RecommendedAction::Status => None,
         }
     }

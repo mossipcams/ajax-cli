@@ -133,8 +133,6 @@ echo "+ ajax diff"
 ajax diff web/fix-login --execute >/dev/null
 echo "+ ajax merge"
 ajax merge web/fix-login --execute --yes >/dev/null
-echo "+ ajax reconcile"
-ajax reconcile >/dev/null
 echo "+ ajax clean"
 ajax clean web/fix-login --execute --yes >/dev/null
 echo "+ ajax cockpit"

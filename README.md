@@ -110,8 +110,9 @@ The preferred flow is:
 SSH or dev command -> ajax cockpit/CLI -> ajax-core -> git/tmux/agents
 ```
 
-Rust owns the orchestration core because safety policy, reconciliation, command
-dispatch, and task state benefit from explicit types and testable decisions.
+Rust owns the orchestration core because safety policy, live status projection,
+command dispatch, and task state benefit from explicit types and testable
+decisions.
 Cockpit owns the operator workflow over those typed decisions.
 
 ## Command Surface
@@ -136,7 +137,6 @@ ajax inbox
 ajax review
 ajax status
 ajax doctor
-ajax reconcile
 ajax cockpit
 ajax cockpit --watch
 ```
@@ -166,7 +166,7 @@ and which command plan should run. It uses a project-first workflow modeled
 after the earlier gum flow: choose a project, choose an action, then choose the
 task when that action needs one. Project actions include creating a task,
 opening or reviewing a task, running checks, viewing diffs, merging, cleaning,
-reconciling, and showing project status.
+and showing project status.
 
 The cockpit remains a Rust operator surface over `ajax-core` command and JSON
 contracts. Orchestration logic stays in the core so Cockpit can be tested,
@@ -212,7 +212,7 @@ Planned core modules:
 - `registry`
 - `models`
 - `policy`
-- `reconcile`
+- `live`
 - `attention`
 - `commands`
 - `adapters`
@@ -228,7 +228,7 @@ The native cockpit renders from `ajax-core` responses through `ajax-tui`.
 
 Phase 3 stabilizes JSON output contracts for UI consumption.
 Current JSON-backed commands include `repos`, `tasks`, `inspect`, `inbox`,
-`next`, `doctor`, and `reconcile`.
+`next`, `doctor`, and `status`.
 
 Phase 4 makes the native Rust cockpit the primary operator experience over the
 same backend. The initial cockpit artifact is the `ajax-tui` crate plus

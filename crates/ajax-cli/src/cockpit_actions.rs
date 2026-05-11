@@ -74,24 +74,6 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
     }
 
     match action {
-        Some(RecommendedAction::Reconcile) => {
-            let response = commands::reconcile_external(context, runner).map_err(|error| {
-                let message = match command_error(error) {
-                    CliError::CommandFailed(message)
-                    | CliError::CommandFailedAfterStateChange(message)
-                    | CliError::JsonSerialization(message)
-                    | CliError::ContextLoad(message)
-                    | CliError::ContextSave(message) => message,
-                };
-                std::io::Error::other(message)
-            })?;
-            *state_changed |= response.tasks_changed > 0;
-            Ok(ajax_tui::ActionOutcome::Refresh {
-                repos: commands::list_repos(context),
-                tasks: commands::list_tasks(context, None),
-                inbox: commands::inbox(context),
-            })
-        }
         Some(RecommendedAction::NewTask) => Ok(ajax_tui::ActionOutcome::Message(
             "select a project, then choose new task to enter a task name".to_string(),
         )),
@@ -172,12 +154,6 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     };
     let Some(operation) = operation else {
         match action {
-            Some(RecommendedAction::Reconcile) => {
-                let response =
-                    commands::reconcile_external(context, runner).map_err(command_error)?;
-                *state_changed |= response.tasks_changed > 0;
-                return Ok(PendingCockpitOutcome::ReturnToCockpit);
-            }
             Some(
                 RecommendedAction::NewTask
                 | RecommendedAction::SelectProject

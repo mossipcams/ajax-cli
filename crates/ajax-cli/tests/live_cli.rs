@@ -319,7 +319,7 @@ fn stderr(output: &Output) -> String {
 }
 
 #[test]
-fn live_cockpit_json_refreshes_live_status_from_tmux_pane() {
+fn live_cockpit_json_uses_recorded_state_without_repair_refresh() {
     let home = IsolatedAjaxHome::new("cockpit-live-status");
     let repo_path = home.create_managed_repo("web");
     home.write_config(&format!(
@@ -358,14 +358,16 @@ fn live_cockpit_json_refreshes_live_status_from_tmux_pane() {
     assert_eq!(stderr(&output), "");
     let body: Value =
         serde_json::from_str(&stdout(&output)).expect("ajax cockpit --json should emit valid JSON");
-    assert_eq!(
-        body["tasks"]["tasks"][0]["live_status"],
-        serde_json::json!({
-            "kind": "WaitingForApproval",
-            "summary": "waiting for approval"
-        })
-    );
-    assert_eq!(body["inbox"]["items"][0]["reason"], "waiting for approval");
+    assert!(body["tasks"]["tasks"][0]["live_status"].is_null());
+    assert!(body["inbox"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| {
+            item["reason"]
+                .as_str()
+                .is_none_or(|reason| reason != "waiting for approval")
+        }));
 }
 
 #[test]
@@ -428,7 +430,6 @@ fn live_help_exposes_the_scriptable_command_surface() {
         "review",
         "status",
         "doctor",
-        "reconcile",
         "supervise",
         "cockpit",
     ] {
@@ -437,6 +438,10 @@ fn live_help_exposes_the_scriptable_command_surface() {
             "ajax --help should list `{command}` in:\n{stdout}"
         );
     }
+    assert!(
+        !stdout.contains("reconcile"),
+        "ajax --help should not list removed reconcile command:\n{stdout}"
+    );
 }
 
 #[test]
