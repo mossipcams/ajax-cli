@@ -917,12 +917,12 @@ enum StatusBucket {
 
 fn bucket_color(bucket: StatusBucket) -> Color {
     match bucket {
-        StatusBucket::Active => Color::Indexed(45),
-        StatusBucket::NeedsYou => Color::Indexed(214),
-        StatusBucket::Stuck => Color::Indexed(203),
-        StatusBucket::Done => Color::Indexed(78),
+        StatusBucket::Active => Color::Indexed(110),
+        StatusBucket::NeedsYou => Color::Indexed(179),
+        StatusBucket::Stuck => Color::Indexed(174),
+        StatusBucket::Done => Color::Indexed(108),
         StatusBucket::Idle => Color::Indexed(244),
-        StatusBucket::Missing => Color::Indexed(131),
+        StatusBucket::Missing => Color::Indexed(241),
     }
 }
 
@@ -1133,27 +1133,14 @@ fn show_brand(view: &AppView) -> bool {
 }
 
 fn ajax_brand_spans() -> Vec<Span<'static>> {
-    let bold = Modifier::BOLD;
     let bracket = Style::default().fg(subtle_text());
+    let brand = Style::default()
+        .fg(primary_accent())
+        .add_modifier(Modifier::BOLD);
     vec![
         Span::raw(" "),
         Span::styled("[", bracket),
-        Span::styled(
-            "A",
-            Style::default().fg(primary_accent()).add_modifier(bold),
-        ),
-        Span::styled(
-            "J",
-            Style::default().fg(secondary_accent()).add_modifier(bold),
-        ),
-        Span::styled(
-            "A",
-            Style::default().fg(primary_accent()).add_modifier(bold),
-        ),
-        Span::styled(
-            "X",
-            Style::default().fg(secondary_accent()).add_modifier(bold),
-        ),
+        Span::styled("AJAX", brand),
         Span::styled("]", bracket),
         Span::raw(" "),
     ]
