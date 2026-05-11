@@ -12,15 +12,17 @@ pub mod policy;
 pub mod reconcile;
 pub mod registry;
 
-pub fn package_name() -> &'static str {
-    "ajax-core"
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
-    fn exposes_package_identity() {
-        assert_eq!(super::package_name(), "ajax-core");
+    fn crate_root_does_not_keep_package_identity_wrapper() {
+        let lib = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+        let wrapper_name = ["package", "_name"].concat();
+
+        assert!(!lib.contains(&wrapper_name));
     }
 
     #[test]
