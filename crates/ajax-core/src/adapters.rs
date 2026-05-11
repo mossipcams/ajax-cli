@@ -286,12 +286,6 @@ impl TmuxAdapter {
                 "switch-client",
                 "-t",
                 target,
-                "\\;",
-                "send-keys",
-                "-t",
-                target,
-                "ajax cockpit",
-                "Enter",
             ],
         )
     }
@@ -722,13 +716,7 @@ mod tests {
                     "a",
                     "switch-client",
                     "-t",
-                    "ajax:0",
-                    "\\;",
-                    "send-keys",
-                    "-t",
-                    "ajax:0",
-                    "ajax cockpit",
-                    "Enter"
+                    "ajax:0"
                 ]
             )
         );
