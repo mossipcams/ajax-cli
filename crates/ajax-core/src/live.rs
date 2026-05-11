@@ -141,6 +141,12 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         &lower,
         &[
             "waiting for input",
+            "what kind of ",
+            "what do you want me to",
+            "what you want me to do",
+            "send me the problem",
+            "did you mean",
+            "specific task",
             "press enter",
             "continue?",
             "enter your choice",
@@ -486,6 +492,34 @@ mod tests {
             let observation = classify_pane(pane);
 
             assert_eq!(observation.kind, expected, "{pane}");
+        }
+    }
+
+    #[test]
+    fn pane_classifier_detects_codex_clarification_prompts_as_waiting_for_input() {
+        for pane in [
+            "\
+› Math
+
+⚠ Heads up, you have less than 25% of your weekly limit left.
+
+• What kind of math do you want to work on? Send me the problem, equation, or
+  topic.
+
+› Use /skills to list available skills",
+            "\
+› trst
+
+⚠ Heads up, you have less than 25% of your weekly limit left.
+
+• I’m not sure what you want me to do with “trst”. Did you mean “test”, or is
+  there a specific task in this repo you want me to handle?
+
+› Use /skills to list available skills",
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, LiveStatusKind::WaitingForInput, "{pane}");
         }
     }
 
