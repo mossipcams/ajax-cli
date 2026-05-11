@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod attention;
+pub mod cockpit;
 pub mod commands;
 pub mod config;
 pub mod events;

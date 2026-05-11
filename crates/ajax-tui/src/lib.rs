@@ -1,5 +1,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod app;
+pub mod input;
+pub mod render;
+
 use ajax_core::{
     models::{AttentionItem, RecommendedAction, TaskId},
     output::{
