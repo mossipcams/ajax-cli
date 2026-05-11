@@ -1,12 +1,12 @@
 use ajax_core::{
-    adapters::CommandRunner,
+    adapters::{CommandRunner, TmuxAdapter},
     commands::{self, CommandContext, CommandError},
     models::RecommendedAction,
     registry::InMemoryRegistry,
 };
 
 use crate::{
-    attach::attach_task, command_error, dispatch::TaskCommandOperation, execute_new_task_plan,
+    command_error, dispatch::TaskCommandOperation, execute_new_task_plan,
     render::render_execution_outputs, CliError,
 };
 
@@ -141,6 +141,7 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
             agent: "codex".to_string(),
         };
         let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
+        install_ajax_return_hotkey(runner);
         let (outputs, task) = execute_new_task_plan(context, runner, &request, &plan, true)?;
         *state_changed = true;
         return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
@@ -176,14 +177,12 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
             Some(_) => unreachable!("task actions are mapped by TaskCommandOperation"),
         }
     };
-    if operation == TaskCommandOperation::Open {
-        attach_task(context, runner, &pending.task_handle)?;
-        *state_changed = true;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
-    }
     let plan = operation
         .plan(context, &pending.task_handle)
         .map_err(command_error)?;
+    if operation == TaskCommandOperation::Open {
+        install_ajax_return_hotkey(runner);
+    }
     let outputs = commands::execute_plan(&plan, !plan.requires_confirmation, runner)
         .map_err(command_error)?;
     let changed = operation
@@ -196,4 +195,29 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
     Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
         &outputs, None,
     )))
+}
+
+fn install_ajax_return_hotkey(runner: &mut impl CommandRunner) {
+    let tmux = TmuxAdapter::new("tmux");
+    for command in [
+        tmux.unbind_ajax_return_prefix(),
+        tmux.unbind_ajax_return_key(),
+        tmux.unbind_ajax_return_fallback(),
+    ] {
+        let _ = runner.run(&command);
+    }
+
+    let Ok(output) = runner.run(&tmux.current_client_target()) else {
+        return;
+    };
+    if output.status_code != 0 {
+        return;
+    }
+
+    let target = output.stdout.trim();
+    if target.is_empty() {
+        return;
+    }
+
+    let _ = runner.run(&tmux.bind_ajax_return_key(target));
 }

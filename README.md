@@ -137,7 +137,6 @@ ajax review
 ajax status
 ajax doctor
 ajax reconcile
-ajax attach web/fix-login
 ajax cockpit
 ajax cockpit --watch
 ```
@@ -168,10 +167,6 @@ after the earlier gum flow: choose a project, choose an action, then choose the
 task when that action needs one. Project actions include creating a task,
 opening or reviewing a task, running checks, viewing diffs, merging, cleaning,
 reconciling, and showing project status.
-
-Opening a task from Cockpit attaches to the task's tmux session through Ajax.
-While attached, press `Ctrl-q` to detach from the task and return to Cockpit
-without typing control text into the agent.
 
 The cockpit remains a Rust operator surface over `ajax-core` command and JSON
 contracts. Orchestration logic stays in the core so Cockpit can be tested,

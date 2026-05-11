@@ -261,12 +261,42 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
-    pub fn bind_ajax_detach_key(&self) -> CommandSpec {
-        CommandSpec::new(&self.program, ["bind-key", "-n", "C-q", "detach-client"])
+    pub fn current_client_target(&self) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["display-message", "-p", "#{session_name}:#{window_index}"],
+        )
     }
 
-    pub fn unbind_ajax_detach_key(&self) -> CommandSpec {
-        CommandSpec::new(&self.program, ["unbind-key", "-n", "C-q"])
+    pub fn unbind_ajax_return_prefix(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-n", "/"])
+    }
+
+    pub fn unbind_ajax_return_key(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-T", "ajax-return", "a"])
+    }
+
+    pub fn unbind_ajax_return_fallback(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-T", "ajax-return", "Any"])
+    }
+
+    pub fn bind_ajax_return_key(&self, target: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "bind-key",
+                "A",
+                "switch-client",
+                "-t",
+                target,
+                "\\;",
+                "send-keys",
+                "-t",
+                target,
+                "ajax cockpit",
+                "Enter",
+            ],
+        )
     }
 
     pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
@@ -652,16 +682,46 @@ mod tests {
     }
 
     #[test]
-    fn tmux_adapter_builds_ajax_attach_detach_commands() {
+    fn tmux_adapter_builds_ajax_return_hotkey_commands() {
         let adapter = TmuxAdapter::new("tmux");
 
         assert_eq!(
-            adapter.bind_ajax_detach_key(),
-            CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"])
+            adapter.current_client_target(),
+            CommandSpec::new(
+                "tmux",
+                ["display-message", "-p", "#{session_name}:#{window_index}"]
+            )
         );
         assert_eq!(
-            adapter.unbind_ajax_detach_key(),
-            CommandSpec::new("tmux", ["unbind-key", "-n", "C-q"])
+            adapter.unbind_ajax_return_prefix(),
+            CommandSpec::new("tmux", ["unbind-key", "-n", "/"])
+        );
+        assert_eq!(
+            adapter.unbind_ajax_return_key(),
+            CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"])
+        );
+        assert_eq!(
+            adapter.unbind_ajax_return_fallback(),
+            CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"])
+        );
+        assert_eq!(
+            adapter.bind_ajax_return_key("ajax:0"),
+            CommandSpec::new(
+                "tmux",
+                [
+                    "bind-key",
+                    "A",
+                    "switch-client",
+                    "-t",
+                    "ajax:0",
+                    "\\;",
+                    "send-keys",
+                    "-t",
+                    "ajax:0",
+                    "ajax cockpit",
+                    "Enter"
+                ]
+            )
         );
     }
 

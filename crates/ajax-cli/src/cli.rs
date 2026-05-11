@@ -16,7 +16,6 @@ pub fn build_cli() -> Command {
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
         .subcommand(executable_new_command())
-        .subcommand(task_command("attach").about("Attach to a task; Ctrl-q returns to Ajax"))
         .subcommand(executable_task_command("open"))
         .subcommand(executable_task_command("trunk"))
         .subcommand(executable_task_command("check"))
