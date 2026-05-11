@@ -1,8 +1,7 @@
 use ajax_core::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, TmuxAdapter},
     commands::{self, CommandContext},
-    models::Task,
-    registry::{InMemoryRegistry, Registry},
+    registry::InMemoryRegistry,
 };
 
 use crate::{command_error, CliError};
@@ -12,20 +11,20 @@ pub(crate) fn attach_task<R: CommandRunner>(
     runner: &mut R,
     qualified_handle: &str,
 ) -> Result<Vec<CommandOutput>, CliError> {
-    let _response = commands::inspect_task(context, qualified_handle).map_err(command_error)?;
-    let task = task_for_handle(context, qualified_handle)?;
-    let task_target = task_switch_target(&task);
+    let response = commands::inspect_task(context, qualified_handle).map_err(command_error)?;
     let tmux = TmuxAdapter::new("tmux");
     let mut outputs = Vec::new();
-    let origin_target = detect_current_client_target(runner, &tmux);
+    let current_session = detect_current_session(runner, &tmux);
 
-    if let Some(origin_target) = origin_target.filter(|target| target != &task_target) {
-        let return_channel = ajax_return_channel(&origin_target, &task_target);
+    if let Some(origin_session) =
+        current_session.filter(|session| session != &response.tmux_session)
+    {
+        let return_channel = ajax_return_channel(&origin_session, &response.tmux_session);
         outputs.push(run_required(
             runner,
-            &tmux.bind_ajax_return_to_target_key(&origin_target, &return_channel),
+            &tmux.bind_ajax_return_to_session_key(&origin_session, &return_channel),
         )?);
-        match run_required(runner, &tmux.switch_client(&task_target)) {
+        match run_required(runner, &tmux.switch_client(&response.tmux_session)) {
             Ok(output) => outputs.push(output),
             Err(error) => {
                 run_required(runner, &tmux.unbind_ajax_detach_key())?;
@@ -41,7 +40,7 @@ pub(crate) fn attach_task<R: CommandRunner>(
     }
 
     outputs.push(run_required(runner, &tmux.bind_ajax_detach_key())?);
-    let attach_result = run_required(runner, &tmux.attach_session(&task.tmux_session));
+    let attach_result = run_required(runner, &tmux.attach_session(&response.tmux_session));
     let cleanup_result = run_required(runner, &tmux.unbind_ajax_detach_key());
 
     match (attach_result, cleanup_result) {
@@ -85,39 +84,8 @@ fn run_required<R: CommandRunner>(
     Ok(output)
 }
 
-fn task_for_handle(
-    context: &CommandContext<InMemoryRegistry>,
-    qualified_handle: &str,
-) -> Result<Task, CliError> {
-    context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .cloned()
-        .ok_or_else(|| CliError::CommandFailed(format!("task not found: {qualified_handle}")))
-}
-
-fn task_switch_target(task: &Task) -> String {
-    let window = task
-        .worktrunk_status
-        .as_ref()
-        .filter(|status| status.exists && !status.window_name.trim().is_empty())
-        .map_or(task.worktrunk_window.trim(), |status| {
-            status.window_name.trim()
-        });
-    if window.is_empty() {
-        task.tmux_session.clone()
-    } else {
-        format!("{}:{window}", task.tmux_session)
-    }
-}
-
-fn detect_current_client_target<R: CommandRunner>(
-    runner: &mut R,
-    tmux: &TmuxAdapter,
-) -> Option<String> {
-    let output = match runner.run(&tmux.current_client_target()) {
+fn detect_current_session<R: CommandRunner>(runner: &mut R, tmux: &TmuxAdapter) -> Option<String> {
+    let output = match runner.run(&tmux.current_session()) {
         Ok(output) => output,
         Err(_error) => return None,
     };

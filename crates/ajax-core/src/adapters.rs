@@ -256,15 +256,8 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
-    pub fn current_client_target(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "display-message",
-                "-p",
-                "#{session_name}:#{window_index}.#{pane_index}",
-            ],
-        )
+    pub fn current_session(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["display-message", "-p", "#S"])
     }
 
     pub fn switch_client(&self, session: &str) -> CommandSpec {
@@ -276,7 +269,7 @@ impl TmuxAdapter {
         CommandSpec::new(&self.program, ["bind-key", "-n", "C-q", "detach-client"])
     }
 
-    pub fn bind_ajax_return_to_target_key(&self, target: &str, channel: &str) -> CommandSpec {
+    pub fn bind_ajax_return_to_session_key(&self, session: &str, channel: &str) -> CommandSpec {
         CommandSpec {
             program: self.program.clone(),
             args: vec![
@@ -285,7 +278,7 @@ impl TmuxAdapter {
                 "C-q".to_string(),
                 "switch-client".to_string(),
                 "-t".to_string(),
-                target.to_string(),
+                session.to_string(),
                 "\\;".to_string(),
                 "wait-for".to_string(),
                 "-S".to_string(),
@@ -695,22 +688,15 @@ mod tests {
         let adapter = TmuxAdapter::new("tmux");
 
         assert_eq!(
-            adapter.current_client_target(),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "display-message",
-                    "-p",
-                    "#{session_name}:#{window_index}.#{pane_index}"
-                ]
-            )
+            adapter.current_session(),
+            CommandSpec::new("tmux", ["display-message", "-p", "#S"])
         );
         assert_eq!(
             adapter.bind_ajax_detach_key(),
             CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"])
         );
         assert_eq!(
-            adapter.bind_ajax_return_to_target_key("ajax-ssh-0:0.0", "ajax-return-web-fix-login"),
+            adapter.bind_ajax_return_to_session_key("ajax-cockpit", "ajax-return-web-fix-login"),
             CommandSpec::new(
                 "tmux",
                 [
@@ -719,7 +705,7 @@ mod tests {
                     "C-q",
                     "switch-client",
                     "-t",
-                    "ajax-ssh-0:0.0",
+                    "ajax-cockpit",
                     "\\;",
                     "wait-for",
                     "-S",
