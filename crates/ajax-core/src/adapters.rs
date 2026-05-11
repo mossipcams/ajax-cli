@@ -269,7 +269,7 @@ impl TmuxAdapter {
         CommandSpec::new(&self.program, ["bind-key", "-n", "C-q", "detach-client"])
     }
 
-    pub fn bind_ajax_return_to_session_key(&self, session: &str, channel: &str) -> CommandSpec {
+    pub fn bind_ajax_return_to_session_key(&self, session: &str) -> CommandSpec {
         CommandSpec {
             program: self.program.clone(),
             args: vec![
@@ -280,10 +280,6 @@ impl TmuxAdapter {
                 "-t".to_string(),
                 session.to_string(),
                 "\\;".to_string(),
-                "wait-for".to_string(),
-                "-S".to_string(),
-                channel.to_string(),
-                "\\;".to_string(),
                 "unbind-key".to_string(),
                 "-n".to_string(),
                 "C-q".to_string(),
@@ -291,10 +287,6 @@ impl TmuxAdapter {
             cwd: None,
             mode: CommandMode::Capture,
         }
-    }
-
-    pub fn wait_for_ajax_return(&self, channel: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["wait-for", channel])
     }
 
     pub fn unbind_ajax_detach_key(&self) -> CommandSpec {
@@ -696,7 +688,7 @@ mod tests {
             CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"])
         );
         assert_eq!(
-            adapter.bind_ajax_return_to_session_key("ajax-cockpit", "ajax-return-web-fix-login"),
+            adapter.bind_ajax_return_to_session_key("ajax-cockpit"),
             CommandSpec::new(
                 "tmux",
                 [
@@ -707,19 +699,11 @@ mod tests {
                     "-t",
                     "ajax-cockpit",
                     "\\;",
-                    "wait-for",
-                    "-S",
-                    "ajax-return-web-fix-login",
-                    "\\;",
                     "unbind-key",
                     "-n",
                     "C-q"
                 ]
             )
-        );
-        assert_eq!(
-            adapter.wait_for_ajax_return("ajax-return-web-fix-login"),
-            CommandSpec::new("tmux", ["wait-for", "ajax-return-web-fix-login"])
         );
         assert_eq!(
             adapter.unbind_ajax_detach_key(),

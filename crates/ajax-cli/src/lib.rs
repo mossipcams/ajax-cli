@@ -3267,7 +3267,6 @@ mod tests {
             output(0, "ajax-cockpit\n"),
             output(0, ""),
             output(0, ""),
-            output(0, ""),
         ]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
@@ -3299,21 +3298,13 @@ mod tests {
                         "-t",
                         "ajax-cockpit",
                         "\\;",
-                        "wait-for",
-                        "-S",
-                        "ajax-return-ajax-cockpit-ajax-web-fix-login",
-                        "\\;",
                         "unbind-key",
                         "-n",
                         "C-q"
                     ]
                 ),
                 CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio),
-                CommandSpec::new(
-                    "tmux",
-                    ["wait-for", "ajax-return-ajax-cockpit-ajax-web-fix-login"]
-                )
+                    .with_mode(CommandMode::InheritStdio)
             ]
         );
         assert!(state_changed);
