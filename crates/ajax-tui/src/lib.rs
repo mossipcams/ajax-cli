@@ -199,12 +199,7 @@ fn build_selectables(
     let mut out = Vec::new();
     match view {
         AppView::Projects => {
-            let inbox_task_handles = inbox
-                .items
-                .iter()
-                .filter(|item| is_waiting_for_input(&item.reason))
-                .map(|item| item.task_handle.as_str())
-                .collect::<HashSet<_>>();
+            let inbox_task_handles = waiting_input_task_handles(inbox.items.iter());
             out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
             out.extend(
@@ -217,20 +212,20 @@ fn build_selectables(
             );
         }
         AppView::Project { repo } => {
+            let repo_inbox_items = inbox
+                .items
+                .iter()
+                .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()));
+            let inbox_task_handles = waiting_input_task_handles(repo_inbox_items.clone());
+
             out.push(SelectableKind::NewTask { repo: repo.clone() });
-            out.extend(
-                inbox
-                    .items
-                    .iter()
-                    .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()))
-                    .cloned()
-                    .map(SelectableKind::Inbox),
-            );
+            out.extend(repo_inbox_items.cloned().map(SelectableKind::Inbox));
             out.extend(
                 tasks
                     .tasks
                     .iter()
                     .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
+                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
                     .cloned()
                     .map(SelectableKind::Task),
             );
@@ -249,6 +244,15 @@ fn build_selectables(
         AppView::Help { .. } => {}
     }
     out
+}
+
+fn waiting_input_task_handles<'a>(
+    items: impl Iterator<Item = &'a AttentionItem>,
+) -> HashSet<&'a str> {
+    items
+        .filter(|item| is_waiting_for_input(&item.reason))
+        .map(|item| item.task_handle.as_str())
+        .collect()
 }
 
 // ── App state ─────────────────────────────────────────────────────────────────
@@ -2437,6 +2441,50 @@ mod tests {
                 }],
             },
         );
+
+        let task_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| {
+                matches!(
+                    selectable,
+                    SelectableKind::Task(task) if task.qualified_handle == "web/fix-login"
+                )
+            })
+            .count();
+        let inbox_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| {
+                matches!(
+                    selectable,
+                    SelectableKind::Inbox(item) if item.task_handle == "web/fix-login"
+                )
+            })
+            .count();
+
+        assert_eq!(inbox_rows, 1);
+        assert_eq!(task_rows, 0);
+    }
+
+    #[test]
+    fn project_page_deduplicates_tasks_already_shown_in_inbox() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse {
+                items: vec![AttentionItem {
+                    task_id: TaskId::new("task-1"),
+                    task_handle: "web/fix-login".to_string(),
+                    reason: "waiting for input".to_string(),
+                    priority: 6,
+                    recommended_action: "open task".to_string(),
+                }],
+            },
+        );
+
+        app.select_next();
+        app.activate_selected();
 
         let task_rows = app
             .selectables
