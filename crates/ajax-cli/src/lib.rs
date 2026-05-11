@@ -28,7 +28,7 @@ use render::{
     render_next_human, render_plan, render_reconcile_human, render_repos_human, render_response,
     render_tasks_human,
 };
-use std::time::Duration;
+use std::{io::IsTerminal, time::Duration};
 use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -488,6 +488,12 @@ fn render_matches_mut(
         Some(("attach", subcommand)) => {
             let task = task_arg(subcommand)?;
             attach_task(context, runner, task)?;
+            if should_resume_cockpit_after_attach(
+                std::io::stdin().is_terminal(),
+                std::io::stdout().is_terminal(),
+            ) {
+                return render_interactive_cockpit_loop(context, runner, true, 1000);
+            }
             Ok(RenderedCommand {
                 output: String::new(),
                 state_changed: true,
@@ -523,50 +529,12 @@ fn render_matches_mut(
             if subcommand.get_flag("json") || subcommand.get_flag("watch") {
                 return render_live_cockpit_command(context, subcommand, runner);
             }
-            // Interactive TUI with full action support.
-            let mut state_changed = false;
-            let mut cockpit_flash = None;
-            state_changed |= refresh_live_context(context, runner)?;
-            let refresh_interval =
-                Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
-            loop {
-                let pending = ajax_tui::run_interactive_with_flash_and_refresh(
-                    commands::list_repos(context),
-                    commands::list_tasks(context, None),
-                    commands::inbox(context),
-                    cockpit_flash.take(),
-                    refresh_interval,
-                    InteractiveCockpitHandler {
-                        context,
-                        runner,
-                        state_changed: &mut state_changed,
-                    },
-                )
-                .map_err(|e| CliError::CommandFailed(e.to_string()))?;
-                let Some(pending) = pending else {
-                    return Ok(RenderedCommand {
-                        output: String::new(),
-                        state_changed,
-                    });
-                };
-
-                let Some(outcome) = handle_pending_cockpit_result(
-                    execute_pending_cockpit_action(&pending, context, runner, &mut state_changed),
-                    &mut cockpit_flash,
-                ) else {
-                    continue;
-                };
-
-                match outcome {
-                    PendingCockpitOutcome::Exit(output) => {
-                        return Ok(RenderedCommand {
-                            output,
-                            state_changed,
-                        });
-                    }
-                    PendingCockpitOutcome::ReturnToCockpit => {}
-                }
-            }
+            render_interactive_cockpit_loop(
+                context,
+                runner,
+                false,
+                parse_u64_arg(subcommand, "interval-ms", 1000)?,
+            )
         }
         _ => Ok(RenderedCommand {
             output: render_matches(matches, context)?,
@@ -592,6 +560,60 @@ fn render_matches_mut_with_paths(
     }
 
     render_matches_mut(matches, context, runner)
+}
+
+fn render_interactive_cockpit_loop(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    initial_state_changed: bool,
+    refresh_interval_ms: u64,
+) -> Result<RenderedCommand, CliError> {
+    let mut state_changed = initial_state_changed;
+    let mut cockpit_flash = None;
+    state_changed |= refresh_live_context(context, runner)?;
+    let refresh_interval = Duration::from_millis(refresh_interval_ms);
+    loop {
+        let pending = ajax_tui::run_interactive_with_flash_and_refresh(
+            commands::list_repos(context),
+            commands::list_tasks(context, None),
+            commands::inbox(context),
+            cockpit_flash.take(),
+            refresh_interval,
+            InteractiveCockpitHandler {
+                context,
+                runner,
+                state_changed: &mut state_changed,
+            },
+        )
+        .map_err(|e| CliError::CommandFailed(e.to_string()))?;
+        let Some(pending) = pending else {
+            return Ok(RenderedCommand {
+                output: String::new(),
+                state_changed,
+            });
+        };
+
+        let Some(outcome) = handle_pending_cockpit_result(
+            execute_pending_cockpit_action(&pending, context, runner, &mut state_changed),
+            &mut cockpit_flash,
+        ) else {
+            continue;
+        };
+
+        match outcome {
+            PendingCockpitOutcome::Exit(output) => {
+                return Ok(RenderedCommand {
+                    output,
+                    state_changed,
+                });
+            }
+            PendingCockpitOutcome::ReturnToCockpit => {}
+        }
+    }
+}
+
+fn should_resume_cockpit_after_attach(stdin_is_terminal: bool, stdout_is_terminal: bool) -> bool {
+    stdin_is_terminal && stdout_is_terminal
 }
 
 fn render_live_cockpit_command<R: CommandRunner>(
@@ -815,6 +837,7 @@ mod tests {
         config::{Config, ManagedRepo},
         models::{
             AgentClient, GitStatus, LifecycleStatus, RecommendedAction, SideFlag, Task, TaskId,
+            WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
@@ -952,6 +975,14 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: String::new(),
         }
+    }
+
+    #[test]
+    fn direct_attach_resumes_cockpit_only_for_interactive_terminals() {
+        assert!(super::should_resume_cockpit_after_attach(true, true));
+        assert!(!super::should_resume_cockpit_after_attach(false, true));
+        assert!(!super::should_resume_cockpit_after_attach(true, false));
+        assert!(!super::should_resume_cockpit_after_attach(false, false));
     }
 
     #[test]
@@ -1670,7 +1701,14 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3250,7 +3288,14 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3264,7 +3309,7 @@ mod tests {
     fn pending_cockpit_open_inside_tmux_switches_back_to_ajax_session() {
         let mut context = sample_context();
         let mut runner = QueuedRunner::new(vec![
-            output(0, "ajax-cockpit\n"),
+            output(0, "ajax-cockpit:0.0\n"),
             output(0, ""),
             output(0, ""),
             output(0, ""),
@@ -3288,7 +3333,14 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -3297,22 +3349,111 @@ mod tests {
                         "C-q",
                         "switch-client",
                         "-t",
-                        "ajax-cockpit",
+                        "ajax-cockpit:0.0",
                         "\\;",
                         "wait-for",
                         "-S",
-                        "ajax-return-ajax-cockpit-ajax-web-fix-login",
+                        "ajax-return-ajax-cockpit-0-0-ajax-web-fix-login-worktrunk",
                         "\\;",
                         "unbind-key",
                         "-n",
                         "C-q"
                     ]
                 ),
-                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio),
                 CommandSpec::new(
                     "tmux",
-                    ["wait-for", "ajax-return-ajax-cockpit-ajax-web-fix-login"]
+                    ["switch-client", "-t", "ajax-web-fix-login:worktrunk"]
+                )
+                .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "wait-for",
+                        "ajax-return-ajax-cockpit-0-0-ajax-web-fix-login-worktrunk"
+                    ]
+                )
+            ]
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_inside_same_tmux_session_switches_to_task_window() {
+        let mut context = sample_context();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.tmux_session = "ajax-ssh-0".to_string();
+            task.worktrunk_status = Some(WorktrunkStatus::present(
+                "wm-ajax-code-review",
+                "/tmp/worktrees/web-fix-login",
+            ));
+        }
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-ssh-0:0.0\n"),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+        ]);
+        let mut state_changed = false;
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open task".to_string(),
+            task_title: None,
+        };
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "bind-key",
+                        "-n",
+                        "C-q",
+                        "switch-client",
+                        "-t",
+                        "ajax-ssh-0:0.0",
+                        "\\;",
+                        "wait-for",
+                        "-S",
+                        "ajax-return-ajax-ssh-0-0-0-ajax-ssh-0-wm-ajax-code-review",
+                        "\\;",
+                        "unbind-key",
+                        "-n",
+                        "C-q"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["switch-client", "-t", "ajax-ssh-0:wm-ajax-code-review"]
+                )
+                .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "wait-for",
+                        "ajax-return-ajax-ssh-0-0-0-ajax-ssh-0-wm-ajax-code-review"
+                    ]
                 )
             ]
         );
@@ -3352,7 +3493,14 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3469,7 +3617,14 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
@@ -3642,7 +3797,14 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["display-message", "-p", "#S"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "display-message",
+                        "-p",
+                        "#{session_name}:#{window_index}.#{pane_index}"
+                    ]
+                ),
                 CommandSpec::new("tmux", ["bind-key", "-n", "C-q", "detach-client"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
