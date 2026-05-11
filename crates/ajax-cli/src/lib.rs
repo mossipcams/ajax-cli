@@ -3212,7 +3212,13 @@ mod tests {
                         "a",
                         "switch-client",
                         "-t",
-                        "ajax:0"
+                        "ajax:0",
+                        "\\;",
+                        "send-keys",
+                        "-t",
+                        "ajax:0",
+                        "ajax cockpit",
+                        "Enter"
                     ]
                 ),
                 CommandSpec::new(
