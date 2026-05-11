@@ -2972,6 +2972,9 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
                 CommandSpec::new(
                     "tmux",
                     ["display-message", "-p", "#{session_name}:#{window_index}"]
@@ -3170,9 +3173,10 @@ mod tests {
     fn pending_cockpit_open_installs_ajax_return_hotkey_before_opening_task() {
         let mut context = sample_context();
         let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
             output(0, "ajax:0\n"),
-            output(0, ""),
-            output(0, ""),
             output(0, ""),
             output(0, "opened\n"),
         ]);
@@ -3195,21 +3199,18 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
+                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
                 CommandSpec::new(
                     "tmux",
                     ["display-message", "-p", "#{session_name}:#{window_index}"]
                 ),
                 CommandSpec::new(
                     "tmux",
-                    ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"]
-                ),
-                CommandSpec::new(
-                    "tmux",
                     [
                         "bind-key",
-                        "-T",
-                        "ajax-return",
-                        "a",
+                        "A",
                         "switch-client",
                         "-t",
                         "ajax:0",
@@ -3219,18 +3220,6 @@ mod tests {
                         "ajax:0",
                         "ajax cockpit",
                         "Enter"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "bind-key",
-                        "-T",
-                        "ajax-return",
-                        "Any",
-                        "send-keys",
-                        "/",
-                        "#{key}"
                     ]
                 ),
                 CommandSpec::new("workmux", ["open", "ajax/fix-login"])
@@ -3244,6 +3233,9 @@ mod tests {
     fn pending_cockpit_open_continues_when_ajax_return_hotkey_probe_fails() {
         let mut context = sample_context();
         let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
             CommandOutput {
                 status_code: 1,
                 stdout: String::new(),
@@ -3270,6 +3262,9 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
+                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
                 CommandSpec::new(
                     "tmux",
                     ["display-message", "-p", "#{session_name}:#{window_index}"]
@@ -3388,6 +3383,9 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
                 CommandSpec::new(
                     "tmux",
                     ["display-message", "-p", "#{session_name}:#{window_index}"]
@@ -3562,6 +3560,9 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
+                CommandSpec::new("tmux", ["unbind-key", "-n", "/"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"]),
+                CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"]),
                 CommandSpec::new(
                     "tmux",
                     ["display-message", "-p", "#{session_name}:#{window_index}"]

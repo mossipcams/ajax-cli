@@ -268,11 +268,16 @@ impl TmuxAdapter {
         )
     }
 
-    pub fn bind_ajax_return_prefix(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"],
-        )
+    pub fn unbind_ajax_return_prefix(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-n", "/"])
+    }
+
+    pub fn unbind_ajax_return_key(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-T", "ajax-return", "a"])
+    }
+
+    pub fn unbind_ajax_return_fallback(&self) -> CommandSpec {
+        CommandSpec::new(&self.program, ["unbind-key", "-T", "ajax-return", "Any"])
     }
 
     pub fn bind_ajax_return_key(&self, target: &str) -> CommandSpec {
@@ -280,9 +285,7 @@ impl TmuxAdapter {
             &self.program,
             [
                 "bind-key",
-                "-T",
-                "ajax-return",
-                "a",
+                "A",
                 "switch-client",
                 "-t",
                 target,
@@ -292,21 +295,6 @@ impl TmuxAdapter {
                 target,
                 "ajax cockpit",
                 "Enter",
-            ],
-        )
-    }
-
-    pub fn bind_ajax_return_fallback(&self) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "bind-key",
-                "-T",
-                "ajax-return",
-                "Any",
-                "send-keys",
-                "/",
-                "#{key}",
             ],
         )
     }
@@ -705,11 +693,16 @@ mod tests {
             )
         );
         assert_eq!(
-            adapter.bind_ajax_return_prefix(),
-            CommandSpec::new(
-                "tmux",
-                ["bind-key", "-n", "/", "switch-client", "-T", "ajax-return"]
-            )
+            adapter.unbind_ajax_return_prefix(),
+            CommandSpec::new("tmux", ["unbind-key", "-n", "/"])
+        );
+        assert_eq!(
+            adapter.unbind_ajax_return_key(),
+            CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "a"])
+        );
+        assert_eq!(
+            adapter.unbind_ajax_return_fallback(),
+            CommandSpec::new("tmux", ["unbind-key", "-T", "ajax-return", "Any"])
         );
         assert_eq!(
             adapter.bind_ajax_return_key("ajax:0"),
@@ -717,9 +710,7 @@ mod tests {
                 "tmux",
                 [
                     "bind-key",
-                    "-T",
-                    "ajax-return",
-                    "a",
+                    "A",
                     "switch-client",
                     "-t",
                     "ajax:0",
@@ -729,21 +720,6 @@ mod tests {
                     "ajax:0",
                     "ajax cockpit",
                     "Enter"
-                ]
-            )
-        );
-        assert_eq!(
-            adapter.bind_ajax_return_fallback(),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "bind-key",
-                    "-T",
-                    "ajax-return",
-                    "Any",
-                    "send-keys",
-                    "/",
-                    "#{key}"
                 ]
             )
         );

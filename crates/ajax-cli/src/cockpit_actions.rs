@@ -199,6 +199,14 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
 
 fn install_ajax_return_hotkey(runner: &mut impl CommandRunner) {
     let tmux = TmuxAdapter::new("tmux");
+    for command in [
+        tmux.unbind_ajax_return_prefix(),
+        tmux.unbind_ajax_return_key(),
+        tmux.unbind_ajax_return_fallback(),
+    ] {
+        let _ = runner.run(&command);
+    }
+
     let Ok(output) = runner.run(&tmux.current_client_target()) else {
         return;
     };
@@ -211,11 +219,5 @@ fn install_ajax_return_hotkey(runner: &mut impl CommandRunner) {
         return;
     }
 
-    for command in [
-        tmux.bind_ajax_return_prefix(),
-        tmux.bind_ajax_return_key(target),
-        tmux.bind_ajax_return_fallback(),
-    ] {
-        let _ = runner.run(&command);
-    }
+    let _ = runner.run(&tmux.bind_ajax_return_key(target));
 }
