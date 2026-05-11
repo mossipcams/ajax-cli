@@ -481,10 +481,22 @@ impl App {
     }
 
     fn reload(&mut self, repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) {
+        let missing_task_after_refresh = match &self.view {
+            AppView::TaskActions { task, .. } => !tasks
+                .tasks
+                .iter()
+                .any(|candidate| candidate.qualified_handle == task.qualified_handle),
+            _ => false,
+        };
         self.repos = repos;
         self.tasks = tasks;
         self.inbox = inbox;
         self.pending_confirmation = None;
+        if missing_task_after_refresh {
+            self.view = AppView::Projects;
+            self.selected = 0;
+            self.viewport_scroll = 0;
+        }
         self.rebuild_selectables();
         let max = self.selectables.len().saturating_sub(1);
         self.selected = self.selected.min(max);
@@ -3445,6 +3457,30 @@ mod tests {
         );
         // Only the project row remains at top level → clamps to it.
         assert_eq!(app.selected, 0);
+        assert_eq!(
+            app.selected_action().unwrap().recommended_action,
+            "select project"
+        );
+    }
+
+    #[test]
+    fn refresh_after_removed_task_returns_to_main_page() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.activate_selected();
+        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+
+        super::handle_action_result(
+            &mut app,
+            Ok(ActionOutcome::Refresh {
+                repos: sample_repos(),
+                tasks: TasksResponse { tasks: vec![] },
+                inbox: InboxResponse { items: vec![] },
+            }),
+        )
+        .unwrap();
+
+        assert!(matches!(&app.view, AppView::Projects));
         assert_eq!(
             app.selected_action().unwrap().recommended_action,
             "select project"
