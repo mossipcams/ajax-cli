@@ -2051,8 +2051,10 @@ mod tests {
         assert!(plan.blocked_reasons.is_empty());
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
     }
 
@@ -2064,8 +2066,10 @@ mod tests {
 
         assert_eq!(
             plan.commands,
-            vec![CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            vec![
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
     }
 

@@ -2507,8 +2507,10 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
         assert_eq!(
             context
@@ -2591,8 +2593,10 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
         assert_eq!(
             context
@@ -3615,8 +3619,10 @@ mod tests {
         assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
         assert_eq!(
             context
@@ -3771,8 +3777,10 @@ mod tests {
         }
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("workmux", ["remove", "ajax/fix-login"])
-                .with_cwd("/Users/matt/projects/web")]
+            &[
+                CommandSpec::new("workmux", ["remove", "--force", "ajax/fix-login"])
+                    .with_cwd("/Users/matt/projects/web")
+            ]
         );
         assert_eq!(
             context

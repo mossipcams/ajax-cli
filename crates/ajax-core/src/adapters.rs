@@ -212,7 +212,7 @@ impl WorkmuxAdapter {
     }
 
     pub fn remove_task(&self, qualified_handle: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["remove", qualified_handle])
+        CommandSpec::new(&self.program, ["remove", "--force", qualified_handle])
     }
 
     fn add_task_with_args<const N: usize>(
@@ -562,7 +562,7 @@ mod tests {
         );
         assert_eq!(
             adapter.remove_task("web/fix-login"),
-            CommandSpec::new("workmux", ["remove", "web/fix-login"])
+            CommandSpec::new("workmux", ["remove", "--force", "web/fix-login"])
         );
     }
 
