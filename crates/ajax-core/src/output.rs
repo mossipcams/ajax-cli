@@ -27,6 +27,7 @@ pub struct RepoSummary {
     pub name: String,
     pub path: String,
     pub active_tasks: u32,
+    pub attention_items: u32,
     pub reviewable_tasks: u32,
     pub cleanable_tasks: u32,
 }
@@ -84,18 +85,31 @@ pub struct DoctorCheck {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct CockpitSummary {
+    pub repos: u32,
+    pub tasks: u32,
+    pub active_tasks: u32,
+    pub attention_items: u32,
+    pub reviewable_tasks: u32,
+    pub cleanable_tasks: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CockpitResponse {
+    pub summary: CockpitSummary,
     pub repos: ReposResponse,
     pub tasks: TasksResponse,
     pub review: TasksResponse,
     pub inbox: InboxResponse,
+    pub next: NextResponse,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
-        OutputFormat, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+        CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
+        InspectResponse, NextResponse, OutputFormat, ReconcileResponse, RepoSummary, ReposResponse,
+        TaskSummary, TasksResponse,
     };
     use crate::models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction};
 
@@ -106,6 +120,7 @@ mod tests {
                 name: "web".to_string(),
                 path: "/Users/matt/projects/web".to_string(),
                 active_tasks: 2,
+                attention_items: 1,
                 reviewable_tasks: 1,
                 cleanable_tasks: 0,
             }],
@@ -154,10 +169,19 @@ mod tests {
             }],
         };
         let cockpit = CockpitResponse {
+            summary: CockpitSummary {
+                repos: 1,
+                tasks: 1,
+                active_tasks: 1,
+                attention_items: 1,
+                reviewable_tasks: 0,
+                cleanable_tasks: 0,
+            },
             repos: repos.clone(),
             tasks: tasks.clone(),
             review: TasksResponse { tasks: vec![] },
             inbox: inbox.clone(),
+            next: next.clone(),
         };
 
         assert_eq!(
@@ -167,6 +191,7 @@ mod tests {
                     "name": "web",
                     "path": "/Users/matt/projects/web",
                     "active_tasks": 2,
+                    "attention_items": 1,
                     "reviewable_tasks": 1,
                     "cleanable_tasks": 0
                 }]
@@ -236,10 +261,19 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&cockpit).unwrap(),
             serde_json::json!({
+                "summary": {
+                    "repos": 1,
+                    "tasks": 1,
+                    "active_tasks": 1,
+                    "attention_items": 1,
+                    "reviewable_tasks": 0,
+                    "cleanable_tasks": 0
+                },
                 "repos": repos,
                 "tasks": tasks,
                 "review": { "tasks": [] },
-                "inbox": inbox
+                "inbox": inbox,
+                "next": next
             })
         );
     }

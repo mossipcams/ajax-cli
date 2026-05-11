@@ -893,6 +893,45 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
                         .fg(Color::LightRed)
                         .add_modifier(Modifier::BOLD),
                 ));
+                if let Some(next) = app.inbox.items.first() {
+                    parts.push(dot_sep());
+                    parts.push(Span::styled(
+                        format!("next {}", next.task_handle),
+                        Style::default()
+                            .fg(Color::LightRed)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+            }
+            let reviewable_tasks: u32 = app
+                .repos
+                .repos
+                .iter()
+                .map(|repo| repo.reviewable_tasks)
+                .sum();
+            if reviewable_tasks > 0 {
+                parts.push(dot_sep());
+                parts.push(Span::styled(
+                    format!("{reviewable_tasks} review"),
+                    Style::default()
+                        .fg(secondary_accent())
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
+            let cleanable_tasks: u32 = app
+                .repos
+                .repos
+                .iter()
+                .map(|repo| repo.cleanable_tasks)
+                .sum();
+            if cleanable_tasks > 0 {
+                parts.push(dot_sep());
+                parts.push(Span::styled(
+                    format!("{cleanable_tasks} clean"),
+                    Style::default()
+                        .fg(Color::LightRed)
+                        .add_modifier(Modifier::BOLD),
+                ));
             }
         }
         AppView::Project { repo } => {
@@ -1235,6 +1274,15 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     if repo.active_tasks > 0 {
         parts.push(format!("{} active", repo.active_tasks));
     }
+    if repo.attention_items > 0 {
+        parts.push(format!("{} attention", repo.attention_items));
+    }
+    if repo.reviewable_tasks > 0 {
+        parts.push(format!("{} review", repo.reviewable_tasks));
+    }
+    if repo.cleanable_tasks > 0 {
+        parts.push(format!("{} clean", repo.cleanable_tasks));
+    }
     if parts.is_empty() {
         "idle".to_string()
     } else {
@@ -1447,7 +1495,8 @@ mod tests {
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
         output::{
-            CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+            CockpitResponse, CockpitSummary, InboxResponse, RepoSummary, ReposResponse,
+            TaskSummary, TasksResponse,
         },
     };
     use crossterm::event::{
@@ -1463,6 +1512,7 @@ mod tests {
                 name: "web".to_string(),
                 path: "/Users/matt/projects/web".to_string(),
                 active_tasks: 1,
+                attention_items: 1,
                 reviewable_tasks: 1,
                 cleanable_tasks: 0,
             }],
@@ -1546,6 +1596,38 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_header_summarizes_review_and_cleanup_pressure() {
+        let mut repos = sample_repos();
+        repos.repos[0].cleanable_tasks = 1;
+        let app = App::new(repos, sample_tasks(), sample_inbox());
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("1 review"));
+        assert!(content.contains("1 clean"));
+    }
+
+    #[test]
+    fn project_rows_summarize_operator_work_by_project() {
+        let mut repos = sample_repos();
+        repos.repos[0].cleanable_tasks = 1;
+        let app = App::new(repos, sample_tasks(), sample_inbox());
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("1 active - 1 attention - 1 review - 1 clean"));
+    }
+
+    #[test]
+    fn cockpit_header_names_next_attention_item() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("next web/fix-login"));
+    }
+
+    #[test]
     fn refresh_snapshot_updates_live_status_and_preserves_selection() {
         let mut app = App::new(
             sample_repos(),
@@ -1561,10 +1643,19 @@ mod tests {
         ));
 
         app.apply_refresh(CockpitResponse {
+            summary: CockpitSummary {
+                repos: 1,
+                tasks: 1,
+                active_tasks: 1,
+                attention_items: 0,
+                reviewable_tasks: 1,
+                cleanable_tasks: 0,
+            },
             repos: sample_repos(),
             tasks: refreshed_tasks,
             review: TasksResponse { tasks: vec![] },
             inbox: InboxResponse { items: vec![] },
+            next: ajax_core::output::NextResponse { item: None },
         });
 
         assert_eq!(app.selected, selected_before);
@@ -2161,6 +2252,7 @@ mod tests {
                     name: "autodoctor".to_string(),
                     path: "/Users/matt/Desktop/Projects/autodoctor".to_string(),
                     active_tasks: 1,
+                    attention_items: 0,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
                 },
@@ -2168,6 +2260,7 @@ mod tests {
                     name: "autosnooze".to_string(),
                     path: "/Users/matt/Desktop/Projects/autosnooze".to_string(),
                     active_tasks: 0,
+                    attention_items: 0,
                     reviewable_tasks: 1,
                     cleanable_tasks: 0,
                 },
@@ -2808,6 +2901,7 @@ mod tests {
                     name: "web".to_string(),
                     path: "/Users/matt/Desktop/Projects/web".to_string(),
                     active_tasks: 1,
+                    attention_items: 1,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
                 },
@@ -2815,6 +2909,7 @@ mod tests {
                     name: "api".to_string(),
                     path: "/Users/matt/Desktop/Projects/api".to_string(),
                     active_tasks: 1,
+                    attention_items: 0,
                     reviewable_tasks: 0,
                     cleanable_tasks: 0,
                 },

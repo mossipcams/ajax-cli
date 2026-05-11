@@ -8,8 +8,9 @@ use crate::{
     live::{apply_observation, classify_pane},
     models::{AgentClient, LifecycleStatus, SafetyClassification, SideFlag, Task, TaskId},
     output::{
-        CockpitResponse, DoctorCheck, DoctorResponse, InboxResponse, InspectResponse, NextResponse,
-        ReconcileResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+        CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
+        InspectResponse, NextResponse, ReconcileResponse, RepoSummary, ReposResponse, TaskSummary,
+        TasksResponse,
     },
     policy::cleanup_safety,
     reconcile::{reconcile_task, reconcile_task_filesystem, ReconciliationInput},
@@ -152,6 +153,7 @@ pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
                 name: repo.name.clone(),
                 path: repo.path.display().to_string(),
                 active_tasks: count_active_tasks(&repo_tasks),
+                attention_items: count_attention_items(&repo_tasks),
                 reviewable_tasks: count_lifecycle(&repo_tasks, LifecycleStatus::Reviewable),
                 cleanable_tasks: count_lifecycle(&repo_tasks, LifecycleStatus::Cleanable),
             }
@@ -332,11 +334,38 @@ pub fn status<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
 }
 
 pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
+    let repos = list_repos(context);
+    let tasks = list_tasks(context, None);
+    let review = review_queue(context);
+    let inbox = inbox(context);
+    let summary = cockpit_summary(&repos, &tasks, &review, &inbox);
+    let next = NextResponse {
+        item: inbox.items.first().cloned(),
+    };
+
     CockpitResponse {
-        repos: list_repos(context),
-        tasks: list_tasks(context, None),
-        review: TasksResponse { tasks: vec![] },
-        inbox: inbox(context),
+        summary,
+        repos,
+        tasks,
+        review,
+        inbox,
+        next,
+    }
+}
+
+fn cockpit_summary(
+    repos: &ReposResponse,
+    tasks: &TasksResponse,
+    review: &TasksResponse,
+    inbox: &InboxResponse,
+) -> CockpitSummary {
+    CockpitSummary {
+        repos: repos.repos.len() as u32,
+        tasks: tasks.tasks.len() as u32,
+        active_tasks: repos.repos.iter().map(|repo| repo.active_tasks).sum(),
+        attention_items: inbox.items.len() as u32,
+        reviewable_tasks: review.tasks.len() as u32,
+        cleanable_tasks: repos.repos.iter().map(|repo| repo.cleanable_tasks).sum(),
     }
 }
 
@@ -919,6 +948,13 @@ fn count_active_tasks(tasks: &[&Task]) -> u32 {
         .count() as u32
 }
 
+fn count_attention_items(tasks: &[&Task]) -> u32 {
+    tasks
+        .iter()
+        .map(|task| derive_attention_items(std::slice::from_ref(*task)).len() as u32)
+        .sum()
+}
+
 fn is_operational_task(task: &Task) -> bool {
     task.lifecycle_status != LifecycleStatus::Removed && !task.has_missing_substrate()
 }
@@ -929,7 +965,7 @@ fn task_summary(task: &Task) -> TaskSummary {
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
-        needs_attention: task.side_flags().next().is_some(),
+        needs_attention: !derive_attention_items(std::slice::from_ref(task)).is_empty(),
         live_status: task.live_status.clone(),
     }
 }
@@ -1044,6 +1080,7 @@ mod tests {
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, SideFlag, Task, TaskId,
         },
+        output::CockpitSummary,
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -1179,6 +1216,24 @@ mod tests {
     }
 
     #[test]
+    fn task_summary_marks_live_attention_without_side_flags() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(crate::models::LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+
+        let response = list_tasks(&context, None);
+
+        assert!(response.tasks[0].needs_attention);
+    }
+
+    #[test]
     fn removed_tasks_are_hidden_from_operational_summaries() {
         let mut context = context_with_tasks();
         let task = context
@@ -1265,6 +1320,73 @@ mod tests {
         assert_eq!(response.tasks.len(), 2);
         assert_eq!(response.tasks[0].qualified_handle, "web/fix-login");
         assert_eq!(response.tasks[1].qualified_handle, "api/add-cache");
+    }
+
+    #[test]
+    fn cockpit_includes_review_queue() {
+        let mut context = context_with_tasks();
+        let mut mergeable = Task::new(
+            TaskId::new("task-2"),
+            "api",
+            "add-cache",
+            "Add cache",
+            "ajax/add-cache",
+            "main",
+            "/tmp/worktrees/api-add-cache",
+            "ajax-api-add-cache",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        mergeable.lifecycle_status = LifecycleStatus::Mergeable;
+        context.registry.create_task(mergeable).unwrap();
+
+        let response = cockpit(&context);
+
+        assert_eq!(response.review.tasks.len(), 2);
+        assert_eq!(response.review.tasks[0].qualified_handle, "web/fix-login");
+        assert_eq!(response.review.tasks[1].qualified_handle, "api/add-cache");
+    }
+
+    #[test]
+    fn cockpit_summary_counts_operator_work() {
+        let mut context = context_with_tasks();
+        let mut cleanable = Task::new(
+            TaskId::new("task-2"),
+            "api",
+            "remove-cache",
+            "Remove cache",
+            "ajax/remove-cache",
+            "main",
+            "/tmp/worktrees/api-remove-cache",
+            "ajax-api-remove-cache",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        cleanable.lifecycle_status = LifecycleStatus::Cleanable;
+        context.registry.create_task(cleanable).unwrap();
+
+        let response = cockpit(&context);
+
+        assert_eq!(
+            response.summary,
+            CockpitSummary {
+                repos: 2,
+                tasks: 2,
+                active_tasks: 0,
+                attention_items: 2,
+                reviewable_tasks: 1,
+                cleanable_tasks: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn cockpit_next_matches_next_command() {
+        let context = context_with_tasks();
+
+        let response = cockpit(&context);
+
+        assert_eq!(response.next, next(&context));
     }
 
     #[test]

@@ -831,6 +831,16 @@ mod tests {
         CommandContext::new(config, registry)
     }
 
+    fn safe_merge_context() -> CommandContext<InMemoryRegistry> {
+        let mut context = sample_context();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .remove_side_flag(SideFlag::NeedsInput);
+        context
+    }
+
     fn cleanable_context() -> CommandContext<InMemoryRegistry> {
         let mut context = sample_context();
         let task = context
@@ -1103,8 +1113,12 @@ mod tests {
             parsed["tasks"]["tasks"][0]["qualified_handle"],
             "web/fix-login"
         );
-        assert_eq!(parsed["review"]["tasks"], serde_json::Value::Array(vec![]));
+        assert_eq!(
+            parsed["review"]["tasks"][0]["qualified_handle"],
+            "web/fix-login"
+        );
         assert_eq!(parsed["inbox"]["items"][0]["task_handle"], "web/fix-login");
+        assert_eq!(parsed["next"]["item"]["task_handle"], "web/fix-login");
     }
 
     #[test]
@@ -3061,7 +3075,7 @@ mod tests {
 
     #[test]
     fn pending_cockpit_merge_and_reconcile_return_to_ajax() {
-        let mut merge_context = sample_context();
+        let mut merge_context = safe_merge_context();
         let mut merge_runner = QueuedRunner::new(vec![output(0, "merged\n")]);
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
@@ -3304,8 +3318,44 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_failed_external_command_does_not_mutate_state() {
+    fn pending_cockpit_risky_merge_requires_confirmation_without_running() {
         let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "merge task".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        let error = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            super::CliError::CommandFailed(message)
+                if message == "confirmation required; pass --yes"
+        ));
+        assert!(runner.commands().is_empty());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_failed_external_command_does_not_mutate_state() {
+        let mut context = safe_merge_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
             recommended_action: "merge task".to_string(),
@@ -3402,7 +3452,7 @@ mod tests {
 
     #[test]
     fn pending_cockpit_merge_action_runs_task_and_marks_merged() {
-        let mut context = sample_context();
+        let mut context = safe_merge_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
             recommended_action: "merge task".to_string(),

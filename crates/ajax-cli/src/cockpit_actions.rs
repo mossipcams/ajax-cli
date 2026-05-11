@@ -53,7 +53,8 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
             let plan = operation
                 .plan(context, handle)
                 .map_err(command_error_as_io)?;
-            commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
+            commands::execute_plan(&plan, !plan.requires_confirmation, runner)
+                .map_err(command_error_as_io)?;
             let changed = operation
                 .apply_after_execute(context, handle)
                 .map_err(command_error_as_io)?;
@@ -178,7 +179,8 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
     let plan = operation
         .plan(context, &pending.task_handle)
         .map_err(command_error)?;
-    let outputs = commands::execute_plan(&plan, true, runner).map_err(command_error)?;
+    let outputs = commands::execute_plan(&plan, !plan.requires_confirmation, runner)
+        .map_err(command_error)?;
     let changed = operation
         .apply_after_execute(context, &pending.task_handle)
         .map_err(command_error)?;
