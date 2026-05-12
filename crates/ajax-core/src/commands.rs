@@ -565,7 +565,7 @@ pub fn open_task_plan<R: Registry>(
             .as_ref()
             .is_some_and(|status| !status.worktree_exists || !status.branch_exists);
     if needs_trunk_repair && !has_non_tmux_missing_substrate {
-        return trunk_task_plan(context, qualified_handle);
+        return trunk_task_plan_with_open_mode(context, qualified_handle, mode);
     }
 
     let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
@@ -1171,6 +1171,14 @@ pub fn trunk_task_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
+    trunk_task_plan_with_open_mode(context, qualified_handle, OpenMode::Attach)
+}
+
+pub fn trunk_task_plan_with_open_mode<R: Registry>(
+    context: &CommandContext<R>,
+    qualified_handle: &str,
+    mode: OpenMode,
+) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let tmux = TmuxAdapter::new("tmux");
     let mut plan = CommandPlan::new(format!("open worktrunk: {qualified_handle}"));
@@ -1225,8 +1233,14 @@ pub fn trunk_task_plan<R: Registry>(
     }
     plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
-    plan.commands
-        .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window));
+    match mode {
+        OpenMode::Attach => plan
+            .commands
+            .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window)),
+        OpenMode::SwitchClient => plan
+            .commands
+            .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+    };
 
     Ok(plan)
 }
@@ -2681,6 +2695,32 @@ mod tests {
     }
 
     #[test]
+    fn open_task_plan_routes_missing_tmux_repair_to_switch_client_inside_tmux() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = None;
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::SwitchClient).unwrap();
+
+        assert_eq!(plan.title, "open worktrunk: web/fix-login");
+        assert_eq!(
+            plan.commands.last(),
+            Some(
+                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            )
+        );
+    }
+
+    #[test]
     fn lifecycle_transitions_update_registry_status() {
         let mut context = context_with_tasks();
         context
@@ -3357,6 +3397,26 @@ mod tests {
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
+        );
+    }
+
+    #[test]
+    fn trunk_task_plan_switches_client_when_inside_tmux() {
+        let context = context_with_tasks();
+
+        let plan = super::trunk_task_plan_with_open_mode(
+            &context,
+            "web/fix-login",
+            OpenMode::SwitchClient,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.commands.last(),
+            Some(
+                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            )
         );
     }
 

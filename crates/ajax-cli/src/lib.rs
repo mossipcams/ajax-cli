@@ -230,7 +230,8 @@ fn render_matches_with_paths(
         }
         Some(("trunk", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::trunk_task_plan(context, task).map_err(command_error)?;
+            let plan = commands::trunk_task_plan_with_open_mode(context, task, current_open_mode())
+                .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("check", subcommand)) => {
@@ -3855,11 +3856,17 @@ mod tests {
     fn trunk_execute_uses_injected_runner() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "trunk", "web/fix-login", "--execute"])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
 
-        run_with_context_and_runner(
-            ["ajax", "trunk", "web/fix-login", "--execute"],
+        super::render_task_command(
+            super::TaskCommandOperation::Trunk,
+            subcommand,
             &mut context,
             &mut runner,
+            OpenMode::Attach,
         )
         .unwrap();
 
@@ -3886,6 +3893,33 @@ mod tests {
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
+        );
+    }
+
+    #[test]
+    fn trunk_execute_switches_client_when_inside_tmux() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "trunk", "web/fix-login", "--execute"])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        super::render_task_command(
+            super::TaskCommandOperation::Trunk,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::SwitchClient,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands().last(),
+            Some(
+                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            )
         );
     }
 
@@ -4956,11 +4990,12 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::execute_pending_cockpit_action(
+        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
+            OpenMode::Attach,
         )
         .unwrap();
 
@@ -4981,11 +5016,12 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::execute_pending_cockpit_action(
+        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
+            OpenMode::Attach,
         )
         .unwrap();
 
@@ -5038,11 +5074,12 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::execute_pending_cockpit_action(
+        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
             &pending,
             &mut context,
             &mut runner,
             &mut state_changed,
+            OpenMode::Attach,
         )
         .unwrap();
 
@@ -5070,6 +5107,36 @@ mod tests {
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_open_worktrunk_switches_client_when_inside_tmux() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            recommended_action: "open worktrunk".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+
+        super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            OpenMode::SwitchClient,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands().last(),
+            Some(
+                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            )
         );
         assert!(state_changed);
     }

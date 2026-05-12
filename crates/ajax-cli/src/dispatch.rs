@@ -68,7 +68,7 @@ impl TaskCommandOperation {
     ) -> Result<commands::CommandPlan, CommandError> {
         match self {
             Self::Open => commands::open_task_plan(context, task, open_mode),
-            Self::Trunk => commands::trunk_task_plan(context, task),
+            Self::Trunk => commands::trunk_task_plan_with_open_mode(context, task, open_mode),
             Self::Check => commands::check_task_plan(context, task),
             Self::Diff => commands::diff_task_plan(context, task),
             Self::Merge => commands::merge_task_plan(context, task),
