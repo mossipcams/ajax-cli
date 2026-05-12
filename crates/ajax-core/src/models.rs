@@ -372,6 +372,15 @@ const TASK_PICKER_MENU: [RecommendedAction; 4] = [
     RecommendedAction::RemoveTask,
 ];
 
+const COCKPIT_PRODUCT_ACTIONS: [RecommendedAction; 6] = [
+    RecommendedAction::NewTask,
+    RecommendedAction::OpenTask,
+    RecommendedAction::MergeTask,
+    RecommendedAction::CleanTask,
+    RecommendedAction::RemoveTask,
+    RecommendedAction::Status,
+];
+
 impl RecommendedAction {
     pub const fn all() -> &'static [Self] {
         &[
@@ -408,6 +417,10 @@ impl RecommendedAction {
 
     pub const fn task_picker_menu() -> &'static [Self] {
         &TASK_PICKER_MENU
+    }
+
+    pub const fn cockpit_product_actions() -> &'static [Self] {
+        &COCKPIT_PRODUCT_ACTIONS
     }
 }
 
@@ -774,6 +787,29 @@ mod tests {
             labels,
             vec!["open task", "merge task", "clean task", "remove task"]
         );
+    }
+
+    #[test]
+    fn recommended_actions_define_explicit_cockpit_product_contract() {
+        let labels = RecommendedAction::cockpit_product_actions()
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            labels,
+            vec![
+                RecommendedAction::NewTask.as_str(),
+                RecommendedAction::OpenTask.as_str(),
+                RecommendedAction::MergeTask.as_str(),
+                RecommendedAction::CleanTask.as_str(),
+                RecommendedAction::RemoveTask.as_str(),
+                RecommendedAction::Status.as_str(),
+            ]
+        );
+        assert!(!labels.contains(&RecommendedAction::OpenTrunk.as_str()));
+        assert!(!labels.contains(&"check task"));
+        assert!(!labels.contains(&"diff task"));
     }
 
     #[test]

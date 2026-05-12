@@ -2976,6 +2976,33 @@ mod tests {
     }
 
     #[test]
+    fn task_action_menu_uses_only_product_task_actions() {
+        let product_task_actions = RecommendedAction::cockpit_product_actions()
+            .iter()
+            .copied()
+            .filter(|action| {
+                matches!(
+                    action,
+                    RecommendedAction::OpenTask
+                        | RecommendedAction::MergeTask
+                        | RecommendedAction::CleanTask
+                        | RecommendedAction::RemoveTask
+                )
+            })
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+        let task_menu_actions = RecommendedAction::task_picker_menu()
+            .iter()
+            .map(|action| action.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(task_menu_actions, product_task_actions);
+        assert!(!task_menu_actions.contains(&RecommendedAction::OpenTrunk.as_str()));
+        assert!(!task_menu_actions.contains(&"check task"));
+        assert!(!task_menu_actions.contains(&"diff task"));
+    }
+
+    #[test]
     fn task_picker_actions_have_dedicated_render_metadata() {
         for action in RecommendedAction::task_picker_menu() {
             let chrome = action_chrome(action.as_str());

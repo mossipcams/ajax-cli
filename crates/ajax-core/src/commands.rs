@@ -1772,12 +1772,12 @@ mod tests {
 
             assert_eq!(
                 response.tasks[0].actions,
-                vec![RecommendedAction::OpenTrunk.as_str().to_string()],
+                vec![RecommendedAction::OpenTask.as_str().to_string()],
                 "{flag:?}"
             );
             assert_eq!(
                 inbox(&context).items[0].recommended_action,
-                RecommendedAction::OpenTrunk.as_str(),
+                RecommendedAction::OpenTask.as_str(),
                 "{flag:?}"
             );
         }

@@ -114,8 +114,8 @@ fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) 
     match flag {
         SideFlag::NeedsInput => ("agent needs input", 10, RecommendedAction::OpenTask),
         SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::OpenTask),
-        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTrunk),
-        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTrunk),
+        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTask),
+        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTask),
         SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::OpenTask),
         SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::OpenTask),
         SideFlag::Conflicted => ("git conflicts detected", 40, RecommendedAction::OpenTask),
@@ -156,10 +156,10 @@ fn attention_for_live_status(
             Some(("worktree missing", 30, RecommendedAction::OpenTask))
         }
         LiveStatusKind::TmuxMissing => {
-            Some(("tmux session missing", 25, RecommendedAction::OpenTrunk))
+            Some(("tmux session missing", 25, RecommendedAction::OpenTask))
         }
         LiveStatusKind::WorktrunkMissing => {
-            Some(("worktrunk missing", 20, RecommendedAction::OpenTrunk))
+            Some(("worktrunk missing", 20, RecommendedAction::OpenTask))
         }
         LiveStatusKind::ShellIdle
         | LiveStatusKind::CommandRunning
@@ -245,7 +245,7 @@ mod tests {
                     task_handle: "web/broken".to_string(),
                     reason: "worktrunk missing".to_string(),
                     priority: 20,
-                    recommended_action: "open worktrunk".to_string(),
+                    recommended_action: "open task".to_string(),
                 },
                 AttentionItem {
                     task_id: TaskId::new("task-merged-task"),

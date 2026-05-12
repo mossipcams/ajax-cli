@@ -62,7 +62,7 @@ pub(super) fn task_summary(task: &Task) -> TaskSummary {
 
 fn task_actions(task: &Task) -> Vec<String> {
     if task.has_side_flag(SideFlag::TmuxMissing) || task.has_side_flag(SideFlag::WorktrunkMissing) {
-        return vec![RecommendedAction::OpenTrunk.as_str().to_string()];
+        return vec![RecommendedAction::OpenTask.as_str().to_string()];
     }
 
     [

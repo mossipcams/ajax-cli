@@ -3556,22 +3556,57 @@ mod tests {
     #[test]
     fn cockpit_action_contract_covers_all_current_actions() {
         enum Expected<'a> {
+            Confirm(&'a str),
             Defer,
             Message(&'a [&'a str]),
             Refresh,
         }
 
-        for (handle, action, expected) in [
-            ("web/fix-login", "open task", Expected::Defer),
-            ("web/fix-login", "merge task", Expected::Defer),
-            ("web/fix-login", "clean task", Expected::Refresh),
+        let cases = [
             (
+                RecommendedAction::NewTask,
                 "web",
-                "new task",
                 Expected::Message(&["select a project", "new task"]),
             ),
-            ("web", "status", Expected::Message(&["web: 1 task(s)"])),
-        ] {
+            (
+                RecommendedAction::OpenTask,
+                "web/fix-login",
+                Expected::Defer,
+            ),
+            (
+                RecommendedAction::MergeTask,
+                "web/fix-login",
+                Expected::Defer,
+            ),
+            (
+                RecommendedAction::CleanTask,
+                "web/fix-login",
+                Expected::Refresh,
+            ),
+            (
+                RecommendedAction::RemoveTask,
+                "web/fix-login",
+                Expected::Confirm("remove task"),
+            ),
+            (
+                RecommendedAction::Status,
+                "web",
+                Expected::Message(&["web: 1 task(s)"]),
+            ),
+        ];
+        let covered_actions = cases
+            .iter()
+            .map(|(action, _, _)| *action)
+            .collect::<std::collections::BTreeSet<_>>();
+        let product_actions = RecommendedAction::cockpit_product_actions()
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(covered_actions, product_actions);
+
+        for (action, handle, expected) in cases {
+            let action = action.as_str();
             let mut context = if action == "clean task" {
                 cleanable_context()
             } else {
@@ -3586,6 +3621,25 @@ mod tests {
                     .unwrap();
 
             match expected {
+                Expected::Confirm(part) => match outcome {
+                    ajax_tui::ActionOutcome::Confirm(message) => {
+                        assert!(message.contains(part), "{action}: {message}");
+                        assert!(
+                            runner.commands().is_empty(),
+                            "{action} should not execute before confirmation"
+                        );
+                        assert!(!state_changed, "{action}");
+                    }
+                    ajax_tui::ActionOutcome::Defer(_) => {
+                        panic!("{action} should request confirmation, got defer");
+                    }
+                    ajax_tui::ActionOutcome::Message(message) => {
+                        panic!("{action} should request confirmation, got message: {message}");
+                    }
+                    ajax_tui::ActionOutcome::Refresh { .. } => {
+                        panic!("{action} should request confirmation, got refresh");
+                    }
+                },
                 Expected::Defer => match outcome {
                     ajax_tui::ActionOutcome::Defer(pending) => {
                         assert_eq!(pending.task_handle, handle, "{action}");
@@ -3823,7 +3877,21 @@ mod tests {
             .find(|task| task.qualified_handle() == "web/fix-login")
             .expect("failed cockpit create should leave a visible task");
         assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
-        assert_eq!(ajax_core::commands::inbox(&context).items.len(), 1);
+        let tasks = ajax_core::commands::list_tasks(&context, None);
+        assert_eq!(
+            tasks.tasks[0].actions,
+            vec![
+                RecommendedAction::OpenTask.as_str().to_string(),
+                RecommendedAction::RemoveTask.as_str().to_string(),
+            ]
+        );
+        let inbox = ajax_core::commands::inbox(&context);
+        assert_eq!(inbox.items.len(), 1);
+        assert_eq!(
+            inbox.items[0].recommended_action,
+            RecommendedAction::OpenTask.as_str()
+        );
+        assert!(RecommendedAction::cockpit_product_actions().contains(&RecommendedAction::OpenTask));
     }
 
     #[test]
