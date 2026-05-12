@@ -70,6 +70,16 @@ record typed events. SQLite persists typed task fields and event rows directly;
 new operation fields or statuses must round-trip through that typed schema and
 unsupported schema versions must fail clearly.
 
+Lifecycle mutation authority is centralized in `ajax-core::lifecycle`. Production
+code must use lifecycle transition helpers, and those helpers own the direct
+`Task::lifecycle_status` assignment after validating the transition reason and
+edge. Registry persistence may hydrate a stored lifecycle through the same
+module, but command, live-status, attention, CLI, and TUI code should consume
+lifecycle projections or request transitions rather than assigning lifecycle
+state directly. Attention remains a derived projection from lifecycle, live
+status, side flags, and external substrate evidence; it must not mutate task
+lifecycle.
+
 ## Command Execution
 
 Command planning should stay separate from command execution. `CommandSpec`

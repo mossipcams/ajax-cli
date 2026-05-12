@@ -7,7 +7,8 @@ use std::{
 };
 
 use crate::lifecycle::{
-    validate_lifecycle_transition, LifecycleTransitionError, LifecycleTransitionReason,
+    hydrate_lifecycle_status, transition_lifecycle, LifecycleTransitionError,
+    LifecycleTransitionReason,
 };
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
@@ -97,14 +98,9 @@ impl Registry for InMemoryRegistry {
             return Err(RegistryError::TaskNotFound(task_id.clone()));
         };
 
-        validate_lifecycle_transition(
-            task.lifecycle_status,
-            status,
-            LifecycleTransitionReason::Generic,
-        )
-        .map_err(RegistryError::InvalidLifecycleTransition)?;
+        transition_lifecycle(task, status, LifecycleTransitionReason::Generic)
+            .map_err(RegistryError::InvalidLifecycleTransition)?;
 
-        task.lifecycle_status = status;
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
         self.events.push(RegistryEvent::new(
@@ -487,7 +483,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
         worktrunk_window,
         selected_agent,
     );
-    task.lifecycle_status = lifecycle_status;
+    hydrate_lifecycle_status(&mut task, lifecycle_status);
     task.agent_status = agent_status;
     task.created_at = created_at;
     task.last_activity_at = last_activity_at;

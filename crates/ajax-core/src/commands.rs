@@ -5,6 +5,7 @@ use crate::{
     },
     attention::derive_attention_items,
     config::Config,
+    lifecycle::{force_mark_removed, mark_provisioning},
     live::LiveStatusKind,
     models::{
         AgentClient, LifecycleStatus, LiveObservation, RecommendedAction, SafetyClassification,
@@ -480,7 +481,9 @@ pub fn task_from_new_request<R: Registry>(
         "worktrunk",
         agent_from_name(&request.agent),
     );
-    task.lifecycle_status = LifecycleStatus::Provisioning;
+    mark_provisioning(&mut task).map_err(|error| {
+        CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
+    })?;
 
     Ok(task)
 }
@@ -1047,7 +1050,9 @@ pub fn mark_task_force_removed<R: Registry>(
         return Err(CommandError::TaskNotFound(qualified_handle.to_string()));
     };
 
-    task.lifecycle_status = LifecycleStatus::Removed;
+    force_mark_removed(task).map_err(|error| {
+        CommandError::Registry(RegistryError::InvalidLifecycleTransition(error))
+    })?;
     task.last_activity_at = SystemTime::now();
     task.remove_side_flag(SideFlag::Stale);
     context

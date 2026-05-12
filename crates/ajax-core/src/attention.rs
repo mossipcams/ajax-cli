@@ -186,9 +186,10 @@ fn attention_for_agent_status(
 
 #[cfg(test)]
 mod tests {
+    use crate::lifecycle::{mark_active, mark_cleanable, mark_merged, mark_reviewable};
     use crate::models::{
-        AgentClient, AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveObservation,
-        LiveStatusKind, SideFlag, Task, TaskId,
+        AgentClient, AgentRuntimeStatus, AttentionItem, LiveObservation, LiveStatusKind, SideFlag,
+        Task, TaskId,
     };
 
     fn task_with_flags(handle: &str, flags: &[SideFlag]) -> Task {
@@ -212,10 +213,18 @@ mod tests {
         task
     }
 
+    fn cleanable_task(handle: &str) -> Task {
+        let mut task = task_with_flags(handle, &[]);
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        mark_merged(&mut task).unwrap();
+        mark_cleanable(&mut task).unwrap();
+        task
+    }
+
     #[test]
     fn attention_items_are_structured_and_prioritized() {
-        let mut cleanable = task_with_flags("merged-task", &[]);
-        cleanable.lifecycle_status = LifecycleStatus::Cleanable;
+        let cleanable = cleanable_task("merged-task");
         let waiting = task_with_flags("needs-input", &[SideFlag::NeedsInput]);
         let broken = task_with_flags("broken", &[SideFlag::WorktrunkMissing]);
 
@@ -415,5 +424,29 @@ mod tests {
             items.iter().all(|item| item.reason != "agent is running"),
             "specific live status should be enough without generic monitor attention: {items:?}"
         );
+    }
+
+    #[test]
+    fn deriving_attention_does_not_mutate_task_lifecycle() {
+        let task = cleanable_task("read-only");
+        let before = task.lifecycle_status;
+
+        let _items = super::derive_attention_items(std::slice::from_ref(&task));
+
+        assert_eq!(task.lifecycle_status, before);
+    }
+
+    #[test]
+    fn attention_module_does_not_assign_lifecycle_status() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/attention.rs"),
+        )
+        .unwrap();
+        let forbidden_assignment = [".lifecycle", "_status ="].concat();
+        let permitted_equality = [".lifecycle", "_status =="].concat();
+
+        assert!(!source.lines().any(
+            |line| line.contains(&forbidden_assignment) && !line.contains(&permitted_equality)
+        ));
     }
 }

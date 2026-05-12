@@ -1,7 +1,7 @@
 use std::time::SystemTime;
 
 use crate::{
-    lifecycle::{validate_lifecycle_transition, LifecycleTransitionReason},
+    lifecycle::{transition_lifecycle, LifecycleTransitionReason},
     models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
 };
 
@@ -417,17 +417,12 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 }
 
 fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
-    if validate_lifecycle_transition(
-        task.lifecycle_status,
-        status,
-        LifecycleTransitionReason::OperationResult,
-    )
-    .is_err()
+    if let Err(_error) =
+        transition_lifecycle(task, status, LifecycleTransitionReason::OperationResult)
     {
-        return;
+        // Live evidence can lag lifecycle state; invalid evidence-driven edges leave
+        // the lifecycle unchanged while still allowing live status projection.
     }
-
-    task.lifecycle_status = status;
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
