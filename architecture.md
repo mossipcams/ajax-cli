@@ -21,6 +21,19 @@ testable, and scriptable.
   agent CLIs remain opaque workers. Ajax owns task lifecycle planning, naming,
   policy, live status projection, and registry state.
 
+The `ajax-supervisor` split keeps runtime orchestration separate from
+substrate-specific observation:
+
+- `runtime.rs` owns monitor task wiring, cancellation, channels, optional event
+  logging, and public monitor handles.
+- `agent/codex.rs` owns only Codex command construction and Codex JSONL protocol
+  parsing into `AgentEvent`.
+- `repo_observer.rs` owns notify event translation and git snapshot production.
+- `process_observer.rs` owns child process output, exit status, and hang
+  detection.
+- `event_log.rs` owns optional append-only JSONL monitor event persistence.
+- `status.rs` reduces monitor events into the current observed live status.
+
 ## Architectural Direction
 
 Keep the current Rust core plus CLI JSON contract behind Cockpit. This is the

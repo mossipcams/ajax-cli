@@ -25,11 +25,6 @@ pub fn notify_event_to_monitor_events(event: Event) -> Vec<MonitorEvent> {
         .collect()
 }
 
-fn is_git_internal_path(path: &Path) -> bool {
-    path.components()
-        .any(|component| component.as_os_str() == OsStr::new(".git"))
-}
-
 pub fn watch_repo(
     path: &Path,
     sender: std::sync::mpsc::Sender<notify::Result<Event>>,
@@ -65,6 +60,21 @@ pub async fn git_snapshot(worktree_path: impl AsRef<Path>) -> Result<RepoEvent, 
     })
 }
 
+pub async fn send_git_snapshot(
+    events: &tokio::sync::mpsc::Sender<MonitorEvent>,
+    worktree_path: &Path,
+) -> Result<(), SupervisorError> {
+    events
+        .send(MonitorEvent::Repo(git_snapshot(worktree_path).await?))
+        .await
+        .map_err(|_| SupervisorError::Process("monitor event receiver closed".to_string()))
+}
+
+fn is_git_internal_path(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == OsStr::new(".git"))
+}
+
 fn ensure_git_success(command: &str, output: &Output) -> Result<(), SupervisorError> {
     if output.status.success() {
         return Ok(());
@@ -87,10 +97,13 @@ mod tests {
     use super::{git_snapshot, notify_event_to_monitor_events};
 
     #[test]
-    fn notify_events_map_to_repo_file_changes() {
+    fn notify_events_map_to_repo_file_changes_and_filter_git_internal_paths() {
         let event = Event {
             kind: EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
-            paths: vec![PathBuf::from("/tmp/repo/src/lib.rs")],
+            paths: vec![
+                PathBuf::from("/tmp/repo/src/lib.rs"),
+                PathBuf::from("/tmp/repo/.git/index"),
+            ],
             attrs: notify::event::EventAttributes::default(),
         };
 

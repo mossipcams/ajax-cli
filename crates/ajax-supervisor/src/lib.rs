@@ -1,158 +1,18 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use std::{error::Error, fmt};
-use std::{path::PathBuf, time::Duration};
 
-use tokio::{sync::mpsc, task::JoinHandle};
-
-mod codex;
-mod process;
+pub mod agent;
+pub mod event_log;
+pub mod process_observer;
 pub mod renderer;
-mod repo;
+pub mod repo_observer;
+pub mod runtime;
 mod status;
 
 pub use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent, RepoEvent};
-use codex::CodexAdapter;
+pub use runtime::{spawn_monitor, GitSnapshotPolicy, MonitorConfig, MonitorExit, MonitorHandle};
 pub use status::SupervisorStatusMachine;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MonitorConfig {
-    pub codex_bin: String,
-    pub prompt: String,
-    pub worktree_path: Option<PathBuf>,
-    pub channel_capacity: usize,
-    pub watch_filesystem: bool,
-    pub git_snapshots: GitSnapshotPolicy,
-    pub hang_after: Option<Duration>,
-}
-
-impl MonitorConfig {
-    pub fn codex_exec(prompt: impl Into<String>) -> Self {
-        Self {
-            codex_bin: "codex".to_string(),
-            prompt: prompt.into(),
-            worktree_path: None,
-            channel_capacity: 1024,
-            watch_filesystem: false,
-            git_snapshots: GitSnapshotPolicy::Disabled,
-            hang_after: None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum GitSnapshotPolicy {
-    Disabled,
-    OnStartAndExit,
-    OnFileChange,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MonitorExit {
-    pub status_code: Option<i32>,
-}
-
-#[derive(Debug)]
-pub struct MonitorHandle {
-    join: JoinHandle<Result<MonitorExit, SupervisorError>>,
-}
-
-impl MonitorHandle {
-    pub async fn wait(self) -> Result<MonitorExit, SupervisorError> {
-        self.join
-            .await
-            .map_err(|error| SupervisorError::Process(error.to_string()))?
-    }
-}
-
-pub fn spawn_monitor(
-    config: MonitorConfig,
-) -> Result<(MonitorHandle, mpsc::Receiver<MonitorEvent>), SupervisorError> {
-    let capacity = config.channel_capacity.max(1);
-    let (events, receiver) = mpsc::channel(capacity);
-    let join = tokio::spawn(async move {
-        let (_watcher, watcher_forwarder) = start_watcher(&config, &events)?;
-        if config.git_snapshots == GitSnapshotPolicy::OnStartAndExit {
-            let worktree_path = config.worktree_path.as_ref().ok_or_else(|| {
-                SupervisorError::Process("worktree path is required for git snapshots".to_string())
-            })?;
-            send_git_snapshot(&events, worktree_path).await?;
-        }
-
-        let adapter = CodexAdapter::new(config.codex_bin);
-        let result = adapter
-            .supervise_exec_json_with_options(&config.prompt, events.clone(), config.hang_after)
-            .await;
-
-        if config.git_snapshots == GitSnapshotPolicy::OnStartAndExit {
-            let worktree_path = config.worktree_path.as_ref().ok_or_else(|| {
-                SupervisorError::Process("worktree path is required for git snapshots".to_string())
-            })?;
-            send_git_snapshot(&events, worktree_path).await?;
-        }
-
-        let status_code = result?;
-        drop(watcher_forwarder);
-        Ok(MonitorExit { status_code })
-    });
-
-    Ok((MonitorHandle { join }, receiver))
-}
-
-fn start_watcher(
-    config: &MonitorConfig,
-    events: &mpsc::Sender<MonitorEvent>,
-) -> Result<(Option<notify::RecommendedWatcher>, Option<JoinHandle<()>>), SupervisorError> {
-    if !config.watch_filesystem {
-        return Ok((None, None));
-    }
-
-    let worktree_path = config.worktree_path.as_ref().ok_or_else(|| {
-        SupervisorError::Process("worktree path is required to watch filesystem".to_string())
-    })?;
-    let (notify_sender, notify_receiver) = std::sync::mpsc::channel();
-    let watcher = repo::watch_repo(worktree_path, notify_sender)?;
-    let repo_events = events.clone();
-    let git_snapshot_policy = config.git_snapshots;
-    let git_snapshot_worktree = config.worktree_path.clone();
-    let runtime = tokio::runtime::Handle::current();
-    let forwarder = tokio::task::spawn_blocking(move || {
-        while let Ok(event) = notify_receiver.recv() {
-            let Ok(event) = event else {
-                continue;
-            };
-            let monitor_events = repo::notify_event_to_monitor_events(event);
-            if monitor_events.is_empty() {
-                continue;
-            }
-            for monitor_event in monitor_events {
-                if repo_events.blocking_send(monitor_event).is_err() {
-                    return;
-                }
-            }
-            if git_snapshot_policy == GitSnapshotPolicy::OnFileChange {
-                if let Some(worktree_path) = git_snapshot_worktree.clone() {
-                    let events = repo_events.clone();
-                    runtime.spawn(async move {
-                        let _ = send_git_snapshot(&events, &worktree_path).await;
-                    });
-                }
-            }
-        }
-    });
-
-    Ok((Some(watcher), Some(forwarder)))
-}
-
-async fn send_git_snapshot(
-    events: &mpsc::Sender<MonitorEvent>,
-    worktree_path: &std::path::Path,
-) -> Result<(), SupervisorError> {
-    events
-        .send(MonitorEvent::Repo(repo::git_snapshot(worktree_path).await?))
-        .await
-        .map_err(|_| SupervisorError::Process("monitor event receiver closed".to_string()))
-}
 
 #[derive(Debug)]
 pub enum SupervisorError {
@@ -205,6 +65,13 @@ mod tests {
     };
 
     #[test]
+    fn public_monitor_config_exposes_optional_event_log_path() {
+        let config = MonitorConfig::codex_exec("fix tests");
+
+        assert_eq!(config.event_log_path, None);
+    }
+
+    #[test]
     fn monitor_config_builds_codex_exec_defaults() {
         let config = MonitorConfig::codex_exec("fix tests");
 
@@ -227,6 +94,7 @@ mod tests {
             watch_filesystem: false,
             git_snapshots: GitSnapshotPolicy::Disabled,
             hang_after: Some(Duration::from_secs(30)),
+            event_log_path: None,
         };
 
         let (_handle, receiver) = spawn_monitor(config).expect("monitor should spawn");
