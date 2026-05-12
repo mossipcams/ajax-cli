@@ -114,6 +114,14 @@ The current `ajax-cli` split is:
   test helpers.
 - `context` for config/state path resolution and load/save behavior.
 - `render` for human, JSON, execution-output, and command-plan rendering.
+- `snapshot_dispatch` for read-only command routing, state export, and doctor
+  path checks.
+- `execution_dispatch` for mutable command routing and state-changing execution
+  helpers.
+- `cockpit_backend` for cockpit snapshots, live refresh, watch mode, and
+  interactive TUI backend glue.
+- `classifiers` for small operator-facing heuristics that interpret command
+  output.
 
 If `lib.rs` becomes difficult to scan, prefer extracting dispatch into a small
 module while preserving the public test helpers used by the current suite.
@@ -137,6 +145,13 @@ should:
 
 Ratatui is the current interactive TUI foundation because it preserves Ajax's
 Rust-only runtime story while keeping orchestration logic in `ajax-core`.
+
+The current `ajax-tui` internals keep small pure helpers out of the main TUI
+file:
+
+- `actions` owns action chrome metadata for core `RecommendedAction` values.
+- `navigation` owns terminal key classification helpers.
+- `rendering` owns status bucket palette and glyph mapping.
 
 ## Validation Expectations
 

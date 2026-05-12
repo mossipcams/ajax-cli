@@ -1,5 +1,9 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod actions;
+mod navigation;
+mod rendering;
+
 use ajax_core::{
     models::{AttentionItem, LiveStatusKind, RecommendedAction, TaskId},
     output::{
@@ -22,6 +26,7 @@ use ratatui::{
     widgets::{Block, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
 };
+use rendering::StatusBucket;
 use std::{
     collections::HashSet,
     io,
@@ -872,27 +877,15 @@ fn handle_back_key(app: &mut App) -> bool {
 }
 
 fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    matches!(code, KeyCode::Esc | KeyCode::Left | KeyCode::Char('h'))
-        || is_navigation_backspace_key(code, modifiers)
+    navigation::is_back_key_event(code, modifiers)
 }
 
 fn is_help_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    matches!(code, KeyCode::Char('?'))
-        || matches!(code, KeyCode::Char('/') if modifiers.contains(KeyModifiers::SHIFT))
-}
-
-fn is_navigation_backspace_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    matches!(
-        code,
-        KeyCode::Backspace | KeyCode::Char('\u{8}') | KeyCode::Char('\u{7f}')
-    ) || matches!(code, KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL))
+    navigation::is_help_key_event(code, modifiers)
 }
 
 fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    matches!(
-        code,
-        KeyCode::Backspace | KeyCode::Delete | KeyCode::Char('\u{8}') | KeyCode::Char('\u{7f}')
-    ) || matches!(code, KeyCode::Char('h') if modifiers.contains(KeyModifiers::CONTROL))
+    navigation::is_input_delete_key(code, modifiers)
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -917,36 +910,12 @@ fn subtle_text() -> Color {
     Color::Indexed(240)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StatusBucket {
-    Active,
-    NeedsYou,
-    Stuck,
-    Done,
-    Idle,
-    Missing,
-}
-
 fn bucket_color(bucket: StatusBucket) -> Color {
-    match bucket {
-        StatusBucket::Active => Color::Indexed(110),
-        StatusBucket::NeedsYou => Color::Indexed(179),
-        StatusBucket::Stuck => Color::Indexed(174),
-        StatusBucket::Done => Color::Indexed(108),
-        StatusBucket::Idle => Color::Indexed(244),
-        StatusBucket::Missing => Color::Indexed(241),
-    }
+    rendering::bucket_color(bucket)
 }
 
 fn bucket_glyph(bucket: StatusBucket) -> &'static str {
-    match bucket {
-        StatusBucket::Active => "▸",
-        StatusBucket::NeedsYou => "?",
-        StatusBucket::Stuck => "!",
-        StatusBucket::Done => "✓",
-        StatusBucket::Idle => "·",
-        StatusBucket::Missing => "×",
-    }
+    rendering::bucket_glyph(bucket)
 }
 
 fn live_bucket(kind: &LiveStatusKind) -> StatusBucket {
@@ -1315,71 +1284,8 @@ fn priority_accent(priority: u32) -> Color {
     }
 }
 
-#[derive(Clone, Copy)]
-struct ActionChrome {
-    glyph: &'static str,
-    glyph_color: Color,
-    label_color: Color,
-    bold: bool,
-}
-
-fn action_chrome(recommended_action: &str) -> ActionChrome {
-    match RecommendedAction::from_label(recommended_action) {
-        Some(RecommendedAction::SelectProject) => {
-            ActionChrome::new("P", primary_accent(), primary_accent(), true)
-        }
-        Some(RecommendedAction::NewTask) => {
-            ActionChrome::new("+", primary_accent(), primary_accent(), true)
-        }
-        Some(RecommendedAction::OpenTask) => {
-            ActionChrome::new(">", primary_accent(), primary_accent(), true)
-        }
-        Some(RecommendedAction::OpenTrunk) => {
-            ActionChrome::new("T", primary_accent(), primary_accent(), true)
-        }
-        Some(RecommendedAction::MergeTask) => {
-            ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
-        }
-        Some(RecommendedAction::CleanTask) => {
-            ActionChrome::new("X", danger_accent(), danger_accent(), true)
-        }
-        Some(RecommendedAction::RemoveTask) => {
-            ActionChrome::new("!", danger_accent(), danger_accent(), true)
-        }
-        Some(RecommendedAction::Status) => {
-            ActionChrome::new("S", primary_accent(), primary_accent(), true)
-        }
-        None if recommended_action == "help" => {
-            ActionChrome::new("?", Color::LightYellow, Color::White, true)
-        }
-        _ => ActionChrome::new(".", subtle_text(), muted_text(), false),
-    }
-}
-
-impl ActionChrome {
-    const fn new(glyph: &'static str, glyph_color: Color, label_color: Color, bold: bool) -> Self {
-        Self {
-            glyph,
-            glyph_color,
-            label_color,
-            bold,
-        }
-    }
-
-    fn glyph_style(self) -> Style {
-        self.apply_weight(Style::default().fg(self.glyph_color))
-    }
-
-    fn label_style(self) -> Style {
-        self.apply_weight(Style::default().fg(self.label_color))
-    }
-
-    fn apply_weight(self, mut style: Style) -> Style {
-        if self.bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        style
-    }
+fn action_chrome(recommended_action: &str) -> actions::ActionChrome {
+    actions::action_chrome(recommended_action)
 }
 
 fn action_glyph(recommended_action: &str) -> Span<'static> {
@@ -3093,6 +2999,34 @@ mod tests {
 
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
+    }
+
+    #[test]
+    fn actions_module_exposes_typed_action_chrome() {
+        let chrome = crate::actions::recommended_action_chrome(RecommendedAction::OpenTask);
+
+        assert_eq!(chrome.glyph, ">");
+        assert_eq!(chrome.label_color, primary_accent());
+    }
+
+    #[test]
+    fn navigation_module_classifies_back_keys() {
+        assert!(crate::navigation::is_back_key_event(
+            KeyCode::Esc,
+            KeyModifiers::NONE
+        ));
+        assert!(!crate::navigation::is_back_key_event(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE
+        ));
+    }
+
+    #[test]
+    fn rendering_module_exposes_status_palette() {
+        assert_eq!(
+            crate::rendering::bucket_color(crate::rendering::StatusBucket::Active),
+            primary_accent()
+        );
     }
 
     #[test]

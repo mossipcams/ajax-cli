@@ -1,37 +1,40 @@
+mod classifiers;
 mod cli;
 mod cockpit_actions;
+mod cockpit_backend;
 mod context;
 mod dispatch;
+mod execution_dispatch;
 mod render;
+mod snapshot_dispatch;
 mod supervise;
 
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner, ProcessCommandRunner, TmuxAdapter},
+    adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
-    events::apply_monitor_event_to_task,
-    live::{self, LiveObservation, LiveStatusKind},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, SideFlag, TmuxStatus, WorktrunkStatus},
-    output::{CockpitResponse, DoctorCheck},
-    registry::{InMemoryRegistry, Registry},
+    registry::InMemoryRegistry,
 };
 use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
+#[cfg(test)]
 use cockpit_actions::{
     execute_pending_cockpit_action, handle_pending_cockpit_result, tui_cockpit_action,
     tui_cockpit_confirmed_action, PendingCockpitOutcome,
 };
+#[cfg(test)]
+use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
 use context::{default_context_paths, load_context, save_context};
+#[cfg(test)]
 use dispatch::{render_task_command, TaskCommandOperation};
-use render::{
-    render_doctor_human, render_execution_outputs, render_inbox_human, render_inspect_human,
-    render_next_human, render_plan, render_repos_human, render_response, render_tasks_human,
-};
-use std::{ffi::OsStr, time::Duration};
+use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
+#[cfg(test)]
+use snapshot_dispatch::parent_directory_available;
+use snapshot_dispatch::render_matches_with_paths;
+use std::ffi::OsStr;
 #[cfg(test)]
 use supervise::render_supervise_command;
-use supervise::supervise_command_output_and_events;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -42,7 +45,7 @@ pub enum CliError {
     ContextSave(String),
 }
 
-fn current_open_mode() -> commands::OpenMode {
+pub(crate) fn current_open_mode() -> commands::OpenMode {
     open_mode_from_tmux_env(std::env::var_os("TMUX").as_deref())
 }
 
@@ -187,872 +190,12 @@ fn render_snapshot_matches(
     matches: &ArgMatches,
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<String, CliError> {
-    render_matches_with_paths(matches, context, None)
+    snapshot_dispatch::render_snapshot_matches(matches, context)
 }
 
-fn render_matches_with_paths(
-    matches: &ArgMatches,
-    context: &CommandContext<InMemoryRegistry>,
-    paths: Option<&CliContextPaths>,
-) -> Result<String, CliError> {
-    match matches.subcommand() {
-        Some(("repos", subcommand)) => render_response(
-            commands::list_repos(context),
-            subcommand.get_flag("json"),
-            render_repos_human,
-        ),
-        Some(("tasks", subcommand)) => render_response(
-            commands::list_tasks(
-                context,
-                subcommand.get_one::<String>("repo").map(String::as_str),
-            ),
-            subcommand.get_flag("json"),
-            render_tasks_human,
-        ),
-        Some(("inspect", subcommand)) => {
-            let task = subcommand
-                .get_one::<String>("task")
-                .map(String::as_str)
-                .unwrap_or_default();
-            let response = commands::inspect_task(context, task).map_err(command_error)?;
-            render_response(response, subcommand.get_flag("json"), render_inspect_human)
-        }
-        Some(("new", subcommand)) => {
-            let request = new_task_request(subcommand)?;
-            let plan = commands::new_task_plan(context, request).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("open", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::open_task_plan(context, task, current_open_mode())
-                .map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("trunk", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::trunk_task_plan_with_open_mode(context, task, current_open_mode())
-                .map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("check", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::check_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("diff", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::diff_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("merge", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("cleanup", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("clean", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("remove", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::remove_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("sweep", subcommand)) => {
-            render_readonly_plan(commands::sweep_cleanup_plan(context), subcommand)
-        }
-        Some(("next", subcommand)) => render_response(
-            commands::next(context),
-            subcommand.get_flag("json"),
-            render_next_human,
-        ),
-        Some(("inbox", subcommand)) => render_response(
-            commands::inbox(context),
-            subcommand.get_flag("json"),
-            render_inbox_human,
-        ),
-        Some(("review", subcommand)) => render_response(
-            commands::review_queue(context),
-            subcommand.get_flag("json"),
-            render_tasks_human,
-        ),
-        Some(("doctor", subcommand)) => {
-            let mut response = commands::doctor(context);
-            if let Some(paths) = paths {
-                response.checks.extend(context_path_checks(paths));
-            }
-            render_response(response, subcommand.get_flag("json"), render_doctor_human)
-        }
-        Some(("status", subcommand)) => render_response(
-            commands::status(context),
-            subcommand.get_flag("json"),
-            render_tasks_human,
-        ),
-        Some(("state", subcommand)) => render_state_command(context, subcommand),
-        Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
-        Some(("supervise", _)) => Err(CliError::CommandFailed(
-            "supervise requires mutable context and runner support".to_string(),
-        )),
-        Some((name, _)) => Err(CliError::CommandFailed(format!(
-            "unsupported command: {name}"
-        ))),
-        None => Err(CliError::CommandFailed(
-            "command is required; pass --help".to_string(),
-        )),
-    }
-}
+// The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
 
-fn render_state_command(
-    context: &CommandContext<InMemoryRegistry>,
-    matches: &ArgMatches,
-) -> Result<String, CliError> {
-    match matches.subcommand() {
-        Some(("export", subcommand)) => {
-            let output = subcommand.get_one::<String>("output").ok_or_else(|| {
-                CliError::CommandFailed("state export --output is required".to_string())
-            })?;
-            export_state_snapshot(context, std::path::Path::new(output))
-        }
-        Some((name, _)) => Err(CliError::CommandFailed(format!(
-            "unknown state subcommand: {name}"
-        ))),
-        None => Err(CliError::CommandFailed(
-            "state subcommand is required".to_string(),
-        )),
-    }
-}
-
-fn export_state_snapshot(
-    context: &CommandContext<InMemoryRegistry>,
-    path: &std::path::Path,
-) -> Result<String, CliError> {
-    if path.exists() {
-        return Err(CliError::CommandFailed(format!(
-            "state export target already exists: {}",
-            path.display()
-        )));
-    }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| CliError::CommandFailed(error.to_string()))?;
-    }
-    context
-        .registry
-        .export_json_snapshot_file(path)
-        .map_err(|error| CliError::CommandFailed(format!("state export failed: {error}")))?;
-
-    Ok(format!("exported state snapshot: {}", path.display()))
-}
-
-fn context_path_checks(paths: &CliContextPaths) -> Vec<DoctorCheck> {
-    let config_exists = paths.config_file.is_file();
-    let state_exists = paths.state_file.is_file();
-    let state_parent_creatable = state_exists || parent_directory_available(&paths.state_file);
-
-    vec![
-        DoctorCheck {
-            name: "config:path".to_string(),
-            ok: config_exists,
-            message: if config_exists {
-                format!("file exists: {}", paths.config_file.display())
-            } else {
-                format!(
-                    "file not found; defaults in use: {}",
-                    paths.config_file.display()
-                )
-            },
-        },
-        DoctorCheck {
-            name: "state:path".to_string(),
-            ok: state_parent_creatable,
-            message: if state_exists {
-                format!("file exists: {}", paths.state_file.display())
-            } else if state_parent_creatable {
-                "parent directory can be created".to_string()
-            } else {
-                format!(
-                    "parent directory unavailable: {}",
-                    paths.state_file.display()
-                )
-            },
-        },
-    ]
-}
-
-fn parent_directory_available(path: &std::path::Path) -> bool {
-    let Some(parent) = path.parent() else {
-        return false;
-    };
-    let parent = if parent.as_os_str().is_empty() {
-        std::env::current_dir().ok()
-    } else if parent.is_absolute() {
-        Some(parent.to_path_buf())
-    } else {
-        std::env::current_dir()
-            .ok()
-            .map(|current_dir| current_dir.join(parent))
-    };
-
-    parent.is_some_and(|parent| {
-        parent.is_dir() || parent.ancestors().skip(1).any(|ancestor| ancestor.is_dir())
-    })
-}
-
-fn render_cockpit_command(
-    context: &CommandContext<InMemoryRegistry>,
-    matches: &ArgMatches,
-) -> Result<String, CliError> {
-    if matches.get_flag("json") {
-        return render_response(commands::cockpit(context), true, |_| String::new());
-    }
-
-    let iterations = parse_u32_arg(matches, "iterations", 1)?;
-    let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
-
-    if matches.get_flag("watch") {
-        return Ok(render_cockpit_frames(
-            context,
-            iterations.max(1),
-            Duration::from_millis(interval),
-        ));
-    }
-
-    Err(CliError::CommandFailed(
-        "interactive cockpit requires command execution support".to_string(),
-    ))
-}
-
-fn render_cockpit_frames(
-    context: &CommandContext<InMemoryRegistry>,
-    iterations: u32,
-    interval: Duration,
-) -> String {
-    let frames = (0..iterations)
-        .map(|index| {
-            if index > 0 && !interval.is_zero() {
-                std::thread::sleep(interval);
-            }
-            render_cockpit_frame(context)
-        })
-        .collect::<Vec<_>>();
-
-    frames.join("\n\n")
-}
-
-fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
-    ajax_tui::render_cockpit(
-        &commands::list_repos(context),
-        &commands::list_tasks(context, None),
-        &commands::inbox(context),
-    )
-}
-
-fn render_matches_mut(
-    matches: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-) -> Result<RenderedCommand, CliError> {
-    match matches.subcommand() {
-        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "review" | "status"), _)) => {
-            render_refreshed_read_command(name, matches, context, runner)
-        }
-        Some(("new", subcommand)) => {
-            let request = new_task_request(subcommand)?;
-            let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-
-            let (outputs, task) = execute_new_task_plan(
-                context,
-                runner,
-                &request,
-                &plan,
-                subcommand.get_flag("yes"),
-                current_open_mode(),
-            )?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, Some(&task.qualified_handle())),
-                state_changed: true,
-            })
-        }
-        Some((
-            name @ ("open" | "trunk" | "check" | "diff" | "merge" | "cleanup" | "clean" | "remove"),
-            subcommand,
-        )) => {
-            let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
-                CliError::CommandFailed(format!("unsupported task command: {name}"))
-            })?;
-            render_task_command(operation, subcommand, context, runner, current_open_mode())
-        }
-        Some(("sweep", subcommand)) => {
-            let plan = commands::sweep_cleanup_plan(context);
-            let candidates = commands::sweep_cleanup_candidates(context);
-            if !subcommand.get_flag("execute") {
-                return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
-                    state_changed: false,
-                });
-            }
-            let outputs =
-                execute_sweep_cleanup(context, runner, &candidates, subcommand.get_flag("yes"))?;
-            Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: !candidates.is_empty(),
-            })
-        }
-        Some(("supervise", subcommand)) => {
-            let supervised_task = validate_supervised_task(context, subcommand)?;
-            let (output, events) = supervise_command_output_and_events(subcommand)?;
-            let mut state_changed = false;
-            if let Some(task_id) = supervised_task {
-                let task = context.registry.get_task_mut(&task_id).ok_or_else(|| {
-                    CliError::CommandFailed("supervised task disappeared".to_string())
-                })?;
-                for event in &events {
-                    state_changed |= apply_monitor_event_to_task(task, event);
-                }
-            }
-            Ok(RenderedCommand {
-                output,
-                state_changed,
-            })
-        }
-        Some(("cockpit", subcommand)) => {
-            if subcommand.get_flag("json") {
-                return render_refreshed_read_command("cockpit", matches, context, runner);
-            }
-            if subcommand.get_flag("watch") {
-                return render_live_cockpit_command(context, subcommand, runner);
-            }
-            // Interactive TUI with full action support.
-            let mut state_changed = false;
-            let mut cockpit_flash = None;
-            state_changed |= refresh_live_context(context, runner)?;
-            let refresh_interval =
-                Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
-            loop {
-                let pending = ajax_tui::run_interactive_with_flash_and_refresh(
-                    commands::list_repos(context),
-                    commands::list_tasks(context, None),
-                    commands::inbox(context),
-                    cockpit_flash.take(),
-                    refresh_interval,
-                    InteractiveCockpitHandler {
-                        context,
-                        runner,
-                        state_changed: &mut state_changed,
-                    },
-                )
-                .map_err(|e| CliError::CommandFailed(e.to_string()))?;
-                let Some(pending) = pending else {
-                    return Ok(RenderedCommand {
-                        output: String::new(),
-                        state_changed,
-                    });
-                };
-
-                let Some(outcome) = handle_pending_cockpit_result(
-                    execute_pending_cockpit_action(&pending, context, runner, &mut state_changed),
-                    &mut cockpit_flash,
-                ) else {
-                    continue;
-                };
-
-                match outcome {
-                    PendingCockpitOutcome::Exit(output) => {
-                        return Ok(RenderedCommand {
-                            output,
-                            state_changed,
-                        });
-                    }
-                    PendingCockpitOutcome::ReturnToCockpit => {}
-                }
-            }
-        }
-        _ => Ok(RenderedCommand {
-            output: render_snapshot_matches(matches, context)?,
-            state_changed: false,
-        }),
-    }
-}
-
-fn render_refreshed_read_command<R: CommandRunner>(
-    _name: &str,
-    matches: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-) -> Result<RenderedCommand, CliError> {
-    let changed = refresh_live_context(context, runner)?;
-    Ok(RenderedCommand {
-        output: render_snapshot_matches(matches, context)?,
-        state_changed: changed,
-    })
-}
-
-fn render_matches_mut_with_paths(
-    matches: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<RenderedCommand, CliError> {
-    if matches
-        .subcommand()
-        .is_some_and(|(name, _)| name == "doctor")
-    {
-        return Ok(RenderedCommand {
-            output: render_matches_with_paths(matches, context, paths)?,
-            state_changed: false,
-        });
-    }
-
-    render_matches_mut(matches, context, runner)
-}
-
-fn render_live_cockpit_command<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    matches: &ArgMatches,
-    runner: &mut R,
-) -> Result<RenderedCommand, CliError> {
-    let iterations = parse_u32_arg(matches, "iterations", 1)?.max(1);
-    let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
-
-    if matches.get_flag("json") {
-        let changed = refresh_live_context(context, runner)?;
-        return Ok(RenderedCommand {
-            output: render_response(commands::cockpit(context), true, |_| String::new())?,
-            state_changed: changed,
-        });
-    }
-
-    let mut state_changed = false;
-    let frames = (0..iterations)
-        .map(|index| {
-            if index > 0 && interval > 0 {
-                std::thread::sleep(Duration::from_millis(interval));
-            }
-            let changed = refresh_live_context(context, runner)?;
-            state_changed |= changed;
-            Ok(render_cockpit_frame(context))
-        })
-        .collect::<Result<Vec<_>, CliError>>()?;
-
-    Ok(RenderedCommand {
-        output: frames.join("\n\n"),
-        state_changed,
-    })
-}
-
-fn refresh_live_context<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-) -> Result<bool, CliError> {
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    if task_ids.is_empty() {
-        return Ok(false);
-    }
-
-    let tmux = TmuxAdapter::new("tmux");
-    let sessions_command = tmux.list_sessions();
-    let sessions_output = match runner.run(&sessions_command) {
-        Ok(output) if output.status_code == 0 => output.stdout,
-        Ok(_output) => return Ok(false),
-        Err(_error) => return Ok(false),
-    };
-    if sessions_output.trim().is_empty() {
-        return Ok(false);
-    }
-    let mut changed = false;
-
-    for task_id in task_ids {
-        let Some(task_snapshot) = context.registry.get_task(&task_id).cloned() else {
-            continue;
-        };
-        let session_status =
-            TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
-
-        if !session_status.exists {
-            if task_snapshot
-                .tmux_status
-                .as_ref()
-                .is_some_and(|status| status.exists)
-            {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    task.remove_side_flag(SideFlag::AgentRunning);
-                    changed = true;
-                }
-                continue;
-            }
-            if let Some(task) = context.registry.get_task_mut(&task_id) {
-                task.add_side_flag(SideFlag::TmuxMissing);
-                live::apply_observation(
-                    task,
-                    LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
-                );
-                changed = true;
-            }
-            continue;
-        }
-        changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
-
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            task.tmux_status = Some(session_status.clone());
-        }
-
-        let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
-        let windows_output = match runner.run(&windows_command) {
-            Ok(output) if output.status_code == 0 => output.stdout,
-            Ok(_) | Err(_) => {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    task.add_side_flag(SideFlag::WorktrunkMissing);
-                    live::apply_observation(
-                        task,
-                        LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
-                    );
-                    changed = true;
-                }
-                continue;
-            }
-        };
-        let worktrunk_status = TmuxAdapter::parse_worktrunk_status(
-            &task_snapshot.worktrunk_window,
-            &task_snapshot.worktree_path.display().to_string(),
-            &windows_output,
-        );
-        changed |= task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
-
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            task.tmux_status = Some(session_status);
-            task.worktrunk_status = Some(worktrunk_status.clone());
-            if task.has_side_flag(SideFlag::TmuxMissing) {
-                task.remove_side_flag(SideFlag::TmuxMissing);
-                changed = true;
-            }
-        }
-
-        if !worktrunk_status.exists {
-            if let Some(task) = context.registry.get_task_mut(&task_id) {
-                task.add_side_flag(SideFlag::WorktrunkMissing);
-                live::apply_observation(
-                    task,
-                    LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
-                );
-                changed = true;
-            }
-            continue;
-        }
-
-        let pane_command =
-            tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window);
-        let pane_output = match runner.run(&pane_command) {
-            Ok(output) if output.status_code == 0 => output.stdout,
-            Ok(_) | Err(_) => {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    live::apply_observation(
-                        task,
-                        LiveObservation::new(LiveStatusKind::CommandFailed, "live refresh failed"),
-                    );
-                    changed = true;
-                }
-                continue;
-            }
-        };
-        let observation = live::classify_pane(&pane_output);
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            let previous = task.clone();
-            task.remove_side_flag(SideFlag::TmuxMissing);
-            task.remove_side_flag(SideFlag::WorktrunkMissing);
-            live::apply_observation(task, observation);
-            changed |= *task != previous;
-        }
-    }
-
-    Ok(changed)
-}
-
-fn refresh_cockpit_snapshot<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
-) -> Result<CockpitResponse, CliError> {
-    *state_changed |= refresh_live_context(context, runner)?;
-    Ok(commands::cockpit(context))
-}
-
-struct InteractiveCockpitHandler<'a, R: CommandRunner> {
-    context: &'a mut CommandContext<InMemoryRegistry>,
-    runner: &'a mut R,
-    state_changed: &'a mut bool,
-}
-
-impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
-    fn on_action(
-        &mut self,
-        item: &ajax_core::models::AttentionItem,
-    ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_action(item, self.context, self.runner, self.state_changed)
-    }
-
-    fn on_confirmed_action(
-        &mut self,
-        item: &ajax_core::models::AttentionItem,
-    ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_confirmed_action(item, self.context, self.runner, self.state_changed)
-    }
-
-    fn on_refresh(&mut self) -> std::io::Result<Option<CockpitResponse>> {
-        refresh_cockpit_snapshot(self.context, self.runner, self.state_changed)
-            .map(Some)
-            .map_err(|error| std::io::Error::other(error.to_string()))
-    }
-}
-
-pub(crate) fn execute_new_task_plan<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    request: &commands::NewTaskRequest,
-    plan: &commands::CommandPlan,
-    confirmed: bool,
-    open_mode: commands::OpenMode,
-) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let task = commands::record_new_task(context, request).map_err(command_error)?;
-    if plan.requires_confirmation && !confirmed {
-        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
-    }
-    if !plan.blocked_reasons.is_empty() {
-        return Err(
-            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
-                .after_state_change(),
-        );
-    }
-
-    let mut outputs = Vec::new();
-    for (index, command) in plan.commands.iter().enumerate() {
-        let output = runner.run(command).map_err(|error| {
-            mark_new_task_provisioning_failed(context, &task.id);
-            command_error(CommandError::CommandRun(error)).after_state_change()
-        })?;
-        if output.status_code != 0 {
-            mark_new_task_provisioning_failed(context, &task.id);
-            return Err(
-                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                    program: command.program.clone(),
-                    status_code: output.status_code,
-                    stderr: output.stderr,
-                    cwd: command.cwd.clone(),
-                }))
-                .after_state_change(),
-            );
-        }
-        outputs.push(output);
-        mark_new_task_step_complete(context, &task.id, index);
-    }
-    commands::mark_task_opened(context, &task.qualified_handle())
-        .map_err(|error| command_error(error).after_state_change())?;
-    let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
-        .map_err(|error| command_error(error).after_state_change())?;
-    outputs.extend(
-        commands::execute_plan(&open_plan, true, runner)
-            .map_err(|error| command_error(error).after_state_change())?,
-    );
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.id == task.id)
-        .cloned()
-        .unwrap_or(task);
-
-    Ok((outputs, task))
-}
-
-fn mark_new_task_provisioning_failed(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task_id: &ajax_core::models::TaskId,
-) {
-    let _ = context
-        .registry
-        .update_lifecycle(task_id, LifecycleStatus::Error);
-    if let Some(task) = context.registry.get_task_mut(task_id) {
-        task.add_side_flag(SideFlag::NeedsInput);
-    }
-}
-
-fn mark_new_task_step_complete(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task_id: &ajax_core::models::TaskId,
-    step_index: usize,
-) {
-    if step_index == 2 {
-        let _ = context
-            .registry
-            .update_lifecycle(task_id, LifecycleStatus::Active);
-    }
-
-    let Some(task) = context.registry.get_task_mut(task_id) else {
-        return;
-    };
-
-    match step_index {
-        0 => {
-            task.git_status = Some(GitStatus {
-                worktree_exists: true,
-                branch_exists: true,
-                current_branch: Some(task.branch.clone()),
-                dirty: false,
-                ahead: 0,
-                behind: 0,
-                merged: false,
-                untracked_files: 0,
-                unpushed_commits: 0,
-                conflicted: false,
-                last_commit: None,
-            });
-            task.remove_side_flag(SideFlag::WorktreeMissing);
-            task.remove_side_flag(SideFlag::BranchMissing);
-        }
-        1 => {
-            task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
-            task.worktrunk_status = Some(WorktrunkStatus::present(
-                task.worktrunk_window.clone(),
-                task.worktree_path.clone(),
-            ));
-            task.remove_side_flag(SideFlag::TmuxMissing);
-            task.remove_side_flag(SideFlag::WorktrunkMissing);
-        }
-        2 => {
-            task.agent_attempts.push(AgentAttempt::new(
-                task.selected_agent,
-                task.worktree_path.display().to_string(),
-            ));
-            task.add_side_flag(SideFlag::AgentRunning);
-        }
-        _ => {}
-    }
-}
-
-fn execute_sweep_cleanup<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    candidates: &[String],
-    confirmed: bool,
-) -> Result<Vec<CommandOutput>, CliError> {
-    let mut outputs = Vec::new();
-    let mut state_changed = false;
-
-    for candidate in candidates {
-        let plan = commands::clean_task_plan(context, candidate).map_err(command_error)?;
-        if !plan.blocked_reasons.is_empty() {
-            let cli_error = command_error(CommandError::PlanBlocked(plan.blocked_reasons));
-            return Err(if state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            });
-        }
-        if plan.requires_confirmation && !confirmed {
-            let cli_error = command_error(CommandError::ConfirmationRequired);
-            return Err(if state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            });
-        }
-
-        for command in &plan.commands {
-            let output = runner.run(command).map_err(|error| {
-                let cli_error = command_error(CommandError::CommandRun(error));
-                if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
-            if output.status_code != 0 {
-                let cli_error =
-                    command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                        program: command.program.clone(),
-                        status_code: output.status_code,
-                        stderr: output.stderr.clone(),
-                        cwd: command.cwd.clone(),
-                    }));
-                return Err(if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                });
-            }
-            outputs.push(output);
-            state_changed |= commands::mark_task_cleanup_step_completed(
-                context, candidate, command,
-            )
-            .map_err(|error| {
-                let cli_error = command_error(error);
-                if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
-        }
-        commands::mark_task_removed(context, candidate).map_err(command_error)?;
-        state_changed = true;
-    }
-
-    Ok(outputs)
-}
-
-fn parse_u32_arg(matches: &ArgMatches, name: &str, default: u32) -> Result<u32, CliError> {
-    let Some(value) = matches.get_one::<String>(name) else {
-        return Ok(default);
-    };
-
-    value
-        .parse::<u32>()
-        .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
-}
-
-fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, CliError> {
-    let Some(value) = matches.get_one::<String>(name) else {
-        return Ok(default);
-    };
-
-    value
-        .parse::<u64>()
-        .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
-}
-
-fn render_readonly_plan(
-    plan: commands::CommandPlan,
-    matches: &ArgMatches,
-) -> Result<String, CliError> {
-    if matches.get_flag("execute") {
-        return Err(CliError::CommandFailed(
-            "execution requires mutable context and runner support".to_string(),
-        ));
-    }
-
-    render_plan(plan, matches.get_flag("json"))
-}
-
-fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
+pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
     let repo = matches
         .get_one::<String>("repo")
         .cloned()
@@ -1073,29 +216,6 @@ pub(crate) fn task_arg(matches: &ArgMatches) -> Result<&str, CliError> {
         .get_one::<String>("task")
         .map(String::as_str)
         .ok_or_else(|| CliError::CommandFailed("task argument is required".to_string()))
-}
-
-fn validate_supervised_task(
-    context: &CommandContext<InMemoryRegistry>,
-    matches: &ArgMatches,
-) -> Result<Option<ajax_core::models::TaskId>, CliError> {
-    let Some(qualified_handle) = matches.get_one::<String>("task").map(String::as_str) else {
-        return Ok(None);
-    };
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .ok_or_else(|| CliError::CommandFailed(format!("task not found: {qualified_handle}")))?;
-    if task.lifecycle_status == LifecycleStatus::Removed {
-        return Err(CliError::CommandFailed(format!(
-            "task not found: {qualified_handle}"
-        )));
-    }
-
-    Ok(Some(task.id.clone()))
 }
 
 pub(crate) fn command_error(error: CommandError) -> CliError {
@@ -1165,6 +285,63 @@ mod tests {
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, registry)
+    }
+
+    #[test]
+    fn snapshot_dispatch_module_routes_read_commands() {
+        let context = sample_context();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "tasks", "--json"])
+            .unwrap();
+
+        let output = crate::snapshot_dispatch::render_snapshot_matches(&matches, &context).unwrap();
+
+        assert!(output.contains("\"tasks\""));
+        assert!(output.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn execution_dispatch_module_routes_mutating_commands() {
+        let mut context = sample_context();
+        let mut runner = RecordingCommandRunner::default();
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "new",
+                "--repo",
+                "web",
+                "--title",
+                "Fix logout",
+                "--execute",
+            ])
+            .unwrap();
+
+        let rendered =
+            crate::execution_dispatch::render_matches_mut(&matches, &mut context, &mut runner)
+                .unwrap();
+
+        assert!(rendered.state_changed);
+        assert!(rendered.output.contains("recorded task: web/fix-logout"));
+    }
+
+    #[test]
+    fn cockpit_backend_module_renders_snapshot_frame() {
+        let frame = crate::cockpit_backend::render_cockpit_frame(&sample_context());
+
+        assert!(frame.contains("Ajax"));
+        assert!(frame.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn classifiers_module_detects_merge_conflict_errors() {
+        let error = CommandRunError::NonZeroExit {
+            program: "git".to_string(),
+            status_code: 1,
+            stderr: "Automatic merge failed; fix conflicts and then commit.".to_string(),
+            cwd: None,
+        };
+
+        assert!(crate::classifiers::command_error_looks_conflicted(&error));
     }
 
     #[test]

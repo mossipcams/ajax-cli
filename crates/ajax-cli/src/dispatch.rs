@@ -7,6 +7,7 @@ use ajax_core::{
 use clap::ArgMatches;
 
 use crate::{
+    classifiers::command_error_looks_conflicted,
     command_error,
     render::{render_execution_outputs, render_plan},
     task_arg, CliError, RenderedCommand,
@@ -234,8 +235,7 @@ fn refresh_merge_evidence_if_available<R: CommandRunner>(
 fn merge_error_looks_conflicted(error: &CommandError) -> bool {
     matches!(
         error,
-        CommandError::CommandRun(CommandRunError::NonZeroExit { stderr, .. })
-            if stderr.to_ascii_lowercase().contains("conflict")
+        CommandError::CommandRun(error) if command_error_looks_conflicted(error)
     )
 }
 

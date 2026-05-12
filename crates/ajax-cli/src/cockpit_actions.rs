@@ -6,7 +6,7 @@ use ajax_core::{
 };
 
 use crate::{
-    command_error, dispatch::TaskCommandOperation, execute_new_task_plan,
+    command_error, dispatch::TaskCommandOperation, execution_dispatch::execute_new_task_plan,
     render::render_execution_outputs, CliError,
 };
 
