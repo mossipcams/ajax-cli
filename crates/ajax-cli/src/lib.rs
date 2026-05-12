@@ -1674,14 +1674,30 @@ mod tests {
 
         assert!(smoke.contains("ajax doctor"));
         assert!(smoke.contains("ajax new"));
+        assert!(smoke.contains("ajax supervise --task"));
         assert!(smoke.contains("ajax merge"));
         assert!(smoke.contains("ajax state export"));
+        assert!(!smoke.contains("ajax check"));
+        assert!(!smoke.contains("ajax diff"));
+        assert!(smoke.contains("assert_json_contains"));
+        assert!(smoke.contains("\"lifecycle_status\": \"Active\""));
+        assert!(smoke.contains("\"lifecycle_status\": \"Reviewable\""));
+        assert!(smoke.contains("\"lifecycle_status\": \"Merged\""));
+        assert!(smoke.contains("\"tasks\": []"));
+        assert!(smoke.contains("assert_log_contains"));
+        assert!(smoke.contains("run_happy_path_journey"));
+        assert!(smoke.contains("run_recovery_journey"));
+        assert!(smoke.contains("AJAX_SMOKE_FAIL_AFTER_WORKTREE"));
+        assert!(smoke.contains("\"lifecycle_status\": \"Error\""));
+        assert!(smoke.contains("state export target already exists"));
         assert!(smoke.contains("target/release/ajax"));
         assert!(smoke.contains("cargo build --release -p ajax-cli"));
         assert!(!smoke.contains("target/debug/ajax"));
         assert!(smoke.contains("if [[ -z \"${AJAX_BIN:-}\" ]]"));
         assert!(smoke.contains("ajax binary is not executable"));
         assert!(readme.contains("scripts/smoke.sh"));
+        assert!(!readme.contains("running checks"));
+        assert!(!readme.contains("viewing diffs"));
         assert!(release.contains("scripts/smoke.sh"));
     }
 

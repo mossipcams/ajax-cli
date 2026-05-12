@@ -33,7 +33,8 @@ cargo build --release -p ajax-cli
 ```
 
 6. Smoke test the release binary with `ajax doctor`, `ajax repos`, `ajax tasks`,
-   and one full fake-tool workflow:
+   one full fake-tool workflow, state export checks, and a partial-failure
+   recovery journey:
 
 ```sh
 scripts/smoke.sh

@@ -92,6 +92,10 @@ Run the deterministic local smoke workflow before release-sensitive changes:
 scripts/smoke.sh
 ```
 
+The smoke workflow uses strict fake `git`, `tmux`, and agent tools to validate
+the full happy-path journey, state export behavior, and a partial-failure
+recovery path where Ajax keeps the task visible with attention.
+
 ## Architecture
 
 Ajax owns task lifecycle planning, orchestration, state, policy, attention,
@@ -171,8 +175,7 @@ Cockpit is the place to decide what needs attention, what is safe to do next,
 and which command plan should run. It uses a project-first workflow modeled
 after the earlier gum flow: choose a project, choose an action, then choose the
 task when that action needs one. Project actions include creating a task,
-opening or reviewing a task, running checks, viewing diffs, merging, cleaning,
-and showing project status.
+opening or reviewing a task, merging, cleaning, and showing project status.
 
 The cockpit remains a Rust operator surface over `ajax-core` command and JSON
 contracts. Orchestration logic stays in the core so Cockpit can be tested,
