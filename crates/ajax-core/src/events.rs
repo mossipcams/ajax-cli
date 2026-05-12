@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     live::classify_pane,
-    models::{GitStatus, LiveObservation, LiveStatusKind, SideFlag},
+    models::{GitStatus, LiveObservation, LiveStatusKind},
+    registry::{Registry, RegistryError},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -128,38 +129,27 @@ pub fn apply_monitor_event_to_task(task: &mut crate::models::Task, event: &Monit
     true
 }
 
+pub fn apply_monitor_event_to_registry<R: Registry>(
+    registry: &mut R,
+    task_id: &crate::models::TaskId,
+    event: &MonitorEvent,
+) -> Result<bool, RegistryError> {
+    let mut changed = false;
+    if let MonitorEvent::Repo(RepoEvent::GitSnapshot { status, .. }) = event {
+        registry.update_git_status(task_id, status.clone())?;
+        changed = true;
+    }
+
+    let Some(observation) = live_observation_from_event(event) else {
+        return Ok(changed);
+    };
+
+    registry.apply_live_observation(task_id, observation)?;
+    Ok(true)
+}
+
 fn apply_git_snapshot_to_task(task: &mut crate::models::Task, status: GitStatus) {
-    if status.worktree_exists {
-        task.remove_side_flag(SideFlag::WorktreeMissing);
-    } else {
-        task.add_side_flag(SideFlag::WorktreeMissing);
-    }
-
-    if status.branch_exists {
-        task.remove_side_flag(SideFlag::BranchMissing);
-    } else {
-        task.add_side_flag(SideFlag::BranchMissing);
-    }
-
-    if status.dirty || status.untracked_files > 0 {
-        task.add_side_flag(SideFlag::Dirty);
-    } else {
-        task.remove_side_flag(SideFlag::Dirty);
-    }
-
-    if status.conflicted {
-        task.add_side_flag(SideFlag::Conflicted);
-    } else {
-        task.remove_side_flag(SideFlag::Conflicted);
-    }
-
-    if status.has_unpushed_work() {
-        task.add_side_flag(SideFlag::Unpushed);
-    } else {
-        task.remove_side_flag(SideFlag::Unpushed);
-    }
-
-    task.git_status = Some(status);
+    task.apply_git_status(status);
 }
 
 fn classify_text_or_else(text: &str, fallback: LiveObservation) -> LiveObservation {
@@ -183,6 +173,7 @@ mod tests {
         AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag,
         Task, TaskId,
     };
+    use crate::registry::{InMemoryRegistry, Registry, RegistryEventKind};
 
     fn task() -> Task {
         let mut task = Task::new(
@@ -430,5 +421,51 @@ mod tests {
         assert!(attention
             .iter()
             .any(|item| item.reason == "merge conflict needs attention"));
+    }
+
+    #[test]
+    fn registry_monitor_event_application_records_evented_updates() {
+        let mut registry = InMemoryRegistry::default();
+        registry.create_task(task()).unwrap();
+        let status = GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 1,
+            behind: 0,
+            merged: false,
+            untracked_files: 2,
+            unpushed_commits: 1,
+            conflicted: true,
+            last_commit: Some("abc123".to_string()),
+        };
+
+        let changed = super::apply_monitor_event_to_registry(
+            &mut registry,
+            &TaskId::new("task-1"),
+            &MonitorEvent::Repo(RepoEvent::GitSnapshot {
+                worktree_path: PathBuf::from("/tmp/worktrees/web-fix-login"),
+                status: status.clone(),
+                diff_stat: "src/lib.rs | 2 +".to_string(),
+            }),
+        )
+        .unwrap();
+
+        assert!(changed);
+        let task = registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.git_status, Some(status));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::MergeConflict)
+        );
+        let events = registry.events_for_task(&TaskId::new("task-1"));
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
+        assert_eq!(events[1].kind, RegistryEventKind::SubstrateChanged);
+        assert_eq!(events[1].message, "git evidence changed");
+        assert_eq!(events[2].kind, RegistryEventKind::LifecycleChanged);
+        assert_eq!(events[2].message, "lifecycle changed to Error");
     }
 }

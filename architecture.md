@@ -83,6 +83,13 @@ record typed events. SQLite persists typed task fields and event rows directly;
 new operation fields or statuses must round-trip through that typed schema and
 unsupported schema versions must fail clearly.
 
+The registry facade owns typed task/event behavior, not concrete state encoding.
+`registry/sqlite.rs` owns SQLite schema creation, schema compatibility checks,
+row encoding, and row decoding behind `SqliteRegistryStore`. The public registry
+surface exposes typed tasks and events to output boundaries; JSON state export is
+an operator export contract built in `ajax-core::output` and written by the CLI
+state-export boundary, while SQLite remains the runtime store.
+
 Lifecycle mutation authority is centralized in `ajax-core::lifecycle`. Production
 code must use lifecycle transition helpers, and those helpers own the direct
 `Task::lifecycle_status` assignment after validating the transition reason and
@@ -93,12 +100,50 @@ state directly. Attention remains a derived projection from lifecycle, live
 status, side flags, and external substrate evidence; it must not mutate task
 lifecycle.
 
+Git evidence interpretation is an analysis boundary. `analysis::git_evidence`
+owns conversion from captured git status output plus cached evidence into typed
+`GitStatus`; command use cases request that interpretation and registry/domain
+functions apply the resulting evidence and side flags.
+
+Live status classification and reduction stay pure in `live.rs`. The concrete
+observation mutation boundary is `live_application.rs`, which applies reduced
+observations to task lifecycle, agent status, side flags, activity timestamps,
+and visible live status while preserving the public `live::apply_observation`
+entrypoint.
+
 The `ajax-core::commands` module remains the public command-planning and command
 response facade, but its internal helpers should stay split by responsibility:
 
-- `commands/doctor.rs` owns environment inspection and doctor check assembly.
+- `commands/doctor.rs` owns doctor check assembly over supplied environment
+  facts.
+- `commands/check.rs` owns check command planning and check result state
+  updates.
+- `commands/diff.rs` owns task diff command planning.
+- `commands/merge.rs` owns merge planning, merge preflight safety reasons, and
+  merge result state updates.
+- `commands/new_task.rs` owns new-task planning, provisional task creation,
+  generated branch/worktree/tmux names, duplicate-handle policy, and
+  provisioning step state effects.
+- `commands/open.rs` owns open command planning and open result state effects.
 - `commands/projection.rs` owns task visibility, task summaries, action
   projections, and cockpit summary counts.
+- `commands/teardown.rs` owns cleanup, remove, and sweep planning plus teardown
+  step result updates and remove lifecycle application.
+- `commands/trunk.rs` owns worktrunk repair/open planning and trunk repair state
+  updates.
+
+The `ajax-core::adapters` module remains the public adapter facade, but
+subprocess and concrete command construction should stay split by external
+boundary:
+
+- `adapters/command.rs` owns `CommandSpec`, `CommandMode`, `CommandRunner`, and
+  test recording for the command runner port.
+- `adapters/process.rs` owns concrete subprocess execution for capture and
+  inherited stdio modes.
+- `adapters/git.rs`, `adapters/tmux.rs`, and `adapters/agent.rs` own concrete
+  command construction and parsing for those substrates.
+- `adapters/environment.rs` owns operator environment probing such as PATH tool
+  discovery and path-existence checks.
 - `commands/lookup.rs` owns shared task lookup, repo path lookup, and lifecycle
   update plumbing used by command handlers.
 
@@ -113,8 +158,6 @@ Ajax needs more than one execution style:
   `tmux list-sessions`.
 - `CommandMode::InheritStdio` for interactive commands such as
   `tmux attach-session`.
-- `CommandMode::Spawn` for detached execution where Ajax should start a
-  process without waiting on captured output.
 
 Avoid treating all external commands as captured subprocesses.
 
@@ -182,8 +225,16 @@ The current `ajax-tui` internals keep small pure helpers out of the main TUI
 file:
 
 - `actions` owns action chrome metadata for core `RecommendedAction` values.
+- `cockpit_state` owns Cockpit view state, selectable construction, state
+  transitions, refresh application, flash state, and confirmation bookkeeping.
+- `input` owns already-read terminal event classification and conversion into
+  Cockpit state changes, pending actions, or quit decisions.
+- `layout` owns small layout calculations that are independent of terminal IO.
 - `navigation` owns terminal key classification helpers.
-- `rendering` owns status bucket palette and glyph mapping.
+- `rendering` owns status bucket palette, glyph mapping, and the top-level
+  screen renderer over Cockpit state.
+- `runtime` owns raw mode, alternate screen, mouse capture, terminal polling,
+  refresh timing, and the interactive event loop.
 
 ## Validation Expectations
 
@@ -194,7 +245,7 @@ applicable checks:
 cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-features
+cargo nextest run --all-features
 ```
 
 There is no Python frontend runtime in the supported cockpit path.

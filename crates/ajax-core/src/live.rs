@@ -1,10 +1,4 @@
-use std::time::SystemTime;
-
-use crate::{
-    lifecycle::{transition_lifecycle, LifecycleTransitionReason},
-    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
-};
-
+pub use crate::live_application::apply_observation;
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
@@ -227,105 +221,6 @@ fn is_completion_line(lower: &str) -> bool {
     ) || lower.trim_matches(|character: char| !character.is_ascii_alphanumeric()) == "done"
 }
 
-pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
-    let observation = reduce_task_live_observation(task, observation);
-    let refresh_activity = refreshes_activity(observation.kind);
-    let has_missing_substrate_flag = has_missing_substrate_flag(task);
-
-    match observation.kind {
-        LiveStatusKind::WorktreeMissing => {
-            task.mark_resource_missing(SideFlag::WorktreeMissing);
-        }
-        LiveStatusKind::TmuxMissing => {
-            task.mark_resource_missing(SideFlag::TmuxMissing);
-        }
-        LiveStatusKind::WorktrunkMissing => {
-            task.mark_resource_missing(SideFlag::WorktrunkMissing);
-        }
-        LiveStatusKind::AgentRunning
-        | LiveStatusKind::CommandRunning
-        | LiveStatusKind::TestsRunning => {
-            if has_missing_substrate_flag {
-                task.agent_status = AgentRuntimeStatus::Unknown;
-                task.remove_side_flag(SideFlag::AgentRunning);
-            } else {
-                task.agent_status = AgentRuntimeStatus::Running;
-                task.add_side_flag(SideFlag::AgentRunning);
-                update_live_lifecycle(task, LifecycleStatus::Active);
-            }
-            task.remove_side_flag(SideFlag::NeedsInput);
-            task.remove_side_flag(SideFlag::AgentDead);
-        }
-        LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
-            task.agent_status = AgentRuntimeStatus::Waiting;
-            update_live_lifecycle(task, LifecycleStatus::Waiting);
-            task.add_side_flag(SideFlag::NeedsInput);
-            task.remove_side_flag(SideFlag::AgentRunning);
-        }
-        LiveStatusKind::AuthRequired
-        | LiveStatusKind::RateLimited
-        | LiveStatusKind::ContextLimit
-        | LiveStatusKind::CiFailed
-        | LiveStatusKind::CommandFailed
-        | LiveStatusKind::Blocked => {
-            task.agent_status = AgentRuntimeStatus::Blocked;
-            update_live_lifecycle(task, LifecycleStatus::Error);
-            if observation.kind == LiveStatusKind::CiFailed {
-                task.add_side_flag(SideFlag::TestsFailed);
-            }
-            task.add_side_flag(SideFlag::NeedsInput);
-            task.remove_side_flag(SideFlag::AgentRunning);
-        }
-        LiveStatusKind::MergeConflict => {
-            task.agent_status = AgentRuntimeStatus::Blocked;
-            update_live_lifecycle(task, LifecycleStatus::Error);
-            task.add_side_flag(SideFlag::Conflicted);
-            task.add_side_flag(SideFlag::NeedsInput);
-            task.remove_side_flag(SideFlag::AgentRunning);
-        }
-        LiveStatusKind::ShellIdle => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
-            task.remove_side_flag(SideFlag::AgentRunning);
-        }
-        LiveStatusKind::Done => {
-            task.agent_status = AgentRuntimeStatus::Done;
-            update_live_lifecycle(task, LifecycleStatus::Reviewable);
-            task.remove_side_flag(SideFlag::AgentRunning);
-            task.remove_side_flag(SideFlag::NeedsInput);
-        }
-        LiveStatusKind::Unknown => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
-            task.remove_side_flag(SideFlag::AgentRunning);
-        }
-    }
-
-    task.live_status = Some(observation);
-    if refresh_activity {
-        task.last_activity_at = SystemTime::now();
-        task.remove_side_flag(SideFlag::Stale);
-    }
-}
-
-fn reduce_task_live_observation(task: &Task, next: LiveObservation) -> LiveObservation {
-    if recovered_from_missing_substrate(task, next.kind) {
-        return next;
-    }
-
-    reduce_live_observation(task.live_status.as_ref(), next)
-}
-
-fn recovered_from_missing_substrate(task: &Task, next: LiveStatusKind) -> bool {
-    task.live_status
-        .as_ref()
-        .is_some_and(|status| status.kind.is_missing_substrate())
-        && !next.is_missing_substrate()
-        && !has_missing_substrate_flag(task)
-}
-
-fn has_missing_substrate_flag(task: &Task) -> bool {
-    task.side_flags().any(SideFlag::is_missing_substrate)
-}
-
 pub fn reduce_live_observation(
     current: Option<&LiveObservation>,
     next: LiveObservation,
@@ -394,35 +289,6 @@ fn is_incidental_observation(kind: LiveStatusKind) -> bool {
             | LiveStatusKind::CommandRunning
             | LiveStatusKind::TestsRunning
     )
-}
-
-fn refreshes_activity(kind: LiveStatusKind) -> bool {
-    matches!(
-        kind,
-        LiveStatusKind::ShellIdle
-            | LiveStatusKind::CommandRunning
-            | LiveStatusKind::TestsRunning
-            | LiveStatusKind::AgentRunning
-            | LiveStatusKind::WaitingForApproval
-            | LiveStatusKind::WaitingForInput
-            | LiveStatusKind::Blocked
-            | LiveStatusKind::RateLimited
-            | LiveStatusKind::AuthRequired
-            | LiveStatusKind::MergeConflict
-            | LiveStatusKind::CiFailed
-            | LiveStatusKind::ContextLimit
-            | LiveStatusKind::CommandFailed
-            | LiveStatusKind::Done
-    )
-}
-
-fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
-    if let Err(_error) =
-        transition_lifecycle(task, status, LifecycleTransitionReason::OperationResult)
-    {
-        // Live evidence can lag lifecycle state; invalid evidence-driven edges leave
-        // the lifecycle unchanged while still allowing live status projection.
-    }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -830,5 +696,41 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
 
         assert!(!task.has_side_flag(SideFlag::Stale));
         assert!(task.last_activity_at > std::time::SystemTime::UNIX_EPOCH);
+    }
+
+    #[test]
+    fn live_projection_functions_do_not_mutate_lifecycle_or_substrate() {
+        let task = base_task();
+        let lifecycle_before = task.lifecycle_status;
+        let git_before = task.git_status.clone();
+        let tmux_before = task.tmux_status.clone();
+        let worktrunk_before = task.worktrunk_status.clone();
+
+        let classified = classify_pane("Do you want to proceed? y/n\n");
+        let reduced = super::reduce_live_observation(
+            task.live_status.as_ref(),
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(classified.kind, LiveStatusKind::WaitingForApproval);
+        assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
+        assert_eq!(task.lifecycle_status, lifecycle_before);
+        assert_eq!(task.git_status, git_before);
+        assert_eq!(task.tmux_status, tmux_before);
+        assert_eq!(task.worktrunk_status, worktrunk_before);
+    }
+
+    #[test]
+    fn live_projection_module_does_not_own_lifecycle_mutation() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/live.rs"),
+        )
+        .unwrap();
+
+        let transition_call = ["transition", "_lifecycle("].concat();
+        let transition_reason = ["Lifecycle", "TransitionReason"].concat();
+
+        assert!(!source.contains(&transition_call));
+        assert!(!source.contains(&transition_reason));
     }
 }

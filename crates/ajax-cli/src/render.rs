@@ -139,17 +139,122 @@ fn render_plan_human(plan: &commands::CommandPlan) -> String {
             .map(|reason| format!("blocked: {reason}")),
     );
     lines.extend(plan.commands.iter().map(|command| {
+        let command_line = shell_words(
+            std::iter::once(command.program.as_str())
+                .chain(command.args.iter().map(String::as_str)),
+        );
         if let Some(cwd) = &command.cwd {
-            format!(
-                "$ (cd {} && {} {})",
-                cwd,
-                command.program,
-                command.args.join(" ")
-            )
+            let cwd = cwd.to_string_lossy();
+            format!("$ (cd {} && {})", shell_quote(cwd.as_ref()), command_line)
         } else {
-            format!("$ {} {}", command.program, command.args.join(" "))
+            format!("$ {command_line}")
         }
     }));
 
     lines.join("\n")
+}
+
+fn shell_words<'a>(words: impl Iterator<Item = &'a str>) -> String {
+    words.map(shell_quote).collect::<Vec<_>>().join(" ")
+}
+
+fn shell_quote(word: &str) -> String {
+    if word.is_empty() {
+        return "''".to_string();
+    }
+
+    if word
+        .bytes()
+        .all(|byte| matches!(byte, b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'@' | b'%' | b'+' | b'=' | b':' | b',' | b'.' | b'/' | b'-'))
+    {
+        return word.to_string();
+    }
+
+    format!("'{}'", word.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use ajax_core::{
+        adapters::CommandSpec,
+        commands::CommandPlan,
+        models::{AttentionItem, TaskId},
+        output::{InboxResponse, InspectResponse, TaskSummary},
+    };
+
+    use super::{render_inbox_human, render_inspect_human, render_plan, render_plan_human};
+
+    #[test]
+    fn render_plan_quotes_shell_words_for_copy_paste_safe_human_output() {
+        let mut plan = CommandPlan::new("copy safe");
+        plan.commands.push(
+            CommandSpec::new(
+                "my tool",
+                ["hello world", "semi;colon", "it's", "$(danger)"],
+            )
+            .with_cwd("/tmp/ajax worktrees/feat;rm"),
+        );
+
+        let rendered = render_plan_human(&plan);
+
+        assert_eq!(
+            rendered,
+            "copy safe\n$ (cd '/tmp/ajax worktrees/feat;rm' && 'my tool' 'hello world' 'semi;colon' 'it'\\''s' '$(danger)')"
+        );
+    }
+
+    #[test]
+    fn render_plan_json_remains_structured() {
+        let mut plan = CommandPlan::new("copy safe");
+        plan.commands.push(
+            CommandSpec::new("my tool", ["hello world", "semi;colon"])
+                .with_cwd("/tmp/ajax worktrees/feat;rm"),
+        );
+
+        let rendered = render_plan(plan, true).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(parsed["commands"][0]["program"], "my tool");
+        assert_eq!(parsed["commands"][0]["args"][0], "hello world");
+        assert_eq!(parsed["commands"][0]["cwd"], "/tmp/ajax worktrees/feat;rm");
+    }
+
+    #[test]
+    fn inspect_human_renders_task_resource_details() {
+        let rendered = render_inspect_human(&InspectResponse {
+            task: TaskSummary {
+                id: "task-1".to_string(),
+                qualified_handle: "web/fix-login".to_string(),
+                title: "Fix login".to_string(),
+                lifecycle_status: "Reviewable".to_string(),
+                needs_attention: true,
+                live_status: None,
+                actions: vec!["open task".to_string()],
+            },
+            branch: "ajax/fix-login".to_string(),
+            worktree_path: "/tmp/worktrees/web-fix-login".to_string(),
+            tmux_session: "ajax-web-fix-login".to_string(),
+            flags: vec!["needs-input".to_string(), "dirty".to_string()],
+        });
+
+        assert_eq!(
+            rendered,
+            "web/fix-login\tReviewable\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
+        );
+    }
+
+    #[test]
+    fn inbox_human_renders_attention_item_action_lines() {
+        let rendered = render_inbox_human(&InboxResponse {
+            items: vec![AttentionItem {
+                task_id: TaskId::new("task-1"),
+                task_handle: "web/fix-login".to_string(),
+                reason: "agent needs input".to_string(),
+                priority: 75,
+                recommended_action: "open task".to_string(),
+            }],
+        });
+
+        assert_eq!(rendered, "web/fix-login: agent needs input -> open task");
+    }
 }

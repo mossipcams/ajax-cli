@@ -196,6 +196,60 @@ impl Task {
                 .as_ref()
                 .is_some_and(|live_status| live_status.kind.is_missing_substrate())
     }
+
+    pub fn apply_git_status(&mut self, status: GitStatus) {
+        if status.worktree_exists {
+            self.remove_side_flag(SideFlag::WorktreeMissing);
+        } else {
+            self.mark_resource_missing(SideFlag::WorktreeMissing);
+        }
+
+        if status.branch_exists {
+            self.remove_side_flag(SideFlag::BranchMissing);
+        } else {
+            self.mark_resource_missing(SideFlag::BranchMissing);
+        }
+
+        if status.dirty || status.untracked_files > 0 {
+            self.add_side_flag(SideFlag::Dirty);
+        } else {
+            self.remove_side_flag(SideFlag::Dirty);
+        }
+
+        if status.conflicted {
+            self.add_side_flag(SideFlag::Conflicted);
+        } else {
+            self.remove_side_flag(SideFlag::Conflicted);
+        }
+
+        if status.has_unpushed_work() {
+            self.add_side_flag(SideFlag::Unpushed);
+        } else {
+            self.remove_side_flag(SideFlag::Unpushed);
+        }
+
+        self.git_status = Some(status);
+    }
+
+    pub fn apply_tmux_status(&mut self, status: Option<TmuxStatus>) {
+        match status.as_ref() {
+            Some(status) if status.exists => self.remove_side_flag(SideFlag::TmuxMissing),
+            Some(_) | None => self.mark_resource_missing(SideFlag::TmuxMissing),
+        }
+
+        self.tmux_status = status;
+    }
+
+    pub fn apply_worktrunk_status(&mut self, status: Option<WorktrunkStatus>) {
+        match status.as_ref() {
+            Some(status) if status.exists && status.points_at_expected_path => {
+                self.remove_side_flag(SideFlag::WorktrunkMissing);
+            }
+            Some(_) | None => self.mark_resource_missing(SideFlag::WorktrunkMissing),
+        }
+
+        self.worktrunk_status = status;
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]

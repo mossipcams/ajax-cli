@@ -27,11 +27,15 @@ not stop after each task. Continue task-by-task with TDD until the approved plan
 is complete, then report the final validation results.
 
 Markdown-only documentation changes are exempt from the TDD requirement. For
-`.md`-only changes, still plan first, get approval, make the documentation
-change, and verify it with an appropriate read/search or formatting check.
+`.md`-only changes, do not write failing tests or use the TDD loop; still plan
+first, get approval, make the documentation change, and verify it with an
+appropriate read/search or formatting check.
 
 ## Rules
 - NEVER implement without failing test first
+- Production code may only be changed to satisfy a failing behavior test; write
+  the test first, make it pass with the smallest implementation, then refactor
+  while keeping all tests green.
 - NEVER skip approval step
 - NEVER move to next task without asking
 - Exception: when the user has explicitly approved finishing all tasks, do not
@@ -54,6 +58,33 @@ change, and verify it with an appropriate read/search or formatting check.
   - `ajax-supervisor = process supervision`
   - `ajax-tui = Cockpit screen state, input, layout, rendering`
 - Keep cleanup work behavior-neutral unless the task explicitly asks for a runtime change.
+
+## Architecture Rule
+
+Use a restrained ports-and-adapters modular monolith.
+
+The codebase must stay organized around clear responsibilities:
+
+- `cli/` parses command-line arguments only.
+- `app/` contains command/use-case orchestration.
+- `domain/` contains core types and business rules.
+- `analysis/` contains checking, scanning, or evaluation logic.
+- `ports/` defines small traits only for real external boundaries.
+- `adapters/` implements filesystem, terminal, JSON, subprocess, network, or environment access.
+- `tests/` verifies user-visible behavior.
+
+Do not create managers, services, processors, handlers, factories, registries,
+helpers, utils, or generic abstraction layers unless there is a concrete need
+explained in the code review or PR.
+
+Prefer concrete structs and functions over traits. Introduce traits only for IO
+boundaries, test seams, or genuinely swappable implementations.
+
+Do not let CLI parsing, filesystem access, terminal output, or subprocess
+execution leak into domain or analysis code.
+
+When adding a feature, implement one vertical slice at a time: CLI args, app
+use case, domain/analysis logic, adapter changes if needed, and tests.
 
 @/Users/matt/.codex/RTK.md
 

@@ -1,590 +1,29 @@
-use serde::{Deserialize, Serialize};
-use std::{
-    error::Error,
-    fmt,
-    process::{Command, Stdio},
+pub mod agent;
+pub mod command;
+pub mod environment;
+pub mod git;
+pub mod process;
+pub mod tmux;
+
+pub use agent::{AgentAdapter, AgentLaunch};
+pub use command::{
+    CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
-
-use crate::models::{GitStatus, TmuxStatus, WorktrunkStatus};
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct CommandSpec {
-    pub program: String,
-    pub args: Vec<String>,
-    pub cwd: Option<String>,
-    pub mode: CommandMode,
-}
-
-impl CommandSpec {
-    pub fn new<const N: usize>(program: impl Into<String>, args: [&str; N]) -> Self {
-        Self {
-            program: program.into(),
-            args: args.into_iter().map(str::to_string).collect(),
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn with_cwd(mut self, cwd: impl Into<String>) -> Self {
-        self.cwd = Some(cwd.into());
-        self
-    }
-
-    pub fn with_mode(mut self, mode: CommandMode) -> Self {
-        self.mode = mode;
-        self
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub enum CommandMode {
-    Capture,
-    InheritStdio,
-    Spawn,
-}
-
-pub trait CommandRunner {
-    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError>;
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CommandOutput {
-    pub status_code: i32,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandRunError {
-    SpawnFailed(String),
-    MissingStatusCode,
-    NonZeroExit {
-        program: String,
-        status_code: i32,
-        stderr: String,
-        cwd: Option<String>,
-    },
-}
-
-impl fmt::Display for CommandRunError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SpawnFailed(message) => write!(formatter, "failed to start command: {message}"),
-            Self::MissingStatusCode => write!(formatter, "command exited without a status code"),
-            Self::NonZeroExit {
-                program,
-                status_code,
-                stderr,
-                cwd,
-            } => {
-                write!(formatter, "{program} exited with status {status_code}")?;
-                if let Some(cwd) = cwd {
-                    write!(formatter, " in {cwd}")?;
-                }
-                let stderr = stderr.trim();
-                if !stderr.is_empty() {
-                    write!(formatter, ": {stderr}")?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl Error for CommandRunError {}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct RecordingCommandRunner {
-    commands: Vec<CommandSpec>,
-}
-
-impl RecordingCommandRunner {
-    pub fn commands(&self) -> &[CommandSpec] {
-        &self.commands
-    }
-}
-
-impl CommandRunner for RecordingCommandRunner {
-    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-        self.commands.push(command.clone());
-
-        Ok(CommandOutput {
-            status_code: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        })
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct ProcessCommandRunner;
-
-impl CommandRunner for ProcessCommandRunner {
-    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-        let mut process = Command::new(&command.program);
-        process.args(&command.args);
-        if let Some(cwd) = &command.cwd {
-            process.current_dir(cwd);
-        }
-        match command.mode {
-            CommandMode::Capture => {
-                let output = process
-                    .output()
-                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-                let status_code = output
-                    .status
-                    .code()
-                    .ok_or(CommandRunError::MissingStatusCode)?;
-
-                Ok(CommandOutput {
-                    status_code,
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                })
-            }
-            CommandMode::InheritStdio => {
-                let status = process
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status()
-                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-                let status_code = status.code().ok_or(CommandRunError::MissingStatusCode)?;
-
-                Ok(CommandOutput {
-                    status_code,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                })
-            }
-            CommandMode::Spawn => {
-                process
-                    .stdin(Stdio::inherit())
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .spawn()
-                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-
-                Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                })
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TmuxAdapter {
-    program: String,
-}
-
-impl TmuxAdapter {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-        }
-    }
-
-    pub fn attach_session(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["attach-session", "-t", session])
-            .with_mode(CommandMode::InheritStdio)
-    }
-
-    pub fn switch_client(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["switch-client", "-t", session])
-            .with_mode(CommandMode::InheritStdio)
-    }
-
-    pub fn new_detached_worktrunk_session(
-        &self,
-        session: &str,
-        window: &str,
-        path: &str,
-    ) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["new-session", "-d", "-s", session, "-n", window, "-c", path],
-        )
-    }
-
-    pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["new-window", "-t", session, "-n", window, "-c", path],
-        )
-    }
-
-    pub fn kill_window(&self, session: &str, window: &str) -> CommandSpec {
-        let target = tmux_window_target(session, window);
-        CommandSpec::new(&self.program, ["kill-window", "-t", &target])
-    }
-
-    pub fn select_window(&self, session: &str, window: &str) -> CommandSpec {
-        let target = tmux_window_target(session, window);
-        CommandSpec::new(&self.program, ["select-window", "-t", &target])
-    }
-
-    pub fn attach_window(&self, session: &str, _window: &str) -> CommandSpec {
-        self.attach_session(session)
-    }
-
-    pub fn switch_client_to_window(&self, session: &str, _window: &str) -> CommandSpec {
-        self.switch_client(session)
-    }
-
-    pub fn send_agent_command(&self, session: &str, window: &str, command: &str) -> CommandSpec {
-        let target = tmux_window_target(session, window);
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "send-keys".to_string(),
-                "-t".to_string(),
-                target,
-                command.to_string(),
-                "Enter".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn kill_session(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["kill-session", "-t", session])
-    }
-
-    pub fn list_sessions(&self) -> CommandSpec {
-        CommandSpec::new(&self.program, ["list-sessions", "-F", "#{session_name}"])
-    }
-
-    pub fn list_windows(&self, session: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "list-windows",
-                "-t",
-                session,
-                "-F",
-                "#{window_name}\t#{pane_current_path}",
-            ],
-        )
-    }
-
-    pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
-        let target = format!("{session}:{window}");
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "capture-pane".to_string(),
-                "-p".to_string(),
-                "-t".to_string(),
-                target,
-                "-S".to_string(),
-                "-200".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn parse_session_status(session: &str, list_sessions_output: &str) -> TmuxStatus {
-        TmuxStatus {
-            exists: list_sessions_output
-                .lines()
-                .map(str::trim)
-                .any(|line| line == session),
-            session_name: session.to_string(),
-        }
-    }
-
-    pub fn parse_worktrunk_status(
-        window: &str,
-        expected_path: &str,
-        list_windows_output: &str,
-    ) -> WorktrunkStatus {
-        let mut status = WorktrunkStatus {
-            exists: false,
-            window_name: window.to_string(),
-            current_path: String::new().into(),
-            points_at_expected_path: false,
-        };
-
-        for line in list_windows_output.lines() {
-            let Some((window_name, current_path)) = line.split_once('\t') else {
-                continue;
-            };
-
-            if window_name == window {
-                status.exists = true;
-                status.current_path = current_path.into();
-                status.points_at_expected_path = current_path == expected_path;
-                break;
-            }
-        }
-
-        status
-    }
-}
-
-fn tmux_window_target(session: &str, window: &str) -> String {
-    format!("{session}:{window}")
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct GitAdapter {
-    program: String,
-}
-
-impl GitAdapter {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-        }
-    }
-
-    pub fn status(&self, worktree_path: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["-C", worktree_path, "status", "--porcelain=v1", "--branch"],
-        )
-    }
-
-    pub fn add_worktree(
-        &self,
-        repo_path: &str,
-        worktree_path: &str,
-        branch: &str,
-        start_point: &str,
-    ) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "add".to_string(),
-                "-b".to_string(),
-                branch.to_string(),
-                worktree_path.to_string(),
-                start_point.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "remove".to_string(),
-                worktree_path.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn force_remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "remove".to_string(),
-                "--force".to_string(),
-                worktree_path.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "branch".to_string(),
-                "-d".to_string(),
-                branch.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn force_delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "branch".to_string(),
-                "-D".to_string(),
-                branch.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
-    pub fn switch_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(&self.program, ["-C", repo_path, "switch", branch])
-    }
-
-    pub fn merge_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            ["-C", repo_path, "merge", "--ff-only", branch],
-        )
-    }
-
-    pub fn merge_base_is_ancestor(
-        &self,
-        worktree_path: &str,
-        ancestor: &str,
-        descendant: &str,
-    ) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "-C",
-                worktree_path,
-                "merge-base",
-                "--is-ancestor",
-                ancestor,
-                descendant,
-            ],
-        )
-    }
-
-    pub fn parse_status(porcelain_branch_output: &str, merged: bool) -> GitStatus {
-        let mut status = GitStatus {
-            worktree_exists: true,
-            branch_exists: false,
-            current_branch: None,
-            dirty: false,
-            ahead: 0,
-            behind: 0,
-            merged,
-            untracked_files: 0,
-            unpushed_commits: 0,
-            conflicted: false,
-            last_commit: None,
-        };
-
-        for line in porcelain_branch_output.lines() {
-            if let Some(branch_line) = line.strip_prefix("## ") {
-                status.current_branch = parse_current_branch(branch_line);
-                status.branch_exists =
-                    !branch_line.starts_with("No commits yet") && status.current_branch.is_some();
-                apply_branch_divergence(&mut status, branch_line);
-                continue;
-            }
-
-            if line.starts_with("??") {
-                status.dirty = true;
-                status.untracked_files += 1;
-                continue;
-            }
-
-            if line.len() >= 2 {
-                status.dirty = true;
-                let code = &line[..2];
-                if matches!(code, "DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU") {
-                    status.conflicted = true;
-                }
-            }
-        }
-
-        status.unpushed_commits = status.ahead;
-        status
-    }
-}
-
-fn parse_current_branch(branch_line: &str) -> Option<String> {
-    if branch_line.starts_with("No commits yet") || branch_line.starts_with("HEAD ") {
-        return None;
-    }
-
-    let branch = branch_line
-        .split_once("...")
-        .map_or(branch_line, |(branch, _)| branch);
-    let branch = branch.split_once(' ').map_or(branch, |(branch, _)| branch);
-
-    (!branch.is_empty()).then(|| branch.to_string())
-}
-
-fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
-    let Some(open_bracket) = branch_line.find('[') else {
-        return;
-    };
-    let Some(close_bracket) = branch_line[open_bracket..].find(']') else {
-        return;
-    };
-    let divergence = &branch_line[open_bracket + 1..open_bracket + close_bracket];
-
-    for part in divergence.split(',').map(str::trim) {
-        if let Some(ahead) = part.strip_prefix("ahead ") {
-            if let Ok(value) = ahead.parse::<u32>() {
-                status.ahead = value;
-            }
-        }
-        if let Some(behind) = part.strip_prefix("behind ") {
-            if let Ok(value) = behind.parse::<u32>() {
-                status.behind = value;
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentLaunch {
-    pub worktree_path: String,
-    pub prompt: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentAdapter {
-    program: String,
-}
-
-impl AgentAdapter {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
-        }
-    }
-
-    pub fn launch(&self, launch: &AgentLaunch) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "--cd".to_string(),
-                launch.worktree_path.clone(),
-                launch.prompt.clone(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-}
+pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
+pub use git::GitAdapter;
+pub use process::ProcessCommandRunner;
+pub use tmux::TmuxAdapter;
 
 #[cfg(test)]
 mod tests {
+    use super::{command, process};
     use super::{
         AgentAdapter, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
         RecordingCommandRunner, TmuxAdapter,
     };
     use crate::models::{TmuxStatus, WorktrunkStatus};
     use proptest::prelude::*;
+    use std::path::Path;
 
     fn safe_token() -> impl Strategy<Value = String> {
         "[A-Za-z0-9_.-]{1,32}"
@@ -1044,6 +483,44 @@ mod tests {
 
         assert_eq!(output.status_code, 0);
         assert_eq!(runner.commands(), &[CommandSpec::new("git", ["status"])]);
+    }
+
+    #[test]
+    fn command_spec_cwd_preserves_path_boundary() {
+        let command = CommandSpec::new("git", ["status"]).with_cwd("/tmp/ajax worktrees/feat a");
+
+        assert_eq!(
+            command.cwd.as_deref(),
+            Some(Path::new("/tmp/ajax worktrees/feat a"))
+        );
+    }
+
+    #[test]
+    fn process_runner_modes_map_to_process_behavior() {
+        fn accepts_port_and_process_runner(
+            runner: &mut dyn command::CommandRunner,
+        ) -> Result<(), command::CommandRunError> {
+            let capture = runner.run(&command::CommandSpec::new(
+                "sh",
+                ["-c", "printf ajax-capture"],
+            ))?;
+            assert_eq!(capture.status_code, 0);
+            assert_eq!(capture.stdout, "ajax-capture");
+
+            let inherited = runner.run(
+                &command::CommandSpec::new("sh", ["-c", "printf ajax-inherit"])
+                    .with_mode(command::CommandMode::InheritStdio),
+            )?;
+            assert_eq!(inherited.status_code, 0);
+            assert!(inherited.stdout.is_empty());
+            assert!(inherited.stderr.is_empty());
+
+            Ok(())
+        }
+
+        let mut runner = process::ProcessCommandRunner;
+
+        accepts_port_and_process_runner(&mut runner).unwrap();
     }
 
     #[test]

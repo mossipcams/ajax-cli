@@ -1,4 +1,10 @@
 use ratatui::style::Color;
+use ratatui::{
+    layout::{Constraint, Layout},
+    Frame,
+};
+
+use crate::App;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StatusBucket {
@@ -30,4 +36,17 @@ pub(crate) fn bucket_glyph(bucket: StatusBucket) -> &'static str {
         StatusBucket::Idle => "·",
         StatusBucket::Missing => "×",
     }
+}
+
+pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
+    let chunks = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Min(0),
+        Constraint::Length(1),
+    ])
+    .split(frame.area());
+
+    crate::render_header(frame, app, chunks[0]);
+    crate::render_feed(frame, app, chunks[1]);
+    crate::render_status_bar(frame, app, chunks[2]);
 }

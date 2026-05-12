@@ -24,13 +24,10 @@ impl ConfigPaths {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub repos: Vec<ManagedRepo>,
-    #[serde(default)]
-    pub launchers: Vec<LauncherDefinition>,
-    #[serde(default)]
-    pub cleanup: CleanupRules,
     #[serde(default)]
     pub test_commands: Vec<TestCommand>,
 }
@@ -78,38 +75,6 @@ impl ManagedRepo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct LauncherDefinition {
-    pub name: String,
-    pub command: String,
-}
-
-impl LauncherDefinition {
-    pub fn new(name: impl Into<String>, command: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            command: command.into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct CleanupRules {
-    pub require_clean_worktree: bool,
-    pub require_merged_branch: bool,
-    pub require_no_unpushed_commits: bool,
-}
-
-impl Default for CleanupRules {
-    fn default() -> Self {
-        Self {
-            require_clean_worktree: true,
-            require_merged_branch: true,
-            require_no_unpushed_commits: true,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TestCommand {
     pub repo: String,
     pub command: String,
@@ -126,10 +91,7 @@ impl TestCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        CleanupRules, Config, ConfigParseError, ConfigPaths, LauncherDefinition, ManagedRepo,
-        TestCommand,
-    };
+    use super::{Config, ConfigParseError, ConfigPaths, ManagedRepo, TestCommand};
     use proptest::prelude::*;
     use std::path::Path;
 
@@ -158,21 +120,13 @@ mod tests {
     }
 
     #[test]
-    fn config_tracks_repos_launchers_cleanup_and_tests() {
+    fn config_tracks_repos_and_tests() {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
-            launchers: vec![LauncherDefinition::new("codex", "codex")],
-            cleanup: CleanupRules {
-                require_clean_worktree: true,
-                require_merged_branch: true,
-                require_no_unpushed_commits: true,
-            },
             test_commands: vec![TestCommand::new("web", "cargo test")],
         };
 
         assert_eq!(config.repos[0].name, "web");
-        assert_eq!(config.launchers[0].name, "codex");
-        assert!(config.cleanup.require_clean_worktree);
         assert_eq!(config.test_commands[0].command, "cargo test");
     }
 
@@ -182,8 +136,6 @@ mod tests {
             repo_name in "\\PC*",
             repo_path in "\\PC*",
             default_branch in "\\PC*",
-            launcher_name in "\\PC*",
-            launcher_command in "\\PC*",
             test_repo in "\\PC*",
             test_command in "\\PC*",
         ) {
@@ -191,10 +143,6 @@ mod tests {
             prop_assert_eq!(repo.name, repo_name);
             prop_assert_eq!(repo.path, Path::new(&repo_path));
             prop_assert_eq!(repo.default_branch, default_branch);
-
-            let launcher = LauncherDefinition::new(&launcher_name, &launcher_command);
-            prop_assert_eq!(launcher.name, launcher_name);
-            prop_assert_eq!(launcher.command, launcher_command);
 
             let test_command_value = TestCommand::new(&test_repo, &test_command);
             prop_assert_eq!(test_command_value.repo, test_repo);
@@ -211,15 +159,6 @@ mod tests {
             path = "/Users/matt/projects/web"
             default_branch = "main"
 
-            [[launchers]]
-            name = "codex"
-            command = "codex"
-
-            [cleanup]
-            require_clean_worktree = true
-            require_merged_branch = true
-            require_no_unpushed_commits = true
-
             [[test_commands]]
             repo = "web"
             command = "cargo test"
@@ -228,8 +167,46 @@ mod tests {
         .unwrap();
 
         assert_eq!(config.repos[0].name, "web");
-        assert_eq!(config.launchers[0].command, "codex");
         assert_eq!(config.test_commands[0].repo, "web");
+    }
+
+    #[test]
+    fn config_rejects_undocumented_launcher_sections() {
+        let error = Config::from_toml_str(
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+
+            [[launchers]]
+            name = "codex"
+            command = "codex"
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `launchers`"));
+    }
+
+    #[test]
+    fn config_rejects_undocumented_cleanup_sections() {
+        let error = Config::from_toml_str(
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+
+            [cleanup]
+            require_clean_worktree = true
+            require_merged_branch = true
+            require_no_unpushed_commits = true
+            "#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `cleanup`"));
     }
 
     #[test]

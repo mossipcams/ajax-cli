@@ -255,12 +255,12 @@ mod tests {
         commands::{CommandContext, OpenMode},
         config::{Config, ManagedRepo},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
-            RecommendedAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, RecommendedAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn sample_context() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -551,6 +551,21 @@ mod tests {
         }
     }
 
+    fn ajax_binary_path() -> PathBuf {
+        if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax") {
+            return binary.into();
+        }
+
+        let current_exe = std::env::current_exe().unwrap();
+        let deps_dir = current_exe
+            .parent()
+            .expect("test binary should live under target debug deps");
+        let debug_dir = deps_dir
+            .parent()
+            .expect("test binary should live under target debug deps");
+        debug_dir.join(if cfg!(windows) { "ajax.exe" } else { "ajax" })
+    }
+
     #[test]
     fn cli_error_display_omits_internal_enum_wrapping() {
         let error = CliError::CommandFailed("task title is required; pass --title".to_string());
@@ -561,11 +576,18 @@ mod tests {
 
     #[test]
     fn binary_prints_cli_errors_with_display_formatting() {
-        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
+        let directory =
+            std::env::temp_dir().join(format!("ajax-cli-empty-context-{}", std::process::id()));
+        let output = std::process::Command::new(ajax_binary_path())
+            .env("AJAX_CONFIG", directory.join("missing-config.toml"))
+            .env("AJAX_STATE", directory.join("missing-state.db"))
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
 
-        assert!(main_source.contains("eprintln!(\"{error}\")"));
-        assert!(!main_source.contains("eprintln!(\"{error:?}\")"));
+        assert!(!output.status.success());
+        assert!(stderr.contains("command is required; pass --help"));
+        assert!(!stderr.contains("CommandFailed"));
     }
 
     fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::AttentionItem {
@@ -1004,6 +1026,266 @@ mod tests {
     }
 
     #[test]
+    fn live_refresh_ignores_nonzero_session_listing_without_mutation() {
+        let mut context = sample_context();
+        let mut runner = QueuedRunner::new(vec![output(1, "ajax-web-fix-login\n")]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(!changed);
+        assert!(task.tmux_status.is_none());
+        assert!(task.worktrunk_status.is_none());
+        assert_eq!(runner.commands, vec![tmux_live_commands()[0].clone()]);
+    }
+
+    #[test]
+    fn live_refresh_nonzero_window_listing_stops_before_pane_capture() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(1, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+        ]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(changed);
+        let expected_commands = tmux_live_commands();
+        assert_eq!(runner.commands, expected_commands[..2]);
+        assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert_eq!(
+            task.live_status
+                .as_ref()
+                .map(|status| status.summary.as_str()),
+            Some("worktrunk missing")
+        );
+    }
+
+    #[test]
+    fn live_refresh_nonzero_pane_capture_reports_command_failure() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(1, "codex is working\n"),
+        ]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(changed);
+        assert_eq!(runner.commands, tmux_live_commands());
+        assert_eq!(
+            task.live_status
+                .as_ref()
+                .map(|status| status.summary.as_str()),
+            Some("live refresh failed")
+        );
+    }
+
+    #[test]
+    fn live_refresh_updates_changed_tmux_status_before_window_failure() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "stale-session".to_string(),
+        });
+        let mut runner = QueuedRunner::new(vec![output(0, "ajax-web-fix-login\n"), output(1, "")]);
+
+        crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(
+            task.tmux_status
+                .as_ref()
+                .map(|status| status.session_name.as_str()),
+            Some("ajax-web-fix-login")
+        );
+        assert_eq!(runner.commands, tmux_live_commands()[..2]);
+    }
+
+    #[test]
+    fn live_refresh_clears_stale_tmux_missing_flag_when_status_matches() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.agent_status = AgentRuntimeStatus::Unknown;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: true,
+        });
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::Unknown,
+            "pane is empty",
+        ));
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, ""),
+        ]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(changed);
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
+        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert_eq!(runner.commands, tmux_live_commands());
+    }
+
+    #[test]
+    fn live_refresh_updates_changed_worktrunk_status_before_pane_failure() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/wrong".into(),
+            points_at_expected_path: false,
+        });
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(1, ""),
+        ]);
+
+        crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(
+            task.worktrunk_status
+                .as_ref()
+                .map(|status| status.current_path.as_path()),
+            Some(Path::new("/tmp/worktrees/web-fix-login"))
+        );
+        assert!(task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| status.points_at_expected_path));
+        assert_eq!(runner.commands, tmux_live_commands());
+    }
+
+    #[test]
+    fn live_refresh_clears_stale_worktrunk_missing_flag_when_status_matches() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.agent_status = AgentRuntimeStatus::Unknown;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::WorktrunkMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: true,
+        });
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::Unknown,
+            "pane is empty",
+        ));
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(0, ""),
+        ]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(changed);
+        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert_eq!(runner.commands, tmux_live_commands());
+    }
+
+    #[test]
+    fn live_cockpit_watch_accumulates_state_change_after_unchanged_frame() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let mut outputs = vec![output(0, "")];
+        outputs.extend(tmux_live_outputs("Do you want to proceed? y/n\n"));
+        let mut runner = QueuedRunner::new(outputs);
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "cockpit",
+                "--watch",
+                "--iterations",
+                "2",
+                "--interval-ms",
+                "0",
+            ])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        let rendered = crate::cockpit_backend::render_live_cockpit_command(
+            &mut context,
+            subcommand,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert!(rendered.state_changed);
+        assert_eq!(rendered.output.matches("Ajax Cockpit").count(), 2);
+        assert_eq!(runner.commands.len(), 4);
+    }
+
+    #[test]
     fn supervise_command_runs_codex_json_adapter_and_renders_events() {
         let fake_codex =
             std::env::temp_dir().join(format!("ajax-cli-fake-codex-{}", std::process::id()));
@@ -1352,16 +1634,16 @@ mod tests {
         )
         .unwrap();
 
-        for command_mode in [
-            "CommandMode::Capture",
-            "CommandMode::InheritStdio",
-            "CommandMode::Spawn",
-        ] {
+        for command_mode in ["CommandMode::Capture", "CommandMode::InheritStdio"] {
             assert!(
                 architecture.contains(command_mode),
                 "architecture.md should name the current {command_mode} execution path"
             );
         }
+        assert!(
+            !architecture.contains("CommandMode::Spawn"),
+            "architecture.md should not document unused detached spawn semantics"
+        );
 
         assert!(architecture.contains("current `ajax-cli` split"));
         assert!(!architecture.contains("Consider Ratatui"));
@@ -1840,7 +2122,7 @@ mod tests {
         let output = run_with_context(["ajax", "check", "web/fix-login"], &context).unwrap();
 
         assert!(output.contains("check task: web/fix-login"));
-        assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc cargo test)"));
+        assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
     }
 
     #[test]

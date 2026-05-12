@@ -1,38 +1,44 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod actions;
+mod cockpit_state;
+mod input;
+mod layout;
 mod navigation;
 mod rendering;
+mod runtime;
 
 use ajax_core::{
-    models::{AttentionItem, LiveStatusKind, RecommendedAction, TaskId},
+    models::{AttentionItem, LiveStatusKind},
     output::{
         CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
     },
 };
-use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
-        MouseEventKind,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+pub use cockpit_state::App;
+#[cfg(test)]
+pub(crate) use cockpit_state::FLASH_TICKS;
+use cockpit_state::{is_waiting_for_input, task_summary_repo, AppView, SelectableKind};
+#[cfg(test)]
+use input::{
+    handle_action_result, handle_back_key, handle_cockpit_event, is_back_key_event,
+    is_help_key_event, is_input_delete_key, EventLoopAction,
 };
 use ratatui::{
-    backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
-    Frame, Terminal,
+    Frame,
 };
+#[cfg(test)]
+use rendering::render_ui;
 use rendering::StatusBucket;
-use std::{
-    collections::HashSet,
-    io,
-    ops::Range,
-    time::{Duration, Instant},
+pub use runtime::{
+    run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
 };
+#[cfg(test)]
+use runtime::{terminal_entry_commands, terminal_exit_commands, TerminalModeCommand};
+use std::{io, ops::Range};
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
@@ -114,200 +120,9 @@ pub trait CockpitEventHandler {
     }
 }
 
-// ── Selectable items ──────────────────────────────────────────────────────────
-
-#[derive(Clone)]
-enum SelectableKind {
-    Project(RepoSummary),
-    /// Synthetic "+ new task" row, only shown inside a project.
-    NewTask {
-        repo: String,
-    },
-    Inbox(AttentionItem),
-    Task(TaskSummary),
-    /// Action row inside the per-task action menu.
-    TaskAction {
-        task: TaskSummary,
-        recommended_action: String,
-    },
-}
-
-#[derive(Clone)]
-enum AppView {
-    Projects,
-    Project {
-        repo: String,
-    },
-    /// Per-task action menu reached by selecting a task and pressing Enter.
-    TaskActions {
-        task: TaskSummary,
-        parent: Box<AppView>,
-    },
-    NewTaskInput {
-        repo: String,
-        title: String,
-    },
-    Help {
-        previous: Box<AppView>,
-    },
-}
-
-impl SelectableKind {
-    /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
-    /// pass through unchanged; task rows get the default open action.
-    /// The CLI dispatcher decides whether an action is navigational or should
-    /// point the operator at an explicit executable command.
-    fn as_action(&self) -> AttentionItem {
-        match self {
-            SelectableKind::Project(repo) => AttentionItem {
-                task_id: TaskId::new(format!("__project__{}", repo.name)),
-                task_handle: repo.name.clone(),
-                reason: "project".to_string(),
-                priority: 0,
-                recommended_action: RecommendedAction::SelectProject.as_str().to_string(),
-            },
-            SelectableKind::NewTask { repo } => AttentionItem {
-                task_id: TaskId::new(format!("__new_task__{repo}")),
-                task_handle: repo.clone(),
-                reason: "create a new task".to_string(),
-                priority: 0,
-                recommended_action: RecommendedAction::NewTask.as_str().to_string(),
-            },
-            SelectableKind::Inbox(item) => item.clone(),
-            SelectableKind::Task(t) => AttentionItem {
-                task_id: TaskId::new(t.id.clone()),
-                task_handle: t.qualified_handle.clone(),
-                reason: t.lifecycle_status.clone(),
-                priority: 50,
-                recommended_action: RecommendedAction::OpenTask.as_str().to_string(),
-            },
-            SelectableKind::TaskAction {
-                task,
-                recommended_action,
-            } => AttentionItem {
-                task_id: TaskId::new(task.id.clone()),
-                task_handle: task.qualified_handle.clone(),
-                reason: task.lifecycle_status.clone(),
-                priority: 50,
-                recommended_action: recommended_action.clone(),
-            },
-        }
-    }
-}
-
-fn build_selectables(
-    view: &AppView,
-    repos: &ReposResponse,
-    inbox: &InboxResponse,
-    tasks: &TasksResponse,
-) -> Vec<SelectableKind> {
-    let mut out = Vec::new();
-    match view {
-        AppView::Projects => {
-            let inbox_task_handles = waiting_input_task_handles(inbox.items.iter());
-            out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
-            out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
-            out.extend(
-                tasks
-                    .tasks
-                    .iter()
-                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
-                    .cloned()
-                    .map(SelectableKind::Task),
-            );
-        }
-        AppView::Project { repo } => {
-            let repo_inbox_items = inbox
-                .items
-                .iter()
-                .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()));
-            let inbox_task_handles = waiting_input_task_handles(repo_inbox_items.clone());
-
-            out.push(SelectableKind::NewTask { repo: repo.clone() });
-            out.extend(repo_inbox_items.cloned().map(SelectableKind::Inbox));
-            out.extend(
-                tasks
-                    .tasks
-                    .iter()
-                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
-                    .cloned()
-                    .map(SelectableKind::Task),
-            );
-        }
-        AppView::TaskActions { task, .. } => {
-            out.extend(
-                task.actions
-                    .iter()
-                    .map(|action| SelectableKind::TaskAction {
-                        task: task.clone(),
-                        recommended_action: action.clone(),
-                    }),
-            );
-        }
-        AppView::NewTaskInput { .. } => {}
-        AppView::Help { .. } => {}
-    }
-    out
-}
-
-fn waiting_input_task_handles<'a>(
-    items: impl Iterator<Item = &'a AttentionItem>,
-) -> HashSet<&'a str> {
-    items
-        .filter(|item| is_waiting_for_input(&item.reason))
-        .map(|item| item.task_handle.as_str())
-        .collect()
-}
-
-// ── App state ─────────────────────────────────────────────────────────────────
-
-pub struct App {
-    repos: ReposResponse,
-    tasks: TasksResponse,
-    inbox: InboxResponse,
-    view: AppView,
-    selectables: Vec<SelectableKind>,
-    selected: usize,
-    viewport_scroll: usize,
-    flash: Option<(String, u8)>,
-    pending_confirmation: Option<AttentionItem>,
-}
-
-const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
+// ── Layout-coupled state helpers ──────────────────────────────────────────────
 
 impl App {
-    pub fn new(repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) -> Self {
-        let view = AppView::Projects;
-        let selectables = build_selectables(&view, &repos, &inbox, &tasks);
-        Self {
-            repos,
-            tasks,
-            inbox,
-            view,
-            selectables,
-            selected: 0,
-            viewport_scroll: 0,
-            flash: None,
-            pending_confirmation: None,
-        }
-    }
-
-    pub fn select_prev(&mut self) {
-        if self.selectables.is_empty() {
-            return;
-        }
-        self.selected = self.selected.saturating_sub(1);
-    }
-
-    pub fn select_next(&mut self) {
-        if self.selectables.is_empty() {
-            return;
-        }
-        let max = self.selectables.len() - 1;
-        self.selected = (self.selected + 1).min(max);
-    }
-
     /// Select whichever selectable occupies the given absolute feed row.
     /// No-op if the row falls on a section header / placeholder.
     pub fn select_at_feed_row(&mut self, feed_row: usize) {
@@ -318,214 +133,6 @@ impl App {
             .find(|(_, r)| r.contains(&feed_row))
         {
             self.selected = idx;
-        }
-    }
-
-    /// The action that Enter would dispatch right now, or None if nothing is selectable.
-    pub fn selected_action(&self) -> Option<AttentionItem> {
-        self.selectables.get(self.selected).map(|s| s.as_action())
-    }
-
-    /// Return to the cockpit's main project list. Returns false at the top
-    /// level so callers can keep the TUI alive without treating back as quit.
-    pub fn go_home(&mut self) -> bool {
-        if matches!(self.view, AppView::Projects) {
-            return false;
-        }
-
-        self.view = AppView::Projects;
-        self.selected = 0;
-        self.viewport_scroll = 0;
-        self.pending_confirmation = None;
-        self.rebuild_selectables();
-        true
-    }
-
-    /// Erase editable input, then return to the cockpit's main project list.
-    /// Returns false at the top level so back never exits the TUI.
-    pub fn go_back(&mut self) -> bool {
-        if let AppView::Help { previous } = &self.view {
-            self.view = *previous.clone();
-            self.selected = 0;
-            self.viewport_scroll = 0;
-            self.pending_confirmation = None;
-            self.rebuild_selectables();
-            return true;
-        }
-
-        if let AppView::TaskActions { parent, .. } = &self.view {
-            self.view = *parent.clone();
-            self.selected = 0;
-            self.viewport_scroll = 0;
-            self.pending_confirmation = None;
-            self.rebuild_selectables();
-            return true;
-        }
-
-        if let AppView::NewTaskInput { title, .. } = &mut self.view {
-            if !title.is_empty() {
-                title.pop();
-                return true;
-            }
-        }
-
-        self.go_home()
-    }
-
-    pub fn open_help(&mut self) {
-        if matches!(self.view, AppView::Help { .. }) {
-            return;
-        }
-
-        self.view = AppView::Help {
-            previous: Box::new(self.view.clone()),
-        };
-        self.selected = 0;
-        self.viewport_scroll = 0;
-        self.flash = None;
-        self.pending_confirmation = None;
-        self.rebuild_selectables();
-    }
-
-    pub fn activate_selected(&mut self) -> Option<AttentionItem> {
-        match self.selectables.get(self.selected).cloned()? {
-            SelectableKind::Project(repo) => {
-                self.view = AppView::Project { repo: repo.name };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.pending_confirmation = None;
-                self.rebuild_selectables();
-                None
-            }
-            SelectableKind::NewTask { repo } => {
-                self.view = AppView::NewTaskInput {
-                    repo,
-                    title: String::new(),
-                };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.flash = None;
-                self.pending_confirmation = None;
-                self.rebuild_selectables();
-                None
-            }
-            SelectableKind::Task(task) => {
-                self.view = AppView::TaskActions {
-                    task,
-                    parent: Box::new(self.view.clone()),
-                };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.flash = None;
-                self.pending_confirmation = None;
-                self.rebuild_selectables();
-                None
-            }
-            SelectableKind::Inbox(item) => {
-                if let Some(task) = self.find_task_for_handle(&item.task_handle) {
-                    let preselected = task
-                        .actions
-                        .iter()
-                        .position(|action| action == &item.recommended_action)
-                        .unwrap_or(0);
-                    self.view = AppView::TaskActions {
-                        task,
-                        parent: Box::new(self.view.clone()),
-                    };
-                    self.selected = preselected;
-                    self.viewport_scroll = 0;
-                    self.flash = None;
-                    self.pending_confirmation = None;
-                    self.rebuild_selectables();
-                    None
-                } else {
-                    Some(SelectableKind::Inbox(item).as_action())
-                }
-            }
-            selectable => Some(selectable.as_action()),
-        }
-    }
-
-    fn find_task_for_handle(&self, handle: &str) -> Option<TaskSummary> {
-        self.tasks
-            .tasks
-            .iter()
-            .find(|task| task.qualified_handle == handle)
-            .cloned()
-    }
-
-    pub fn push_input_char(&mut self, character: char) {
-        if let AppView::NewTaskInput { title, .. } = &mut self.view {
-            title.push(character);
-        }
-    }
-
-    pub fn submit_input(&mut self) -> Option<PendingAction> {
-        let AppView::NewTaskInput { repo, title } = &self.view else {
-            return None;
-        };
-        let title = title.trim();
-        if title.is_empty() {
-            self.flash("task name required".to_string());
-            return None;
-        }
-
-        Some(PendingAction {
-            task_handle: repo.clone(),
-            recommended_action: RecommendedAction::NewTask.as_str().to_string(),
-            task_title: Some(title.to_string()),
-        })
-    }
-
-    pub fn apply_refresh(&mut self, snapshot: CockpitResponse) {
-        self.reload(snapshot.repos, snapshot.tasks, snapshot.inbox);
-    }
-
-    fn is_collecting_input(&self) -> bool {
-        matches!(self.view, AppView::NewTaskInput { .. })
-    }
-
-    fn reload(&mut self, repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) {
-        let missing_task_after_refresh = match &self.view {
-            AppView::TaskActions { task, .. } => !tasks
-                .tasks
-                .iter()
-                .any(|candidate| candidate.qualified_handle == task.qualified_handle),
-            _ => false,
-        };
-        self.repos = repos;
-        self.tasks = tasks;
-        self.inbox = inbox;
-        self.pending_confirmation = None;
-        if missing_task_after_refresh {
-            self.view = AppView::Projects;
-            self.selected = 0;
-            self.viewport_scroll = 0;
-        }
-        self.rebuild_selectables();
-        let max = self.selectables.len().saturating_sub(1);
-        self.selected = self.selected.min(max);
-    }
-
-    fn rebuild_selectables(&mut self) {
-        self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.tasks);
-    }
-
-    fn flash(&mut self, msg: String) {
-        self.flash = Some((msg, FLASH_TICKS));
-    }
-
-    fn has_pending_confirmation(&self, item: &AttentionItem) -> bool {
-        self.pending_confirmation.as_ref() == Some(item)
-    }
-
-    fn tick_flash(&mut self) {
-        if let Some((_, ticks)) = &mut self.flash {
-            if *ticks == 0 {
-                self.flash = None;
-            } else {
-                *ticks -= 1;
-            }
         }
     }
 
@@ -551,341 +158,7 @@ impl App {
 /// Compute the row range each selectable occupies in the rendered feed,
 /// in the same order as `app.selectables`. Must stay in sync with `build_feed`.
 fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
-    selectable_feed_rows(app)
-        .into_iter()
-        .map(|row| row..row + 1)
-        .collect()
-}
-
-// ── Entry point ───────────────────────────────────────────────────────────────
-
-pub fn run_interactive(
-    repos: ReposResponse,
-    tasks: TasksResponse,
-    inbox: InboxResponse,
-    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
-) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash(repos, tasks, inbox, None, on_action)
-}
-
-pub fn run_interactive_with_flash(
-    repos: ReposResponse,
-    tasks: TasksResponse,
-    inbox: InboxResponse,
-    initial_flash: Option<String>,
-    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
-) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash_and_refresh(
-        repos,
-        tasks,
-        inbox,
-        initial_flash,
-        Duration::from_secs(1),
-        ActionOnly { on_action },
-    )
-}
-
-pub fn run_interactive_with_flash_and_refresh(
-    repos: ReposResponse,
-    tasks: TasksResponse,
-    inbox: InboxResponse,
-    initial_flash: Option<String>,
-    refresh_interval: Duration,
-    handler: impl CockpitEventHandler,
-) -> io::Result<Option<PendingAction>> {
-    let mut stdout = io::stdout();
-    let mut terminal_mode = TerminalModeGuard::enter(&mut stdout)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    let mut app = App::new(repos, tasks, inbox);
-    if let Some(message) = initial_flash {
-        app.flash(message);
-    }
-    let result = run_event_loop(&mut terminal, &mut app, handler, refresh_interval);
-
-    terminal_mode.leave(terminal.backend_mut())?;
-    terminal.show_cursor()?;
-
-    result
-}
-
-struct ActionOnly<F> {
-    on_action: F,
-}
-
-impl<F> CockpitEventHandler for ActionOnly<F>
-where
-    F: FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
-{
-    fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome> {
-        (self.on_action)(item)
-    }
-}
-
-struct TerminalModeGuard {
-    active: bool,
-}
-
-impl TerminalModeGuard {
-    fn enter(output: &mut impl io::Write) -> io::Result<Self> {
-        enable_raw_mode()?;
-        if let Err(error) = enter_terminal_mode(output) {
-            let _ = disable_raw_mode();
-            return Err(error);
-        }
-
-        Ok(Self { active: true })
-    }
-
-    fn leave(&mut self, output: &mut impl io::Write) -> io::Result<()> {
-        let leave_result = leave_terminal_mode(output);
-        let raw_result = disable_raw_mode();
-        self.active = false;
-        leave_result?;
-        raw_result
-    }
-}
-
-impl Drop for TerminalModeGuard {
-    fn drop(&mut self) {
-        if self.active {
-            let _ = disable_raw_mode();
-            let mut stdout = io::stdout();
-            let _ = leave_terminal_mode(&mut stdout);
-        }
-    }
-}
-
-fn enter_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
-    execute!(output, EnterAlternateScreen, EnableMouseCapture)
-}
-
-fn leave_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
-    execute!(output, LeaveAlternateScreen, DisableMouseCapture)
-}
-
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TerminalModeCommand {
-    EnterAlternateScreen,
-    EnableMouseCapture,
-    LeaveAlternateScreen,
-    DisableMouseCapture,
-}
-
-#[cfg(test)]
-fn terminal_entry_commands() -> &'static [TerminalModeCommand] {
-    &[
-        TerminalModeCommand::EnterAlternateScreen,
-        TerminalModeCommand::EnableMouseCapture,
-    ]
-}
-
-#[cfg(test)]
-fn terminal_exit_commands() -> &'static [TerminalModeCommand] {
-    &[
-        TerminalModeCommand::LeaveAlternateScreen,
-        TerminalModeCommand::DisableMouseCapture,
-    ]
-}
-
-// ── Event loop ────────────────────────────────────────────────────────────────
-
-enum EventLoopAction {
-    Continue,
-    Quit,
-    Pending(PendingAction),
-}
-
-fn run_event_loop<B: Backend>(
-    terminal: &mut Terminal<B>,
-    app: &mut App,
-    mut handler: impl CockpitEventHandler,
-    refresh_interval: Duration,
-) -> io::Result<Option<PendingAction>> {
-    let mut last_refresh = Instant::now();
-    loop {
-        let height = terminal
-            .size()
-            .map_err(|_| io::Error::other("terminal backend size error"))?
-            .height as usize;
-        let feed_height = height.saturating_sub(2);
-
-        app.tick_flash();
-        if should_refresh(&mut last_refresh, refresh_interval) {
-            handle_refresh_result(app, handler.on_refresh())?;
-        }
-        app.ensure_visible(feed_height);
-        terminal
-            .draw(|f| render_ui(f, app))
-            .map_err(|_| io::Error::other("terminal backend draw error"))?;
-
-        if event::poll(Duration::from_millis(250))? {
-            match handle_cockpit_event(app, event::read()?, height, &mut handler)? {
-                EventLoopAction::Continue => {}
-                EventLoopAction::Quit => return Ok(None),
-                EventLoopAction::Pending(pending) => return Ok(Some(pending)),
-            }
-        }
-    }
-}
-
-fn handle_cockpit_event<H: CockpitEventHandler + ?Sized>(
-    app: &mut App,
-    event: Event,
-    height: usize,
-    handler: &mut H,
-) -> io::Result<EventLoopAction> {
-    match event {
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            handle_key_event(app, key.code, key.modifiers, handler)
-        }
-        Event::Mouse(mouse) => {
-            // Layout: row 0 = header, last row = status bar, feed in between.
-            let feed_top: usize = 1;
-            let feed_bottom = height.saturating_sub(1);
-            match mouse.kind {
-                MouseEventKind::ScrollUp => app.select_prev(),
-                MouseEventKind::ScrollDown => app.select_next(),
-                MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
-                    let mouse_row = mouse.row as usize;
-                    if mouse_row >= feed_top && mouse_row < feed_bottom {
-                        let feed_row = mouse_row - feed_top + app.viewport_scroll;
-                        app.select_at_feed_row(feed_row);
-                    }
-                }
-                _ => {}
-            }
-            Ok(EventLoopAction::Continue)
-        }
-        _ => Ok(EventLoopAction::Continue),
-    }
-}
-
-fn handle_key_event<H: CockpitEventHandler + ?Sized>(
-    app: &mut App,
-    code: KeyCode,
-    modifiers: KeyModifiers,
-    handler: &mut H,
-) -> io::Result<EventLoopAction> {
-    match code {
-        code if is_help_key_event(code, modifiers) => {
-            app.open_help();
-        }
-        KeyCode::Enter if app.is_collecting_input() => {
-            if let Some(pending) = app.submit_input() {
-                return Ok(EventLoopAction::Pending(pending));
-            }
-        }
-        code if app.is_collecting_input() && is_input_delete_key(code, modifiers) => {
-            handle_back_key(app);
-        }
-        KeyCode::Char(character) if app.is_collecting_input() => {
-            app.push_input_char(character);
-        }
-        KeyCode::Char('q') => return Ok(EventLoopAction::Quit),
-        code if is_back_key_event(code, modifiers) => {
-            handle_back_key(app);
-        }
-        KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
-        KeyCode::Down | KeyCode::Char('j') => app.select_next(),
-        KeyCode::Enter => {
-            if let Some(item) = app.activate_selected() {
-                let confirmed = app.has_pending_confirmation(&item);
-                let result = if confirmed {
-                    app.pending_confirmation = None;
-                    handler.on_confirmed_action(&item)
-                } else {
-                    let result = handler.on_action(&item);
-                    if let Ok(ActionOutcome::Confirm(_)) = &result {
-                        app.pending_confirmation = Some(item.clone());
-                    } else {
-                        app.pending_confirmation = None;
-                    }
-                    result
-                };
-                if let Some(pending) = handle_action_result(app, result)? {
-                    return Ok(EventLoopAction::Pending(pending));
-                }
-            }
-        }
-        _ => {}
-    }
-
-    Ok(EventLoopAction::Continue)
-}
-
-fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> bool {
-    if refresh_interval.is_zero() || last_refresh.elapsed() < refresh_interval {
-        return false;
-    }
-
-    *last_refresh = Instant::now();
-    true
-}
-
-fn handle_refresh_result(
-    app: &mut App,
-    result: io::Result<Option<CockpitResponse>>,
-) -> io::Result<()> {
-    match result {
-        Ok(Some(snapshot)) => {
-            app.apply_refresh(snapshot);
-            Ok(())
-        }
-        Ok(None) => Ok(()),
-        Err(error) => {
-            app.flash(error.to_string());
-            Ok(())
-        }
-    }
-}
-
-fn handle_action_result(
-    app: &mut App,
-    result: io::Result<ActionOutcome>,
-) -> io::Result<Option<PendingAction>> {
-    match result {
-        Ok(ActionOutcome::Refresh {
-            repos,
-            tasks,
-            inbox,
-        }) => {
-            app.reload(repos, tasks, inbox);
-            Ok(None)
-        }
-        Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
-        Ok(ActionOutcome::Confirm(message)) => {
-            app.flash(message);
-            Ok(None)
-        }
-        Ok(ActionOutcome::Message(message)) => {
-            app.flash(message);
-            Ok(None)
-        }
-        Err(error) => {
-            app.flash(error.to_string());
-            Ok(None)
-        }
-    }
-}
-
-fn handle_back_key(app: &mut App) -> bool {
-    app.go_back();
-    false
-}
-
-fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_back_key_event(code, modifiers)
-}
-
-fn is_help_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_help_key_event(code, modifiers)
-}
-
-fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_input_delete_key(code, modifiers)
+    layout::selectable_row_ranges(selectable_feed_rows(app))
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -969,19 +242,6 @@ fn task_bucket(task: &TaskSummary) -> StatusBucket {
         }
         (bucket, _) => bucket,
     }
-}
-
-fn render_ui(frame: &mut Frame, app: &App) {
-    let chunks = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Min(0),
-        Constraint::Length(1),
-    ])
-    .split(frame.area());
-
-    render_header(frame, app, chunks[0]);
-    render_feed(frame, app, chunks[1]);
-    render_status_bar(frame, app, chunks[2]);
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -1199,14 +459,6 @@ fn blank_row() -> ListItem<'static> {
     ListItem::new(Line::from(""))
 }
 
-fn task_handle_repo(handle: &str) -> Option<&str> {
-    handle.split_once('/').map(|(repo, _)| repo)
-}
-
-fn task_summary_repo(task: &TaskSummary) -> Option<&str> {
-    task_handle_repo(&task.qualified_handle)
-}
-
 fn group_of(kind: &SelectableKind) -> &'static str {
     match kind {
         SelectableKind::NewTask { .. } => "create",
@@ -1236,10 +488,6 @@ fn task_status_label(task: &TaskSummary) -> String {
         .as_ref()
         .map(|status| status.summary.clone())
         .unwrap_or_else(|| task.lifecycle_status.clone())
-}
-
-fn is_waiting_for_input(status: &str) -> bool {
-    status == "WaitingForInput" || status.eq_ignore_ascii_case("waiting for input")
 }
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
@@ -1506,11 +754,13 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, bucket_color, handle_cockpit_event, inbox_item_accent, primary_accent,
+        action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, danger_accent,
+        handle_cockpit_event, inbox_glyph, inbox_item_accent, lifecycle_bucket, muted_text,
+        primary_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
         render_cockpit, render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout,
-        task_bucket, task_glyph, task_handle_color, ActionOutcome, App, AppView,
-        CockpitEventHandler, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
-        TerminalModeCommand, FLASH_TICKS,
+        selected_highlight, show_brand, subtle_text, task_bucket, task_glyph, task_handle_color,
+        ActionOutcome, App, AppView, CockpitEventHandler, EventLoopAction, PendingAction,
+        SelectableKind, StatusBucket, TerminalModeCommand, FLASH_TICKS,
     };
     use ajax_core::{
         models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
@@ -1523,7 +773,11 @@ mod tests {
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
         MouseEvent, MouseEventKind,
     };
-    use ratatui::{backend::TestBackend, style::Color, Terminal};
+    use ratatui::{
+        backend::TestBackend,
+        style::{Color, Modifier, Style},
+        Terminal,
+    };
     use rstest::rstest;
 
     fn sample_repos() -> ReposResponse {
@@ -1598,6 +852,202 @@ mod tests {
     fn cockpit_palette_maps_accents_to_status_buckets() {
         assert_eq!(primary_accent(), bucket_color(StatusBucket::Active));
         assert_eq!(secondary_accent(), bucket_color(StatusBucket::NeedsYou));
+        assert_eq!(danger_accent(), bucket_color(StatusBucket::Stuck));
+        assert_eq!(muted_text(), bucket_color(StatusBucket::Idle));
+        assert_eq!(subtle_text(), Color::Indexed(240));
+    }
+
+    #[rstest]
+    #[case(StatusBucket::Active, "▸")]
+    #[case(StatusBucket::NeedsYou, "?")]
+    #[case(StatusBucket::Stuck, "!")]
+    #[case(StatusBucket::Done, "✓")]
+    #[case(StatusBucket::Idle, "·")]
+    #[case(StatusBucket::Missing, "×")]
+    fn status_buckets_have_stable_glyphs(#[case] bucket: StatusBucket, #[case] glyph: &str) {
+        assert_eq!(bucket_glyph(bucket), glyph);
+        assert_eq!(crate::rendering::bucket_glyph(bucket), glyph);
+    }
+
+    #[rstest]
+    #[case("Error", StatusBucket::Stuck)]
+    #[case("Orphaned", StatusBucket::Stuck)]
+    #[case("Reviewable", StatusBucket::NeedsYou)]
+    #[case("Mergeable", StatusBucket::NeedsYou)]
+    #[case("Waiting", StatusBucket::NeedsYou)]
+    #[case("Merged", StatusBucket::Done)]
+    #[case("Cleanable", StatusBucket::Done)]
+    #[case("Active", StatusBucket::Active)]
+    #[case("Provisioning", StatusBucket::Active)]
+    #[case("Removed", StatusBucket::Idle)]
+    fn lifecycle_labels_map_to_status_buckets(
+        #[case] lifecycle: &str,
+        #[case] bucket: StatusBucket,
+    ) {
+        assert_eq!(lifecycle_bucket(lifecycle), bucket);
+    }
+
+    #[test]
+    fn row_chrome_helpers_preserve_visible_glyphs_and_styles() {
+        let active_repo = RepoSummary {
+            name: "web".to_string(),
+            path: "/repo".to_string(),
+            active_tasks: 1,
+            attention_items: 0,
+            reviewable_tasks: 0,
+            cleanable_tasks: 0,
+        };
+        let idle_repo = RepoSummary {
+            active_tasks: 0,
+            ..active_repo.clone()
+        };
+        let urgent_item = AttentionItem {
+            task_id: TaskId::new("task-1"),
+            task_handle: "web/fix".to_string(),
+            reason: "waiting for input".to_string(),
+            priority: 10,
+            recommended_action: "open task".to_string(),
+        };
+
+        assert_eq!(project_glyph(&active_repo).content.as_ref(), "*");
+        assert_eq!(project_glyph(&idle_repo).content.as_ref(), ".");
+        assert_eq!(project_name_color(&active_repo), primary_accent());
+        assert_eq!(project_name_color(&idle_repo), muted_text());
+        assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
+        assert_eq!(inbox_item_accent(&urgent_item), secondary_accent());
+        assert_eq!(action_glyph("help").content.as_ref(), "?");
+        assert_eq!(
+            action_glyph("help").style,
+            Style::default()
+                .fg(Color::LightYellow)
+                .add_modifier(Modifier::BOLD)
+        );
+        assert_eq!(action_glyph("unknown").content.as_ref(), ".");
+        assert_eq!(
+            action_label_style("help"),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD)
+        );
+        assert_eq!(
+            action_label_style("unknown"),
+            Style::default().fg(muted_text())
+        );
+    }
+
+    #[rstest]
+    #[case(0, danger_accent())]
+    #[case(19, danger_accent())]
+    #[case(20, secondary_accent())]
+    #[case(49, secondary_accent())]
+    #[case(50, primary_accent())]
+    fn priority_boundaries_map_to_expected_accents(#[case] priority: u32, #[case] color: Color) {
+        assert_eq!(priority_accent(priority), color);
+    }
+
+    #[test]
+    fn project_subtitle_includes_only_nonzero_counts() {
+        let idle = RepoSummary {
+            name: "web".to_string(),
+            path: "/repo".to_string(),
+            active_tasks: 0,
+            attention_items: 0,
+            reviewable_tasks: 0,
+            cleanable_tasks: 0,
+        };
+        let busy = RepoSummary {
+            active_tasks: 1,
+            attention_items: 2,
+            reviewable_tasks: 3,
+            cleanable_tasks: 4,
+            ..idle.clone()
+        };
+
+        assert_eq!(project_subtitle(&idle), "idle");
+        assert_eq!(
+            project_subtitle(&busy),
+            "1 active - 2 attention - 3 review - 4 clean"
+        );
+    }
+
+    #[rstest]
+    #[case(AppView::Projects, true)]
+    #[case(AppView::Project { repo: "web".to_string() }, true)]
+    #[case(
+        AppView::TaskActions {
+            task: TaskSummary {
+                id: "task-1".to_string(),
+                qualified_handle: "web/fix-login".to_string(),
+                title: "Fix login".to_string(),
+                lifecycle_status: "Active".to_string(),
+                needs_attention: false,
+                live_status: None,
+                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
+            },
+            parent: Box::new(AppView::Projects),
+        },
+        true
+    )]
+    #[case(
+        AppView::NewTaskInput {
+            repo: "web".to_string(),
+            title: String::new(),
+        },
+        false
+    )]
+    #[case(
+        AppView::Help {
+            previous: Box::new(AppView::Projects),
+        },
+        false
+    )]
+    fn brand_visibility_matches_primary_operator_views(
+        #[case] view: AppView,
+        #[case] expected: bool,
+    ) {
+        assert_eq!(show_brand(&view), expected);
+    }
+
+    #[test]
+    fn selected_rows_use_highlight_style() {
+        assert_eq!(
+            selected_highlight(),
+            Style::default()
+                .bg(Color::Indexed(237))
+                .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn top_level_status_bar_does_not_advertise_nested_back_action() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("q quit"));
+        assert!(!content.contains("esc/h back"));
+        assert!(!content.contains("esc/h erase/back"));
+    }
+
+    #[test]
+    fn scrolled_feed_highlights_selected_row_at_viewport_offset() {
+        let mut app = app_in_project_view_with_task_count(8);
+        let target = 5;
+        let target_feed_row = selectable_row_layout(&app)[target].start;
+        app.selected = target;
+        app.viewport_scroll = 2;
+        let selected_screen_row = 1 + target_feed_row - app.viewport_scroll;
+        let backend = TestBackend::new(80, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| render_ui(frame, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let selected_row_has_highlight = (0..buffer.area.width).any(|x| {
+            let cell = &buffer[(x, selected_screen_row as u16)];
+            cell.bg == Color::Indexed(237) && cell.modifier.contains(Modifier::BOLD)
+        });
+        assert!(selected_row_has_highlight);
     }
 
     #[test]
@@ -2563,6 +2013,18 @@ mod tests {
     }
 
     #[test]
+    fn runtime_module_exposes_terminal_mode_commands() {
+        assert_eq!(
+            crate::runtime::terminal_entry_commands(),
+            super::terminal_entry_commands()
+        );
+        assert_eq!(
+            crate::runtime::terminal_exit_commands(),
+            super::terminal_exit_commands()
+        );
+    }
+
+    #[test]
     fn nested_back_returns_to_parent_without_exit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
@@ -3037,6 +2499,25 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_state_module_exposes_state_transitions() {
+        let mut app =
+            crate::cockpit_state::App::new(sample_repos(), sample_tasks(), sample_inbox());
+
+        app.select_next();
+        assert!(app.activate_selected().is_none());
+        assert!(matches!(
+            &app.view,
+            crate::cockpit_state::AppView::Project { repo } if repo == "web"
+        ));
+
+        app.open_help();
+        assert!(matches!(
+            app.view,
+            crate::cockpit_state::AppView::Help { .. }
+        ));
+    }
+
+    #[test]
     fn navigation_module_classifies_back_keys() {
         assert!(crate::navigation::is_back_key_event(
             KeyCode::Esc,
@@ -3049,11 +2530,59 @@ mod tests {
     }
 
     #[test]
+    fn input_module_handles_navigation_events() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+
+        let action = crate::input::handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            10,
+            &mut NoopHandler,
+        )
+        .unwrap();
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn layout_module_exposes_selectable_row_ranges() {
+        assert_eq!(
+            crate::layout::selectable_row_ranges([1, 3, 5]),
+            vec![1..2, 3..4, 5..6]
+        );
+    }
+
+    #[test]
     fn rendering_module_exposes_status_palette() {
         assert_eq!(
             crate::rendering::bucket_color(crate::rendering::StatusBucket::Active),
             primary_accent()
         );
+    }
+
+    #[test]
+    fn rendering_module_exposes_screen_renderer() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal
+            .draw(|frame| crate::rendering::render_ui(frame, &app))
+            .unwrap();
+
+        let content = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(content.contains("Ajax"));
     }
 
     #[test]

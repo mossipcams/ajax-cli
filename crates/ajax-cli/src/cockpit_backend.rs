@@ -195,8 +195,12 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                 }
                 continue;
             }
+            changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
+            context
+                .registry
+                .update_tmux_status(&task_id, Some(session_status))
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
             if let Some(task) = context.registry.get_task_mut(&task_id) {
-                task.add_side_flag(ajax_core::models::SideFlag::TmuxMissing);
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
@@ -207,16 +211,35 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         }
         changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
 
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            task.tmux_status = Some(session_status.clone());
+        let tmux_status_changed = task_snapshot.tmux_status.as_ref() != Some(&session_status);
+        let had_stale_tmux_missing =
+            task_snapshot.has_side_flag(ajax_core::models::SideFlag::TmuxMissing);
+        changed |= tmux_status_changed || had_stale_tmux_missing;
+
+        if tmux_status_changed || had_stale_tmux_missing {
+            context
+                .registry
+                .update_tmux_status(&task_id, Some(session_status.clone()))
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
         }
 
         let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
         let windows_output = match runner.run(&windows_command) {
             Ok(output) if output.status_code == 0 => output.stdout,
             Ok(_) | Err(_) => {
+                context
+                    .registry
+                    .update_worktrunk_status(
+                        &task_id,
+                        Some(ajax_core::models::WorktrunkStatus {
+                            exists: false,
+                            window_name: task_snapshot.worktrunk_window.clone(),
+                            current_path: task_snapshot.worktree_path.clone(),
+                            points_at_expected_path: false,
+                        }),
+                    )
+                    .map_err(|error| CliError::CommandFailed(error.to_string()))?;
                 if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    task.add_side_flag(ajax_core::models::SideFlag::WorktrunkMissing);
                     live::apply_observation(
                         task,
                         LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
@@ -233,18 +256,21 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         );
         changed |= task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
 
-        if let Some(task) = context.registry.get_task_mut(&task_id) {
-            task.tmux_status = Some(session_status);
-            task.worktrunk_status = Some(worktrunk_status.clone());
-            if task.has_side_flag(ajax_core::models::SideFlag::TmuxMissing) {
-                task.remove_side_flag(ajax_core::models::SideFlag::TmuxMissing);
-                changed = true;
-            }
+        let worktrunk_status_changed =
+            task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
+        let had_stale_worktrunk_missing =
+            task_snapshot.has_side_flag(ajax_core::models::SideFlag::WorktrunkMissing);
+        changed |= worktrunk_status_changed || had_stale_worktrunk_missing;
+
+        if worktrunk_status_changed || had_stale_worktrunk_missing {
+            context
+                .registry
+                .update_worktrunk_status(&task_id, Some(worktrunk_status.clone()))
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
         }
 
         if !worktrunk_status.exists {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
-                task.add_side_flag(ajax_core::models::SideFlag::WorktrunkMissing);
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),

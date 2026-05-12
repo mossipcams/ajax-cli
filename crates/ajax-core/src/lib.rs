@@ -1,12 +1,14 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapters;
+pub mod analysis;
 pub mod attention;
 pub mod commands;
 pub mod config;
 pub mod events;
 pub mod lifecycle;
 pub mod live;
+mod live_application;
 pub mod models;
 pub mod operation;
 pub mod output;
@@ -54,11 +56,19 @@ mod tests {
         let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
         let doctor_module =
             std::fs::read_to_string(manifest_dir.join("src/commands/doctor.rs")).unwrap();
+        let adapters = std::fs::read_to_string(manifest_dir.join("src/adapters.rs")).unwrap();
+        let environment_adapter =
+            std::fs::read_to_string(manifest_dir.join("src/adapters/environment.rs")).unwrap();
 
         assert!(commands.contains("mod doctor;"));
         assert!(!commands.contains("pub struct DoctorEnvironment"));
-        assert!(doctor_module.contains("pub struct DoctorEnvironment"));
+        assert!(adapters.contains("pub mod environment;"));
+        assert!(!doctor_module.contains("std::env"));
+        assert!(!doctor_module.contains("path.exists()"));
         assert!(doctor_module.contains("pub fn doctor_with_environment"));
+        assert!(environment_adapter.contains("pub struct DoctorEnvironment"));
+        assert!(environment_adapter.contains("std::env"));
+        assert!(environment_adapter.contains("path.exists()"));
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use ajax_core::{
     adapters::{CommandOutput, CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError},
-    events::apply_monitor_event_to_task,
-    models::{AgentAttempt, GitStatus, LifecycleStatus, SideFlag, TmuxStatus, WorktrunkStatus},
+    events::apply_monitor_event_to_registry,
+    models::LifecycleStatus,
     registry::{InMemoryRegistry, Registry},
 };
 use clap::ArgMatches;
@@ -83,11 +83,10 @@ pub(crate) fn render_matches_mut(
             let (output, events) = supervise_command_output_and_events(subcommand)?;
             let mut state_changed = false;
             if let Some(task_id) = supervised_task {
-                let task = context.registry.get_task_mut(&task_id).ok_or_else(|| {
-                    CliError::CommandFailed("supervised task disappeared".to_string())
-                })?;
                 for event in &events {
-                    state_changed |= apply_monitor_event_to_task(task, event);
+                    state_changed |=
+                        apply_monitor_event_to_registry(&mut context.registry, &task_id, event)
+                            .map_err(|error| command_error(CommandError::Registry(error)))?;
                 }
             }
             Ok(RenderedCommand {
@@ -165,11 +164,11 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     let mut outputs = Vec::new();
     for (index, command) in plan.commands.iter().enumerate() {
         let output = runner.run(command).map_err(|error| {
-            mark_new_task_provisioning_failed(context, &task.id);
+            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
             command_error(CommandError::CommandRun(error)).after_state_change()
         })?;
         if output.status_code != 0 {
-            mark_new_task_provisioning_failed(context, &task.id);
+            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
             return Err(
                 command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
                     program: command.program.clone(),
@@ -181,7 +180,8 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
             );
         }
         outputs.push(output);
-        mark_new_task_step_complete(context, &task.id, index);
+        commands::mark_new_task_step_completed(context, &task.id, index)
+            .map_err(|error| command_error(error).after_state_change())?;
     }
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
@@ -201,71 +201,6 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
         .unwrap_or(task);
 
     Ok((outputs, task))
-}
-
-fn mark_new_task_provisioning_failed(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task_id: &ajax_core::models::TaskId,
-) {
-    let _ = context
-        .registry
-        .update_lifecycle(task_id, LifecycleStatus::Error);
-    if let Some(task) = context.registry.get_task_mut(task_id) {
-        task.add_side_flag(SideFlag::NeedsInput);
-    }
-}
-
-fn mark_new_task_step_complete(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task_id: &ajax_core::models::TaskId,
-    step_index: usize,
-) {
-    if step_index == 2 {
-        let _ = context
-            .registry
-            .update_lifecycle(task_id, LifecycleStatus::Active);
-    }
-
-    let Some(task) = context.registry.get_task_mut(task_id) else {
-        return;
-    };
-
-    match step_index {
-        0 => {
-            task.git_status = Some(GitStatus {
-                worktree_exists: true,
-                branch_exists: true,
-                current_branch: Some(task.branch.clone()),
-                dirty: false,
-                ahead: 0,
-                behind: 0,
-                merged: false,
-                untracked_files: 0,
-                unpushed_commits: 0,
-                conflicted: false,
-                last_commit: None,
-            });
-            task.remove_side_flag(SideFlag::WorktreeMissing);
-            task.remove_side_flag(SideFlag::BranchMissing);
-        }
-        1 => {
-            task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
-            task.worktrunk_status = Some(WorktrunkStatus::present(
-                task.worktrunk_window.clone(),
-                task.worktree_path.clone(),
-            ));
-            task.remove_side_flag(SideFlag::TmuxMissing);
-            task.remove_side_flag(SideFlag::WorktrunkMissing);
-        }
-        2 => {
-            task.agent_attempts.push(AgentAttempt::new(
-                task.selected_agent,
-                task.worktree_path.display().to_string(),
-            ));
-            task.add_side_flag(SideFlag::AgentRunning);
-        }
-        _ => {}
-    }
 }
 
 fn execute_sweep_cleanup<R: CommandRunner>(

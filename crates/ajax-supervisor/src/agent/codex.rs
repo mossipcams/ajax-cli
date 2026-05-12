@@ -307,6 +307,8 @@ mod tests {
     use ajax_core::events::AgentEvent;
     use rstest::rstest;
 
+    use crate::process_observer::ProcessProtocol;
+
     use super::CodexAdapter;
 
     #[test]
@@ -316,6 +318,24 @@ mod tests {
         assert_eq!(
             adapter.exec_json_args("fix tests"),
             vec!["exec", "--json", "fix tests"]
+        );
+    }
+
+    #[test]
+    fn codex_adapter_process_protocol_uses_json_exec_and_stdout_parser() {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(
+            ProcessProtocol::args(&adapter, "fix tests"),
+            vec!["exec", "--json", "fix tests"]
+        );
+        assert_eq!(
+            ProcessProtocol::parse_stdout_line(&adapter, r#"{"type":"turn.started"}"#),
+            Some(AgentEvent::Thinking)
+        );
+        assert_eq!(
+            (adapter.stdout_parser())(r#"{"type":"turn.completed"}"#),
+            Some(AgentEvent::Completed)
         );
     }
 
@@ -333,6 +353,138 @@ mod tests {
         r#"{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"Plan ready. Approve to proceed."}}"#,
         AgentEvent::Message { text: "Plan ready. Approve to proceed.".to_string() }
     )]
+    #[case(
+        r#"{"type":"turn.failed","message":"model stopped"}"#,
+        AgentEvent::Failed { message: "model stopped".to_string() }
+    )]
+    #[case(
+        r#"{"type":"turn.failed"}"#,
+        AgentEvent::Failed { message: "turn failed".to_string() }
+    )]
+    #[case(
+        r#"{"type":"error","error":{"message":"bad request"}}"#,
+        AgentEvent::Failed { message: "bad request".to_string() }
+    )]
+    #[case(
+        r#"{"type":"error"}"#,
+        AgentEvent::Failed { message: "codex reported failure".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"mcp_tool_call","server":"github","tool":"search"}}"#,
+        AgentEvent::ToolCall { name: "github.search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"mcp_tool_call","server":"github"}}"#,
+        AgentEvent::ToolCall { name: "github".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"mcp_tool_call","tool":"search"}}"#,
+        AgentEvent::ToolCall { name: "search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"mcp_tool_call"}}"#,
+        AgentEvent::ToolCall { name: "mcp_tool".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"web_search"}}"#,
+        AgentEvent::ToolCall { name: "web_search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"collab_tool_call","tool":"apply_patch"}}"#,
+        AgentEvent::ToolCall { name: "apply_patch".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"file_change"}}"#,
+        AgentEvent::ToolCall { name: "file_change".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"reasoning"}}"#,
+        AgentEvent::Thinking
+    )]
+    #[case(
+        r#"{"type":"item.started","item":{"type":"todo_list"}}"#,
+        AgentEvent::Thinking
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"command_execution","command":"cargo check","status":"failed"}}"#,
+        AgentEvent::Failed { message: "command failed: cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"command_execution","command":"cargo check","status":"declined"}}"#,
+        AgentEvent::Failed { message: "command declined: cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"command_execution","command":"cargo check","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"file_change","status":"failed"}}"#,
+        AgentEvent::Failed { message: "file change failed".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"file_change","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "file_change".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"mcp_tool_call","server":"github","tool":"search","status":"failed","error":{"message":"rate limited"}}}"#,
+        AgentEvent::Failed { message: "mcp tool failed: github.search: rate limited".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"mcp_tool_call","tool":"search","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"collab_tool_call","tool":"apply_patch","status":"failed"}}"#,
+        AgentEvent::Failed { message: "collab tool failed: apply_patch".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"collab_tool_call","tool":"apply_patch","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "apply_patch".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.updated","item":{"type":"reasoning","status":"in_progress"}}"#,
+        AgentEvent::Thinking
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"command_execution","command":"cargo check","status":"failed"}}"#,
+        AgentEvent::Failed { message: "command failed: cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"command_execution","command":"cargo check","status":"declined"}}"#,
+        AgentEvent::Failed { message: "command declined: cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"command_execution","command":"cargo check","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "cargo check".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"file_change","status":"failed"}}"#,
+        AgentEvent::Failed { message: "file change failed".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"file_change","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "file_change".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"mcp_tool_call","server":"github","tool":"search","status":"failed"}}"#,
+        AgentEvent::Failed { message: "mcp tool failed: github.search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"mcp_tool_call","tool":"search","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "search".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"collab_tool_call","tool":"apply_patch","status":"failed"}}"#,
+        AgentEvent::Failed { message: "collab tool failed: apply_patch".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"collab_tool_call","tool":"apply_patch","status":"in_progress"}}"#,
+        AgentEvent::ToolCall { name: "apply_patch".to_string() }
+    )]
+    #[case(
+        r#"{"type":"item.completed","item":{"type":"error","message":"stream failed"}}"#,
+        AgentEvent::Failed { message: "stream failed".to_string() }
+    )]
     #[case(r#"{"type":"turn.completed"}"#, AgentEvent::Completed)]
     fn current_codex_json_events_map_to_agent_events(
         #[case] line: &str,
@@ -341,5 +493,97 @@ mod tests {
         let adapter = CodexAdapter::new("codex");
 
         assert_eq!(adapter.parse_json_line(line), Some(expected));
+    }
+
+    #[rstest]
+    #[case(r#"{"type":"item.completed","item":{"type":"command_execution","command":"cargo check","status":"completed"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"file_change","status":"completed"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"mcp_tool_call","tool":"search","status":"completed"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"collab_tool_call","tool":"apply_patch","status":"completed"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"reasoning"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"todo_list"}}"#)]
+    #[case(r#"{"type":"item.completed","item":{"type":"web_search"}}"#)]
+    fn completed_codex_items_without_visible_status_are_ignored(#[case] line: &str) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(adapter.parse_json_line(line), None);
+    }
+
+    #[rstest]
+    #[case("")]
+    #[case("   ")]
+    #[case("not json")]
+    #[case(r#"{"type":"unknown"}"#)]
+    fn codex_json_lines_without_event_or_message_are_ignored(#[case] line: &str) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(adapter.parse_json_line(line), None);
+    }
+
+    #[rstest]
+    #[case(r#"{"type":"task.complete"}"#)]
+    #[case(r#"{"type":"done"}"#)]
+    fn legacy_codex_completion_events_are_completed(#[case] line: &str) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(adapter.parse_json_line(line), Some(AgentEvent::Completed));
+    }
+
+    #[rstest]
+    #[case(
+        r#"{"type":"worker_failed","message":"process failed"}"#,
+        "process failed"
+    )]
+    #[case(r#"{"type":"fatal_error","message":"bad request"}"#, "bad request")]
+    #[case(r#"{"type":"worker_failed"}"#, "codex reported failure")]
+    fn legacy_codex_failure_events_report_failures(#[case] line: &str, #[case] message: &str) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(
+            adapter.parse_json_line(line),
+            Some(AgentEvent::Failed {
+                message: message.to_string(),
+            })
+        );
+    }
+
+    #[rstest]
+    #[case(r#"{"message":"plain legacy message"}"#)]
+    #[case(r#"{"content":"plain legacy message"}"#)]
+    fn legacy_codex_message_text_is_emitted(#[case] line: &str) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(
+            adapter.parse_json_line(line),
+            Some(AgentEvent::Message {
+                text: "plain legacy message".to_string(),
+            })
+        );
+    }
+
+    #[rstest]
+    #[case(
+        r#"{"type":"message","message":"Approval required to run cargo test","command":"cargo test"}"#,
+        Some("cargo test")
+    )]
+    #[case(
+        r#"{"type":"message","message":"This requires approval before continuing"}"#,
+        None
+    )]
+    #[case(r#"{"type":"message","message":"Waiting for approval"}"#, None)]
+    #[case(r#"{"type":"message","message":"Allow command?"}"#, None)]
+    #[case(r#"{"type":"message","message":"Proceed?"}"#, None)]
+    fn approval_messages_request_operator_approval(
+        #[case] line: &str,
+        #[case] expected_command: Option<&str>,
+    ) {
+        let adapter = CodexAdapter::new("codex");
+
+        assert_eq!(
+            adapter.parse_json_line(line),
+            Some(AgentEvent::WaitingForApproval {
+                command: expected_command.map(str::to_string),
+            })
+        );
     }
 }
