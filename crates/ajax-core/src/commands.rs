@@ -1,3 +1,9 @@
+mod doctor;
+mod lookup;
+mod projection;
+
+pub use doctor::{doctor, doctor_with_environment, DoctorEnvironment};
+
 use crate::{
     adapters::{
         AgentAdapter, AgentLaunch, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
@@ -8,26 +14,26 @@ use crate::{
     lifecycle::{force_mark_removed, mark_provisioning},
     live::LiveStatusKind,
     models::{
-        AgentClient, LifecycleStatus, LiveObservation, RecommendedAction, SafetyClassification,
-        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        AgentClient, LifecycleStatus, LiveObservation, SafetyClassification, SideFlag, Task,
+        TaskId, TmuxStatus, WorktrunkStatus,
     },
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     output::{
-        CockpitResponse, CockpitSummary, DoctorCheck, DoctorResponse, InboxResponse,
-        InspectResponse, NextResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
+        CockpitResponse, InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse,
+        TasksResponse,
     },
     policy::cleanup_safety,
     registry::{Registry, RegistryError, RegistryEventKind},
 };
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-    time::{Duration, SystemTime},
+use lookup::{find_task, task_repo_path, update_task_lifecycle};
+use projection::{
+    cockpit_summary, count_active_tasks, count_attention_items, count_lifecycle, is_visible_task,
+    task_summary,
 };
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-const REQUIRED_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
 
 pub struct CommandContext<R> {
     pub config: Config,
@@ -37,63 +43,6 @@ pub struct CommandContext<R> {
 impl<R> CommandContext<R> {
     pub fn new(config: Config, registry: R) -> Self {
         Self { config, registry }
-    }
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DoctorEnvironment {
-    available_tools: BTreeSet<String>,
-    existing_paths: Option<BTreeSet<PathBuf>>,
-}
-
-impl DoctorEnvironment {
-    pub fn from_available_tools<I, T>(tools: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<String>,
-    {
-        Self {
-            available_tools: tools.into_iter().map(Into::into).collect(),
-            existing_paths: None,
-        }
-    }
-
-    pub fn from_path() -> Self {
-        let Some(path) = std::env::var_os("PATH") else {
-            return Self::default();
-        };
-        let available_tools = REQUIRED_TOOLS
-            .iter()
-            .copied()
-            .filter(|tool| {
-                std::env::split_paths(&path).any(|directory| directory.join(tool).is_file())
-            })
-            .map(str::to_string)
-            .collect();
-
-        Self {
-            available_tools,
-            existing_paths: None,
-        }
-    }
-
-    pub fn with_existing_paths<I, T>(mut self, paths: I) -> Self
-    where
-        I: IntoIterator<Item = T>,
-        T: Into<PathBuf>,
-    {
-        self.existing_paths = Some(paths.into_iter().map(Into::into).collect());
-        self
-    }
-
-    fn has_tool(&self, tool: &str) -> bool {
-        self.available_tools.contains(tool)
-    }
-
-    fn path_exists(&self, path: &Path) -> bool {
-        self.existing_paths
-            .as_ref()
-            .map_or_else(|| path.exists(), |paths| paths.contains(path))
     }
 }
 
@@ -242,96 +191,6 @@ pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     }
 }
 
-pub fn doctor<R: Registry>(context: &CommandContext<R>) -> DoctorResponse {
-    doctor_with_environment(context, &DoctorEnvironment::from_path())
-}
-
-pub fn doctor_with_environment<R: Registry>(
-    context: &CommandContext<R>,
-    environment: &DoctorEnvironment,
-) -> DoctorResponse {
-    let mut checks = vec![
-        DoctorCheck {
-            name: "config".to_string(),
-            ok: true,
-            message: format!("{} repo(s) configured", context.config.repos.len()),
-        },
-        DoctorCheck {
-            name: "registry".to_string(),
-            ok: true,
-            message: format!("{} task(s) tracked", context.registry.list_tasks().len()),
-        },
-    ];
-
-    checks.extend(REQUIRED_TOOLS.iter().map(|tool| {
-        let ok = environment.has_tool(tool);
-        DoctorCheck {
-            name: format!("tool:{tool}"),
-            ok,
-            message: if ok {
-                "available".to_string()
-            } else {
-                "not found on PATH".to_string()
-            },
-        }
-    }));
-    checks.push(repo_name_check(context));
-    for repo in &context.config.repos {
-        let repo_path_exists = environment.path_exists(&repo.path);
-        checks.push(DoctorCheck {
-            name: format!("repo:{}:path", repo.name),
-            ok: repo_path_exists,
-            message: if repo_path_exists {
-                format!("path exists: {}", repo.path.display())
-            } else {
-                format!("path missing: {}", repo.path.display())
-            },
-        });
-
-        let has_test_command = context
-            .config
-            .test_commands
-            .iter()
-            .any(|test_command| test_command.repo == repo.name);
-        checks.push(DoctorCheck {
-            name: format!("repo:{}:test-command", repo.name),
-            ok: has_test_command,
-            message: if has_test_command {
-                "test command configured".to_string()
-            } else {
-                "no test command configured".to_string()
-            },
-        });
-    }
-
-    DoctorResponse { checks }
-}
-
-fn repo_name_check<R: Registry>(context: &CommandContext<R>) -> DoctorCheck {
-    let mut seen = BTreeSet::new();
-    let mut duplicates = BTreeSet::new();
-
-    for repo in &context.config.repos {
-        if !seen.insert(repo.name.clone()) {
-            duplicates.insert(repo.name.clone());
-        }
-    }
-
-    if let Some(duplicate) = duplicates.into_iter().next() {
-        DoctorCheck {
-            name: "config:repo-names".to_string(),
-            ok: false,
-            message: format!("duplicate repo name: {duplicate}"),
-        }
-    } else {
-        DoctorCheck {
-            name: "config:repo-names".to_string(),
-            ok: true,
-            message: "repo names unique".to_string(),
-        }
-    }
-}
-
 pub fn status<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
     list_tasks(context, None)
 }
@@ -353,22 +212,6 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
         review,
         inbox,
         next,
-    }
-}
-
-fn cockpit_summary(
-    repos: &ReposResponse,
-    tasks: &TasksResponse,
-    review: &TasksResponse,
-    inbox: &InboxResponse,
-) -> CockpitSummary {
-    CockpitSummary {
-        repos: repos.repos.len() as u32,
-        tasks: tasks.tasks.len() as u32,
-        active_tasks: repos.repos.iter().map(|repo| repo.active_tasks).sum(),
-        attention_items: inbox.items.len() as u32,
-        reviewable_tasks: review.tasks.len() as u32,
-        cleanable_tasks: repos.repos.iter().map(|repo| repo.cleanable_tasks).sum(),
     }
 }
 
@@ -1279,95 +1122,6 @@ pub fn execute_plan(
     }
 
     Ok(outputs)
-}
-
-fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
-    tasks
-        .iter()
-        .filter(|task| task.lifecycle_status == status)
-        .count() as u32
-}
-
-fn count_active_tasks(tasks: &[&Task]) -> u32 {
-    tasks
-        .iter()
-        .filter(|task| {
-            task.lifecycle_status == LifecycleStatus::Active && !task.has_missing_substrate()
-        })
-        .count() as u32
-}
-
-fn count_attention_items(tasks: &[&Task]) -> u32 {
-    tasks
-        .iter()
-        .map(|task| derive_attention_items(std::slice::from_ref(*task)).len() as u32)
-        .sum()
-}
-
-fn is_visible_task(task: &Task) -> bool {
-    task.lifecycle_status != LifecycleStatus::Removed
-}
-
-fn task_summary(task: &Task) -> TaskSummary {
-    TaskSummary {
-        id: task.id.as_str().to_string(),
-        qualified_handle: task.qualified_handle(),
-        title: task.title.clone(),
-        lifecycle_status: format!("{:?}", task.lifecycle_status),
-        needs_attention: !derive_attention_items(std::slice::from_ref(task)).is_empty(),
-        live_status: task.live_status.clone(),
-        actions: task_actions(task),
-    }
-}
-
-fn task_actions(task: &Task) -> Vec<String> {
-    if task.has_side_flag(SideFlag::TmuxMissing) || task.has_side_flag(SideFlag::WorktrunkMissing) {
-        return vec![RecommendedAction::OpenTrunk.as_str().to_string()];
-    }
-
-    [
-        (TaskOperation::Open, RecommendedAction::OpenTask),
-        (TaskOperation::Merge, RecommendedAction::MergeTask),
-        (TaskOperation::Clean, RecommendedAction::CleanTask),
-        (TaskOperation::Remove, RecommendedAction::RemoveTask),
-    ]
-    .into_iter()
-    .filter(|(operation, _)| task_operation_eligibility(task, *operation).is_allowed())
-    .map(|(_, action)| action.as_str().to_string())
-    .collect()
-}
-
-fn find_task<'a, R: Registry>(
-    context: &'a CommandContext<R>,
-    qualified_handle: &str,
-) -> Result<&'a Task, CommandError> {
-    context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))
-}
-
-fn task_repo_path<R: Registry>(context: &CommandContext<R>, task: &Task) -> Option<String> {
-    context
-        .config
-        .repos
-        .iter()
-        .find(|repo| repo.name == task.repo)
-        .map(|repo| repo.path.display().to_string())
-}
-
-fn update_task_lifecycle<R: Registry>(
-    context: &mut CommandContext<R>,
-    qualified_handle: &str,
-    status: LifecycleStatus,
-) -> Result<(), CommandError> {
-    let task_id = find_task(context, qualified_handle)?.id.clone();
-    context
-        .registry
-        .update_lifecycle(&task_id, status)
-        .map_err(CommandError::Registry)
 }
 
 fn slugify_title(title: &str) -> String {

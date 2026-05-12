@@ -47,4 +47,45 @@ mod tests {
         let reconcile_export = ["pub mod ", "reconcile", ";"].concat();
         assert!(!lib.contains(&reconcile_export));
     }
+
+    #[test]
+    fn command_doctor_checks_live_in_focused_module() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
+        let doctor_module =
+            std::fs::read_to_string(manifest_dir.join("src/commands/doctor.rs")).unwrap();
+
+        assert!(commands.contains("mod doctor;"));
+        assert!(!commands.contains("pub struct DoctorEnvironment"));
+        assert!(doctor_module.contains("pub struct DoctorEnvironment"));
+        assert!(doctor_module.contains("pub fn doctor_with_environment"));
+    }
+
+    #[test]
+    fn command_task_projection_lives_in_focused_module() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
+        let projection_module =
+            std::fs::read_to_string(manifest_dir.join("src/commands/projection.rs")).unwrap();
+
+        assert!(commands.contains("mod projection;"));
+        assert!(!commands.contains("fn task_summary("));
+        assert!(!commands.contains("fn cockpit_summary("));
+        assert!(projection_module.contains("pub(super) fn task_summary("));
+        assert!(projection_module.contains("pub(super) fn cockpit_summary("));
+    }
+
+    #[test]
+    fn command_task_lookup_lives_in_focused_module() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
+        let lookup_module =
+            std::fs::read_to_string(manifest_dir.join("src/commands/lookup.rs")).unwrap();
+
+        assert!(commands.contains("mod lookup;"));
+        assert!(!commands.contains("fn find_task<"));
+        assert!(!commands.contains("fn task_repo_path<"));
+        assert!(lookup_module.contains("pub(super) fn find_task<"));
+        assert!(lookup_module.contains("pub(super) fn task_repo_path<"));
+    }
 }

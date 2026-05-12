@@ -93,6 +93,15 @@ state directly. Attention remains a derived projection from lifecycle, live
 status, side flags, and external substrate evidence; it must not mutate task
 lifecycle.
 
+The `ajax-core::commands` module remains the public command-planning and command
+response facade, but its internal helpers should stay split by responsibility:
+
+- `commands/doctor.rs` owns environment inspection and doctor check assembly.
+- `commands/projection.rs` owns task visibility, task summaries, action
+  projections, and cockpit summary counts.
+- `commands/lookup.rs` owns shared task lookup, repo path lookup, and lifecycle
+  update plumbing used by command handlers.
+
 ## Command Execution
 
 Command planning should stay separate from command execution. `CommandSpec`
