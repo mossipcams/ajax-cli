@@ -15,7 +15,7 @@ use ajax_core::{
 };
 #[cfg(test)]
 pub(crate) use cockpit_state::FLASH_TICKS;
-use cockpit_state::{card_repo, AppView, SelectableKind};
+use cockpit_state::{card_repo, AppView, SelectableKind, Severity};
 pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use input::{
@@ -23,7 +23,7 @@ use input::{
     is_help_key_event, is_input_delete_key, EventLoopAction,
 };
 use ratatui::{
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, List, ListItem, ListState, Paragraph},
@@ -208,72 +208,12 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     )];
 
     let crumb_sep = || Span::styled(" > ", Style::default().fg(subtle_text()));
-    let dot_sep = || Span::styled(" - ", Style::default().fg(subtle_text()));
     let crumb_style = Style::default()
         .fg(primary_accent())
         .add_modifier(Modifier::BOLD);
 
     match &app.view {
-        AppView::Projects => {
-            parts.push(dot_sep());
-            parts.push(Span::styled(
-                format!("{} repos", app.repos.repos.len()),
-                Style::default().fg(secondary_accent()),
-            ));
-            parts.push(dot_sep());
-            parts.push(Span::styled(
-                format!("{} tasks", app.cards.len()),
-                Style::default().fg(primary_accent()),
-            ));
-            if !app.inbox.items.is_empty() {
-                parts.push(dot_sep());
-                parts.push(Span::styled(
-                    format!("{} inbox", app.inbox.items.len()),
-                    Style::default()
-                        .fg(danger_accent())
-                        .add_modifier(Modifier::BOLD),
-                ));
-                if let Some(next) = app.inbox.items.first() {
-                    parts.push(dot_sep());
-                    parts.push(Span::styled(
-                        format!("next {}", next.task_handle),
-                        Style::default()
-                            .fg(danger_accent())
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                }
-            }
-            let reviewable_tasks: u32 = app
-                .repos
-                .repos
-                .iter()
-                .map(|repo| repo.reviewable_tasks)
-                .sum();
-            if reviewable_tasks > 0 {
-                parts.push(dot_sep());
-                parts.push(Span::styled(
-                    format!("{reviewable_tasks} review"),
-                    Style::default()
-                        .fg(secondary_accent())
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-            let cleanable_tasks: u32 = app
-                .repos
-                .repos
-                .iter()
-                .map(|repo| repo.cleanable_tasks)
-                .sum();
-            if cleanable_tasks > 0 {
-                parts.push(dot_sep());
-                parts.push(Span::styled(
-                    format!("{cleanable_tasks} clean"),
-                    Style::default()
-                        .fg(danger_accent())
-                        .add_modifier(Modifier::BOLD),
-                ));
-            }
-        }
+        AppView::Projects => {}
         AppView::Project { repo } => {
             parts.push(crumb_sep());
             parts.push(Span::styled(repo.clone(), crumb_style));
@@ -309,90 +249,189 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    if show_brand(&app.view) {
-        let brand = ajax_brand_spans();
-        let brand_width: u16 = brand.iter().map(|s| s.content.chars().count() as u16).sum();
-        let chunks =
-            Layout::horizontal([Constraint::Min(0), Constraint::Length(brand_width)]).split(area);
-        frame.render_widget(Paragraph::new(Line::from(parts)), chunks[0]);
-        frame.render_widget(Paragraph::new(Line::from(brand).right_aligned()), chunks[1]);
-    } else {
-        frame.render_widget(Paragraph::new(Line::from(parts)), area);
+    frame.render_widget(Paragraph::new(Line::from(parts)), area);
+}
+
+fn render_counts_strip(frame: &mut Frame, app: &App, area: Rect) {
+    let dot_sep = || Span::styled(" - ", Style::default().fg(subtle_text()));
+    let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
+
+    parts.push(Span::styled(
+        format!("{} repos", app.repos.repos.len()),
+        Style::default().fg(secondary_accent()),
+    ));
+    parts.push(dot_sep());
+    parts.push(Span::styled(
+        format!("{} tasks", app.cards.len()),
+        Style::default().fg(primary_accent()),
+    ));
+    if !app.inbox.items.is_empty() {
+        parts.push(dot_sep());
+        parts.push(Span::styled(
+            format!("{} inbox", app.inbox.items.len()),
+            Style::default()
+                .fg(danger_accent())
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let reviewable_tasks: u32 = app
+        .repos
+        .repos
+        .iter()
+        .map(|repo| repo.reviewable_tasks)
+        .sum();
+    if reviewable_tasks > 0 {
+        parts.push(dot_sep());
+        parts.push(Span::styled(
+            format!("{reviewable_tasks} review"),
+            Style::default()
+                .fg(secondary_accent())
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    let cleanable_tasks: u32 = app
+        .repos
+        .repos
+        .iter()
+        .map(|repo| repo.cleanable_tasks)
+        .sum();
+    if cleanable_tasks > 0 {
+        parts.push(dot_sep());
+        parts.push(Span::styled(
+            format!("{cleanable_tasks} clean"),
+            Style::default()
+                .fg(danger_accent())
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(parts)), area);
+}
+
+/// Show the counts strip only on the Projects view; subviews drop it to
+/// preserve vertical space for the feed.
+pub(crate) fn show_counts_strip(view: &AppView) -> bool {
+    matches!(view, AppView::Projects)
+}
+
+/// Show the persistent attention line when the inbox has work for the
+/// current view's scope.
+pub(crate) fn show_attention_line(app: &App) -> bool {
+    if !matches!(app.view, AppView::Projects | AppView::Project { .. }) {
+        return false;
+    }
+    current_attention_item(app).is_some()
+}
+
+fn current_attention_item(app: &App) -> Option<&AttentionItem> {
+    match &app.view {
+        AppView::Project { repo } => {
+            app.inbox.items.iter().find(|item| {
+                cockpit_state::task_handle_repo(&item.task_handle) == Some(repo.as_str())
+            })
+        }
+        _ => app.inbox.items.first(),
     }
 }
 
-fn show_brand(view: &AppView) -> bool {
-    matches!(
-        view,
-        AppView::Projects | AppView::Project { .. } | AppView::TaskActions { .. }
-    )
+fn render_attention_line(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(item) = current_attention_item(app) else {
+        return;
+    };
+    let style = Style::default()
+        .fg(danger_accent())
+        .add_modifier(Modifier::BOLD);
+    let text = format!(" ! {}: {}", item.task_handle, item.reason);
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
-fn ajax_brand_spans() -> Vec<Span<'static>> {
-    let bracket = Style::default().fg(subtle_text());
-    let brand = Style::default()
-        .fg(primary_accent())
+/// Screen row at which the feed starts. Mouse handling must use this to map
+/// terminal rows back to feed-internal coordinates.
+pub(crate) fn feed_top_row(app: &App) -> usize {
+    let mut top = 1; // breadcrumb
+    if show_attention_line(app) {
+        top += 1;
+    }
+    if show_counts_strip(&app.view) {
+        top += 1;
+    }
+    top
+}
+
+pub(crate) fn show_notice_row(app: &App) -> bool {
+    app.current_notice().is_some()
+}
+
+fn notice_glyph(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Confirm => ">",
+        Severity::Error => "!",
+        Severity::Success => ".",
+        Severity::Hint => "-",
+    }
+}
+
+fn notice_color(severity: Severity) -> Color {
+    match severity {
+        Severity::Confirm => primary_accent(),
+        Severity::Error => danger_accent(),
+        Severity::Success => secondary_accent(),
+        Severity::Hint => subtle_text(),
+    }
+}
+
+fn render_notice_row(frame: &mut Frame, app: &App, area: Rect) {
+    let Some(notice) = app.current_notice() else {
+        return;
+    };
+    let style = Style::default()
+        .fg(notice_color(notice.severity))
         .add_modifier(Modifier::BOLD);
-    vec![
-        Span::raw(" "),
-        Span::styled("[", bracket),
-        Span::styled("AJAX", brand),
-        Span::styled("]", bracket),
-        Span::raw(" "),
-    ]
+    let text = format!(" {} {}", notice_glyph(notice.severity), notice.msg);
+    frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let content = if let Some((msg, _)) = &app.flash {
-        Line::from(vec![Span::styled(
-            format!(" {msg}"),
+    let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
+    let push_hint = |parts: &mut Vec<Span<'static>>, key: &str, label: &str, last: bool| {
+        parts.push(Span::styled(
+            key.to_string(),
             Style::default()
-                .fg(primary_accent())
+                .fg(secondary_accent())
                 .add_modifier(Modifier::BOLD),
-        )])
-    } else {
-        let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
-        let push_hint = |parts: &mut Vec<Span<'static>>, key: &str, label: &str, last: bool| {
+        ));
+        parts.push(Span::styled(
+            format!(" {label}"),
+            Style::default().fg(subtle_text()),
+        ));
+        if !last {
             parts.push(Span::styled(
-                key.to_string(),
-                Style::default()
-                    .fg(secondary_accent())
-                    .add_modifier(Modifier::BOLD),
-            ));
-            parts.push(Span::styled(
-                format!(" {label}"),
+                "   ".to_string(),
                 Style::default().fg(subtle_text()),
             ));
-            if !last {
-                parts.push(Span::styled(
-                    "   ".to_string(),
-                    Style::default().fg(subtle_text()),
-                ));
-            }
-        };
-        let enter_label = match &app.view {
-            AppView::Projects => "open",
-            AppView::Project { .. } => "open",
-            AppView::TaskActions { .. } => "run",
-            AppView::NewTaskInput { .. } => "create",
-            AppView::Help { .. } => "back",
-        };
-        let nested = !matches!(app.view, AppView::Projects);
-        push_hint(&mut parts, "up/down", "select", false);
-        push_hint(&mut parts, "enter", enter_label, false);
-        push_hint(&mut parts, "?", "help", false);
-        if nested {
-            let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {
-                "erase/back"
-            } else {
-                "back"
-            };
-            push_hint(&mut parts, "esc/h", back_label, false);
         }
-        push_hint(&mut parts, "q", "quit", true);
-        Line::from(parts)
     };
-    frame.render_widget(Paragraph::new(content), area);
+    let enter_label = match &app.view {
+        AppView::Projects => "open",
+        AppView::Project { .. } => "open",
+        AppView::TaskActions { .. } => "run",
+        AppView::NewTaskInput { .. } => "create",
+        AppView::Help { .. } => "back",
+    };
+    let nested = !matches!(app.view, AppView::Projects);
+    push_hint(&mut parts, "up/down", "select", false);
+    push_hint(&mut parts, "enter", enter_label, false);
+    push_hint(&mut parts, "?", "help", false);
+    if nested {
+        let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {
+            "erase/back"
+        } else {
+            "back"
+        };
+        push_hint(&mut parts, "esc/h", back_label, false);
+    }
+    push_hint(&mut parts, "q", "quit", true);
+    frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
 fn selected_highlight() -> Style {
@@ -422,6 +461,25 @@ fn group_of(kind: &SelectableKind) -> &'static str {
         SelectableKind::Task(_) => "tasks",
         SelectableKind::TaskAction { .. } => "task-actions",
     }
+}
+
+fn section_header_label(group: &str) -> &'static str {
+    match group {
+        "hot" => "inbox",
+        "create" => "new task",
+        "projects" => "projects",
+        "tasks" => "tasks",
+        "task-actions" => "actions",
+        _ => "",
+    }
+}
+
+fn section_header_row(group: &str) -> ListItem<'static> {
+    let label = section_header_label(group);
+    ListItem::new(Line::from(vec![Span::styled(
+        format!("   -- {label} --"),
+        Style::default().fg(subtle_text()),
+    )]))
 }
 
 fn task_glyph(card: &TaskCard) -> Span<'static> {
@@ -521,13 +579,27 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     }
 }
 
-fn render_row(glyph: Span<'static>, mut spans: Vec<Span<'static>>) -> ListItem<'static> {
-    let mut all = vec![Span::raw("   "), glyph, Span::raw("  ")];
+fn render_row(
+    is_selected: bool,
+    glyph: Span<'static>,
+    mut spans: Vec<Span<'static>>,
+) -> ListItem<'static> {
+    let prefix = if is_selected {
+        Span::styled(
+            " > ",
+            Style::default()
+                .fg(primary_accent())
+                .add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw("   ")
+    };
+    let mut all = vec![prefix, glyph, Span::raw("  ")];
     all.append(&mut spans);
     ListItem::new(Line::from(all))
 }
 
-fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
+fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static> {
     let bold = Modifier::BOLD;
     let dim = Style::default().fg(subtle_text());
     let arrow = Style::default().fg(subtle_text());
@@ -535,6 +607,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
             render_row(
+                is_selected,
                 inbox_glyph(accent),
                 vec![
                     Span::styled(
@@ -551,6 +624,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             )
         }
         SelectableKind::Project(repo) => render_row(
+            is_selected,
             project_glyph(repo),
             vec![
                 Span::styled(
@@ -563,6 +637,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             ],
         ),
         SelectableKind::NewTask { .. } => render_row(
+            is_selected,
             action_glyph("new task"),
             vec![Span::styled(
                 "start a new task",
@@ -572,6 +647,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
         SelectableKind::TaskAction {
             recommended_action, ..
         } => render_row(
+            is_selected,
             action_glyph(recommended_action),
             vec![Span::styled(
                 recommended_action.clone(),
@@ -579,6 +655,7 @@ fn render_selectable(s: &SelectableKind) -> ListItem<'static> {
             )],
         ),
         SelectableKind::Task(t) => render_row(
+            is_selected,
             task_glyph(t),
             vec![
                 Span::styled(
@@ -604,6 +681,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             title.clone()
         };
         rows.push(render_row(
+            false,
             action_glyph("new task"),
             vec![
                 Span::styled(
@@ -620,6 +698,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
 
     if matches!(app.view, AppView::Help { .. }) {
         rows.push(render_row(
+            false,
             action_glyph("help"),
             vec![Span::styled(
                 "Keyboard shortcuts",
@@ -643,6 +722,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             ),
         ] {
             rows.push(render_row(
+                false,
                 Span::styled(".", Style::default().fg(subtle_text())),
                 vec![
                     Span::styled(format!("{key:<18}"), Style::default().fg(Color::Yellow)),
@@ -651,6 +731,28 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             ));
         }
         return (rows, sel_to_row);
+    }
+
+    if let AppView::TaskActions { task, .. } = &app.view {
+        let bold = Modifier::BOLD;
+        let dim = Style::default().fg(subtle_text());
+        rows.push(render_row(
+            false,
+            task_glyph(task),
+            vec![
+                Span::styled(
+                    format!("{:<28}", task.qualified_handle),
+                    Style::default()
+                        .fg(task_handle_color(task))
+                        .add_modifier(bold),
+                ),
+                Span::styled(format!("{}  ", task_status_label(task)), dim),
+                Span::styled(
+                    task.title.clone(),
+                    Style::default().fg(Color::White).add_modifier(bold),
+                ),
+            ],
+        ));
     }
 
     if app.selectables.is_empty() {
@@ -666,15 +768,15 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     }
 
     let mut prev_group: Option<&'static str> = None;
-    for selectable in &app.selectables {
+    for (idx, selectable) in app.selectables.iter().enumerate() {
         let group = group_of(selectable);
         if let Some(prev) = prev_group {
             if prev != group {
-                rows.push(blank_row());
+                rows.push(section_header_row(group));
             }
         }
         sel_to_row.push(rows.len());
-        rows.push(render_selectable(selectable));
+        rows.push(render_selectable(selectable, app.selected == idx));
         prev_group = Some(group);
     }
 
@@ -710,10 +812,10 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 mod tests {
     use super::{
         action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-        danger_accent, handle_cockpit_event, inbox_glyph, inbox_item_accent, muted_text,
-        primary_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
-        render_cockpit, render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout,
-        selected_highlight, show_brand, subtle_text, task_glyph, task_handle_color,
+        danger_accent, feed_top_row, handle_cockpit_event, inbox_glyph, inbox_item_accent,
+        muted_text, primary_accent, priority_accent, project_glyph, project_name_color,
+        project_subtitle, render_cockpit, render_ui, secondary_accent, selectable_feed_rows,
+        selectable_row_layout, selected_highlight, subtle_text, task_glyph, task_handle_color,
         ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
         EventLoopAction, PendingAction, SelectableKind, StatusBucket, TerminalModeCommand,
         FLASH_TICKS,
@@ -933,42 +1035,6 @@ mod tests {
         );
     }
 
-    #[rstest]
-    #[case(AppView::Projects, true)]
-    #[case(AppView::Project { repo: "web".to_string() }, true)]
-    #[case(
-        AppView::TaskActions {
-            task: sample_card(
-                "task-1",
-                "web/fix-login",
-                "Fix login",
-                UiState::Idle,
-                LifecycleStatus::Active,
-            ),
-            parent: Box::new(AppView::Projects),
-        },
-        true
-    )]
-    #[case(
-        AppView::NewTaskInput {
-            repo: "web".to_string(),
-            title: String::new(),
-        },
-        false
-    )]
-    #[case(
-        AppView::Help {
-            previous: Box::new(AppView::Projects),
-        },
-        false
-    )]
-    fn brand_visibility_matches_primary_operator_views(
-        #[case] view: AppView,
-        #[case] expected: bool,
-    ) {
-        assert_eq!(show_brand(&view), expected);
-    }
-
     #[test]
     fn selected_rows_use_highlight_style() {
         assert_eq!(
@@ -1080,12 +1146,15 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_header_names_next_attention_item() {
+    fn cockpit_attention_line_names_next_inbox_task() {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
         let content = render_to_string(80, 30, &app);
 
-        assert!(content.contains("next web/fix-login"));
+        // Counts strip no longer carries "next X" — the attention line owns it.
+        assert!(!content.contains("next web/fix-login"));
+        assert!(content.contains("web/fix-login"));
+        assert!(content.contains("agent needs input"));
     }
 
     #[test]
@@ -1133,7 +1202,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_brand_renders_at_header_right_edge() {
+    fn cockpit_brand_does_not_render_in_header() {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let backend = TestBackend::new(80, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1141,11 +1210,173 @@ mod tests {
         terminal.draw(|f| render_ui(f, &app)).unwrap();
 
         let buffer = terminal.backend().buffer();
-        let brand = (73..79)
+        let screen: String = buffer.content().iter().map(|c| c.symbol()).collect();
+        assert!(
+            !screen.contains("[AJAX]"),
+            "brand marker should no longer render"
+        );
+    }
+
+    #[test]
+    fn counts_strip_renders_below_breadcrumb_on_projects_view() {
+        let mut repos = sample_repos();
+        repos.repos[0].cleanable_tasks = 1;
+        let app = App::new(repos, sample_tasks(), sample_inbox());
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row0: String = (0..buffer.area.width)
             .map(|x| buffer[(x, 0)].symbol())
-            .collect::<String>();
-        assert_eq!(brand, "[AJAX]");
-        assert_eq!(buffer[(79, 0)].symbol(), " ");
+            .collect();
+        // Inbox non-empty → attention on row 1, counts on row 2.
+        let counts: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 2)].symbol())
+            .collect();
+
+        assert!(row0.contains("Ajax"), "row 0 should carry the breadcrumb");
+        assert!(
+            !row0.contains("1 repos"),
+            "counts must not stay in breadcrumb row"
+        );
+        assert!(
+            counts.contains("1 repos"),
+            "counts row should contain repos count"
+        );
+        assert!(
+            counts.contains("1 tasks"),
+            "counts row should contain tasks count"
+        );
+        assert!(
+            counts.contains("1 inbox"),
+            "counts row should contain inbox count"
+        );
+        assert!(
+            counts.contains("1 review"),
+            "counts row should contain review count"
+        );
+        assert!(
+            counts.contains("1 clean"),
+            "counts row should contain clean count"
+        );
+    }
+
+    #[test]
+    fn counts_strip_is_absent_on_subviews() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // Walk to the project row and drill in.
+        app.select_next();
+        app.activate_selected();
+        assert!(matches!(&app.view, AppView::Project { .. }));
+
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let row1: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect();
+        assert!(
+            !row1.contains("repos"),
+            "counts strip must not appear off Projects view"
+        );
+        assert!(
+            !row1.contains("review"),
+            "counts strip must not appear off Projects view"
+        );
+    }
+
+    #[test]
+    fn feed_top_row_accounts_for_counts_strip_on_projects_view() {
+        let projects_app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // breadcrumb + attention + counts = 3
+        assert_eq!(feed_top_row(&projects_app), 3);
+
+        let mut subview_app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        subview_app.select_next();
+        subview_app.activate_selected();
+        // breadcrumb + attention = 2
+        assert_eq!(feed_top_row(&subview_app), 2);
+
+        let empty_app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        // breadcrumb + counts = 2 (no attention since inbox empty)
+        assert_eq!(feed_top_row(&empty_app), 2);
+    }
+
+    #[test]
+    fn attention_line_renders_when_inbox_non_empty() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row1: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect();
+        assert!(
+            row1.contains("web/fix-login"),
+            "attention line should name the task"
+        );
+        assert!(
+            row1.contains("agent needs input"),
+            "attention line should carry the reason"
+        );
+        let danger = buffer[(2, 1)].fg;
+        assert_eq!(danger, super::danger_accent());
+    }
+
+    #[test]
+    fn attention_line_absent_when_inbox_empty() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row1: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect();
+        // With inbox empty, row 1 is counts strip, not attention.
+        assert!(row1.contains("repos"));
+    }
+
+    #[test]
+    fn attention_line_absent_on_task_actions_view() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // Walk past inbox to the task row, then into TaskActions.
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Task(_))
+            ) {
+                break;
+            }
+            app.select_next();
+        }
+        app.activate_selected();
+        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row1: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 1)].symbol())
+            .collect();
+        assert!(
+            !row1.contains("agent needs input"),
+            "attention line should hide on TaskActions"
+        );
     }
 
     #[test]
@@ -1317,10 +1548,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case(0, Some(FLASH_TICKS))]
-    #[case(1, Some(FLASH_TICKS - 1))]
-    #[case(FLASH_TICKS, Some(0))]
-    #[case(FLASH_TICKS + 1, None)]
+    #[case(0, Some(crate::cockpit_state::NOTICE_TICKS_HINT))]
+    #[case(1, Some(crate::cockpit_state::NOTICE_TICKS_HINT - 1))]
+    #[case(crate::cockpit_state::NOTICE_TICKS_HINT, Some(0))]
+    #[case(crate::cockpit_state::NOTICE_TICKS_HINT + 1, None)]
     fn flash_expires_after_final_visible_tick(
         #[case] ticks: u8,
         #[case] expected_remaining: Option<u8>,
@@ -1329,13 +1560,15 @@ mod tests {
         assert!(app.submit_input().is_none());
 
         for _ in 0..ticks {
-            app.tick_flash();
+            app.tick_notices();
         }
 
         assert_eq!(
-            app.flash.as_ref().map(|(_, ticks)| *ticks),
+            app.current_notice().map(|n| n.ticks_remaining),
             expected_remaining
         );
+        // FLASH_TICKS still exported for back-compat reference.
+        assert_ne!(FLASH_TICKS, 0);
     }
 
     #[test]
@@ -1445,7 +1678,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(action, EventLoopAction::Continue));
-        assert_eq!(app.flash.is_some(), flashes_for_empty_submit);
+        assert_eq!(app.current_notice().is_some(), flashes_for_empty_submit);
         match code {
             KeyCode::Char('x') => {
                 assert!(matches!(&app.view, AppView::NewTaskInput { title, .. } if title == "x"));
@@ -1605,13 +1838,14 @@ mod tests {
         let mut app = app_in_project_view();
         let target = 2;
         let target_feed_row = selectable_row_layout(&app)[target].start;
+        let feed_top = super::feed_top_row(&app);
 
         let action = handle_with_noop(
             &mut app,
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 2,
-                row: (target_feed_row + 1) as u16,
+                row: (target_feed_row + feed_top) as u16,
                 modifiers: KeyModifiers::NONE,
             }),
             10,
@@ -1627,7 +1861,8 @@ mod tests {
         let target = 5;
         let target_feed_row = selectable_row_layout(&app)[target].start;
         app.viewport_scroll = 2;
-        let mouse_row = (target_feed_row - app.viewport_scroll + 1) as u16;
+        let feed_top = super::feed_top_row(&app);
+        let mouse_row = (target_feed_row - app.viewport_scroll + feed_top) as u16;
 
         let action = handle_with_noop(
             &mut app,
@@ -2892,11 +3127,13 @@ mod tests {
         let mut app = app_in_project_view();
         app.select_next();
         app.select_next();
+        let item = app.selected_action().expect("task row selected");
         app.activate_selected();
         assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         super::handle_action_result(
             &mut app,
+            &item,
             Ok(ActionOutcome::Refresh(CockpitSnapshot {
                 repos: sample_repos(),
                 cards: Vec::<TaskCard>::new(),
@@ -2928,23 +3165,30 @@ mod tests {
     #[test]
     fn on_action_message_outcome_sets_flash() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        app.flash("done".to_string());
-        assert!(app.flash.is_some());
+        app.notify_system(
+            "done".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        assert!(app.current_notice().is_some());
     }
 
     #[test]
     fn action_errors_set_flash_and_stay_in_ajax() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // Select an inbox row so the task notice lookup matches the dispatched item.
+        let item = app.selected_action().expect("inbox item selected");
 
         let pending = super::handle_action_result(
             &mut app,
+            &item,
             Err(std::io::Error::other("git exited with status 42")),
         )
         .unwrap();
 
         assert!(pending.is_none());
         assert_eq!(
-            app.flash.as_ref().map(|(message, _)| message.as_str()),
+            app.current_notice().map(|n| n.msg.as_str()),
             Some("git exited with status 42")
         );
     }
@@ -2968,7 +3212,7 @@ mod tests {
         assert_eq!(handler.asked, 1);
         assert_eq!(handler.confirmed, 0);
         assert_eq!(
-            app.flash.as_ref().map(|(message, _)| message.as_str()),
+            app.current_notice().map(|n| n.msg.as_str()),
             Some("press enter again to confirm")
         );
 
@@ -2982,5 +3226,600 @@ mod tests {
         assert!(matches!(second, EventLoopAction::Continue));
         assert_eq!(handler.asked, 1);
         assert_eq!(handler.confirmed, 1);
+    }
+
+    #[test]
+    fn notify_task_higher_severity_replaces_lower() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+
+        app.notify_task(
+            task_id.clone(),
+            "saved".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            task_id.clone(),
+            "boom".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.notices.get(&task_id).expect("notice present");
+        assert_eq!(notice.msg, "boom");
+        assert_eq!(notice.severity, super::Severity::Error);
+    }
+
+    #[test]
+    fn notify_task_lower_severity_dropped() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+
+        app.notify_task(
+            task_id.clone(),
+            "confirm me".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            task_id.clone(),
+            "later success".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.notices.get(&task_id).expect("notice present");
+        assert_eq!(notice.msg, "confirm me");
+        assert_eq!(notice.severity, super::Severity::Confirm);
+    }
+
+    #[test]
+    fn notify_task_identical_message_resets_ticks_remaining() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+
+        app.notify_task(
+            task_id.clone(),
+            "saved".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        let full = super::cockpit_state::NOTICE_TICKS_SUCCESS;
+        // Tick the notice down a few steps, but not to zero.
+        for _ in 0..3 {
+            app.tick_notices();
+        }
+        assert_eq!(app.notices.get(&task_id).unwrap().ticks_remaining, full - 3);
+
+        // Identical (msg, severity) must reset to full lifetime.
+        app.notify_task(
+            task_id.clone(),
+            "saved".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        assert_eq!(app.notices.get(&task_id).unwrap().ticks_remaining, full);
+    }
+
+    #[test]
+    fn notify_task_user_action_replaces_background_event_at_equal_severity() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+
+        app.notify_task(
+            task_id.clone(),
+            "background failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::BackgroundEvent,
+        );
+        app.notify_task(
+            task_id.clone(),
+            "user failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.notices.get(&task_id).expect("notice present");
+        assert_eq!(notice.msg, "user failed");
+        assert_eq!(notice.origin, super::cockpit_state::Origin::UserAction,);
+    }
+
+    #[test]
+    fn notify_task_background_event_does_not_replace_user_action_at_equal_severity() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+
+        app.notify_task(
+            task_id.clone(),
+            "user failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            task_id.clone(),
+            "background failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::BackgroundEvent,
+        );
+
+        let notice = app.notices.get(&task_id).expect("notice present");
+        assert_eq!(notice.msg, "user failed");
+        assert_eq!(notice.origin, super::cockpit_state::Origin::UserAction,);
+    }
+
+    #[test]
+    fn current_notice_prefers_selected_task_notice_over_system_notice() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // selected=0 → inbox item for task-99 (sample_inbox).
+        let selected_task_id = app
+            .selected_task_id()
+            .cloned()
+            .expect("inbox row maps to task id");
+
+        app.notify_system(
+            "system message".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::BackgroundEvent,
+        );
+        app.notify_task(
+            selected_task_id,
+            "task message".to_string(),
+            super::Severity::Hint,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.current_notice().expect("notice present");
+        assert_eq!(notice.msg, "task message");
+        assert_eq!(notice.severity, super::Severity::Hint);
+    }
+
+    #[test]
+    fn current_notice_returns_system_notice_when_selected_row_has_none() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        // Move selection onto the project row, which does not map to a task id.
+        app.select_next();
+        assert!(app.selected_task_id().is_none());
+
+        app.notify_system(
+            "system message".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.current_notice().expect("notice present");
+        assert_eq!(notice.msg, "system message");
+        assert_eq!(notice.severity, super::Severity::Success);
+    }
+
+    #[test]
+    fn current_notice_prefers_pending_confirm_over_selected_task() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let selected_task_id = app
+            .selected_task_id()
+            .cloned()
+            .expect("inbox row maps to task id");
+
+        let confirm_item = AttentionItem {
+            task_id: TaskId::new("task-1"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "open".to_string(),
+            priority: 50,
+            recommended_action: "open task".to_string(),
+        };
+
+        app.notify_task(
+            confirm_item.task_id.clone(),
+            "press enter again to confirm".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.pending_confirmation = Some(confirm_item);
+
+        // A notice on the currently selected row must lose to the pending Confirm.
+        app.notify_task(
+            selected_task_id,
+            "selected message".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let notice = app.current_notice().expect("notice present");
+        assert_eq!(notice.msg, "press enter again to confirm");
+        assert_eq!(notice.severity, super::Severity::Confirm);
+    }
+
+    #[test]
+    fn error_notice_decays_over_error_lifetime() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+        app.notify_task(
+            task_id.clone(),
+            "boom".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let lifetime = super::cockpit_state::NOTICE_TICKS_ERROR;
+        // After exactly `lifetime` ticks, the notice is still present at 0.
+        for _ in 0..lifetime {
+            app.tick_notices();
+        }
+        let remaining = app.notices.get(&task_id).map(|n| n.ticks_remaining);
+        assert_eq!(remaining, Some(0));
+
+        // One more tick prunes it.
+        app.tick_notices();
+        assert!(!app.notices.contains_key(&task_id));
+    }
+
+    #[test]
+    fn confirm_notice_does_not_decay() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+        app.notify_task(
+            task_id.clone(),
+            "press enter again to confirm".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let initial = app.notices.get(&task_id).unwrap().ticks_remaining;
+        assert_eq!(initial, super::cockpit_state::NOTICE_TICKS_CONFIRM);
+
+        // Tick well past any non-sticky lifetime; Confirm must persist unchanged.
+        for _ in 0..super::cockpit_state::NOTICE_TICKS_ERROR + 2 {
+            app.tick_notices();
+        }
+
+        let notice = app.notices.get(&task_id).expect("confirm still present");
+        assert_eq!(notice.severity, super::Severity::Confirm);
+        assert_eq!(notice.ticks_remaining, initial);
+    }
+
+    #[test]
+    fn reload_prunes_notices_for_vanished_tasks() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let task_id = TaskId::new("task-1");
+        app.notify_task(
+            task_id.clone(),
+            "saved".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        assert!(app.notices.contains_key(&task_id));
+
+        // Refresh with no cards — task-1 has vanished.
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: Vec::<TaskCard>::new(),
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        assert!(
+            !app.notices.contains_key(&task_id),
+            "notice for vanished task should be pruned"
+        );
+    }
+
+    #[test]
+    fn reload_clears_background_error_notices_but_keeps_user_action_errors() {
+        let cards = vec![
+            sample_card(
+                "task-1",
+                "web/fix-login",
+                "Fix login",
+                UiState::Blocked,
+                LifecycleStatus::Active,
+            ),
+            sample_card(
+                "task-2",
+                "web/add-search",
+                "Add search",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+        ];
+        let inbox = InboxResponse { items: vec![] };
+        let mut app = App::new(sample_repos(), cards.clone(), inbox.clone());
+
+        let bg = TaskId::new("task-1");
+        let user = TaskId::new("task-2");
+
+        app.notify_task(
+            bg.clone(),
+            "poll failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::BackgroundEvent,
+        );
+        app.notify_task(
+            user.clone(),
+            "merge failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards,
+            inbox,
+        });
+
+        assert!(
+            !app.notices.contains_key(&bg),
+            "BackgroundEvent error should be cleared on refresh"
+        );
+        assert!(
+            app.notices.contains_key(&user),
+            "UserAction error should survive refresh"
+        );
+    }
+
+    #[test]
+    fn reload_drops_success_hint_on_lifecycle_change_keeps_error_confirm() {
+        let initial = vec![
+            sample_card(
+                "task-1",
+                "web/a",
+                "A",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+            sample_card(
+                "task-2",
+                "web/b",
+                "B",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+            sample_card(
+                "task-3",
+                "web/c",
+                "C",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+            sample_card(
+                "task-4",
+                "web/d",
+                "D",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+        ];
+        let inbox = InboxResponse { items: vec![] };
+        let mut app = App::new(sample_repos(), initial, inbox.clone());
+
+        app.notify_task(
+            TaskId::new("task-1"),
+            "success".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            TaskId::new("task-2"),
+            "hint".to_string(),
+            super::Severity::Hint,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            TaskId::new("task-3"),
+            "error".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.notify_task(
+            TaskId::new("task-4"),
+            "confirm".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        // All four tasks change lifecycle on refresh.
+        let refreshed = vec![
+            sample_card(
+                "task-1",
+                "web/a",
+                "A",
+                UiState::Idle,
+                LifecycleStatus::Reviewable,
+            ),
+            sample_card(
+                "task-2",
+                "web/b",
+                "B",
+                UiState::Idle,
+                LifecycleStatus::Reviewable,
+            ),
+            sample_card(
+                "task-3",
+                "web/c",
+                "C",
+                UiState::Idle,
+                LifecycleStatus::Reviewable,
+            ),
+            sample_card(
+                "task-4",
+                "web/d",
+                "D",
+                UiState::Idle,
+                LifecycleStatus::Reviewable,
+            ),
+        ];
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: refreshed,
+            inbox,
+        });
+
+        assert!(
+            !app.notices.contains_key(&TaskId::new("task-1")),
+            "Success should be dropped when lifecycle changes"
+        );
+        assert!(
+            !app.notices.contains_key(&TaskId::new("task-2")),
+            "Hint should be dropped when lifecycle changes"
+        );
+        assert!(
+            app.notices.contains_key(&TaskId::new("task-3")),
+            "Error must survive lifecycle change"
+        );
+        assert!(
+            app.notices.contains_key(&TaskId::new("task-4")),
+            "Confirm must survive lifecycle change"
+        );
+    }
+
+    #[test]
+    fn reload_clears_system_background_error_notice() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        app.notify_system(
+            "poll failed".to_string(),
+            super::Severity::Error,
+            super::cockpit_state::Origin::BackgroundEvent,
+        );
+        assert!(app.system_notice.is_some());
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: sample_tasks(),
+            inbox: sample_inbox(),
+        });
+
+        assert!(
+            app.system_notice.is_none(),
+            "system BackgroundEvent error must clear on successful refresh"
+        );
+    }
+
+    #[test]
+    fn reload_preserves_system_user_action_notice() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        app.notify_system(
+            "task name required".to_string(),
+            super::Severity::Hint,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: sample_tasks(),
+            inbox: sample_inbox(),
+        });
+
+        assert!(
+            app.system_notice.is_some(),
+            "system UserAction notice must survive successful refresh"
+        );
+    }
+
+    #[test]
+    fn view_change_via_go_home_invalidates_pending_confirm() {
+        let mut app = app_in_project_view();
+        let confirm_item = AttentionItem {
+            task_id: TaskId::new("task-1"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "open".to_string(),
+            priority: 50,
+            recommended_action: "open task".to_string(),
+        };
+        app.notify_task(
+            confirm_item.task_id.clone(),
+            "press enter again to confirm".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+        app.pending_confirmation = Some(confirm_item.clone());
+
+        assert!(app.go_home());
+
+        assert!(app.pending_confirmation.is_none());
+        assert!(
+            !app.notices.contains_key(&confirm_item.task_id),
+            "Confirm notice should be cleared on view change"
+        );
+        let hint = app
+            .system_notice
+            .as_ref()
+            .expect("hint should be posted on view change");
+        assert_eq!(hint.msg, "confirm again — context changed");
+        assert_eq!(hint.severity, super::Severity::Hint);
+    }
+
+    #[test]
+    fn view_change_with_no_pending_confirm_does_not_post_hint() {
+        let mut app = app_in_project_view();
+        assert!(app.system_notice.is_none());
+
+        assert!(app.go_home());
+
+        assert!(app.system_notice.is_none());
+    }
+
+    #[test]
+    fn selected_row_renders_chevron_prefix() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let content = render_to_string(80, 30, &app);
+        let line = content
+            .as_bytes()
+            .chunks(80)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .find(|line| line.contains("web/fix-login") && line.contains("open task"))
+            .expect("selected inbox feed row should be in the rendered output");
+        assert!(
+            line.contains(" > "),
+            "selected row should be prefixed with chevron, got: {line:?}"
+        );
+    }
+
+    #[test]
+    fn feed_uses_named_section_headers_between_groups() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let content = render_to_string(80, 30, &app);
+        assert!(
+            content.contains("-- projects --"),
+            "expected projects section header in feed"
+        );
+        assert!(
+            content.contains("-- tasks --"),
+            "expected tasks section header in feed"
+        );
+    }
+
+    #[test]
+    fn task_actions_view_pins_summary_row_above_action_list() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Task(_))
+            ) {
+                break;
+            }
+            app.select_next();
+        }
+        app.activate_selected();
+        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+
+        let first_action_row = selectable_row_layout(&app)[0].start;
+        assert!(
+            first_action_row >= 2,
+            "pinned summary should push selectables[0] below the initial blank, got start = {first_action_row}"
+        );
+
+        let content = render_to_string(80, 30, &app);
+        let lines: Vec<&str> = content
+            .as_bytes()
+            .chunks(80)
+            .map(|c| std::str::from_utf8(c).unwrap())
+            .collect();
+        let feed_top = feed_top_row(&app);
+        let summary_window = &lines[feed_top..feed_top + first_action_row];
+        assert!(
+            summary_window
+                .iter()
+                .any(|line| line.contains("web/fix-login") && line.contains("Fix login")),
+            "expected pinned task summary above the action list, got: {summary_window:?}"
+        );
     }
 }

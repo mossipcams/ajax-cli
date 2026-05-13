@@ -1,11 +1,47 @@
 use ajax_core::{
-    models::{AttentionItem, RecommendedAction, TaskId},
+    models::{AttentionItem, LifecycleStatus, RecommendedAction, TaskId},
     output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
     ui_state::UiState,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::PendingAction;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Severity {
+    Hint,
+    Success,
+    Error,
+    Confirm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Origin {
+    BackgroundEvent,
+    UserAction,
+}
+
+#[derive(Clone, Debug)]
+pub struct Notice {
+    pub msg: String,
+    pub severity: Severity,
+    pub origin: Origin,
+    pub ticks_remaining: u8,
+}
+
+pub(crate) const NOTICE_TICKS_HINT: u8 = 4;
+pub(crate) const NOTICE_TICKS_SUCCESS: u8 = 8;
+pub(crate) const NOTICE_TICKS_ERROR: u8 = 20;
+pub(crate) const NOTICE_TICKS_CONFIRM: u8 = u8::MAX;
+
+pub(crate) fn lifetime_for(severity: Severity) -> u8 {
+    match severity {
+        Severity::Hint => NOTICE_TICKS_HINT,
+        Severity::Success => NOTICE_TICKS_SUCCESS,
+        Severity::Error => NOTICE_TICKS_ERROR,
+        Severity::Confirm => NOTICE_TICKS_CONFIRM,
+    }
+}
 
 #[derive(Clone)]
 pub(crate) enum SelectableKind {
@@ -154,11 +190,13 @@ pub struct App {
     pub(crate) selectables: Vec<SelectableKind>,
     pub(crate) selected: usize,
     pub(crate) viewport_scroll: usize,
-    pub(crate) flash: Option<(String, u8)>,
+    pub(crate) notices: HashMap<TaskId, Notice>,
+    pub(crate) system_notice: Option<Notice>,
     pub(crate) pending_confirmation: Option<AttentionItem>,
 }
 
-pub(crate) const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
+#[cfg(test)]
+pub(crate) const FLASH_TICKS: u8 = NOTICE_TICKS_SUCCESS;
 
 impl App {
     pub fn new(repos: ReposResponse, cards: Vec<TaskCard>, inbox: InboxResponse) -> Self {
@@ -172,7 +210,8 @@ impl App {
             selectables,
             selected: 0,
             viewport_scroll: 0,
-            flash: None,
+            notices: HashMap::new(),
+            system_notice: None,
             pending_confirmation: None,
         }
     }
@@ -207,7 +246,7 @@ impl App {
         self.view = AppView::Projects;
         self.selected = 0;
         self.viewport_scroll = 0;
-        self.pending_confirmation = None;
+        self.invalidate_pending_confirmation();
         self.rebuild_selectables();
         true
     }
@@ -219,7 +258,7 @@ impl App {
             self.view = *previous.clone();
             self.selected = 0;
             self.viewport_scroll = 0;
-            self.pending_confirmation = None;
+            self.invalidate_pending_confirmation();
             self.rebuild_selectables();
             return true;
         }
@@ -228,7 +267,7 @@ impl App {
             self.view = *parent.clone();
             self.selected = 0;
             self.viewport_scroll = 0;
-            self.pending_confirmation = None;
+            self.invalidate_pending_confirmation();
             self.rebuild_selectables();
             return true;
         }
@@ -253,8 +292,8 @@ impl App {
         };
         self.selected = 0;
         self.viewport_scroll = 0;
-        self.flash = None;
-        self.pending_confirmation = None;
+        self.system_notice = None;
+        self.invalidate_pending_confirmation();
         self.rebuild_selectables();
     }
 
@@ -264,7 +303,7 @@ impl App {
                 self.view = AppView::Project { repo: repo.name };
                 self.selected = 0;
                 self.viewport_scroll = 0;
-                self.pending_confirmation = None;
+                self.invalidate_pending_confirmation();
                 self.rebuild_selectables();
                 None
             }
@@ -275,8 +314,8 @@ impl App {
                 };
                 self.selected = 0;
                 self.viewport_scroll = 0;
-                self.flash = None;
-                self.pending_confirmation = None;
+                self.system_notice = None;
+                self.invalidate_pending_confirmation();
                 self.rebuild_selectables();
                 None
             }
@@ -287,8 +326,8 @@ impl App {
                 };
                 self.selected = 0;
                 self.viewport_scroll = 0;
-                self.flash = None;
-                self.pending_confirmation = None;
+                self.system_notice = None;
+                self.invalidate_pending_confirmation();
                 self.rebuild_selectables();
                 None
             }
@@ -305,7 +344,7 @@ impl App {
                     };
                     self.selected = preselected;
                     self.viewport_scroll = 0;
-                    self.flash = None;
+                    self.system_notice = None;
                     self.pending_confirmation = None;
                     self.rebuild_selectables();
                     None
@@ -333,7 +372,11 @@ impl App {
         };
         let title = title.trim();
         if title.is_empty() {
-            self.flash("task name required".to_string());
+            self.notify_system(
+                "task name required".to_string(),
+                Severity::Hint,
+                Origin::UserAction,
+            );
             return None;
         }
 
@@ -364,10 +407,19 @@ impl App {
             }
             _ => false,
         };
+        let prior_lifecycles: HashMap<TaskId, LifecycleStatus> = self
+            .cards
+            .iter()
+            .map(|card| (card.id.clone(), card.lifecycle))
+            .collect();
         self.repos = repos;
         self.cards = cards;
         self.inbox = inbox;
         self.pending_confirmation = None;
+        self.prune_notices_for_vanished_tasks();
+        self.prune_background_error_notices();
+        self.prune_stale_lifecycle_notices(&prior_lifecycles);
+        self.clear_system_background_error();
         if missing_task_after_refresh {
             self.view = AppView::Projects;
             self.selected = 0;
@@ -378,24 +430,177 @@ impl App {
         self.selected = self.selected.min(max);
     }
 
+    fn prune_notices_for_vanished_tasks(&mut self) {
+        let live_ids: HashSet<&TaskId> = self.cards.iter().map(|card| &card.id).collect();
+        self.notices.retain(|task_id, _| live_ids.contains(task_id));
+    }
+
+    fn prune_background_error_notices(&mut self) {
+        self.notices.retain(|_, notice| {
+            !(notice.severity == Severity::Error && notice.origin == Origin::BackgroundEvent)
+        });
+    }
+
+    fn clear_system_background_error(&mut self) {
+        if let Some(notice) = &self.system_notice {
+            if notice.severity == Severity::Error && notice.origin == Origin::BackgroundEvent {
+                self.system_notice = None;
+            }
+        }
+    }
+
+    fn prune_stale_lifecycle_notices(&mut self, prior: &HashMap<TaskId, LifecycleStatus>) {
+        let current: HashMap<&TaskId, LifecycleStatus> = self
+            .cards
+            .iter()
+            .map(|card| (&card.id, card.lifecycle))
+            .collect();
+        self.notices.retain(|task_id, notice| {
+            let stale_by_severity = matches!(notice.severity, Severity::Success | Severity::Hint);
+            if !stale_by_severity {
+                return true;
+            }
+            !matches!(
+                (prior.get(task_id), current.get(task_id)),
+                (Some(old), Some(new)) if old != new
+            )
+        });
+    }
+
     fn rebuild_selectables(&mut self) {
         self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.cards);
     }
 
-    pub(crate) fn flash(&mut self, msg: String) {
-        self.flash = Some((msg, FLASH_TICKS));
+    fn invalidate_pending_confirmation(&mut self) {
+        let Some(item) = self.pending_confirmation.take() else {
+            return;
+        };
+        if let Some(notice) = self.notices.get(&item.task_id) {
+            if notice.severity == Severity::Confirm {
+                self.notices.remove(&item.task_id);
+            }
+        }
+        self.notify_system(
+            "confirm again — context changed".to_string(),
+            Severity::Hint,
+            Origin::UserAction,
+        );
+    }
+
+    pub(crate) fn notify_task(
+        &mut self,
+        task_id: TaskId,
+        msg: String,
+        severity: Severity,
+        origin: Origin,
+    ) {
+        let new = Notice {
+            msg,
+            severity,
+            origin,
+            ticks_remaining: lifetime_for(severity),
+        };
+        match self.notices.get(&task_id) {
+            None => {
+                self.notices.insert(task_id, new);
+            }
+            Some(existing) => {
+                if existing.msg == new.msg && existing.severity == new.severity {
+                    let mut updated = existing.clone();
+                    updated.ticks_remaining = lifetime_for(new.severity);
+                    updated.origin = new.origin;
+                    self.notices.insert(task_id, updated);
+                    return;
+                }
+                if new.severity > existing.severity
+                    || (new.severity == existing.severity
+                        && existing.origin == Origin::BackgroundEvent
+                        && new.origin == Origin::UserAction)
+                {
+                    self.notices.insert(task_id, new);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn notify_system(&mut self, msg: String, severity: Severity, origin: Origin) {
+        let new = Notice {
+            msg,
+            severity,
+            origin,
+            ticks_remaining: lifetime_for(severity),
+        };
+        match &self.system_notice {
+            None => {
+                self.system_notice = Some(new);
+            }
+            Some(existing) => {
+                if existing.msg == new.msg && existing.severity == new.severity {
+                    let mut updated = existing.clone();
+                    updated.ticks_remaining = lifetime_for(new.severity);
+                    updated.origin = new.origin;
+                    self.system_notice = Some(updated);
+                    return;
+                }
+                if new.severity > existing.severity
+                    || (new.severity == existing.severity
+                        && existing.origin == Origin::BackgroundEvent
+                        && new.origin == Origin::UserAction)
+                {
+                    self.system_notice = Some(new);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn current_notice(&self) -> Option<&Notice> {
+        if let Some(item) = &self.pending_confirmation {
+            if let Some(notice) = self.notices.get(&item.task_id) {
+                if notice.severity == Severity::Confirm {
+                    return Some(notice);
+                }
+            }
+        }
+        if let Some(task_id) = self.selected_task_id() {
+            if let Some(notice) = self.notices.get(task_id) {
+                return Some(notice);
+            }
+        }
+        self.system_notice.as_ref()
+    }
+
+    pub(crate) fn selected_task_id(&self) -> Option<&TaskId> {
+        let selectable = self.selectables.get(self.selected)?;
+        match selectable {
+            SelectableKind::Task(card) => Some(&card.id),
+            SelectableKind::Inbox(item) => Some(&item.task_id),
+            SelectableKind::TaskAction { task, .. } => Some(&task.id),
+            _ => None,
+        }
     }
 
     pub(crate) fn has_pending_confirmation(&self, item: &AttentionItem) -> bool {
         self.pending_confirmation.as_ref() == Some(item)
     }
 
-    pub(crate) fn tick_flash(&mut self) {
-        if let Some((_, ticks)) = &mut self.flash {
-            if *ticks == 0 {
-                self.flash = None;
+    pub(crate) fn tick_notices(&mut self) {
+        self.notices.retain(|_, notice| {
+            if notice.severity == Severity::Confirm {
+                true
+            } else if notice.ticks_remaining == 0 {
+                false
             } else {
-                *ticks -= 1;
+                notice.ticks_remaining -= 1;
+                true
+            }
+        });
+        if let Some(notice) = &mut self.system_notice {
+            if notice.severity != Severity::Confirm {
+                if notice.ticks_remaining == 0 {
+                    self.system_notice = None;
+                } else {
+                    notice.ticks_remaining -= 1;
+                }
             }
         }
     }

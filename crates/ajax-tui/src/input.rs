@@ -1,9 +1,11 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::io;
 
+use ajax_core::models::AttentionItem;
+
 use crate::{
-    cockpit_state::CockpitSnapshot, navigation, ActionOutcome, App, CockpitEventHandler,
-    PendingAction,
+    cockpit_state::{CockpitSnapshot, Origin, Severity},
+    navigation, ActionOutcome, App, CockpitEventHandler, PendingAction,
 };
 
 pub(crate) enum EventLoopAction {
@@ -23,8 +25,8 @@ pub(crate) fn handle_cockpit_event<H: CockpitEventHandler + ?Sized>(
             handle_key_event(app, key.code, key.modifiers, handler)
         }
         Event::Mouse(mouse) => {
-            // Layout: row 0 = header, last row = status bar, feed in between.
-            let feed_top: usize = 1;
+            // Layout: row 0 = header, optional counts row, feed, status bar.
+            let feed_top: usize = crate::feed_top_row(app);
             let feed_bottom = height.saturating_sub(1);
             match mouse.kind {
                 MouseEventKind::ScrollUp => app.select_prev(),
@@ -76,6 +78,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
                 let confirmed = app.has_pending_confirmation(&item);
                 let result = if confirmed {
                     app.pending_confirmation = None;
+                    app.notices.remove(&item.task_id);
                     handler.on_confirmed_action(&item)
                 } else {
                     let result = handler.on_action(&item);
@@ -86,7 +89,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
                     }
                     result
                 };
-                if let Some(pending) = handle_action_result(app, result)? {
+                if let Some(pending) = handle_action_result(app, &item, result)? {
                     return Ok(EventLoopAction::Pending(pending));
                 }
             }
@@ -108,7 +111,7 @@ pub(crate) fn handle_refresh_result(
         }
         Ok(None) => Ok(()),
         Err(error) => {
-            app.flash(error.to_string());
+            app.notify_system(error.to_string(), Severity::Error, Origin::BackgroundEvent);
             Ok(())
         }
     }
@@ -116,6 +119,7 @@ pub(crate) fn handle_refresh_result(
 
 pub(crate) fn handle_action_result(
     app: &mut App,
+    item: &AttentionItem,
     result: io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     match result {
@@ -125,15 +129,30 @@ pub(crate) fn handle_action_result(
         }
         Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
         Ok(ActionOutcome::Confirm(message)) => {
-            app.flash(message);
+            app.notify_task(
+                item.task_id.clone(),
+                message,
+                Severity::Confirm,
+                Origin::UserAction,
+            );
             Ok(None)
         }
         Ok(ActionOutcome::Message(message)) => {
-            app.flash(message);
+            app.notify_task(
+                item.task_id.clone(),
+                message,
+                Severity::Success,
+                Origin::UserAction,
+            );
             Ok(None)
         }
         Err(error) => {
-            app.flash(error.to_string());
+            app.notify_task(
+                item.task_id.clone(),
+                error.to_string(),
+                Severity::Error,
+                Origin::UserAction,
+            );
             Ok(None)
         }
     }

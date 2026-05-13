@@ -17,6 +17,7 @@ use std::{
 };
 
 use crate::{
+    cockpit_state::{Origin, Severity},
     input::{handle_cockpit_event, handle_refresh_result, EventLoopAction},
     rendering::render_ui,
     ActionOutcome, App, CockpitEventHandler, PendingAction,
@@ -63,7 +64,7 @@ pub fn run_interactive_with_flash_and_refresh(
 
     let mut app = App::new(repos, cards, inbox);
     if let Some(message) = initial_flash {
-        app.flash(message);
+        app.notify_system(message, Severity::Success, Origin::UserAction);
     }
     let result = run_event_loop(&mut terminal, &mut app, handler, refresh_interval);
 
@@ -167,7 +168,7 @@ fn run_event_loop<B: Backend>(
             .height as usize;
         let feed_height = height.saturating_sub(2);
 
-        app.tick_flash();
+        app.tick_notices();
         if should_refresh(&mut last_refresh, refresh_interval) {
             handle_refresh_result(app, handler.on_refresh())?;
         }
