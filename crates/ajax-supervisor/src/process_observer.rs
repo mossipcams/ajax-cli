@@ -79,6 +79,7 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
     let hang_detector = hang_after
         .map(|hang_after| Arc::new(Mutex::new(HangDetector::new(Instant::now(), hang_after))));
     let process_done = Arc::new(AtomicBool::new(false));
+    let hung_reported = Arc::new(AtomicBool::new(false));
 
     send_event(
         &events,
@@ -90,25 +91,18 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
         let hang_events = events.clone();
         let hang_detector = Arc::clone(hang_detector);
         let hang_process_done = Arc::clone(&process_done);
+        let hang_reported = Arc::clone(&hung_reported);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(50)).await;
                 if hang_process_done.load(Ordering::SeqCst) {
                     break;
                 }
-                let quiet_for = match hang_detector.lock() {
-                    Ok(detector) if detector.is_hung(Instant::now()) => {
-                        detector.quiet_for(Instant::now())
-                    }
-                    Ok(_) => continue,
+                match send_hung_if_quiet(Some(&hang_detector), &hang_events, &hang_reported).await {
+                    Ok(true) => break,
+                    Ok(false) => continue,
                     Err(_) => break,
-                };
-                let _ = send_event(
-                    &hang_events,
-                    MonitorEvent::Process(ProcessEvent::Hung { quiet_for }),
-                )
-                .await;
-                break;
+                }
             }
         })
     });
@@ -173,6 +167,7 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
     stderr_task
         .await
         .map_err(|error| SupervisorError::Process(error.to_string()))??;
+    send_hung_if_quiet(hang_detector.as_ref(), &events, &hung_reported).await?;
     let status_code = status.code();
     send_event(
         &events,
@@ -219,6 +214,40 @@ fn observe_output(hang_detector: Option<&Arc<Mutex<HangDetector>>>) {
     }
 }
 
+async fn send_hung_if_quiet(
+    hang_detector: Option<&Arc<Mutex<HangDetector>>>,
+    events: &mpsc::Sender<MonitorEvent>,
+    hung_reported: &AtomicBool,
+) -> Result<bool, SupervisorError> {
+    if hung_reported.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    let Some(hang_detector) = hang_detector else {
+        return Ok(false);
+    };
+
+    let quiet_for = match hang_detector.lock() {
+        Ok(detector) => {
+            let now = Instant::now();
+            detector.is_hung(now).then(|| detector.quiet_for(now))
+        }
+        Err(_) => None,
+    };
+    let Some(quiet_for) = quiet_for else {
+        return Ok(false);
+    };
+    if hung_reported.swap(true, Ordering::SeqCst) {
+        return Ok(false);
+    }
+
+    send_event(
+        events,
+        MonitorEvent::Process(ProcessEvent::Hung { quiet_for }),
+    )
+    .await?;
+    Ok(true)
+}
+
 async fn send_event(
     events: &mpsc::Sender<MonitorEvent>,
     event: MonitorEvent,
@@ -231,7 +260,12 @@ async fn send_event(
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        sync::{atomic::AtomicBool, Arc, Mutex},
+        time::{Duration, Instant},
+    };
 
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::mpsc;
@@ -361,6 +395,56 @@ mod tests {
         assert!(saw_hung);
         let _ = supervise.await.unwrap();
         let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn process_observer_reports_hung_when_quiet_process_exits_before_poll_wakes() {
+        let script = std::env::temp_dir().join(format!(
+            "ajax-process-observer-fast-hung-{}",
+            std::process::id()
+        ));
+        fs::write(&script, "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\n").unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let adapter = CodexAdapter::new(script.display().to_string());
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let status = supervise_process(&adapter, "ignored", tx, Some(Duration::ZERO))
+            .await
+            .unwrap();
+        let mut saw_hung = false;
+        while let Ok(event) = rx.try_recv() {
+            if matches!(event, MonitorEvent::Process(ProcessEvent::Hung { .. })) {
+                saw_hung = true;
+                break;
+            }
+        }
+
+        assert_eq!(status, Some(0));
+        assert!(saw_hung);
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn final_hang_check_reports_quiet_detector_before_process_exit() {
+        let detector = Arc::new(Mutex::new(super::HangDetector::new(
+            Instant::now() - Duration::from_millis(20),
+            Duration::from_millis(10),
+        )));
+        let (tx, mut rx) = mpsc::channel(1);
+
+        let hung_reported = AtomicBool::new(false);
+
+        super::send_hung_if_quiet(Some(&detector), &tx, &hung_reported)
+            .await
+            .expect("hung event should send");
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Hung { .. }))
+        ));
     }
 
     #[test]

@@ -79,20 +79,15 @@ pub fn spawn_monitor(
 ) -> Result<(MonitorHandle, mpsc::Receiver<MonitorEvent>), SupervisorError> {
     let capacity = config.channel_capacity.max(1);
     let (events, receiver) = mpsc::channel(capacity);
-    let (raw_events, mut raw_receiver) = mpsc::channel(capacity);
+    let (raw_events, raw_receiver) = mpsc::channel(capacity);
     let event_log = config.event_log_path.clone().map(EventLog::new);
-    let event_forwarder = tokio::spawn(async move {
-        while let Some(event) = raw_receiver.recv().await {
-            if let Some(event_log) = &event_log {
-                event_log.append(&event)?;
-            }
-            if events.send(event).await.is_err() {
-                break;
-            }
-        }
-        Ok(())
-    });
     let (cancel, cancel_rx) = watch::channel(false);
+    let event_forwarder = tokio::spawn(forward_monitor_events(
+        raw_receiver,
+        events,
+        event_log,
+        cancel_rx.clone(),
+    ));
     let join = tokio::spawn(async move {
         let (_watcher, watcher_forwarder) = start_watcher(&config, &raw_events)?;
         if config.git_snapshots == GitSnapshotPolicy::OnStartAndExit {
@@ -132,6 +127,42 @@ pub fn spawn_monitor(
         },
         receiver,
     ))
+}
+
+async fn forward_monitor_events(
+    mut raw_receiver: mpsc::Receiver<MonitorEvent>,
+    events: mpsc::Sender<MonitorEvent>,
+    event_log: Option<EventLog>,
+    mut cancel: watch::Receiver<bool>,
+) -> Result<(), SupervisorError> {
+    loop {
+        if *cancel.borrow() {
+            break;
+        }
+
+        tokio::select! {
+            biased;
+
+            changed = cancel.changed() => match changed {
+                Ok(()) if *cancel.borrow() => break,
+                Ok(()) => continue,
+                Err(_) => break,
+            },
+            event = raw_receiver.recv() => {
+                let Some(event) = event else {
+                    break;
+                };
+                if let Some(event_log) = &event_log {
+                    event_log.append(&event)?;
+                }
+                if events.send(event).await.is_err() {
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn start_watcher(
@@ -184,6 +215,7 @@ mod tests {
     use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
 
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
+    use tokio::sync::{mpsc, watch};
 
     use super::{spawn_monitor, GitSnapshotPolicy, MonitorConfig};
 
@@ -279,6 +311,46 @@ mod tests {
 
         let _ = handle.wait().await;
         let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn event_forwarder_closes_output_when_monitor_is_cancelled() {
+        let (raw_events, raw_receiver) = mpsc::channel(4);
+        let (events, mut receiver) = mpsc::channel(4);
+        let (cancel, cancel_rx) = watch::channel(false);
+        let forwarder = tokio::spawn(super::forward_monitor_events(
+            raw_receiver,
+            events,
+            None,
+            cancel_rx,
+        ));
+
+        raw_events
+            .send(MonitorEvent::Process(ProcessEvent::Started {
+                pid: Some(123),
+            }))
+            .await
+            .expect("raw event receiver should be open");
+        assert!(matches!(
+            receiver.recv().await,
+            Some(MonitorEvent::Process(ProcessEvent::Started {
+                pid: Some(123)
+            }))
+        ));
+
+        cancel.send(true).expect("cancel receiver should be open");
+
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), receiver.recv())
+                .await
+                .expect("receiver should close after cancellation")
+                .is_none()
+        );
+        forwarder
+            .await
+            .expect("forwarder should join")
+            .expect("forwarder should not fail");
+        drop(raw_events);
     }
 
     #[tokio::test]

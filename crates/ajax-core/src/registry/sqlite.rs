@@ -1437,6 +1437,7 @@ mod tests {
 
     #[rstest]
     #[case::tasks_payload(
+        "tasks-payload",
         r#"
         CREATE TABLE registry_tasks (
             task_id TEXT PRIMARY KEY NOT NULL,
@@ -1452,6 +1453,7 @@ mod tests {
         "#
     )]
     #[case::events_payload(
+        "events-payload",
         r#"
         CREATE TABLE registry_tasks (
             task_id TEXT PRIMARY KEY NOT NULL
@@ -1466,11 +1468,14 @@ mod tests {
         PRAGMA user_version = 1;
         "#
     )]
-    fn sqlite_registry_store_rejects_either_legacy_payload_table(#[case] schema: &str) {
+    fn sqlite_registry_store_rejects_either_legacy_payload_table(
+        #[case] fixture_name: &str,
+        #[case] schema: &str,
+    ) {
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
-            "sqlite-one-legacy-payload-table"
+            fixture_name
         ));
         let connection = rusqlite::Connection::open(&path).unwrap();
         connection.execute_batch(schema).unwrap();
