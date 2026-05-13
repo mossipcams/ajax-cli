@@ -1,6 +1,9 @@
-use crate::models::{
-    AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, RecommendedAction,
-    SideFlag, Task,
+use crate::{
+    models::{
+        AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, RecommendedAction,
+        SideFlag, Task,
+    },
+    recommended::opportunity_attention_for,
 };
 
 pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
@@ -8,6 +11,12 @@ pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
         .iter()
         .flat_map(attention_items_for_task)
         .collect::<Vec<_>>();
+
+    for task in tasks {
+        if let Some(item) = opportunity_attention_for(task) {
+            items.push(item);
+        }
+    }
 
     items = deduplicate_attention_items(items);
 

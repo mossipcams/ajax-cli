@@ -13,6 +13,7 @@ pub mod models;
 pub mod operation;
 pub mod output;
 pub mod policy;
+pub mod recommended;
 pub mod registry;
 pub mod ui_state;
 
