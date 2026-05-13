@@ -14,6 +14,7 @@ pub mod operation;
 pub mod output;
 pub mod policy;
 pub mod registry;
+pub mod ui_state;
 
 #[cfg(test)]
 mod tests {

@@ -1,4 +1,76 @@
-use crate::models::{SafetyClassification, SafetyReport, SideFlag, Task};
+use crate::models::{LifecycleStatus, SafetyClassification, SafetyReport, SideFlag, Task};
+
+pub fn merge_safety(task: &Task) -> SafetyReport {
+    let mut classification = SafetyClassification::Safe;
+    let mut reasons = Vec::new();
+
+    if !matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
+    ) {
+        return SafetyReport {
+            classification: SafetyClassification::Blocked,
+            reasons: vec!["lifecycle is not reviewable or mergeable".to_string()],
+        };
+    }
+
+    let Some(git_status) = task.git_status.as_ref() else {
+        return SafetyReport {
+            classification: SafetyClassification::Blocked,
+            reasons: vec!["git status is unknown".to_string()],
+        };
+    };
+
+    if !git_status.worktree_exists || task.has_side_flag(SideFlag::WorktreeMissing) {
+        mark(
+            &mut classification,
+            SafetyClassification::Blocked,
+            &mut reasons,
+            "worktree is missing",
+        );
+    }
+
+    if !git_status.branch_exists || task.has_side_flag(SideFlag::BranchMissing) {
+        mark(
+            &mut classification,
+            SafetyClassification::Blocked,
+            &mut reasons,
+            "branch is missing",
+        );
+    }
+
+    if git_status.conflicted || task.has_side_flag(SideFlag::Conflicted) {
+        mark(
+            &mut classification,
+            SafetyClassification::Dangerous,
+            &mut reasons,
+            "working tree has conflicts",
+        );
+    }
+
+    if git_status.dirty || git_status.untracked_files > 0 || task.has_side_flag(SideFlag::Dirty) {
+        mark(
+            &mut classification,
+            SafetyClassification::NeedsConfirmation,
+            &mut reasons,
+            "working tree has local changes",
+        );
+    }
+
+    if git_status.has_unpushed_work() || task.has_side_flag(SideFlag::Unpushed) {
+        mark(
+            &mut classification,
+            SafetyClassification::NeedsConfirmation,
+            &mut reasons,
+            "branch has unpushed commits",
+        );
+    }
+
+    SafetyReport {
+        classification,
+        reasons,
+    }
+}
 
 pub fn cleanup_safety(task: &Task) -> SafetyReport {
     let mut classification = SafetyClassification::Safe;
@@ -468,5 +540,115 @@ mod tests {
             "missing reason {expected_reason:?} in {:?}",
             report.reasons
         );
+    }
+
+    use super::merge_safety;
+    use crate::lifecycle::{mark_active, mark_mergeable, mark_merged, mark_reviewable};
+
+    fn reviewable_clean_task() -> Task {
+        let mut task = clean_merged_task();
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        let git = task.git_status.as_mut().unwrap();
+        git.merged = false;
+        git.ahead = 0;
+        git.unpushed_commits = 0;
+        task
+    }
+
+    #[test]
+    fn reviewable_clean_task_is_safe_to_merge() {
+        let report = merge_safety(&reviewable_clean_task());
+
+        assert_eq!(report.classification, SafetyClassification::Safe);
+    }
+
+    #[test]
+    fn mergeable_clean_task_is_safe_to_merge() {
+        let mut task = reviewable_clean_task();
+        mark_mergeable(&mut task).unwrap();
+
+        let report = merge_safety(&task);
+
+        assert_eq!(report.classification, SafetyClassification::Safe);
+    }
+
+    #[test]
+    fn merge_safety_blocks_non_review_lifecycle() {
+        let mut task = reviewable_clean_task();
+        mark_mergeable(&mut task).unwrap();
+        mark_merged(&mut task).unwrap();
+
+        let report = merge_safety(&task);
+
+        assert_eq!(report.classification, SafetyClassification::Blocked);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|reason| reason == "lifecycle is not reviewable or mergeable"));
+    }
+
+    #[test]
+    fn merge_safety_flags_conflicted_worktree_as_dangerous() {
+        let mut task = reviewable_clean_task();
+        task.git_status.as_mut().unwrap().conflicted = true;
+        task.add_side_flag(SideFlag::Conflicted);
+
+        let report = merge_safety(&task);
+
+        assert_eq!(report.classification, SafetyClassification::Dangerous);
+    }
+
+    #[test]
+    fn merge_safety_flags_dirty_worktree_as_needs_confirmation() {
+        let mut task = reviewable_clean_task();
+        task.git_status.as_mut().unwrap().dirty = true;
+        task.add_side_flag(SideFlag::Dirty);
+
+        let report = merge_safety(&task);
+
+        assert_eq!(
+            report.classification,
+            SafetyClassification::NeedsConfirmation
+        );
+    }
+
+    #[test]
+    fn merge_safety_flags_unpushed_branch_as_needs_confirmation() {
+        let mut task = reviewable_clean_task();
+        task.git_status.as_mut().unwrap().ahead = 2;
+        task.git_status.as_mut().unwrap().unpushed_commits = 2;
+
+        let report = merge_safety(&task);
+
+        assert_eq!(
+            report.classification,
+            SafetyClassification::NeedsConfirmation
+        );
+    }
+
+    #[test]
+    fn merge_safety_blocks_missing_worktree() {
+        let mut task = reviewable_clean_task();
+        task.git_status.as_mut().unwrap().worktree_exists = false;
+        task.add_side_flag(SideFlag::WorktreeMissing);
+
+        let report = merge_safety(&task);
+
+        assert_eq!(report.classification, SafetyClassification::Blocked);
+    }
+
+    #[test]
+    fn merge_safety_blocks_when_git_status_unknown() {
+        let mut task = reviewable_clean_task();
+        task.git_status = None;
+
+        let report = merge_safety(&task);
+
+        assert_eq!(report.classification, SafetyClassification::Blocked);
+        assert!(report
+            .reasons
+            .iter()
+            .any(|reason| reason == "git status is unknown"));
     }
 }
