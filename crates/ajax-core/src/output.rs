@@ -1,8 +1,40 @@
 use crate::{
-    models::{AttentionItem, LiveObservation, Task},
+    models::{AttentionItem, LifecycleStatus, LiveObservation, RecommendedAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
+    ui_state::UiState,
 };
 use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskCard {
+    pub id: TaskId,
+    pub qualified_handle: String,
+    pub title: String,
+    pub ui_state: UiState,
+    pub lifecycle: LifecycleStatus,
+    pub recommended_action: RecommendedAction,
+    pub action_reason: String,
+    pub available_actions: Vec<RecommendedAction>,
+    pub live_summary: Option<String>,
+    pub blocker_reason: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CockpitNextStep {
+    pub task_id: TaskId,
+    pub task_handle: String,
+    pub ui_state: UiState,
+    pub action: RecommendedAction,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CockpitProjection {
+    pub counts: CockpitSummary,
+    pub cards: Vec<TaskCard>,
+    pub attention: Vec<AttentionItem>,
+    pub next: Option<CockpitNextStep>,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReposResponse {

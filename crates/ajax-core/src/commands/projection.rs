@@ -2,7 +2,12 @@ use crate::{
     attention::derive_attention_items,
     models::{LifecycleStatus, RecommendedAction, SideFlag, Task},
     operation::{task_operation_eligibility, TaskOperation},
-    output::{CockpitSummary, InboxResponse, ReposResponse, TaskSummary, TasksResponse},
+    output::{
+        CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse, ReposResponse, TaskCard,
+        TaskSummary, TasksResponse,
+    },
+    recommended::{next_recommendation, recommended_action},
+    ui_state::derive_ui_state,
 };
 
 pub(super) fn cockpit_summary(
@@ -75,4 +80,53 @@ fn task_actions(task: &Task) -> Vec<String> {
     .filter(|(operation, _)| task_operation_eligibility(task, *operation).is_allowed())
     .map(|(_, action)| action.as_str().to_string())
     .collect()
+}
+
+pub(super) fn task_card(task: &Task) -> TaskCard {
+    let ui_state = derive_ui_state(task);
+    let plan = recommended_action(task);
+    let blocker_reason = if matches!(ui_state, crate::ui_state::UiState::Blocked) {
+        Some(plan.reason.clone())
+    } else {
+        None
+    };
+    TaskCard {
+        id: task.id.clone(),
+        qualified_handle: task.qualified_handle(),
+        title: task.title.clone(),
+        ui_state,
+        lifecycle: task.lifecycle_status,
+        recommended_action: plan.action,
+        action_reason: plan.reason,
+        available_actions: plan.available_actions,
+        live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
+        blocker_reason,
+    }
+}
+
+pub(super) fn cockpit_projection(
+    tasks: &[&Task],
+    summary: CockpitSummary,
+    attention: Vec<crate::models::AttentionItem>,
+) -> CockpitProjection {
+    let visible: Vec<&Task> = tasks
+        .iter()
+        .copied()
+        .filter(|task| is_visible_task(task))
+        .collect();
+    let cards = visible.iter().copied().map(task_card).collect();
+    let owned: Vec<Task> = visible.iter().copied().cloned().collect();
+    let next = next_recommendation(&owned).map(|step| CockpitNextStep {
+        task_id: step.task_id,
+        task_handle: step.task_handle,
+        ui_state: step.ui_state,
+        action: step.action,
+        reason: step.reason,
+    });
+    CockpitProjection {
+        counts: summary,
+        cards,
+        attention,
+        next,
+    }
 }

@@ -35,15 +35,15 @@ use crate::{
     config::Config,
     models::{LifecycleStatus, SideFlag, Task},
     output::{
-        CockpitResponse, InboxResponse, InspectResponse, NextResponse, RepoSummary, ReposResponse,
-        TasksResponse,
+        CockpitProjection, CockpitResponse, InboxResponse, InspectResponse, NextResponse,
+        RepoSummary, ReposResponse, TasksResponse,
     },
     registry::{Registry, RegistryError},
 };
 use lookup::find_task;
 use projection::{
-    cockpit_summary, count_active_tasks, count_attention_items, count_lifecycle, is_visible_task,
-    task_summary,
+    cockpit_projection as build_cockpit_projection, cockpit_summary, count_active_tasks,
+    count_attention_items, count_lifecycle, is_visible_task, task_summary,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
@@ -221,6 +221,16 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
         inbox,
         next,
     }
+}
+
+pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitProjection {
+    let repos = list_repos(context);
+    let tasks_list = list_tasks(context, None);
+    let review = review_queue(context);
+    let inbox = inbox(context);
+    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
+    let all_tasks = context.registry.list_tasks();
+    build_cockpit_projection(all_tasks.as_slice(), summary, inbox.items)
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
