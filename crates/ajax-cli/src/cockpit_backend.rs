@@ -2,9 +2,9 @@ use ajax_core::{
     adapters::{CommandRunner, TmuxAdapter},
     commands::{self, CommandContext},
     live::{self, LiveObservation, LiveStatusKind},
-    output::CockpitResponse,
     registry::{InMemoryRegistry, Registry},
 };
+use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
 use std::time::Duration;
 
@@ -59,9 +59,10 @@ fn render_cockpit_frames(
 }
 
 pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
+    let projection = commands::cockpit_projection(context);
     ajax_tui::render_cockpit(
         &commands::list_repos(context),
-        &commands::list_tasks(context, None),
+        &projection.cards,
         &commands::inbox(context),
     )
 }
@@ -76,10 +77,11 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
     loop {
+        let snapshot = build_cockpit_snapshot(context);
         let pending = ajax_tui::run_interactive_with_flash_and_refresh(
-            commands::list_repos(context),
-            commands::list_tasks(context, None),
-            commands::inbox(context),
+            snapshot.repos,
+            snapshot.cards,
+            snapshot.inbox,
             cockpit_flash.take(),
             refresh_interval,
             InteractiveCockpitHandler {
@@ -312,9 +314,20 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
-) -> Result<CockpitResponse, CliError> {
+) -> Result<CockpitSnapshot, CliError> {
     *state_changed |= refresh_live_context(context, runner)?;
-    Ok(commands::cockpit(context))
+    Ok(build_cockpit_snapshot(context))
+}
+
+pub(crate) fn build_cockpit_snapshot(
+    context: &CommandContext<InMemoryRegistry>,
+) -> CockpitSnapshot {
+    let projection = commands::cockpit_projection(context);
+    CockpitSnapshot {
+        repos: commands::list_repos(context),
+        cards: projection.cards,
+        inbox: commands::inbox(context),
+    }
 }
 
 struct InteractiveCockpitHandler<'a, R: CommandRunner> {
@@ -338,7 +351,7 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
         tui_cockpit_confirmed_action(item, self.context, self.runner, self.state_changed)
     }
 
-    fn on_refresh(&mut self) -> std::io::Result<Option<CockpitResponse>> {
+    fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
         refresh_cockpit_snapshot(self.context, self.runner, self.state_changed)
             .map(Some)
             .map_err(|error| std::io::Error::other(error.to_string()))

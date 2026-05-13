@@ -1,8 +1,10 @@
-use ajax_core::output::CockpitResponse;
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::io;
 
-use crate::{navigation, ActionOutcome, App, CockpitEventHandler, PendingAction};
+use crate::{
+    cockpit_state::CockpitSnapshot, navigation, ActionOutcome, App, CockpitEventHandler,
+    PendingAction,
+};
 
 pub(crate) enum EventLoopAction {
     Continue,
@@ -97,7 +99,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
 
 pub(crate) fn handle_refresh_result(
     app: &mut App,
-    result: io::Result<Option<CockpitResponse>>,
+    result: io::Result<Option<CockpitSnapshot>>,
 ) -> io::Result<()> {
     match result {
         Ok(Some(snapshot)) => {
@@ -117,12 +119,8 @@ pub(crate) fn handle_action_result(
     result: io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     match result {
-        Ok(ActionOutcome::Refresh {
-            repos,
-            tasks,
-            inbox,
-        }) => {
-            app.reload(repos, tasks, inbox);
+        Ok(ActionOutcome::Refresh(snapshot)) => {
+            app.apply_refresh(snapshot);
             Ok(None)
         }
         Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),

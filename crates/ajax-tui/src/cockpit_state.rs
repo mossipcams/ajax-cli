@@ -1,8 +1,7 @@
 use ajax_core::{
     models::{AttentionItem, RecommendedAction, TaskId},
-    output::{
-        CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
-    },
+    output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+    ui_state::UiState,
 };
 use std::collections::HashSet;
 
@@ -16,10 +15,10 @@ pub(crate) enum SelectableKind {
         repo: String,
     },
     Inbox(AttentionItem),
-    Task(TaskSummary),
+    Task(TaskCard),
     /// Action row inside the per-task action menu.
     TaskAction {
-        task: TaskSummary,
+        task: TaskCard,
         recommended_action: String,
     },
 }
@@ -32,7 +31,7 @@ pub(crate) enum AppView {
     },
     /// Per-task action menu reached by selecting a task and pressing Enter.
     TaskActions {
-        task: TaskSummary,
+        task: TaskCard,
         parent: Box<AppView>,
     },
     NewTaskInput {
@@ -66,10 +65,10 @@ impl SelectableKind {
                 recommended_action: RecommendedAction::NewTask.as_str().to_string(),
             },
             SelectableKind::Inbox(item) => item.clone(),
-            SelectableKind::Task(t) => AttentionItem {
-                task_id: TaskId::new(t.id.clone()),
-                task_handle: t.qualified_handle.clone(),
-                reason: t.lifecycle_status.clone(),
+            SelectableKind::Task(card) => AttentionItem {
+                task_id: card.id.clone(),
+                task_handle: card.qualified_handle.clone(),
+                reason: card.action_reason.clone(),
                 priority: 50,
                 recommended_action: RecommendedAction::OpenTask.as_str().to_string(),
             },
@@ -77,9 +76,9 @@ impl SelectableKind {
                 task,
                 recommended_action,
             } => AttentionItem {
-                task_id: TaskId::new(task.id.clone()),
+                task_id: task.id.clone(),
                 task_handle: task.qualified_handle.clone(),
-                reason: task.lifecycle_status.clone(),
+                reason: task.action_reason.clone(),
                 priority: 50,
                 recommended_action: recommended_action.clone(),
             },
@@ -91,19 +90,19 @@ fn build_selectables(
     view: &AppView,
     repos: &ReposResponse,
     inbox: &InboxResponse,
-    tasks: &TasksResponse,
+    cards: &[TaskCard],
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
     match view {
         AppView::Projects => {
-            let inbox_task_handles = waiting_input_task_handles(inbox.items.iter());
+            let inbox_task_ids = inbox_task_ids(inbox.items.iter());
             out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
             out.extend(
-                tasks
-                    .tasks
+                cards
                     .iter()
-                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
+                    .filter(|card| !inbox_task_ids.contains(&card.id))
+                    .filter(|card| !matches!(card.ui_state, UiState::Archived))
                     .cloned()
                     .map(SelectableKind::Task),
             );
@@ -113,27 +112,27 @@ fn build_selectables(
                 .items
                 .iter()
                 .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()));
-            let inbox_task_handles = waiting_input_task_handles(repo_inbox_items.clone());
+            let inbox_task_ids = inbox_task_ids(repo_inbox_items.clone());
 
             out.push(SelectableKind::NewTask { repo: repo.clone() });
             out.extend(repo_inbox_items.cloned().map(SelectableKind::Inbox));
             out.extend(
-                tasks
-                    .tasks
+                cards
                     .iter()
-                    .filter(|task| task_summary_repo(task) == Some(repo.as_str()))
-                    .filter(|task| !inbox_task_handles.contains(task.qualified_handle.as_str()))
+                    .filter(|card| card_repo(card) == Some(repo.as_str()))
+                    .filter(|card| !inbox_task_ids.contains(&card.id))
+                    .filter(|card| !matches!(card.ui_state, UiState::Archived))
                     .cloned()
                     .map(SelectableKind::Task),
             );
         }
         AppView::TaskActions { task, .. } => {
             out.extend(
-                task.actions
+                task.available_actions
                     .iter()
                     .map(|action| SelectableKind::TaskAction {
                         task: task.clone(),
-                        recommended_action: action.clone(),
+                        recommended_action: action.as_str().to_string(),
                     }),
             );
         }
@@ -143,18 +142,13 @@ fn build_selectables(
     out
 }
 
-fn waiting_input_task_handles<'a>(
-    items: impl Iterator<Item = &'a AttentionItem>,
-) -> HashSet<&'a str> {
-    items
-        .filter(|item| is_waiting_for_input(&item.reason))
-        .map(|item| item.task_handle.as_str())
-        .collect()
+fn inbox_task_ids<'a>(items: impl Iterator<Item = &'a AttentionItem>) -> HashSet<TaskId> {
+    items.map(|item| item.task_id.clone()).collect()
 }
 
 pub struct App {
     pub(crate) repos: ReposResponse,
-    pub(crate) tasks: TasksResponse,
+    pub(crate) cards: Vec<TaskCard>,
     pub(crate) inbox: InboxResponse,
     pub(crate) view: AppView,
     pub(crate) selectables: Vec<SelectableKind>,
@@ -167,12 +161,12 @@ pub struct App {
 pub(crate) const FLASH_TICKS: u8 = 8; // ~2 s at 250 ms poll
 
 impl App {
-    pub fn new(repos: ReposResponse, tasks: TasksResponse, inbox: InboxResponse) -> Self {
+    pub fn new(repos: ReposResponse, cards: Vec<TaskCard>, inbox: InboxResponse) -> Self {
         let view = AppView::Projects;
-        let selectables = build_selectables(&view, &repos, &inbox, &tasks);
+        let selectables = build_selectables(&view, &repos, &inbox, &cards);
         Self {
             repos,
-            tasks,
+            cards,
             inbox,
             view,
             selectables,
@@ -286,9 +280,9 @@ impl App {
                 self.rebuild_selectables();
                 None
             }
-            SelectableKind::Task(task) => {
+            SelectableKind::Task(card) => {
                 self.view = AppView::TaskActions {
-                    task,
+                    task: card,
                     parent: Box::new(self.view.clone()),
                 };
                 self.selected = 0;
@@ -299,14 +293,14 @@ impl App {
                 None
             }
             SelectableKind::Inbox(item) => {
-                if let Some(task) = self.find_task_for_handle(&item.task_handle) {
-                    let preselected = task
-                        .actions
+                if let Some(card) = self.find_card_for_task(&item.task_id) {
+                    let preselected = card
+                        .available_actions
                         .iter()
-                        .position(|action| action == &item.recommended_action)
+                        .position(|action| action.as_str() == item.recommended_action.as_str())
                         .unwrap_or(0);
                     self.view = AppView::TaskActions {
-                        task,
+                        task: card,
                         parent: Box::new(self.view.clone()),
                     };
                     self.selected = preselected;
@@ -323,12 +317,8 @@ impl App {
         }
     }
 
-    fn find_task_for_handle(&self, handle: &str) -> Option<TaskSummary> {
-        self.tasks
-            .tasks
-            .iter()
-            .find(|task| task.qualified_handle == handle)
-            .cloned()
+    fn find_card_for_task(&self, task_id: &TaskId) -> Option<TaskCard> {
+        self.cards.iter().find(|card| &card.id == task_id).cloned()
     }
 
     pub fn push_input_char(&mut self, character: char) {
@@ -354,8 +344,8 @@ impl App {
         })
     }
 
-    pub fn apply_refresh(&mut self, snapshot: CockpitResponse) {
-        self.reload(snapshot.repos, snapshot.tasks, snapshot.inbox);
+    pub fn apply_refresh(&mut self, snapshot: CockpitSnapshot) {
+        self.reload(snapshot.repos, snapshot.cards, snapshot.inbox);
     }
 
     pub(crate) fn is_collecting_input(&self) -> bool {
@@ -365,18 +355,17 @@ impl App {
     pub(crate) fn reload(
         &mut self,
         repos: ReposResponse,
-        tasks: TasksResponse,
+        cards: Vec<TaskCard>,
         inbox: InboxResponse,
     ) {
         let missing_task_after_refresh = match &self.view {
-            AppView::TaskActions { task, .. } => !tasks
-                .tasks
-                .iter()
-                .any(|candidate| candidate.qualified_handle == task.qualified_handle),
+            AppView::TaskActions { task, .. } => {
+                !cards.iter().any(|candidate| candidate.id == task.id)
+            }
             _ => false,
         };
         self.repos = repos;
-        self.tasks = tasks;
+        self.cards = cards;
         self.inbox = inbox;
         self.pending_confirmation = None;
         if missing_task_after_refresh {
@@ -390,7 +379,7 @@ impl App {
     }
 
     fn rebuild_selectables(&mut self) {
-        self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.tasks);
+        self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.cards);
     }
 
     pub(crate) fn flash(&mut self, msg: String) {
@@ -412,14 +401,18 @@ impl App {
     }
 }
 
+/// Snapshot of cockpit state passed into the TUI's refresh path.
+#[derive(Clone, Debug)]
+pub struct CockpitSnapshot {
+    pub repos: ReposResponse,
+    pub cards: Vec<TaskCard>,
+    pub inbox: InboxResponse,
+}
+
 pub(crate) fn task_handle_repo(handle: &str) -> Option<&str> {
     handle.split_once('/').map(|(repo, _)| repo)
 }
 
-pub(crate) fn task_summary_repo(task: &TaskSummary) -> Option<&str> {
-    task_handle_repo(&task.qualified_handle)
-}
-
-pub(crate) fn is_waiting_for_input(status: &str) -> bool {
-    status == "WaitingForInput" || status.eq_ignore_ascii_case("waiting for input")
+pub(crate) fn card_repo(card: &TaskCard) -> Option<&str> {
+    task_handle_repo(&card.qualified_handle)
 }

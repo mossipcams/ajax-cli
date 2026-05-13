@@ -13,7 +13,6 @@ pub(crate) enum StatusBucket {
     Stuck,
     Done,
     Idle,
-    Missing,
 }
 
 pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
@@ -23,7 +22,6 @@ pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
         StatusBucket::Stuck => Color::Indexed(174),
         StatusBucket::Done => Color::Indexed(108),
         StatusBucket::Idle => Color::Indexed(244),
-        StatusBucket::Missing => Color::Indexed(241),
     }
 }
 
@@ -34,7 +32,6 @@ pub(crate) fn bucket_glyph(bucket: StatusBucket) -> &'static str {
         StatusBucket::Stuck => "!",
         StatusBucket::Done => "✓",
         StatusBucket::Idle => "·",
-        StatusBucket::Missing => "×",
     }
 }
 

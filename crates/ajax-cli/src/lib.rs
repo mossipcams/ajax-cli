@@ -942,10 +942,7 @@ mod tests {
 
         assert!(state_changed);
         assert_eq!(
-            snapshot.tasks.tasks[0]
-                .live_status
-                .as_ref()
-                .map(|status| status.summary.as_str()),
+            snapshot.cards[0].live_summary.as_deref(),
             Some("waiting for approval")
         );
         assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
@@ -974,12 +971,9 @@ mod tests {
         assert!(state_changed);
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
         assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-        assert_eq!(snapshot.tasks.tasks.len(), 1);
+        assert_eq!(snapshot.cards.len(), 1);
         assert_eq!(
-            snapshot.tasks.tasks[0]
-                .live_status
-                .as_ref()
-                .map(|status| status.summary.as_str()),
+            snapshot.cards[0].live_summary.as_deref(),
             Some("worktrunk missing")
         );
     }
@@ -1582,8 +1576,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(architecture.contains("Legacy JSON state is not migrated"));
-        assert!(architecture.contains("full rewrite"));
+        assert!(architecture.contains("SQLite stores Ajax registry state"));
+        assert!(architecture.contains("Durable registry state is backed by SQLite"));
     }
 
     #[test]
@@ -1593,9 +1587,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(agents.contains("Do NOT keep legacy code"));
-        assert!(agents.contains("When adding new code always fully replace legacy code"));
-        assert!(agents.contains("It is not a migration"));
+        assert!(agents.contains("Replace internal legacy implementation"));
+        assert!(agents.contains("preserve public APIs and user-visible behavior"));
     }
 
     #[test]
@@ -1621,10 +1614,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(architecture.contains("current durable registry store"));
         assert!(architecture.contains("SqliteRegistryStore"));
-        assert!(architecture.contains("Ratatui"));
-        assert!(architecture.contains("current interactive TUI foundation"));
+        assert!(architecture.contains("InMemoryRegistry"));
+        assert!(architecture.contains("native Cockpit interface"));
+        assert!(architecture.contains("native terminal interaction and rendering"));
     }
 
     #[test]
@@ -1634,18 +1627,16 @@ mod tests {
         )
         .unwrap();
 
-        for command_mode in ["CommandMode::Capture", "CommandMode::InheritStdio"] {
-            assert!(
-                architecture.contains(command_mode),
-                "architecture.md should name the current {command_mode} execution path"
-            );
-        }
+        assert!(
+            architecture.contains("capture or inherited-stdio modes"),
+            "architecture.md should name the current command execution modes"
+        );
         assert!(
             !architecture.contains("CommandMode::Spawn"),
             "architecture.md should not document unused detached spawn semantics"
         );
 
-        assert!(architecture.contains("current `ajax-cli` split"));
+        assert!(architecture.contains("`ajax-cli` is the command and rendering shell"));
         assert!(!architecture.contains("Consider Ratatui"));
         assert!(!architecture.contains("long-term implementation should"));
         assert!(!architecture.contains("The intended persistence boundary"));
@@ -1906,10 +1897,10 @@ mod tests {
         assert!(agents.contains("Workspace Hygiene"));
 
         for boundary in [
-            "ajax-cli = CLI parsing, dispatch, rendering, context loading",
-            "ajax-core = models, policy, live status, registry",
-            "ajax-supervisor = process supervision",
-            "ajax-tui = Cockpit screen state, input, layout, rendering",
+            "`ajax-cli`: CLI parsing, dispatch, rendering, and context loading",
+            "`ajax-core`: models, policy, live status, and registry",
+            "`ajax-supervisor`: process supervision",
+            "`ajax-tui`: Cockpit screen state, input, layout, and rendering",
         ] {
             assert!(
                 agents.contains(boundary),
@@ -3960,23 +3951,19 @@ mod tests {
                     ajax_tui::ActionOutcome::Confirm(message) => {
                         panic!("{action} should render in cockpit, got confirm: {message}");
                     }
-                    ajax_tui::ActionOutcome::Refresh { .. } => {
+                    ajax_tui::ActionOutcome::Refresh(_) => {
                         panic!("{action} should render in cockpit, got refresh");
                     }
                 },
                 Expected::Refresh => match outcome {
-                    ajax_tui::ActionOutcome::Refresh {
-                        repos,
-                        tasks,
-                        inbox,
-                    } => {
-                        assert_eq!(repos.repos.len(), 1, "{action}");
+                    ajax_tui::ActionOutcome::Refresh(snapshot) => {
+                        assert_eq!(snapshot.repos.repos.len(), 1, "{action}");
                         if action == "clean task" {
-                            assert!(tasks.tasks.is_empty(), "{action}");
-                            assert!(inbox.items.is_empty(), "{action}");
+                            assert!(snapshot.cards.is_empty(), "{action}");
+                            assert!(snapshot.inbox.items.is_empty(), "{action}");
                         } else {
-                            assert_eq!(tasks.tasks.len(), 1, "{action}");
-                            assert!(!inbox.items.is_empty(), "{action}");
+                            assert_eq!(snapshot.cards.len(), 1, "{action}");
+                            assert!(!snapshot.inbox.items.is_empty(), "{action}");
                         }
                         assert!(!runner.commands().is_empty(), "{action}");
                         assert!(state_changed, "{action}");
@@ -5118,14 +5105,10 @@ mod tests {
         .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Refresh {
-                repos,
-                tasks,
-                inbox,
-            } => {
-                assert_eq!(repos.repos.len(), 1);
-                assert!(tasks.tasks.is_empty());
-                assert!(inbox.items.is_empty());
+            ajax_tui::ActionOutcome::Refresh(snapshot) => {
+                assert_eq!(snapshot.repos.repos.len(), 1);
+                assert!(snapshot.cards.is_empty());
+                assert!(snapshot.inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => {
                 panic!("clean task should refresh Ajax instead of deferring out")

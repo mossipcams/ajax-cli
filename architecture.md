@@ -1,251 +1,146 @@
 # Ajax Architecture
 
 Ajax is a native operator cockpit for isolated AI coding tasks. Cockpit is the
-primary operator surface; the `ajax` command, JSON contract, and typed Rust
-orchestration library, `ajax-core`, exist to make that surface deterministic,
-testable, and scriptable.
+primary operator surface. The CLI, JSON contract, and Rust core provide the
+deterministic backend used by Cockpit, scripts, and tests.
 
-## System Boundaries
+## Crates
 
-- `ajax-core` owns task models, orchestration decisions, policy, attention,
-  live status projection, command plans, and output contracts.
-- `ajax-cli` owns argument parsing, context loading/saving, command dispatch,
-  human rendering, JSON rendering, and process execution wiring for Cockpit and
-  scripts.
-- `ajax-tui` is the primary native Rust operator surface over `ajax-core`
-  responses.
-- `ajax-supervisor` owns supervised agent execution, process monitoring, and
-  translation of live agent/process events into Ajax monitor events.
-- External tools remain durable substrates: `git` owns repository truth,
-  branches, merges, and worktrees; `tmux` owns durable interactive runtime; and
-  agent CLIs remain opaque workers. Ajax owns task lifecycle planning, naming,
-  policy, live status projection, and registry state.
+### `ajax-core`
 
-The `ajax-supervisor` split keeps runtime orchestration separate from
-substrate-specific observation:
+Owns the domain model, registry facade, lifecycle model, command planning,
+policy decisions, live-status reduction, attention projection, and typed output
+contracts.
 
-- `runtime.rs` owns monitor task wiring, cancellation, channels, optional event
-  logging, and public monitor handles.
-- `agent/codex.rs` owns only Codex command construction and Codex JSONL protocol
-  parsing into `AgentEvent`.
-- `repo_observer.rs` owns notify event translation and git snapshot production.
+### `ajax-cli`
+
+Owns argument parsing, context loading/saving, command dispatch, human rendering,
+JSON rendering, and process execution wiring.
+
+### `ajax-tui`
+
+Owns the native Cockpit interface over `ajax-core` JSON-backed responses.
+
+### `ajax-supervisor`
+
+Owns supervised agent execution, process monitoring, repository observation, and
+translation of live process events into Ajax monitor events.
+
+## External Substrates
+
+Ajax coordinates external tools but does not replace them.
+
+- Git owns repository truth, branches, merges, and worktrees.
+- tmux owns durable interactive sessions.
+- Agent CLIs are opaque workers.
+- SQLite stores Ajax registry state.
+
+Ajax owns task lifecycle, naming, policy, live projection, command plans, and
+registry state.
+
+## Core Architecture
+
+### Registry
+
+The registry stores Ajax task state and typed task events. It exposes typed
+tasks and events to command, output, CLI, and Cockpit boundaries.
+
+Durable registry state is backed by SQLite through `SqliteRegistryStore`.
+Transient and test state use `InMemoryRegistry`.
+
+### Lifecycle
+
+Lifecycle state is modeled in `ajax-core::lifecycle`. Commands and live-status
+application request lifecycle transitions through the lifecycle boundary.
+
+Attention is derived from lifecycle state, live status, side flags, and substrate
+evidence.
+
+### Substrate Evidence
+
+Substrate evidence records observed external facts from Git, tmux, worktrees,
+and supervised processes.
+
+Git evidence interpretation lives in `analysis::git_evidence`.
+
+### Live Status
+
+`live.rs` reduces observations into live-status classifications.
+
+`live_application.rs` applies reduced observations to task state, agent status,
+side flags, activity timestamps, and visible live status.
+
+## Command Architecture
+
+Command planning and command execution are separate.
+
+`ajax-core::commands` builds command plans and typed command responses.
+
+`CommandSpec` describes external commands. `CommandRunner` executes them through
+capture or inherited-stdio modes.
+
+Command modules are split by use case:
+
+- `commands/doctor.rs`
+- `commands/check.rs`
+- `commands/diff.rs`
+- `commands/merge.rs`
+- `commands/new_task.rs`
+- `commands/open.rs`
+- `commands/projection.rs`
+- `commands/teardown.rs`
+- `commands/trunk.rs`
+- `commands/lookup.rs`
+
+## Adapter Architecture
+
+`ajax-core::adapters` is the adapter facade.
+
+- `adapters/command.rs` defines command specs and the command-runner port.
+- `adapters/process.rs` executes subprocesses.
+- `adapters/git.rs` builds and parses Git commands.
+- `adapters/tmux.rs` builds and parses tmux commands.
+- `adapters/agent.rs` builds and parses agent commands.
+- `adapters/environment.rs` probes operator environment facts.
+
+## Supervisor Architecture
+
+`ajax-supervisor` separates monitor runtime wiring from substrate observers.
+
+- `runtime.rs` owns monitor wiring, cancellation, channels, event logging, and
+  monitor handles.
+- `agent/codex.rs` owns Codex command construction and JSONL parsing.
+- `repo_observer.rs` owns repository file-change observation and Git snapshots.
 - `process_observer.rs` owns child process output, exit status, and hang
   detection.
-- `event_log.rs` owns optional append-only JSONL monitor event persistence.
-- `status.rs` reduces monitor events into the current observed live status.
+- `event_log.rs` owns optional append-only JSONL event persistence.
+- `status.rs` reduces monitor events into observed live status.
 
-## Architectural Direction
+## CLI Architecture
 
-Keep the current Rust core plus CLI JSON contract behind Cockpit. This is the
-right boundary for a tool that needs deterministic policy, event-driven runtime
-state, and scriptable command output while still centering the operator
-experience in the native cockpit.
+`ajax-cli` is the command and rendering shell around `ajax-core`.
 
-Do not rewrite Ajax into a different application framework. Prefer small
-boundary improvements:
-
-- Keep `clap` for the command surface.
-- Keep `serde` response structs as the frontend contract.
-- Keep Cockpit native to Rust so Ajax has one install/runtime path.
-- Keep Ratatui as the current interactive TUI foundation.
-
-## Persistence
-
-The runtime state path is documented as `~/.local/state/ajax/ajax.db`, and the
-current durable registry store is SQLite via `SqliteRegistryStore`.
-
-Prefer `rusqlite` for this project because Ajax is local, synchronous, and
-Cockpit-first over a CLI/JSON backend. Avoid `sqlx` unless Ajax later needs
-async database access or a larger server-style persistence model.
-
-The persistence boundary is:
-
-- Keep `InMemoryRegistry` for tests and transient contexts.
-- Keep `RegistryStore` as the load/save abstraction for registry state.
-- Back durable state with SQLite tables for tasks, events, and future
-  migrations.
-- Preserve explicit errors on corrupt, incompatible, or unavailable state.
-
-Legacy JSON state is not migrated. This is a full rewrite of the durable state
-format, so pre-SQLite JSON snapshots at the state path should fail with a clear
-operator-facing error and can be removed to start with fresh SQLite state.
-
-Registry state records three separate kinds of truth:
-
-- Lifecycle status describes Ajax's current task state.
-- Substrate evidence records current external facts such as git, tmux, and
-  worktrunk state.
-- Operation/live status records what Ajax or a supervised agent is doing now or
-  what last failed.
-
-Lifecycle and substrate changes should go through registry-level helpers that
-record typed events. SQLite persists typed task fields and event rows directly;
-new operation fields or statuses must round-trip through that typed schema and
-unsupported schema versions must fail clearly.
-
-The registry facade owns typed task/event behavior, not concrete state encoding.
-`registry/sqlite.rs` owns SQLite schema creation, schema compatibility checks,
-row encoding, and row decoding behind `SqliteRegistryStore`. The public registry
-surface exposes typed tasks and events to output boundaries; JSON state export is
-an operator export contract built in `ajax-core::output` and written by the CLI
-state-export boundary, while SQLite remains the runtime store.
-
-Lifecycle mutation authority is centralized in `ajax-core::lifecycle`. Production
-code must use lifecycle transition helpers, and those helpers own the direct
-`Task::lifecycle_status` assignment after validating the transition reason and
-edge. Registry persistence may hydrate a stored lifecycle through the same
-module, but command, live-status, attention, CLI, and TUI code should consume
-lifecycle projections or request transitions rather than assigning lifecycle
-state directly. Attention remains a derived projection from lifecycle, live
-status, side flags, and external substrate evidence; it must not mutate task
-lifecycle.
-
-Git evidence interpretation is an analysis boundary. `analysis::git_evidence`
-owns conversion from captured git status output plus cached evidence into typed
-`GitStatus`; command use cases request that interpretation and registry/domain
-functions apply the resulting evidence and side flags.
-
-Live status classification and reduction stay pure in `live.rs`. The concrete
-observation mutation boundary is `live_application.rs`, which applies reduced
-observations to task lifecycle, agent status, side flags, activity timestamps,
-and visible live status while preserving the public `live::apply_observation`
-entrypoint.
-
-The `ajax-core::commands` module remains the public command-planning and command
-response facade, but its internal helpers should stay split by responsibility:
-
-- `commands/doctor.rs` owns doctor check assembly over supplied environment
-  facts.
-- `commands/check.rs` owns check command planning and check result state
-  updates.
-- `commands/diff.rs` owns task diff command planning.
-- `commands/merge.rs` owns merge planning, merge preflight safety reasons, and
-  merge result state updates.
-- `commands/new_task.rs` owns new-task planning, provisional task creation,
-  generated branch/worktree/tmux names, duplicate-handle policy, and
-  provisioning step state effects.
-- `commands/open.rs` owns open command planning and open result state effects.
-- `commands/projection.rs` owns task visibility, task summaries, action
-  projections, and cockpit summary counts.
-- `commands/teardown.rs` owns cleanup, remove, and sweep planning plus teardown
-  step result updates and remove lifecycle application.
-- `commands/trunk.rs` owns worktrunk repair/open planning and trunk repair state
-  updates.
-
-The `ajax-core::adapters` module remains the public adapter facade, but
-subprocess and concrete command construction should stay split by external
-boundary:
-
-- `adapters/command.rs` owns `CommandSpec`, `CommandMode`, `CommandRunner`, and
-  test recording for the command runner port.
-- `adapters/process.rs` owns concrete subprocess execution for capture and
-  inherited stdio modes.
-- `adapters/git.rs`, `adapters/tmux.rs`, and `adapters/agent.rs` own concrete
-  command construction and parsing for those substrates.
-- `adapters/environment.rs` owns operator environment probing such as PATH tool
-  discovery and path-existence checks.
-- `commands/lookup.rs` owns shared task lookup, repo path lookup, and lifecycle
-  update plumbing used by command handlers.
-
-## Command Execution
-
-Command planning should stay separate from command execution. `CommandSpec`
-should describe what to run, and the runner should decide how to run it.
-
-Ajax needs more than one execution style:
-
-- `CommandMode::Capture` for probes such as `git status` and
-  `tmux list-sessions`.
-- `CommandMode::InheritStdio` for interactive commands such as
-  `tmux attach-session`.
-
-Avoid treating all external commands as captured subprocesses.
-
-Destructive commands may collect the substrate evidence they require at their
-own command boundary. For example, cleanup may capture `git status` for the task
-worktree before applying cleanup safety policy. That evidence is command-scoped
-bookkeeping, not reconciliation: it must not inspect or repair unrelated tmux
-state, recreate missing resources, or mutate live status outside the command's
-own safety decision.
-
-Merge and cleanup plans must use fresh evidence when their safety decision
-depends on git state. Risky or destructive plans must surface confirmation
-requirements in the command plan and must not execute without explicit operator
-confirmation. Cockpit actions use the same operation policy and confirmation
-state as CLI execution.
-
-A partial failure is recoverable state, not disappearance. If an operation
-successfully changes registry or substrate state and then a later step fails,
-Ajax preserves the completed updates, records visible failure status or
-attention, saves durable state, and keeps the affected task visible for
-operator recovery.
-
-## CLI Organization
-
-`ajax-cli` should stay thin, but it should not grow into a single catch-all file.
-The current `ajax-cli` split is:
-
-- `lib.rs` for the `clap` command tree, parsing, command dispatch, and public
-  test helpers.
-- `context` for config/state path resolution and load/save behavior.
-- `render` for human, JSON, execution-output, and command-plan rendering.
-- `snapshot_dispatch` for read-only command routing, state export, and doctor
-  path checks.
-- `execution_dispatch` for mutable command routing and state-changing execution
+- `lib.rs` owns the Clap command tree, parsing, dispatch, and public test
   helpers.
-- `cockpit_backend` for cockpit snapshots, live refresh, watch mode, and
-  interactive TUI backend glue.
-- `classifiers` for small operator-facing heuristics that interpret command
-  output.
+- `context` owns config/state path resolution and load/save behavior.
+- `render` owns human, JSON, execution-output, and command-plan rendering.
+- `snapshot_dispatch` owns read-only command routing.
+- `execution_dispatch` owns mutable command routing.
+- `cockpit_backend` owns Cockpit snapshots, live refresh, watch mode, and TUI
+  backend glue.
+- `classifiers` owns small operator-facing command-output heuristics.
 
-If `lib.rs` becomes difficult to scan, prefer extracting dispatch into a small
-module while preserving the public test helpers used by the current suite.
+## Cockpit Architecture
 
-Preserve those helpers unless a task explicitly changes them.
+Cockpit is the primary operator surface over the JSON-backed command boundary.
 
-## Cockpit Guidance
+`ajax-tui` owns native terminal interaction and rendering.
 
-Cockpit is the primary operator surface, not the orchestration engine. It
-should:
-
-- Call `ajax cockpit --json` or other JSON-backed commands.
-- Treat missing or malformed backend data as a recoverable startup/rendering
-  issue.
-- Present attention, review, safety, and command-plan decisions as first-class
-  operator workflows.
-- Keep layout behavior tested through layout functions and JSON contracts, not
-  brittle source-string assertions.
-- Avoid taking dependencies on internal Rust model details outside the JSON
-  response schema.
-
-Ratatui is the current interactive TUI foundation because it preserves Ajax's
-Rust-only runtime story while keeping orchestration logic in `ajax-core`.
-
-The current `ajax-tui` internals keep small pure helpers out of the main TUI
-file:
-
-- `actions` owns action chrome metadata for core `RecommendedAction` values.
-- `cockpit_state` owns Cockpit view state, selectable construction, state
-  transitions, refresh application, flash state, and confirmation bookkeeping.
-- `input` owns already-read terminal event classification and conversion into
-  Cockpit state changes, pending actions, or quit decisions.
-- `layout` owns small layout calculations that are independent of terminal IO.
-- `navigation` owns terminal key classification helpers.
-- `rendering` owns status bucket palette, glyph mapping, and the top-level
-  screen renderer over Cockpit state.
-- `runtime` owns raw mode, alternate screen, mouse capture, terminal polling,
-  refresh timing, and the interactive event loop.
-
-## Validation Expectations
-
-Before considering architectural code work complete, run the strongest
-applicable checks:
-
-```sh
-cargo fmt --check
-cargo check --all-targets --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-features
-```
-
-There is no Python frontend runtime in the supported cockpit path.
+- `actions` owns action chrome metadata.
+- `cockpit_state` owns view state, selectable construction, transitions,
+  refresh application, flash state, and confirmations.
+- `input` owns terminal-event classification.
+- `layout` owns pure layout calculations.
+- `navigation` owns key classification helpers.
+- `rendering` owns status palette, glyph mapping, and screen rendering.
+- `runtime` owns terminal mode, polling, refresh timing, and the event loop.

@@ -9,15 +9,14 @@ mod rendering;
 mod runtime;
 
 use ajax_core::{
-    models::{AttentionItem, LiveStatusKind},
-    output::{
-        CockpitResponse, InboxResponse, RepoSummary, ReposResponse, TaskSummary, TasksResponse,
-    },
+    models::AttentionItem,
+    output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+    ui_state::UiState,
 };
-pub use cockpit_state::App;
 #[cfg(test)]
 pub(crate) use cockpit_state::FLASH_TICKS;
-use cockpit_state::{is_waiting_for_input, task_summary_repo, AppView, SelectableKind};
+use cockpit_state::{card_repo, AppView, SelectableKind};
+pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use input::{
     handle_action_result, handle_back_key, handle_cockpit_event, is_back_key_event,
@@ -42,27 +41,23 @@ use std::{io, ops::Range};
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
 
-pub fn render_cockpit(
-    repos: &ReposResponse,
-    tasks: &TasksResponse,
-    inbox: &InboxResponse,
-) -> String {
+pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxResponse) -> String {
     let mut lines = vec![
         "Ajax Cockpit".to_string(),
         format!("Repos: {}", repos.repos.len()),
-        format!("Tasks: {}", tasks.tasks.len()),
+        format!("Tasks: {}", cards.len()),
         "Task Statuses".to_string(),
     ];
 
-    if tasks.tasks.is_empty() {
+    if cards.is_empty() {
         lines.push("no active tasks".to_string());
     } else {
-        lines.extend(tasks.tasks.iter().map(|task| {
+        lines.extend(cards.iter().map(|card| {
             format!(
                 "{}\t{}\t{}",
-                task.qualified_handle,
-                task_status_label(task),
-                task.title
+                card.qualified_handle,
+                task_status_label(card),
+                card.title
             )
         }));
     }
@@ -95,11 +90,7 @@ pub struct PendingAction {
 /// What the `on_action` callback returns to tell the TUI what to do next.
 pub enum ActionOutcome {
     /// Reload the TUI with fresh data.
-    Refresh {
-        repos: ReposResponse,
-        tasks: TasksResponse,
-        inbox: InboxResponse,
-    },
+    Refresh(CockpitSnapshot),
     /// Exit the TUI — the CLI will run the deferred action.
     Defer(PendingAction),
     /// Ask for a second explicit activation before running a risky action.
@@ -115,7 +106,7 @@ pub trait CockpitEventHandler {
         self.on_action(item)
     }
 
-    fn on_refresh(&mut self) -> io::Result<Option<CockpitResponse>> {
+    fn on_refresh(&mut self) -> io::Result<Option<CockpitSnapshot>> {
         Ok(None)
     }
 }
@@ -191,57 +182,21 @@ fn bucket_glyph(bucket: StatusBucket) -> &'static str {
     rendering::bucket_glyph(bucket)
 }
 
-fn live_bucket(kind: &LiveStatusKind) -> StatusBucket {
-    match kind {
-        LiveStatusKind::AgentRunning
-        | LiveStatusKind::CommandRunning
-        | LiveStatusKind::TestsRunning => StatusBucket::Active,
-        LiveStatusKind::WaitingForApproval
-        | LiveStatusKind::WaitingForInput
-        | LiveStatusKind::AuthRequired => StatusBucket::NeedsYou,
-        LiveStatusKind::Blocked
-        | LiveStatusKind::MergeConflict
-        | LiveStatusKind::CiFailed
-        | LiveStatusKind::CommandFailed
-        | LiveStatusKind::RateLimited
-        | LiveStatusKind::ContextLimit => StatusBucket::Stuck,
-        LiveStatusKind::Done => StatusBucket::Done,
-        LiveStatusKind::ShellIdle | LiveStatusKind::Unknown => StatusBucket::Idle,
-        LiveStatusKind::WorktreeMissing
-        | LiveStatusKind::TmuxMissing
-        | LiveStatusKind::WorktrunkMissing => StatusBucket::Missing,
+fn ui_state_bucket(state: UiState) -> StatusBucket {
+    match state {
+        UiState::Blocked => StatusBucket::NeedsYou,
+        UiState::Running => StatusBucket::Active,
+        UiState::ReviewReady => StatusBucket::NeedsYou,
+        UiState::SafeMerge => StatusBucket::Done,
+        UiState::Cleanable => StatusBucket::Done,
+        UiState::Failed => StatusBucket::Stuck,
+        UiState::Idle => StatusBucket::Idle,
+        UiState::Archived => StatusBucket::Idle,
     }
 }
 
-fn lifecycle_bucket(lifecycle: &str) -> StatusBucket {
-    if lifecycle.contains("Error") || lifecycle.contains("Orphaned") {
-        StatusBucket::Stuck
-    } else if lifecycle.contains("Reviewable")
-        || lifecycle.contains("Mergeable")
-        || lifecycle.contains("Waiting")
-    {
-        StatusBucket::NeedsYou
-    } else if lifecycle.contains("Merged") || lifecycle.contains("Cleanable") {
-        StatusBucket::Done
-    } else if lifecycle.contains("Active") || lifecycle.contains("Provisioning") {
-        StatusBucket::Active
-    } else {
-        StatusBucket::Idle
-    }
-}
-
-fn task_bucket(task: &TaskSummary) -> StatusBucket {
-    let primary = task
-        .live_status
-        .as_ref()
-        .map(|obs| live_bucket(&obs.kind))
-        .unwrap_or_else(|| lifecycle_bucket(&task.lifecycle_status));
-    match (primary, task.needs_attention) {
-        (StatusBucket::Idle | StatusBucket::Active | StatusBucket::Done, true) => {
-            StatusBucket::NeedsYou
-        }
-        (bucket, _) => bucket,
-    }
+fn card_bucket(card: &TaskCard) -> StatusBucket {
+    ui_state_bucket(card.ui_state)
 }
 
 fn render_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -267,7 +222,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             ));
             parts.push(dot_sep());
             parts.push(Span::styled(
-                format!("{} tasks", app.tasks.tasks.len()),
+                format!("{} tasks", app.cards.len()),
                 Style::default().fg(primary_accent()),
             ));
             if !app.inbox.items.is_empty() {
@@ -324,7 +279,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(Span::styled(repo.clone(), crumb_style));
         }
         AppView::TaskActions { task, .. } => {
-            if let Some(repo) = task_summary_repo(task) {
+            if let Some(repo) = card_repo(task) {
                 parts.push(crumb_sep());
                 parts.push(Span::styled(repo.to_string(), crumb_style));
             }
@@ -469,8 +424,8 @@ fn group_of(kind: &SelectableKind) -> &'static str {
     }
 }
 
-fn task_glyph(task: &TaskSummary) -> Span<'static> {
-    let bucket = task_bucket(task);
+fn task_glyph(card: &TaskCard) -> Span<'static> {
+    let bucket = card_bucket(card);
     Span::styled(
         bucket_glyph(bucket),
         Style::default()
@@ -479,15 +434,18 @@ fn task_glyph(task: &TaskSummary) -> Span<'static> {
     )
 }
 
-fn task_handle_color(task: &TaskSummary) -> Color {
-    bucket_color(task_bucket(task))
+fn task_handle_color(card: &TaskCard) -> Color {
+    bucket_color(card_bucket(card))
 }
 
-fn task_status_label(task: &TaskSummary) -> String {
-    task.live_status
-        .as_ref()
-        .map(|status| status.summary.clone())
-        .unwrap_or_else(|| task.lifecycle_status.clone())
+fn task_status_label(card: &TaskCard) -> String {
+    if let Some(blocker) = card.blocker_reason.as_ref() {
+        return blocker.clone();
+    }
+    if let Some(summary) = card.live_summary.as_ref() {
+        return summary.clone();
+    }
+    card.ui_state.as_str().to_string()
 }
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
@@ -516,9 +474,6 @@ fn inbox_glyph(color: Color) -> Span<'static> {
 }
 
 fn inbox_item_accent(item: &AttentionItem) -> Color {
-    if is_waiting_for_input(&item.reason) {
-        return secondary_accent();
-    }
     priority_accent(item.priority)
 }
 
@@ -754,20 +709,19 @@ fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::{
-        action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, danger_accent,
-        handle_cockpit_event, inbox_glyph, inbox_item_accent, lifecycle_bucket, muted_text,
+        action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
+        danger_accent, handle_cockpit_event, inbox_glyph, inbox_item_accent, muted_text,
         primary_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
         render_cockpit, render_ui, secondary_accent, selectable_feed_rows, selectable_row_layout,
-        selected_highlight, show_brand, subtle_text, task_bucket, task_glyph, task_handle_color,
-        ActionOutcome, App, AppView, CockpitEventHandler, EventLoopAction, PendingAction,
-        SelectableKind, StatusBucket, TerminalModeCommand, FLASH_TICKS,
+        selected_highlight, show_brand, subtle_text, task_glyph, task_handle_color,
+        ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
+        EventLoopAction, PendingAction, SelectableKind, StatusBucket, TerminalModeCommand,
+        FLASH_TICKS,
     };
     use ajax_core::{
-        models::{AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, TaskId},
-        output::{
-            CockpitResponse, CockpitSummary, InboxResponse, RepoSummary, ReposResponse,
-            TaskSummary, TasksResponse,
-        },
+        models::{AttentionItem, LifecycleStatus, RecommendedAction, TaskId},
+        output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+        ui_state::UiState,
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
@@ -806,43 +760,58 @@ mod tests {
         }
     }
 
-    fn sample_tasks() -> TasksResponse {
-        TasksResponse {
-            tasks: vec![TaskSummary {
-                id: "task-1".to_string(),
-                qualified_handle: "web/fix-login".to_string(),
-                title: "Fix login".to_string(),
-                lifecycle_status: "Active".to_string(),
-                needs_attention: true,
-                live_status: None,
-                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
-            }],
+    fn sample_card(
+        id: &str,
+        handle: &str,
+        title: &str,
+        ui_state: UiState,
+        lifecycle: LifecycleStatus,
+    ) -> TaskCard {
+        TaskCard {
+            id: TaskId::new(id),
+            qualified_handle: handle.to_string(),
+            title: title.to_string(),
+            ui_state,
+            lifecycle,
+            recommended_action: RecommendedAction::OpenTask,
+            action_reason: "open".to_string(),
+            available_actions: vec![RecommendedAction::OpenTask],
+            live_summary: None,
+            blocker_reason: None,
         }
     }
 
-    fn sample_tasks_with_count(count: usize) -> TasksResponse {
-        TasksResponse {
-            tasks: (0..count)
-                .map(|idx| TaskSummary {
-                    id: format!("task-{idx}"),
-                    qualified_handle: format!("web/task-{idx}"),
-                    title: format!("Task {idx}"),
-                    lifecycle_status: "Active".to_string(),
-                    needs_attention: false,
-                    live_status: None,
-                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
-                })
-                .collect(),
-        }
+    fn sample_tasks() -> Vec<TaskCard> {
+        vec![sample_card(
+            "task-1",
+            "web/fix-login",
+            "Fix login",
+            UiState::Blocked,
+            LifecycleStatus::Active,
+        )]
+    }
+
+    fn sample_tasks_with_count(count: usize) -> Vec<TaskCard> {
+        (0..count)
+            .map(|idx| {
+                sample_card(
+                    &format!("task-{idx}"),
+                    &format!("web/task-{idx}"),
+                    &format!("Task {idx}"),
+                    UiState::Idle,
+                    LifecycleStatus::Active,
+                )
+            })
+            .collect()
     }
 
     fn sample_inbox() -> InboxResponse {
         InboxResponse {
             items: vec![AttentionItem {
-                task_id: TaskId::new("task-1"),
+                task_id: TaskId::new("task-99"),
                 task_handle: "web/fix-login".to_string(),
                 reason: "agent needs input".to_string(),
-                priority: 10,
+                priority: 30,
                 recommended_action: "open task".to_string(),
             }],
         }
@@ -863,28 +832,22 @@ mod tests {
     #[case(StatusBucket::Stuck, "!")]
     #[case(StatusBucket::Done, "✓")]
     #[case(StatusBucket::Idle, "·")]
-    #[case(StatusBucket::Missing, "×")]
     fn status_buckets_have_stable_glyphs(#[case] bucket: StatusBucket, #[case] glyph: &str) {
         assert_eq!(bucket_glyph(bucket), glyph);
         assert_eq!(crate::rendering::bucket_glyph(bucket), glyph);
     }
 
     #[rstest]
-    #[case("Error", StatusBucket::Stuck)]
-    #[case("Orphaned", StatusBucket::Stuck)]
-    #[case("Reviewable", StatusBucket::NeedsYou)]
-    #[case("Mergeable", StatusBucket::NeedsYou)]
-    #[case("Waiting", StatusBucket::NeedsYou)]
-    #[case("Merged", StatusBucket::Done)]
-    #[case("Cleanable", StatusBucket::Done)]
-    #[case("Active", StatusBucket::Active)]
-    #[case("Provisioning", StatusBucket::Active)]
-    #[case("Removed", StatusBucket::Idle)]
-    fn lifecycle_labels_map_to_status_buckets(
-        #[case] lifecycle: &str,
-        #[case] bucket: StatusBucket,
-    ) {
-        assert_eq!(lifecycle_bucket(lifecycle), bucket);
+    #[case(UiState::Blocked, StatusBucket::NeedsYou)]
+    #[case(UiState::Running, StatusBucket::Active)]
+    #[case(UiState::ReviewReady, StatusBucket::NeedsYou)]
+    #[case(UiState::SafeMerge, StatusBucket::Done)]
+    #[case(UiState::Cleanable, StatusBucket::Done)]
+    #[case(UiState::Failed, StatusBucket::Stuck)]
+    #[case(UiState::Idle, StatusBucket::Idle)]
+    #[case(UiState::Archived, StatusBucket::Idle)]
+    fn ui_states_map_to_status_buckets(#[case] state: UiState, #[case] bucket: StatusBucket) {
+        assert_eq!(ui_state_bucket(state), bucket);
     }
 
     #[test]
@@ -905,7 +868,7 @@ mod tests {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix".to_string(),
             reason: "waiting for input".to_string(),
-            priority: 10,
+            priority: 30,
             recommended_action: "open task".to_string(),
         };
 
@@ -975,15 +938,13 @@ mod tests {
     #[case(AppView::Project { repo: "web".to_string() }, true)]
     #[case(
         AppView::TaskActions {
-            task: TaskSummary {
-                id: "task-1".to_string(),
-                qualified_handle: "web/fix-login".to_string(),
-                title: "Fix login".to_string(),
-                lifecycle_status: "Active".to_string(),
-                needs_attention: false,
-                live_status: None,
-                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
-            },
+            task: sample_card(
+                "task-1",
+                "web/fix-login",
+                "Fix login",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
             parent: Box::new(AppView::Projects),
         },
         true
@@ -1066,10 +1027,7 @@ mod tests {
     #[test]
     fn task_rows_render_live_status_when_present() {
         let mut tasks = sample_tasks();
-        tasks.tasks[0].live_status = Some(LiveObservation::new(
-            LiveStatusKind::WaitingForApproval,
-            "waiting for approval",
-        ));
+        tasks[0].live_summary = Some("waiting for approval".to_string());
         let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
         app.activate_selected();
 
@@ -1083,20 +1041,17 @@ mod tests {
     #[test]
     fn waiting_for_input_task_attention_uses_needs_you_chrome() {
         let mut tasks = sample_tasks();
-        tasks.tasks[0].live_status = Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-        tasks.tasks[0].needs_attention = true;
-        let task = &tasks.tasks[0];
+        tasks[0].ui_state = UiState::Blocked;
+        tasks[0].blocker_reason = Some("waiting for input".to_string());
+        let card = &tasks[0];
 
-        assert_eq!(task_bucket(task), StatusBucket::NeedsYou);
+        assert_eq!(card_bucket(card), StatusBucket::NeedsYou);
         assert_eq!(
-            task_glyph(task).style.fg,
+            task_glyph(card).style.fg,
             Some(bucket_color(StatusBucket::NeedsYou))
         );
         assert_eq!(
-            task_handle_color(task),
+            task_handle_color(card),
             bucket_color(StatusBucket::NeedsYou)
         );
     }
@@ -1143,25 +1098,12 @@ mod tests {
         app.select_next();
         let selected_before = app.selected;
         let mut refreshed_tasks = sample_tasks();
-        refreshed_tasks.tasks[0].live_status = Some(LiveObservation::new(
-            LiveStatusKind::WaitingForApproval,
-            "waiting for approval",
-        ));
+        refreshed_tasks[0].live_summary = Some("waiting for approval".to_string());
 
-        app.apply_refresh(CockpitResponse {
-            summary: CockpitSummary {
-                repos: 1,
-                tasks: 1,
-                active_tasks: 1,
-                attention_items: 0,
-                reviewable_tasks: 1,
-                cleanable_tasks: 0,
-            },
+        app.apply_refresh(CockpitSnapshot {
             repos: sample_repos(),
-            tasks: refreshed_tasks,
-            review: TasksResponse { tasks: vec![] },
+            cards: refreshed_tasks,
             inbox: InboxResponse { items: vec![] },
-            next: ajax_core::output::NextResponse { item: None },
         });
 
         assert_eq!(app.selected, selected_before);
@@ -1766,7 +1708,7 @@ mod tests {
         app.activate_selected();
         let content = render_to_string(80, 30, &app);
         let inbox_pos = content.find("agent needs input").unwrap();
-        let task_pos = content.find("Active").unwrap();
+        let task_pos = content.find("blocked").unwrap();
         assert!(inbox_pos < task_pos);
     }
 
@@ -1820,7 +1762,7 @@ mod tests {
         let content = render_to_string(80, 30, &app);
 
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("Active"));
+        assert!(content.contains("blocked"));
         assert!(!content.contains("> web"));
     }
 
@@ -2377,7 +2319,7 @@ mod tests {
     fn empty_task_list_does_not_create_task_rows() {
         let mut app = App::new(
             sample_repos(),
-            TasksResponse { tasks: vec![] },
+            Vec::<TaskCard>::new(),
             InboxResponse { items: vec![] },
         );
         app.activate_selected();
@@ -2616,11 +2558,9 @@ mod tests {
             }],
         };
         let mut tasks = sample_tasks();
-        tasks.tasks[0].lifecycle_status = "Reviewable".to_string();
-        tasks.tasks[0].actions = vec![
-            RecommendedAction::OpenTask.as_str().to_string(),
-            RecommendedAction::MergeTask.as_str().to_string(),
-        ];
+        tasks[0].lifecycle = LifecycleStatus::Reviewable;
+        tasks[0].available_actions =
+            vec![RecommendedAction::OpenTask, RecommendedAction::MergeTask];
         let mut app = App::new(sample_repos(), tasks, inbox);
         assert!(app.activate_selected().is_none());
         let item = app.selected_action().unwrap();
@@ -2661,28 +2601,22 @@ mod tests {
                 },
             ],
         };
-        let tasks = TasksResponse {
-            tasks: vec![
-                TaskSummary {
-                    id: "task-1".to_string(),
-                    qualified_handle: "web/fix-login".to_string(),
-                    title: "Fix login".to_string(),
-                    lifecycle_status: "Active".to_string(),
-                    needs_attention: true,
-                    live_status: None,
-                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
-                },
-                TaskSummary {
-                    id: "task-2".to_string(),
-                    qualified_handle: "api/add-cache".to_string(),
-                    title: "Add cache".to_string(),
-                    lifecycle_status: "Active".to_string(),
-                    needs_attention: false,
-                    live_status: None,
-                    actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
-                },
-            ],
-        };
+        let tasks = vec![
+            sample_card(
+                "task-1",
+                "web/fix-login",
+                "Fix login",
+                UiState::Blocked,
+                LifecycleStatus::Active,
+            ),
+            sample_card(
+                "task-2",
+                "api/add-cache",
+                "Add cache",
+                UiState::Idle,
+                LifecycleStatus::Active,
+            ),
+        ];
         let inbox = InboxResponse {
             items: vec![
                 AttentionItem {
@@ -2818,7 +2752,7 @@ mod tests {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix-login".to_string(),
             reason: "waiting for input".to_string(),
-            priority: 6,
+            priority: 30,
             recommended_action: "open task".to_string(),
         };
 
@@ -2898,7 +2832,7 @@ mod tests {
     fn new_task_is_always_present_even_when_other_sections_empty() {
         let mut app = App::new(
             sample_repos(),
-            TasksResponse { tasks: vec![] },
+            Vec::<TaskCard>::new(),
             InboxResponse { items: vec![] },
         );
         // Top-level holds only the project; drilling in always shows NewTask first.
@@ -2942,7 +2876,7 @@ mod tests {
         app.selected = 99;
         app.reload(
             sample_repos(),
-            TasksResponse { tasks: vec![] },
+            Vec::<TaskCard>::new(),
             InboxResponse { items: vec![] },
         );
         // Only the project row remains at top level → clamps to it.
@@ -2957,16 +2891,17 @@ mod tests {
     fn refresh_after_removed_task_returns_to_main_page() {
         let mut app = app_in_project_view();
         app.select_next();
+        app.select_next();
         app.activate_selected();
         assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         super::handle_action_result(
             &mut app,
-            Ok(ActionOutcome::Refresh {
+            Ok(ActionOutcome::Refresh(CockpitSnapshot {
                 repos: sample_repos(),
-                tasks: TasksResponse { tasks: vec![] },
+                cards: Vec::<TaskCard>::new(),
                 inbox: InboxResponse { items: vec![] },
-            }),
+            })),
         )
         .unwrap();
 

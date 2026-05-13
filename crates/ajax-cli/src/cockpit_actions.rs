@@ -6,8 +6,8 @@ use ajax_core::{
 };
 
 use crate::{
-    command_error, dispatch::TaskCommandOperation, execution_dispatch::execute_new_task_plan,
-    render::render_execution_outputs, CliError,
+    cockpit_backend::build_cockpit_snapshot, command_error, dispatch::TaskCommandOperation,
+    execution_dispatch::execute_new_task_plan, render::render_execution_outputs, CliError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -88,11 +88,9 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
                 .apply_after_execute(context, handle)
                 .map_err(command_error_as_io)?;
             *state_changed |= changed;
-            return Ok(ajax_tui::ActionOutcome::Refresh {
-                repos: commands::list_repos(context),
-                tasks: commands::list_tasks(context, None),
-                inbox: commands::inbox(context),
-            });
+            return Ok(ajax_tui::ActionOutcome::Refresh(build_cockpit_snapshot(
+                context,
+            )));
         }
 
         return Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {

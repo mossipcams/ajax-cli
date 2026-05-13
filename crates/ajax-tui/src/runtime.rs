@@ -1,6 +1,6 @@
 use ajax_core::{
     models::AttentionItem,
-    output::{InboxResponse, ReposResponse, TasksResponse},
+    output::{InboxResponse, ReposResponse, TaskCard},
 };
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
@@ -24,23 +24,23 @@ use crate::{
 
 pub fn run_interactive(
     repos: ReposResponse,
-    tasks: TasksResponse,
+    cards: Vec<TaskCard>,
     inbox: InboxResponse,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash(repos, tasks, inbox, None, on_action)
+    run_interactive_with_flash(repos, cards, inbox, None, on_action)
 }
 
 pub fn run_interactive_with_flash(
     repos: ReposResponse,
-    tasks: TasksResponse,
+    cards: Vec<TaskCard>,
     inbox: InboxResponse,
     initial_flash: Option<String>,
     on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     run_interactive_with_flash_and_refresh(
         repos,
-        tasks,
+        cards,
         inbox,
         initial_flash,
         Duration::from_secs(1),
@@ -50,7 +50,7 @@ pub fn run_interactive_with_flash(
 
 pub fn run_interactive_with_flash_and_refresh(
     repos: ReposResponse,
-    tasks: TasksResponse,
+    cards: Vec<TaskCard>,
     inbox: InboxResponse,
     initial_flash: Option<String>,
     refresh_interval: Duration,
@@ -61,7 +61,7 @@ pub fn run_interactive_with_flash_and_refresh(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new(repos, tasks, inbox);
+    let mut app = App::new(repos, cards, inbox);
     if let Some(message) = initial_flash {
         app.flash(message);
     }
