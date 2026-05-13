@@ -1,4 +1,5 @@
 use crate::{
+    config::{Config, ManagedRepo},
     models::{AttentionItem, LifecycleStatus, LiveObservation, RecommendedAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
     ui_state::UiState,
@@ -125,6 +126,22 @@ pub struct RegistryExportSnapshot {
     pub events: Vec<RegistryEvent>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct StateExportMetadata {
+    pub format_version: u32,
+    pub repo_count: usize,
+    pub task_count: usize,
+    pub event_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct StateExportSnapshot {
+    pub metadata: StateExportMetadata,
+    pub repos: Vec<ManagedRepo>,
+    pub tasks: Vec<Task>,
+    pub events: Vec<RegistryEvent>,
+}
+
 pub fn registry_export_snapshot<R: Registry>(registry: &R) -> RegistryExportSnapshot {
     RegistryExportSnapshot {
         tasks: registry.list_tasks().into_iter().cloned().collect(),
@@ -132,10 +149,41 @@ pub fn registry_export_snapshot<R: Registry>(registry: &R) -> RegistryExportSnap
     }
 }
 
+pub fn state_export_snapshot<R: Registry>(config: &Config, registry: &R) -> StateExportSnapshot {
+    let tasks = registry
+        .list_tasks()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    let events = registry
+        .list_events()
+        .into_iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    StateExportSnapshot {
+        metadata: StateExportMetadata {
+            format_version: 1,
+            repo_count: config.repos.len(),
+            task_count: tasks.len(),
+            event_count: events.len(),
+        },
+        repos: config.repos.clone(),
+        tasks,
+        events,
+    }
+}
+
 pub fn registry_export_json_snapshot<R: Registry>(
     registry: &R,
 ) -> Result<String, serde_json::Error> {
     serde_json::to_string_pretty(&registry_export_snapshot(registry))
+}
+
+pub fn state_export_json_snapshot<R: Registry>(
+    config: &Config,
+    registry: &R,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&state_export_snapshot(config, registry))
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 use ajax_core::{
     commands::{self, CommandContext},
-    output::{registry_export_json_snapshot, DoctorCheck},
+    output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
 };
 use clap::ArgMatches;
@@ -174,7 +174,7 @@ fn export_state_snapshot(
         std::fs::create_dir_all(parent)
             .map_err(|error| CliError::CommandFailed(error.to_string()))?;
     }
-    let json = registry_export_json_snapshot(&context.registry)
+    let json = state_export_json_snapshot(&context.config, &context.registry)
         .map_err(|error| CliError::CommandFailed(format!("state export failed: {error}")))?;
     std::fs::write(path, json)
         .map_err(|error| CliError::CommandFailed(format!("state export failed: {error}")))?;

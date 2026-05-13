@@ -122,6 +122,8 @@ Approval of that plan counts as explicit approval to modify only those listed te
 
 Do not modify unrelated test files.
 
+Never modify `crates/ajax-cli/tests/smoke_user_flows.rs` unless the user explicitly asks to edit those smoke tests.
+
 ---
 
 ## Workspace Hygiene
