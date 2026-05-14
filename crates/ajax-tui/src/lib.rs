@@ -17,8 +17,8 @@ use ajax_core::{
 };
 #[cfg(test)]
 pub(crate) use cockpit_state::FLASH_TICKS;
-use cockpit_state::{card_repo, AppView, SelectableKind, Severity};
 pub use cockpit_state::{App, CockpitSnapshot};
+use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
 use input::{
     handle_action_result, handle_back_key, handle_cockpit_event, is_back_key_event,
@@ -222,19 +222,6 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(crumb_sep());
             parts.push(Span::styled(repo.clone(), crumb_style));
         }
-        AppView::TaskActions { task, .. } => {
-            if let Some(repo) = card_repo(task) {
-                parts.push(crumb_sep());
-                parts.push(Span::styled(repo.to_string(), crumb_style));
-            }
-            parts.push(crumb_sep());
-            parts.push(Span::styled(
-                task.qualified_handle.clone(),
-                Style::default()
-                    .fg(primary_accent())
-                    .add_modifier(Modifier::BOLD),
-            ));
-        }
         AppView::NewTaskInput { repo, .. } => {
             parts.push(crumb_sep());
             parts.push(Span::styled(repo.clone(), crumb_style));
@@ -415,7 +402,6 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let enter_label = match &app.view {
         AppView::Projects => "open",
         AppView::Project { .. } => "open",
-        AppView::TaskActions { .. } => "run",
         AppView::NewTaskInput { .. } => "create",
         AppView::Help { .. } => "back",
     };
@@ -638,6 +624,39 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     }
 }
 
+fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
+    let bold = Modifier::BOLD;
+    let dim = Style::default().fg(subtle_text());
+    let mut spans = vec![Span::styled(
+        format!("{:<28}", t.qualified_handle),
+        Style::default().fg(task_handle_color(t)).add_modifier(bold),
+    )];
+    let label = if let Some(annotation) = t.annotations.first() {
+        annotation.row_label()
+    } else if let Some(summary) = t.live_summary.as_ref() {
+        summary.clone()
+    } else {
+        t.ui_state.as_str().to_string()
+    };
+    spans.push(Span::styled(format!("{label:<36}"), dim));
+    let action_label = t.primary_action.as_str();
+    let chrome = crate::actions::operator_action_chrome(t.primary_action);
+    spans.push(Span::styled(
+        format!("{:>8}  ", title_case(action_label)),
+        chrome.label_style(),
+    ));
+    spans.push(Span::styled(chrome.glyph.to_string(), chrome.glyph_style()));
+    spans
+}
+
+fn title_case(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
 fn render_row(
     is_selected: bool,
     glyph: Span<'static>,
@@ -665,20 +684,22 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
     match s {
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
+            let _ = arrow;
+            let chrome = crate::actions::operator_action_chrome(item.action);
             render_row(
                 is_selected,
                 inbox_glyph(accent),
                 vec![
                     Span::styled(
-                        format!("{:<22}", item.task_handle),
+                        format!("{:<28}", item.task_handle),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
-                    Span::styled(item.reason.clone(), Style::default().fg(accent)),
-                    Span::styled("  ->  ", arrow),
+                    Span::styled(format!("{:<36}", item.reason), Style::default().fg(accent)),
                     Span::styled(
-                        item.action.as_str().to_string(),
-                        Style::default().fg(primary_accent()).add_modifier(bold),
+                        format!("{:>8}  ", title_case(item.action.as_str())),
+                        chrome.label_style(),
                     ),
+                    Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
                 ],
             )
         }
@@ -708,17 +729,7 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
             action_glyph(action),
             vec![Span::styled(action.clone(), action_label_style(action))],
         ),
-        SelectableKind::Task(t) => render_row(
-            is_selected,
-            task_glyph(t),
-            vec![
-                Span::styled(
-                    format!("{:<28}", t.qualified_handle),
-                    Style::default().fg(task_handle_color(t)).add_modifier(bold),
-                ),
-                Span::styled(task_status_label(t), dim),
-            ],
-        ),
+        SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
     }
 }
 
@@ -787,33 +798,10 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         return (rows, sel_to_row);
     }
 
-    if let AppView::TaskActions { task, .. } = &app.view {
-        let bold = Modifier::BOLD;
-        let dim = Style::default().fg(subtle_text());
-        rows.push(render_row(
-            false,
-            task_glyph(task),
-            vec![
-                Span::styled(
-                    format!("{:<28}", task.qualified_handle),
-                    Style::default()
-                        .fg(task_handle_color(task))
-                        .add_modifier(bold),
-                ),
-                Span::styled(format!("{}  ", task_status_label(task)), dim),
-                Span::styled(
-                    task.title.clone(),
-                    Style::default().fg(Color::White).add_modifier(bold),
-                ),
-            ],
-        ));
-    }
-
     if app.selectables.is_empty() {
         let msg = match &app.view {
             AppView::Projects => "no projects yet - edit ~/.config/ajax/config.toml to add one",
             AppView::Project { .. } => "nothing here yet - esc/h to go back",
-            AppView::TaskActions { .. } => "no actions available",
             AppView::NewTaskInput { .. } => "enter a task name",
             AppView::Help { .. } => "keyboard shortcuts",
         };
@@ -831,10 +819,35 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         }
         sel_to_row.push(rows.len());
         rows.push(render_selectable(selectable, app.selected == idx));
+        // Inline annotation lines under an expanded task or inbox row.
+        if let Some(card) = expanded_card_for(selectable, app) {
+            for annotation in &card.annotations {
+                rows.push(render_annotation_line(annotation));
+            }
+        }
         prev_group = Some(group);
     }
 
     (rows, sel_to_row)
+}
+
+fn expanded_card_for<'a>(s: &SelectableKind, app: &'a App) -> Option<&'a TaskCard> {
+    let open = app.expanded_task.as_ref()?;
+    let task_id = match s {
+        SelectableKind::Task(card) if &card.id == open => Some(&card.id),
+        SelectableKind::Inbox(item) if &item.task_id == open => Some(&item.task_id),
+        _ => None,
+    }?;
+    app.cards.iter().find(|c| &c.id == task_id)
+}
+
+fn render_annotation_line(annotation: &ajax_core::models::Annotation) -> ListItem<'static> {
+    let chrome = crate::actions::annotation_chrome(annotation.kind);
+    let prefix = Span::raw("      ");
+    let connector = Span::styled("├─ ".to_string(), Style::default().fg(subtle_text()));
+    let glyph = Span::styled(format!("{} ", chrome.glyph), chrome.glyph_style());
+    let label = Span::styled(annotation.row_label(), Style::default().fg(muted_text()));
+    ListItem::new(Line::from(vec![prefix, connector, glyph, label]))
 }
 
 fn selectable_feed_rows(app: &App) -> Vec<usize> {
@@ -1182,6 +1195,125 @@ mod tests {
     }
 
     #[test]
+    fn app_starts_with_no_expanded_task() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+
+        assert!(app.expanded_task.is_none());
+    }
+
+    #[test]
+    fn project_selectables_include_drawer_when_task_expanded() {
+        let mut tasks = sample_tasks();
+        tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Review];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        app.activate_selected();
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .unwrap();
+        app.selected = task_idx;
+        app.activate_selected();
+
+        let action_count = app
+            .selectables
+            .iter()
+            .filter(|s| matches!(s, SelectableKind::TaskAction { .. }))
+            .count();
+        assert_eq!(action_count, 2);
+    }
+
+    #[test]
+    fn selecting_different_task_collapses_drawer() {
+        let mut tasks = sample_tasks_with_count(2);
+        tasks[0].available_actions = vec![OperatorAction::Resume];
+        tasks[1].available_actions = vec![OperatorAction::Resume];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        app.activate_selected();
+        let first = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .unwrap();
+        app.selected = first;
+        app.activate_selected();
+        assert!(app.expanded_task.is_some());
+
+        // Step past the expanded task's drawer rows onto the next task.
+        loop {
+            app.select_next();
+            if matches!(app.selectables[app.selected], SelectableKind::Task(_)) {
+                let cur_id = app.selected_task_id().cloned();
+                if cur_id.as_ref() != app.expanded_task.as_ref() {
+                    break;
+                }
+            }
+            if app.selected + 1 >= app.selectables.len() {
+                break;
+            }
+        }
+
+        // Drawer should collapse once cursor moves off the expanded task.
+        // (Implementation collapses via the navigation hook.)
+        assert!(app.expanded_task.is_none());
+    }
+
+    #[test]
+    fn esc_collapses_drawer_keeps_view() {
+        let mut tasks = sample_tasks();
+        tasks[0].available_actions = vec![OperatorAction::Resume];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        app.activate_selected();
+        let idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .unwrap();
+        app.selected = idx;
+        app.activate_selected();
+        assert!(app.expanded_task.is_some());
+
+        let kept = app.go_back();
+
+        assert!(kept);
+        assert!(app.expanded_task.is_none());
+        assert!(matches!(app.view, AppView::Project { .. }));
+    }
+
+    #[test]
+    fn enter_on_task_in_project_toggles_drawer() {
+        let mut tasks = sample_tasks();
+        tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Review];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+
+        // Drill into Project view for "web".
+        app.activate_selected();
+        assert!(matches!(app.view, AppView::Project { .. }));
+
+        // Locate the task selectable.
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .expect("task selectable exists");
+        app.selected = task_idx;
+        let task_id = match &app.selectables[task_idx] {
+            SelectableKind::Task(card) => card.id.clone(),
+            _ => unreachable!(),
+        };
+        assert!(app.expanded_task.is_none());
+
+        let dispatched = app.activate_selected();
+
+        assert!(
+            dispatched.is_none(),
+            "first Enter should expand, not dispatch"
+        );
+        assert!(matches!(app.view, AppView::Project { .. }));
+        assert_eq!(app.expanded_task.as_ref(), Some(&task_id));
+    }
+
+    #[test]
     fn cockpit_row_shows_annotation_label() {
         let mut tasks = sample_tasks();
         tasks[0].annotations = vec![Annotation::new(
@@ -1193,6 +1325,26 @@ mod tests {
 
         assert!(content.contains("waiting for input"), "{content}");
         assert!(!content.contains("LiveStatus"), "{content}");
+    }
+
+    #[test]
+    fn task_row_renders_primary_action_label_and_chrome() {
+        let mut tasks = sample_tasks();
+        tasks[0].primary_action = OperatorAction::Review;
+        tasks[0].annotations = vec![Annotation::new(
+            AnnotationKind::Reviewable,
+            Evidence::Lifecycle(LifecycleStatus::Reviewable),
+        )];
+        let app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("web/fix-login"), "handle: {content}");
+        assert!(
+            content.contains("reviewable"),
+            "annotation label: {content}"
+        );
+        assert!(content.contains("Review"), "action label: {content}");
     }
 
     #[test]
@@ -1465,35 +1617,6 @@ mod tests {
     }
 
     #[test]
-    fn attention_line_absent_on_task_actions_view() {
-        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        // Walk past inbox to the task row, then into TaskActions.
-        for _ in 0..app.selectables.len() {
-            if matches!(
-                app.selectables.get(app.selected),
-                Some(SelectableKind::Task(_))
-            ) {
-                break;
-            }
-            app.select_next();
-        }
-        app.activate_selected();
-        assert!(matches!(&app.view, AppView::TaskActions { .. }));
-
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let row1: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 1)].symbol())
-            .collect();
-        assert!(
-            !row1.contains("agent needs input"),
-            "attention line should hide on TaskActions"
-        );
-    }
-
-    #[test]
     fn cockpit_render_uses_orange_yellow_palette() {
         let mut app = app_in_project_view();
         app.select_next();
@@ -1687,7 +1810,7 @@ mod tests {
 
     #[test]
     fn ensure_visible_leaves_exact_bottom_boundary_stable() {
-        let mut app = app_in_project_view();
+        let mut app = app_in_project_view_with_task_count(3);
         app.selected = 2;
         app.viewport_scroll = selectable_row_layout(&app)[0].start;
         let selected_range = selectable_row_layout(&app)[app.selected].clone();
@@ -1701,7 +1824,7 @@ mod tests {
 
     #[test]
     fn ensure_visible_scrolls_up_and_down_to_selected_row() {
-        let mut app = app_in_project_view();
+        let mut app = app_in_project_view_with_task_count(3);
         app.selected = 0;
         app.viewport_scroll = selectable_row_layout(&app)[2].start;
 
@@ -1929,7 +2052,7 @@ mod tests {
     #[case(MouseEventKind::ScrollDown, 2)]
     #[case(MouseEventKind::ScrollUp, 0)]
     fn mouse_scroll_updates_selection(#[case] kind: MouseEventKind, #[case] expected: usize) {
-        let mut app = app_in_project_view();
+        let mut app = app_in_project_view_with_task_count(3);
         app.selected = 1;
 
         let action = handle_with_noop(
@@ -1949,7 +2072,7 @@ mod tests {
 
     #[test]
     fn mouse_click_selects_feed_row_inside_feed_bounds() {
-        let mut app = app_in_project_view();
+        let mut app = app_in_project_view_with_task_count(3);
         let target = 2;
         let target_feed_row = selectable_row_layout(&app)[target].start;
         let feed_top = super::feed_top_row(&app);
@@ -2049,16 +2172,20 @@ mod tests {
     }
 
     #[test]
-    fn feed_inbox_appears_before_tasks() {
-        // In the Project view, inbox rows precede task rows.
+    fn project_drill_in_has_no_inbox_section() {
+        // Inbox lives only on the Projects (top) view per option A. The
+        // Project drill-in shows each repo task exactly once with its
+        // annotation chrome on the row.
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        // Projects view: [inbox, project, NewTask]. Drill into the project.
         app.select_next();
         app.activate_selected();
-        let content = render_to_string(80, 30, &app);
-        let inbox_pos = content.find("needs_input").unwrap();
-        let task_pos = content.find("blocked").unwrap();
-        assert!(inbox_pos < task_pos);
+
+        let project_inbox = app
+            .selectables
+            .iter()
+            .filter(|s| matches!(s, SelectableKind::Inbox(_)))
+            .count();
+        assert_eq!(project_inbox, 0);
     }
 
     #[test]
@@ -2113,7 +2240,7 @@ mod tests {
     }
 
     #[test]
-    fn main_page_task_row_enters_open_task_action() {
+    fn main_page_task_row_enter_expands_drawer_then_dispatches() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -2129,10 +2256,12 @@ mod tests {
             }
             app.select_next();
         }
-        // Enter on a Task opens the per-task action menu (default first row = "resume").
+        // First Enter on a Task expands the drawer (does not dispatch).
         assert!(app.activate_selected().is_none());
-        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+        assert!(matches!(&app.view, AppView::Projects));
+        assert!(app.expanded_task.is_some());
 
+        // Second Enter on the first drawer action dispatches.
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.action, "resume");
@@ -2180,7 +2309,7 @@ mod tests {
     }
 
     #[test]
-    fn project_page_deduplicates_tasks_already_shown_in_inbox() {
+    fn project_page_lists_each_task_once_without_inbox_section() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -2211,16 +2340,11 @@ mod tests {
         let inbox_rows = app
             .selectables
             .iter()
-            .filter(|selectable| {
-                matches!(
-                    selectable,
-                    SelectableKind::Inbox(item) if item.task_handle == "web/fix-login"
-                )
-            })
+            .filter(|selectable| matches!(selectable, SelectableKind::Inbox(_)))
             .count();
 
-        assert_eq!(inbox_rows, 1);
-        assert_eq!(task_rows, 0);
+        assert_eq!(inbox_rows, 0);
+        assert_eq!(task_rows, 1);
     }
 
     #[test]
@@ -2615,7 +2739,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_task_opens_task_actions_menu() {
+    fn enter_on_task_expands_drawer_with_primary_action_preselected() {
         let mut app = App::new(
             sample_repos(),
             sample_tasks(),
@@ -2629,36 +2753,15 @@ mod tests {
             Some(SelectableKind::Task(_))
         ));
 
-        // Enter opens the per-task action menu, doesn't dispatch directly.
+        // Enter expands the drawer in-place, doesn't dispatch.
         assert!(app.activate_selected().is_none());
-        assert!(matches!(
-            &app.view,
-            AppView::TaskActions { task, .. }
-                if task.qualified_handle == "web/fix-login"
-        ));
+        assert!(matches!(&app.view, AppView::Projects));
+        assert!(app.expanded_task.is_some());
 
-        // First action in a non-review menu is "resume".
+        // Drawer cursor lands on the primary action ("resume").
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.action, "resume");
-
-        let content = render_to_string(80, 30, &app);
-        assert!(content.contains("> web/fix-login"));
-        assert!(content.contains("resume"));
-        assert!(!content.contains("ship"));
-        assert!(!content.contains("drop"));
-        for hidden_entry in [
-            "diff task",
-            "check task",
-            "review branch",
-            "repair",
-            "inspect task",
-        ] {
-            assert!(
-                !content.contains(hidden_entry),
-                "menu should not render low-value task action {hidden_entry}"
-            );
-        }
     }
 
     #[test]
@@ -2677,31 +2780,34 @@ mod tests {
     }
 
     #[test]
-    fn task_actions_back_returns_to_parent_view() {
+    fn drawer_back_collapses_keeping_project_view() {
         let mut app = app_in_project_view();
-        // Project view: [NewTask, inbox, task].
-        // Step past NewTask + inbox to the task status row.
-        app.select_next();
-        app.select_next();
-        assert!(matches!(
-            app.selectables.get(app.selected),
-            Some(SelectableKind::Task(_))
-        ));
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .expect("project view has at least one task");
+        app.selected = task_idx;
         app.activate_selected();
-        assert!(matches!(app.view, AppView::TaskActions { .. }));
+        assert!(app.expanded_task.is_some());
 
         super::handle_back_key(&mut app);
+        assert!(app.expanded_task.is_none());
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
     }
 
     #[test]
-    fn task_action_dispatches_action_on_enter() {
+    fn drawer_action_dispatches_on_enter() {
         let mut app = app_in_project_view();
-        app.select_next();
-        app.select_next();
-        app.activate_selected(); // open TaskActions menu
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .expect("project view has at least one task");
+        app.selected = task_idx;
+        app.activate_selected(); // expand drawer
 
-        // All task status rows open the same task action menu.
+        // Cursor now rests on the first drawer action row.
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
         assert_eq!(item.action, "resume");
@@ -2834,7 +2940,7 @@ mod tests {
     }
 
     #[test]
-    fn enter_on_inbox_row_opens_task_actions_with_recommendation_preselected() {
+    fn enter_on_inbox_row_expands_drawer_with_recommendation_preselected() {
         let inbox = InboxResponse {
             items: vec![AnnotationItem {
                 task_id: TaskId::new("task-1"),
@@ -2852,7 +2958,8 @@ mod tests {
         ));
 
         assert!(app.activate_selected().is_none());
-        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+        assert!(matches!(&app.view, AppView::Projects));
+        assert!(app.expanded_task.is_some());
 
         let inbox = InboxResponse {
             items: vec![AnnotationItem {
@@ -2866,6 +2973,7 @@ mod tests {
         let mut tasks = sample_tasks();
         tasks[0].lifecycle = LifecycleStatus::Reviewable;
         tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Ship];
+        tasks[0].primary_action = OperatorAction::Ship;
         let mut app = App::new(sample_repos(), tasks, inbox);
         assert!(app.activate_selected().is_none());
         let item = app.selected_action().unwrap();
@@ -3048,7 +3156,7 @@ mod tests {
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("web/fix-login"));
         assert!(content.contains("needs_input"));
-        assert!(content.contains("resume"));
+        assert!(content.contains("Resume"), "{content}");
     }
 
     #[test]
@@ -3189,11 +3297,15 @@ mod tests {
     #[test]
     fn refresh_after_removed_task_returns_to_main_page() {
         let mut app = app_in_project_view();
-        app.select_next();
-        app.select_next();
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .expect("task row exists");
+        app.selected = task_idx;
         let item = app.selected_action().expect("task row selected");
         app.activate_selected();
-        assert!(matches!(&app.view, AppView::TaskActions { .. }));
+        assert!(app.expanded_task.is_some());
 
         super::handle_action_result(
             &mut app,
@@ -3825,7 +3937,7 @@ mod tests {
             .as_bytes()
             .chunks(80)
             .map(|c| std::str::from_utf8(c).unwrap())
-            .find(|line| line.contains("web/fix-login") && line.contains("resume"))
+            .find(|line| line.contains("web/fix-login") && line.contains("Resume"))
             .expect("selected inbox feed row should be in the rendered output");
         assert!(
             line.contains(" > "),
@@ -3848,7 +3960,7 @@ mod tests {
     }
 
     #[test]
-    fn task_actions_view_pins_summary_row_above_action_list() {
+    fn drawer_actions_render_directly_under_task_row() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         for _ in 0..app.selectables.len() {
             if matches!(
@@ -3859,28 +3971,14 @@ mod tests {
             }
             app.select_next();
         }
+        let task_idx = app.selected;
         app.activate_selected();
-        assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
-        let first_action_row = selectable_row_layout(&app)[0].start;
-        assert!(
-            first_action_row >= 2,
-            "pinned summary should push selectables[0] below the initial blank, got start = {first_action_row}"
-        );
-
-        let content = render_to_string(80, 30, &app);
-        let lines: Vec<&str> = content
-            .as_bytes()
-            .chunks(80)
-            .map(|c| std::str::from_utf8(c).unwrap())
-            .collect();
-        let feed_top = feed_top_row(&app);
-        let summary_window = &lines[feed_top..feed_top + first_action_row];
-        assert!(
-            summary_window
-                .iter()
-                .any(|line| line.contains("web/fix-login") && line.contains("Fix login")),
-            "expected pinned task summary above the action list, got: {summary_window:?}"
-        );
+        // Drawer actions follow the task in the selectable list.
+        let next = app
+            .selectables
+            .get(task_idx + 1)
+            .expect("drawer action follows the task row");
+        assert!(matches!(next, SelectableKind::TaskAction { .. }));
     }
 }

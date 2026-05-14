@@ -477,6 +477,24 @@ impl AnnotationKind {
             Self::Cleanable => OperatorAction::Drop,
         }
     }
+
+    pub const fn glyph(self) -> char {
+        match self {
+            Self::NeedsMe => '?',
+            Self::Broken => '!',
+            Self::Reviewable => 'R',
+            Self::Cleanable => '~',
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::NeedsMe => "needs you",
+            Self::Broken => "broken",
+            Self::Reviewable => "reviewable",
+            Self::Cleanable => "cleanable",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
@@ -495,6 +513,66 @@ pub enum Evidence {
     Substrate(SubstrateGap),
 }
 
+impl Evidence {
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Evidence::LiveStatus(status) => match status {
+                LiveStatusKind::WaitingForApproval => "waiting for approval",
+                LiveStatusKind::WaitingForInput => "waiting for input",
+                LiveStatusKind::AuthRequired => "auth required",
+                LiveStatusKind::RateLimited => "rate limited",
+                LiveStatusKind::ContextLimit => "context limit",
+                LiveStatusKind::CommandFailed => "command failed",
+                LiveStatusKind::Blocked => "blocked",
+                LiveStatusKind::WorktreeMissing => "worktree missing",
+                LiveStatusKind::TmuxMissing => "tmux missing",
+                LiveStatusKind::WorktrunkMissing => "worktrunk missing",
+                LiveStatusKind::MergeConflict => "merge conflict",
+                LiveStatusKind::Done => "done",
+                LiveStatusKind::ShellIdle
+                | LiveStatusKind::CommandRunning
+                | LiveStatusKind::TestsRunning
+                | LiveStatusKind::AgentRunning
+                | LiveStatusKind::CiFailed
+                | LiveStatusKind::Unknown => "live status",
+            },
+            Evidence::SideFlag(flag) => match flag {
+                SideFlag::Dirty => "dirty",
+                SideFlag::AgentRunning => "agent running",
+                SideFlag::AgentDead => "agent dead",
+                SideFlag::NeedsInput => "needs input",
+                SideFlag::TestsFailed => "tests failed",
+                SideFlag::TmuxMissing => "tmux missing",
+                SideFlag::WorktreeMissing => "worktree missing",
+                SideFlag::WorktrunkMissing => "worktrunk missing",
+                SideFlag::BranchMissing => "branch missing",
+                SideFlag::Stale => "stale",
+                SideFlag::Conflicted => "conflicted",
+                SideFlag::Unpushed => "unpushed",
+            },
+            Evidence::Lifecycle(status) => match status {
+                LifecycleStatus::Created => "created",
+                LifecycleStatus::Provisioning => "provisioning",
+                LifecycleStatus::Active => "active",
+                LifecycleStatus::Waiting => "waiting",
+                LifecycleStatus::Reviewable => "reviewable",
+                LifecycleStatus::Mergeable => "mergeable",
+                LifecycleStatus::Merged => "merged",
+                LifecycleStatus::Cleanable => "cleanable",
+                LifecycleStatus::Removed => "removed",
+                LifecycleStatus::Orphaned => "orphaned",
+                LifecycleStatus::Error => "error",
+            },
+            Evidence::Substrate(gap) => match gap {
+                SubstrateGap::WorktreeMissing => "worktree missing",
+                SubstrateGap::TmuxMissing => "tmux missing",
+                SubstrateGap::WorktrunkMissing => "worktrunk missing",
+                SubstrateGap::BranchMissing => "branch missing",
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Annotation {
     pub kind: AnnotationKind,
@@ -511,6 +589,10 @@ impl Annotation {
             evidence,
             suggests: kind.suggests(),
         }
+    }
+
+    pub fn row_label(&self) -> String {
+        format!("{} · {}", self.kind.label(), self.evidence.label())
     }
 }
 
@@ -887,5 +969,38 @@ mod tests {
         let task = sample_task();
 
         assert_eq!(task.annotations, Vec::<Annotation>::new());
+    }
+
+    #[test]
+    fn annotation_row_label_combines_kind_and_evidence() {
+        let annotation = Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::LiveStatus(LiveStatusKind::WaitingForInput),
+        );
+
+        assert_eq!(annotation.row_label(), "needs you · waiting for input");
+
+        let annotation = Annotation::new(
+            AnnotationKind::Broken,
+            Evidence::Substrate(super::SubstrateGap::TmuxMissing),
+        );
+
+        assert_eq!(annotation.row_label(), "broken · tmux missing");
+    }
+
+    #[test]
+    fn annotation_kind_has_distinct_glyphs() {
+        let glyphs = [
+            (AnnotationKind::NeedsMe, '?'),
+            (AnnotationKind::Broken, '!'),
+            (AnnotationKind::Reviewable, 'R'),
+            (AnnotationKind::Cleanable, '~'),
+        ];
+
+        let mut seen = std::collections::BTreeSet::new();
+        for (kind, expected) in glyphs {
+            assert_eq!(kind.glyph(), expected, "{kind:?}");
+            assert!(seen.insert(kind.glyph()), "glyph for {kind:?} not distinct");
+        }
     }
 }

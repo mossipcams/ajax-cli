@@ -1,4 +1,4 @@
-use ajax_core::models::OperatorAction;
+use ajax_core::models::{AnnotationKind, OperatorAction};
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Copy)]
@@ -45,6 +45,19 @@ pub(crate) fn action_chrome(action_label: &str) -> ActionChrome {
     }
 }
 
+pub(crate) fn annotation_chrome(kind: AnnotationKind) -> ActionChrome {
+    match kind {
+        AnnotationKind::NeedsMe => {
+            ActionChrome::new("?", secondary_accent(), secondary_accent(), true)
+        }
+        AnnotationKind::Broken => ActionChrome::new("!", danger_accent(), danger_accent(), true),
+        AnnotationKind::Reviewable => {
+            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
+        }
+        AnnotationKind::Cleanable => ActionChrome::new("~", muted_text(), muted_text(), true),
+    }
+}
+
 pub(crate) fn operator_action_chrome(action: OperatorAction) -> ActionChrome {
     match action {
         OperatorAction::Start => ActionChrome::new("+", primary_accent(), primary_accent(), true),
@@ -82,7 +95,8 @@ const fn subtle_text() -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::action_chrome;
+    use super::{action_chrome, annotation_chrome};
+    use ajax_core::models::AnnotationKind;
 
     #[test]
     fn action_chrome_uses_operator_verbs() {
@@ -99,5 +113,20 @@ mod tests {
             assert!(chrome.bold, "{label}");
         }
         assert_eq!(action_chrome("open task").glyph, ".");
+    }
+
+    #[test]
+    fn annotation_chrome_uses_kind_glyph() {
+        for (kind, glyph) in [
+            (AnnotationKind::NeedsMe, "?"),
+            (AnnotationKind::Broken, "!"),
+            (AnnotationKind::Reviewable, "R"),
+            (AnnotationKind::Cleanable, "~"),
+        ] {
+            let chrome = annotation_chrome(kind);
+
+            assert_eq!(chrome.glyph, glyph, "{kind:?}");
+            assert_eq!(chrome.glyph.chars().next(), Some(kind.glyph()));
+        }
     }
 }

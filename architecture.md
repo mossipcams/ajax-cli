@@ -143,7 +143,7 @@ Cockpit is the primary operator surface over the JSON-backed command boundary.
 
 `ajax-tui` owns native terminal interaction and rendering.
 
-- `actions` owns action chrome metadata.
+- `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,
   refresh application, flash state, and confirmations.
 - `input` owns terminal-event classification.
@@ -151,3 +151,19 @@ Cockpit is the primary operator surface over the JSON-backed command boundary.
 - `navigation` owns key classification helpers.
 - `rendering` owns status palette, glyph mapping, and screen rendering.
 - `runtime` owns terminal mode, polling, refresh timing, and the event loop.
+
+### Cockpit Views
+
+Cockpit has three navigational views:
+
+- `Projects` — top level. Shows the cross-repo annotation inbox followed by
+  the repo list and any unannotated tasks. Inbox rows surface tasks needing
+  operator attention regardless of repo.
+- `Project` — a single repo's task list. Each task row carries its handle,
+  annotation label (or live summary), and primary-action chrome.
+- `NewTaskInput` / `Help` — modal text input and reference screen.
+
+There is no separate per-task action menu view. Enter on a task or inbox row
+expands an inline drawer that lists the task's available operator actions
+underneath the row; Enter on a drawer row dispatches that action. Esc or
+selecting a different task collapses the drawer.

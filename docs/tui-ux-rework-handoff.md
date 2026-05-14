@@ -1,5 +1,9 @@
 # TUI UX Rework — Session Handoff
 
+**Superseded.** This handoff documents the prior TaskActions-based flow.
+The Cockpit now uses an inline drawer; see `architecture.md` and
+`docs/information-model-redesign-plan.md`.
+
 Source plan: `docs/tui-ux-rework-plan.md`.
 
 ## Status — COMPLETE

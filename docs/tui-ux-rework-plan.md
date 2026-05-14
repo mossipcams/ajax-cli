@@ -1,8 +1,11 @@
 # Ajax TUI UX Rework Plan
 
-Status note: this plan predates the information-model redesign. Current Cockpit
-inbox rows are annotation digests keyed by task id and operator action rather
-than `AttentionItem` rows with recommended actions.
+**Superseded.** This plan predates the operator information-model redesign and
+the inline drawer rework. Current behavior: Projects view shows a cross-repo
+annotation inbox followed by repos; Project view shows a dense repo task list;
+Enter on a task expands an inline drawer of available actions. See
+`docs/information-model-redesign-plan.md` and `architecture.md` for the
+current model.
 
 ## Goal
 

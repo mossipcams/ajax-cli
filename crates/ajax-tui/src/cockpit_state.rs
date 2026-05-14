@@ -62,21 +62,9 @@ pub(crate) enum SelectableKind {
 #[derive(Clone)]
 pub(crate) enum AppView {
     Projects,
-    Project {
-        repo: String,
-    },
-    /// Per-task action menu reached by selecting a task and pressing Enter.
-    TaskActions {
-        task: TaskCard,
-        parent: Box<AppView>,
-    },
-    NewTaskInput {
-        repo: String,
-        title: String,
-    },
-    Help {
-        previous: Box<AppView>,
-    },
+    Project { repo: String },
+    NewTaskInput { repo: String, title: String },
+    Help { previous: Box<AppView> },
 }
 
 impl SelectableKind {
@@ -137,51 +125,52 @@ fn build_selectables(
     repos: &ReposResponse,
     inbox: &InboxResponse,
     cards: &[TaskCard],
+    expanded_task: &Option<TaskId>,
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
+    let push_with_drawer =
+        |out: &mut Vec<SelectableKind>, base: SelectableKind, drawer_task: &TaskCard| {
+            out.push(base);
+            if expanded_task.as_ref() == Some(&drawer_task.id) {
+                for action in &drawer_task.available_actions {
+                    out.push(SelectableKind::TaskAction {
+                        task: drawer_task.clone(),
+                        action: action.as_str().to_string(),
+                    });
+                }
+            }
+        };
     match view {
         AppView::Projects => {
             let annotation_items = annotation_inbox_items(cards, inbox);
             let inbox_task_ids = inbox_task_ids(annotation_items.iter());
-            out.extend(annotation_items.into_iter().map(SelectableKind::Inbox));
+            for item in annotation_items {
+                let drawer_card = cards.iter().find(|c| c.id == item.task_id).cloned();
+                let base = SelectableKind::Inbox(item);
+                if let Some(card) = drawer_card {
+                    push_with_drawer(&mut out, base, &card);
+                } else {
+                    out.push(base);
+                }
+            }
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
-            out.extend(
-                cards
-                    .iter()
-                    .filter(|card| !inbox_task_ids.contains(&card.id))
-                    .filter(|card| !matches!(card.ui_state, UiState::Archived))
-                    .cloned()
-                    .map(SelectableKind::Task),
-            );
+            for card in cards
+                .iter()
+                .filter(|card| !inbox_task_ids.contains(&card.id))
+                .filter(|card| !matches!(card.ui_state, UiState::Archived))
+            {
+                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card);
+            }
         }
         AppView::Project { repo } => {
-            let annotation_items = annotation_inbox_items(cards, inbox);
-            let repo_inbox_items = annotation_items
-                .iter()
-                .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()));
-            let inbox_task_ids = inbox_task_ids(repo_inbox_items.clone());
-
             out.push(SelectableKind::NewTask { repo: repo.clone() });
-            out.extend(repo_inbox_items.cloned().map(SelectableKind::Inbox));
-            out.extend(
-                cards
-                    .iter()
-                    .filter(|card| card_repo(card) == Some(repo.as_str()))
-                    .filter(|card| !inbox_task_ids.contains(&card.id))
-                    .filter(|card| !matches!(card.ui_state, UiState::Archived))
-                    .cloned()
-                    .map(SelectableKind::Task),
-            );
-        }
-        AppView::TaskActions { task, .. } => {
-            out.extend(
-                task.available_actions
-                    .iter()
-                    .map(|action| SelectableKind::TaskAction {
-                        task: task.clone(),
-                        action: action.as_str().to_string(),
-                    }),
-            );
+            for card in cards
+                .iter()
+                .filter(|card| card_repo(card) == Some(repo.as_str()))
+                .filter(|card| !matches!(card.ui_state, UiState::Archived))
+            {
+                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card);
+            }
         }
         AppView::NewTaskInput { .. } => {}
         AppView::Help { .. } => {}
@@ -232,6 +221,10 @@ pub struct App {
     pub(crate) notices: HashMap<TaskId, Notice>,
     pub(crate) system_notice: Option<Notice>,
     pub(crate) pending_confirmation: Option<CockpitActionItem>,
+    /// Task whose inline action drawer is currently open. The drawer renders
+    /// annotation lines plus selectable action rows under the matching task
+    /// or inbox row. `None` keeps the list dense.
+    pub(crate) expanded_task: Option<TaskId>,
 }
 
 #[cfg(test)]
@@ -240,7 +233,8 @@ pub(crate) const FLASH_TICKS: u8 = NOTICE_TICKS_SUCCESS;
 impl App {
     pub fn new(repos: ReposResponse, cards: Vec<TaskCard>, inbox: InboxResponse) -> Self {
         let view = AppView::Projects;
-        let selectables = build_selectables(&view, &repos, &inbox, &cards);
+        let expanded_task: Option<TaskId> = None;
+        let selectables = build_selectables(&view, &repos, &inbox, &cards, &expanded_task);
         Self {
             repos,
             cards,
@@ -252,6 +246,7 @@ impl App {
             notices: HashMap::new(),
             system_notice: None,
             pending_confirmation: None,
+            expanded_task,
         }
     }
 
@@ -260,6 +255,7 @@ impl App {
             return;
         }
         self.selected = self.selected.saturating_sub(1);
+        self.collapse_drawer_if_left();
     }
 
     pub fn select_next(&mut self) {
@@ -268,6 +264,31 @@ impl App {
         }
         let max = self.selectables.len() - 1;
         self.selected = (self.selected + 1).min(max);
+        self.collapse_drawer_if_left();
+    }
+
+    fn collapse_drawer_if_left(&mut self) {
+        let Some(open) = self.expanded_task.clone() else {
+            return;
+        };
+        let still_inside = self
+            .selectables
+            .get(self.selected)
+            .map(|s| match s {
+                SelectableKind::Task(card) => card.id == open,
+                SelectableKind::Inbox(item) => item.task_id == open,
+                SelectableKind::TaskAction { task, .. } => task.id == open,
+                _ => false,
+            })
+            .unwrap_or(false);
+        if !still_inside {
+            self.expanded_task = None;
+            self.invalidate_pending_confirmation();
+            // Save selection position by remembering selectable identity-ish.
+            let was_idx = self.selected;
+            self.rebuild_selectables();
+            self.selected = was_idx.min(self.selectables.len().saturating_sub(1));
+        }
     }
 
     /// The action that Enter would dispatch right now, or None if nothing is selectable.
@@ -293,17 +314,12 @@ impl App {
     /// Erase editable input, then return to the cockpit's main project list.
     /// Returns false at the top level so back never exits the TUI.
     pub fn go_back(&mut self) -> bool {
-        if let AppView::Help { previous } = &self.view {
-            self.view = *previous.clone();
-            self.selected = 0;
-            self.viewport_scroll = 0;
-            self.invalidate_pending_confirmation();
-            self.rebuild_selectables();
+        if self.expanded_task.is_some() {
+            self.collapse_drawer();
             return true;
         }
-
-        if let AppView::TaskActions { parent, .. } = &self.view {
-            self.view = *parent.clone();
+        if let AppView::Help { previous } = &self.view {
+            self.view = *previous.clone();
             self.selected = 0;
             self.viewport_scroll = 0;
             self.invalidate_pending_confirmation();
@@ -359,33 +375,12 @@ impl App {
                 None
             }
             SelectableKind::Task(card) => {
-                self.view = AppView::TaskActions {
-                    task: card,
-                    parent: Box::new(self.view.clone()),
-                };
-                self.selected = 0;
-                self.viewport_scroll = 0;
-                self.system_notice = None;
-                self.invalidate_pending_confirmation();
-                self.rebuild_selectables();
+                self.expand_task_drawer(card.id.clone(), card.primary_action);
                 None
             }
             SelectableKind::Inbox(item) => {
                 if let Some(card) = self.find_card_for_task(&item.task_id) {
-                    let preselected = card
-                        .available_actions
-                        .iter()
-                        .position(|action| *action == item.action)
-                        .unwrap_or(0);
-                    self.view = AppView::TaskActions {
-                        task: card,
-                        parent: Box::new(self.view.clone()),
-                    };
-                    self.selected = preselected;
-                    self.viewport_scroll = 0;
-                    self.system_notice = None;
-                    self.pending_confirmation = None;
-                    self.rebuild_selectables();
+                    self.expand_task_drawer(card.id.clone(), item.action);
                     None
                 } else {
                     Some(SelectableKind::Inbox(item).as_action())
@@ -393,6 +388,48 @@ impl App {
             }
             selectable => Some(selectable.as_action()),
         }
+    }
+
+    fn expand_task_drawer(&mut self, task_id: TaskId, preferred: OperatorAction) {
+        self.expanded_task = Some(task_id.clone());
+        self.system_notice = None;
+        self.invalidate_pending_confirmation();
+        self.rebuild_selectables();
+        if let Some(idx) = self.selectables.iter().position(|s| match s {
+            SelectableKind::TaskAction { task, action } => {
+                task.id == task_id
+                    && OperatorAction::from_label(action)
+                        .map(|a| a == preferred)
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }) {
+            self.selected = idx;
+        } else if let Some(idx) = self.selectables.iter().position(|s| {
+            matches!(s,
+            SelectableKind::TaskAction { task, .. } if task.id == task_id)
+        }) {
+            self.selected = idx;
+        }
+    }
+
+    fn collapse_drawer(&mut self) -> bool {
+        if self.expanded_task.is_none() {
+            return false;
+        }
+        let task_id = self.expanded_task.take();
+        self.invalidate_pending_confirmation();
+        self.rebuild_selectables();
+        if let Some(id) = task_id {
+            if let Some(idx) = self.selectables.iter().position(|s| match s {
+                SelectableKind::Task(card) => card.id == id,
+                SelectableKind::Inbox(item) => item.task_id == id,
+                _ => false,
+            }) {
+                self.selected = idx;
+            }
+        }
+        true
     }
 
     fn find_card_for_task(&self, task_id: &TaskId) -> Option<TaskCard> {
@@ -440,9 +477,9 @@ impl App {
         cards: Vec<TaskCard>,
         inbox: InboxResponse,
     ) {
-        let missing_task_after_refresh = match &self.view {
-            AppView::TaskActions { task, .. } => {
-                !cards.iter().any(|candidate| candidate.id == task.id)
+        let missing_task_after_refresh = match (&self.view, &self.expanded_task) {
+            (AppView::Project { .. }, Some(task_id)) => {
+                !cards.iter().any(|candidate| candidate.id == *task_id)
             }
             _ => false,
         };
@@ -507,7 +544,13 @@ impl App {
     }
 
     fn rebuild_selectables(&mut self) {
-        self.selectables = build_selectables(&self.view, &self.repos, &self.inbox, &self.cards);
+        self.selectables = build_selectables(
+            &self.view,
+            &self.repos,
+            &self.inbox,
+            &self.cards,
+            &self.expanded_task,
+        );
     }
 
     fn invalidate_pending_confirmation(&mut self) {
