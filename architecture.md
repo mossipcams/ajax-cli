@@ -9,7 +9,7 @@ deterministic backend used by Cockpit, scripts, and tests.
 ### `ajax-core`
 
 Owns the domain model, registry facade, lifecycle model, command planning,
-policy decisions, live-status reduction, attention projection, and typed output
+policy decisions, live-status reduction, task annotation projection, and typed output
 contracts.
 
 ### `ajax-cli`
@@ -53,8 +53,10 @@ Transient and test state use `InMemoryRegistry`.
 Lifecycle state is modeled in `ajax-core::lifecycle`. Commands and live-status
 application request lifecycle transitions through the lifecycle boundary.
 
-Attention is derived from lifecycle state, live status, side flags, and substrate
-evidence.
+Annotations are task properties derived from lifecycle state, live status, side
+flags, and substrate evidence. Operator actions are projected from those
+annotations and from task state; Cockpit no longer consumes a separate parallel
+attention list.
 
 ### Substrate Evidence
 
@@ -91,6 +93,11 @@ Command modules are split by use case:
 - `commands/teardown.rs`
 - `commands/trunk.rs`
 - `commands/lookup.rs`
+
+The public CLI vocabulary is operator-facing: `start`, `resume`, `repair`,
+`review`, `ship`, `drop`, `tidy`, and `ready`. Some internal command modules
+still carry substrate-oriented names where they wrap the underlying git, tmux,
+or test-command operation.
 
 ## Adapter Architecture
 

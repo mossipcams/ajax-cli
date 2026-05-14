@@ -113,6 +113,8 @@ pub struct Task {
     pub worktrunk_status: Option<WorktrunkStatus>,
     #[serde(default)]
     pub live_status: Option<LiveObservation>,
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
     pub created_at: SystemTime,
     pub last_activity_at: SystemTime,
     pub metadata: HashMap<String, String>,
@@ -153,6 +155,7 @@ impl Task {
             tmux_status: None,
             worktrunk_status: None,
             live_status: None,
+            annotations: Vec::new(),
             created_at: now,
             last_activity_at: now,
             metadata: HashMap::new(),
@@ -399,66 +402,44 @@ pub struct SafetyReport {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct AttentionItem {
+pub struct CockpitActionItem {
     pub task_id: TaskId,
     pub task_handle: String,
     pub reason: String,
     pub priority: u32,
-    pub recommended_action: String,
+    pub action: String,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum RecommendedAction {
-    SelectProject,
-    NewTask,
-    OpenTask,
-    OpenTrunk,
-    MergeTask,
-    CleanTask,
-    RemoveTask,
-    Status,
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+pub enum OperatorAction {
+    Start,
+    Resume,
+    Review,
+    Ship,
+    Drop,
+    Repair,
 }
 
-const TASK_PICKER_MENU: [RecommendedAction; 4] = [
-    RecommendedAction::OpenTask,
-    RecommendedAction::MergeTask,
-    RecommendedAction::CleanTask,
-    RecommendedAction::RemoveTask,
-];
-
-const COCKPIT_PRODUCT_ACTIONS: [RecommendedAction; 6] = [
-    RecommendedAction::NewTask,
-    RecommendedAction::OpenTask,
-    RecommendedAction::MergeTask,
-    RecommendedAction::CleanTask,
-    RecommendedAction::RemoveTask,
-    RecommendedAction::Status,
-];
-
-impl RecommendedAction {
+impl OperatorAction {
     pub const fn all() -> &'static [Self] {
         &[
-            Self::SelectProject,
-            Self::NewTask,
-            Self::OpenTask,
-            Self::OpenTrunk,
-            Self::MergeTask,
-            Self::CleanTask,
-            Self::RemoveTask,
-            Self::Status,
+            Self::Start,
+            Self::Resume,
+            Self::Review,
+            Self::Ship,
+            Self::Drop,
+            Self::Repair,
         ]
     }
 
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::SelectProject => "select project",
-            Self::NewTask => "new task",
-            Self::OpenTask => "open task",
-            Self::OpenTrunk => "open worktrunk",
-            Self::MergeTask => "merge task",
-            Self::CleanTask => "clean task",
-            Self::RemoveTask => "remove task",
-            Self::Status => "status",
+            Self::Start => "start",
+            Self::Resume => "resume",
+            Self::Review => "review",
+            Self::Ship => "ship",
+            Self::Drop => "drop",
+            Self::Repair => "repair",
         }
     }
 
@@ -468,22 +449,77 @@ impl RecommendedAction {
             .copied()
             .find(|action| action.as_str() == label)
     }
+}
 
-    pub const fn task_picker_menu() -> &'static [Self] {
-        &TASK_PICKER_MENU
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+pub enum AnnotationKind {
+    NeedsMe,
+    Broken,
+    Reviewable,
+    Cleanable,
+}
+
+impl AnnotationKind {
+    pub const fn severity(self) -> u32 {
+        match self {
+            Self::NeedsMe => 1,
+            Self::Broken => 2,
+            Self::Reviewable => 3,
+            Self::Cleanable => 4,
+        }
     }
 
-    pub const fn cockpit_product_actions() -> &'static [Self] {
-        &COCKPIT_PRODUCT_ACTIONS
+    pub const fn suggests(self) -> OperatorAction {
+        match self {
+            Self::NeedsMe => OperatorAction::Resume,
+            Self::Broken => OperatorAction::Repair,
+            Self::Reviewable => OperatorAction::Review,
+            Self::Cleanable => OperatorAction::Drop,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Deserialize, Serialize)]
+pub enum SubstrateGap {
+    WorktreeMissing,
+    TmuxMissing,
+    WorktrunkMissing,
+    BranchMissing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum Evidence {
+    LiveStatus(LiveStatusKind),
+    SideFlag(SideFlag),
+    Lifecycle(LifecycleStatus),
+    Substrate(SubstrateGap),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct Annotation {
+    pub kind: AnnotationKind,
+    pub severity: u32,
+    pub evidence: Evidence,
+    pub suggests: OperatorAction,
+}
+
+impl Annotation {
+    pub fn new(kind: AnnotationKind, evidence: Evidence) -> Self {
+        Self {
+            kind,
+            severity: kind.severity(),
+            evidence,
+            suggests: kind.suggests(),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-        LiveStatusKind, RecommendedAction, Repo, SideFlag, Task, TaskId, TmuxStatus,
-        WorktrunkStatus,
+        AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence,
+        GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo,
+        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
@@ -811,79 +847,45 @@ mod tests {
     }
 
     #[test]
-    fn recommended_actions_have_stable_unique_labels() {
-        let labels = RecommendedAction::all()
+    fn operator_action_labels_are_operator_facing() {
+        let labels = OperatorAction::all()
             .iter()
             .map(|action| action.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(labels.len(), 8);
-        assert_eq!(labels[0], "select project");
-        assert_eq!(labels[1], "new task");
-        assert_eq!(labels[3], "open worktrunk");
-        assert!(!labels.contains(&"reconcile"));
+        assert_eq!(
+            labels,
+            vec!["start", "resume", "review", "ship", "drop", "repair"]
+        );
         for label in labels {
             assert_eq!(
-                RecommendedAction::from_label(label).map(|action| action.as_str()),
+                OperatorAction::from_label(label).map(|action| action.as_str()),
                 Some(label)
             );
         }
     }
 
     #[test]
-    fn recommended_actions_define_task_picker_menus() {
-        let labels = RecommendedAction::task_picker_menu()
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
+    fn annotation_kind_suggests_one_operator_action() {
+        let cases = [
+            (AnnotationKind::NeedsMe, OperatorAction::Resume),
+            (AnnotationKind::Broken, OperatorAction::Repair),
+            (AnnotationKind::Reviewable, OperatorAction::Review),
+            (AnnotationKind::Cleanable, OperatorAction::Drop),
+        ];
 
-        assert_eq!(
-            labels,
-            vec!["open task", "merge task", "clean task", "remove task"]
-        );
-    }
+        for (kind, expected_action) in cases {
+            let annotation = Annotation::new(kind, Evidence::Lifecycle(LifecycleStatus::Active));
 
-    #[test]
-    fn recommended_actions_define_explicit_cockpit_product_contract() {
-        let labels = RecommendedAction::cockpit_product_actions()
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            labels,
-            vec![
-                RecommendedAction::NewTask.as_str(),
-                RecommendedAction::OpenTask.as_str(),
-                RecommendedAction::MergeTask.as_str(),
-                RecommendedAction::CleanTask.as_str(),
-                RecommendedAction::RemoveTask.as_str(),
-                RecommendedAction::Status.as_str(),
-            ]
-        );
-        assert!(!labels.contains(&RecommendedAction::OpenTrunk.as_str()));
-        assert!(!labels.contains(&"check task"));
-        assert!(!labels.contains(&"diff task"));
-    }
-
-    #[test]
-    fn recommended_actions_do_not_include_legacy_task_aliases() {
-        let labels = RecommendedAction::all()
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-
-        for legacy_label in [
-            "inspect task",
-            "inspect agent",
-            "inspect test output",
-            "monitor task",
-            "check task",
-            "diff task",
-            "review diff",
-            "review branch",
-        ] {
-            assert!(!labels.contains(&legacy_label), "{legacy_label}");
+            assert_eq!(kind.suggests(), expected_action);
+            assert_eq!(annotation.suggests, expected_action);
         }
+    }
+
+    #[test]
+    fn task_carries_empty_annotations_by_default() {
+        let task = sample_task();
+
+        assert_eq!(task.annotations, Vec::<Annotation>::new());
     }
 }

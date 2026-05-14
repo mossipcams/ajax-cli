@@ -55,7 +55,7 @@ repo = "web"
 command = "cargo nextest run --all-features"
 ```
 
-Each managed repo should have a matching test command so `ajax check` and
+Each managed repo should have a matching test command so `ajax repair` and
 `ajax doctor` can verify the workflow end to end.
 
 ## First Run
@@ -71,13 +71,13 @@ ajax tasks
 Create a task plan before executing it:
 
 ```sh
-ajax new --repo web --title "fix login" --agent codex
+ajax start --repo web --title "fix login" --agent codex
 ```
 
 When the plan looks right, execute it:
 
 ```sh
-ajax new --repo web --title "fix login" --agent codex --execute
+ajax start --repo web --title "fix login" --agent codex --execute
 ```
 
 Before changing machines or testing a state migration, export a backup:
@@ -98,7 +98,7 @@ recovery path where Ajax keeps the task visible with attention.
 
 ## Architecture
 
-Ajax owns task lifecycle planning, orchestration, state, policy, attention,
+Ajax owns task lifecycle planning, orchestration, state, policy, annotations,
 safety, workflow, and the operator experience. Existing tools keep owning the
 durable primitives:
 
@@ -128,19 +128,16 @@ ajax repos
 ajax tasks
 ajax tasks --repo web
 ajax inspect web/fix-login
-ajax new --repo web --title "fix login" --agent codex
-ajax open web/fix-login
-ajax trunk web/fix-login
-ajax check web/fix-login
-ajax diff web/fix-login
-ajax merge web/fix-login
-ajax cleanup web/fix-login
-ajax clean web/fix-login
-ajax remove web/fix-login
-ajax sweep
+ajax start --repo web --title "fix login" --agent codex
+ajax resume web/fix-login
+ajax repair web/fix-login
+ajax review web/fix-login
+ajax ship web/fix-login
+ajax drop web/fix-login
+ajax tidy
 ajax next
 ajax inbox
-ajax review
+ajax ready
 ajax status
 ajax doctor
 ajax supervise --task web/fix-login --prompt "implement the approved plan"
@@ -156,7 +153,7 @@ ajax tasks --json
 ajax inspect web/fix-login --json
 ajax next --json
 ajax inbox --json
-ajax review --json
+ajax ready --json
 ajax status --json
 ajax doctor --json
 ajax cockpit --json
@@ -174,8 +171,8 @@ ajax cockpit
 Cockpit is the place to decide what needs attention, what is safe to do next,
 and which command plan should run. It uses a project-first workflow modeled
 after the earlier gum flow: choose a project, choose an action, then choose the
-task when that action needs one. Project actions include creating a task,
-opening or reviewing a task, merging, cleaning, and showing project status.
+task when that action needs one. Project actions include starting a task,
+resuming or reviewing a task, shipping, dropping, and showing project status.
 
 The cockpit remains a Rust operator surface over `ajax-core` command and JSON
 contracts. Orchestration logic stays in the core so Cockpit can be tested,

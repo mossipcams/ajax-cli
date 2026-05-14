@@ -1,6 +1,6 @@
 use ajax_core::{
-    models::{AttentionItem, LifecycleStatus, RecommendedAction, TaskId},
-    output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+    models::{CockpitActionItem, LifecycleStatus, OperatorAction, TaskId},
+    output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
     ui_state::UiState,
 };
 use std::collections::{HashMap, HashSet};
@@ -50,12 +50,12 @@ pub(crate) enum SelectableKind {
     NewTask {
         repo: String,
     },
-    Inbox(AttentionItem),
+    Inbox(AnnotationItem),
     Task(TaskCard),
     /// Action row inside the per-task action menu.
     TaskAction {
         task: TaskCard,
-        recommended_action: String,
+        action: String,
     },
 }
 
@@ -80,46 +80,56 @@ pub(crate) enum AppView {
 }
 
 impl SelectableKind {
-    /// Synthesize an `AttentionItem` for the dispatch callback. Inbox items
-    /// pass through unchanged; task rows get the default open action.
+    /// Synthesize an action item for the dispatch callback.
     /// The CLI dispatcher decides whether an action is navigational or should
     /// point the operator at an explicit executable command.
-    pub(crate) fn as_action(&self) -> AttentionItem {
+    pub(crate) fn as_action(&self) -> CockpitActionItem {
         match self {
-            SelectableKind::Project(repo) => AttentionItem {
+            SelectableKind::Project(repo) => CockpitActionItem {
                 task_id: TaskId::new(format!("__project__{}", repo.name)),
                 task_handle: repo.name.clone(),
                 reason: "project".to_string(),
                 priority: 0,
-                recommended_action: RecommendedAction::SelectProject.as_str().to_string(),
+                action: "status".to_string(),
             },
-            SelectableKind::NewTask { repo } => AttentionItem {
+            SelectableKind::NewTask { repo } => CockpitActionItem {
                 task_id: TaskId::new(format!("__new_task__{repo}")),
                 task_handle: repo.clone(),
                 reason: "create a new task".to_string(),
                 priority: 0,
-                recommended_action: RecommendedAction::NewTask.as_str().to_string(),
+                action: OperatorAction::Start.as_str().to_string(),
             },
-            SelectableKind::Inbox(item) => item.clone(),
-            SelectableKind::Task(card) => AttentionItem {
+            SelectableKind::Inbox(item) => CockpitActionItem {
+                task_id: item.task_id.clone(),
+                task_handle: item.task_handle.clone(),
+                reason: item.reason.clone(),
+                priority: item.severity,
+                action: item.action.as_str().to_string(),
+            },
+            SelectableKind::Task(card) => CockpitActionItem {
                 task_id: card.id.clone(),
                 task_handle: card.qualified_handle.clone(),
-                reason: card.action_reason.clone(),
+                reason: card_action_reason(card),
                 priority: 50,
-                recommended_action: RecommendedAction::OpenTask.as_str().to_string(),
+                action: card.primary_action.as_str().to_string(),
             },
-            SelectableKind::TaskAction {
-                task,
-                recommended_action,
-            } => AttentionItem {
+            SelectableKind::TaskAction { task, action } => CockpitActionItem {
                 task_id: task.id.clone(),
                 task_handle: task.qualified_handle.clone(),
-                reason: task.action_reason.clone(),
+                reason: card_action_reason(task),
                 priority: 50,
-                recommended_action: recommended_action.clone(),
+                action: action.clone(),
             },
         }
     }
+}
+
+fn card_action_reason(card: &TaskCard) -> String {
+    card.annotations
+        .first()
+        .map(|annotation| crate::evidence_label(&annotation.evidence).to_string())
+        .or_else(|| card.live_summary.clone())
+        .unwrap_or_else(|| card.ui_state.as_str().to_string())
 }
 
 fn build_selectables(
@@ -131,8 +141,9 @@ fn build_selectables(
     let mut out = Vec::new();
     match view {
         AppView::Projects => {
-            let inbox_task_ids = inbox_task_ids(inbox.items.iter());
-            out.extend(inbox.items.iter().cloned().map(SelectableKind::Inbox));
+            let annotation_items = annotation_inbox_items(cards, inbox);
+            let inbox_task_ids = inbox_task_ids(annotation_items.iter());
+            out.extend(annotation_items.into_iter().map(SelectableKind::Inbox));
             out.extend(repos.repos.iter().cloned().map(SelectableKind::Project));
             out.extend(
                 cards
@@ -144,8 +155,8 @@ fn build_selectables(
             );
         }
         AppView::Project { repo } => {
-            let repo_inbox_items = inbox
-                .items
+            let annotation_items = annotation_inbox_items(cards, inbox);
+            let repo_inbox_items = annotation_items
                 .iter()
                 .filter(|item| task_handle_repo(&item.task_handle) == Some(repo.as_str()));
             let inbox_task_ids = inbox_task_ids(repo_inbox_items.clone());
@@ -168,7 +179,7 @@ fn build_selectables(
                     .iter()
                     .map(|action| SelectableKind::TaskAction {
                         task: task.clone(),
-                        recommended_action: action.as_str().to_string(),
+                        action: action.as_str().to_string(),
                     }),
             );
         }
@@ -178,7 +189,35 @@ fn build_selectables(
     out
 }
 
-fn inbox_task_ids<'a>(items: impl Iterator<Item = &'a AttentionItem>) -> HashSet<TaskId> {
+fn annotation_inbox_items(cards: &[TaskCard], fallback: &InboxResponse) -> Vec<AnnotationItem> {
+    let mut items = cards
+        .iter()
+        .filter_map(|card| {
+            let annotation = card
+                .annotations
+                .iter()
+                .min_by_key(|annotation| annotation.severity)?;
+            Some(AnnotationItem {
+                task_id: card.id.clone(),
+                task_handle: card.qualified_handle.clone(),
+                reason: crate::evidence_label(&annotation.evidence).to_string(),
+                severity: annotation.severity,
+                action: annotation.suggests,
+            })
+        })
+        .collect::<Vec<_>>();
+    if items.is_empty() {
+        items = fallback.items.clone();
+    }
+    items.sort_by(|left, right| {
+        left.severity
+            .cmp(&right.severity)
+            .then_with(|| left.task_handle.cmp(&right.task_handle))
+    });
+    items
+}
+
+fn inbox_task_ids<'a>(items: impl Iterator<Item = &'a AnnotationItem>) -> HashSet<TaskId> {
     items.map(|item| item.task_id.clone()).collect()
 }
 
@@ -192,7 +231,7 @@ pub struct App {
     pub(crate) viewport_scroll: usize,
     pub(crate) notices: HashMap<TaskId, Notice>,
     pub(crate) system_notice: Option<Notice>,
-    pub(crate) pending_confirmation: Option<AttentionItem>,
+    pub(crate) pending_confirmation: Option<CockpitActionItem>,
 }
 
 #[cfg(test)]
@@ -232,7 +271,7 @@ impl App {
     }
 
     /// The action that Enter would dispatch right now, or None if nothing is selectable.
-    pub fn selected_action(&self) -> Option<AttentionItem> {
+    pub fn selected_action(&self) -> Option<CockpitActionItem> {
         self.selectables.get(self.selected).map(|s| s.as_action())
     }
 
@@ -297,7 +336,7 @@ impl App {
         self.rebuild_selectables();
     }
 
-    pub fn activate_selected(&mut self) -> Option<AttentionItem> {
+    pub fn activate_selected(&mut self) -> Option<CockpitActionItem> {
         match self.selectables.get(self.selected).cloned()? {
             SelectableKind::Project(repo) => {
                 self.view = AppView::Project { repo: repo.name };
@@ -336,7 +375,7 @@ impl App {
                     let preselected = card
                         .available_actions
                         .iter()
-                        .position(|action| action.as_str() == item.recommended_action.as_str())
+                        .position(|action| *action == item.action)
                         .unwrap_or(0);
                     self.view = AppView::TaskActions {
                         task: card,
@@ -382,7 +421,7 @@ impl App {
 
         Some(PendingAction {
             task_handle: repo.clone(),
-            recommended_action: RecommendedAction::NewTask.as_str().to_string(),
+            action: OperatorAction::Start.as_str().to_string(),
             task_title: Some(title.to_string()),
         })
     }
@@ -579,7 +618,7 @@ impl App {
         }
     }
 
-    pub(crate) fn has_pending_confirmation(&self, item: &AttentionItem) -> bool {
+    pub(crate) fn has_pending_confirmation(&self, item: &CockpitActionItem) -> bool {
         self.pending_confirmation.as_ref() == Some(item)
     }
 

@@ -1,5 +1,5 @@
 use ajax_core::{
-    models::AttentionItem,
+    models::CockpitActionItem,
     output::{InboxResponse, ReposResponse, TaskCard},
 };
 use crossterm::{
@@ -27,7 +27,7 @@ pub fn run_interactive(
     repos: ReposResponse,
     cards: Vec<TaskCard>,
     inbox: InboxResponse,
-    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+    on_action: impl FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     run_interactive_with_flash(repos, cards, inbox, None, on_action)
 }
@@ -37,7 +37,7 @@ pub fn run_interactive_with_flash(
     cards: Vec<TaskCard>,
     inbox: InboxResponse,
     initial_flash: Option<String>,
-    on_action: impl FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+    on_action: impl FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     run_interactive_with_flash_and_refresh(
         repos,
@@ -80,9 +80,9 @@ struct ActionOnly<F> {
 
 impl<F> CockpitEventHandler for ActionOnly<F>
 where
-    F: FnMut(&AttentionItem) -> io::Result<ActionOutcome>,
+    F: FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
 {
-    fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome> {
+    fn on_action(&mut self, item: &CockpitActionItem) -> io::Result<ActionOutcome> {
         (self.on_action)(item)
     }
 }

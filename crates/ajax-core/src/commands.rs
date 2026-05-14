@@ -31,13 +31,14 @@ pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
-    attention::derive_attention_items,
+    attention::annotate,
     config::Config,
-    models::{LifecycleStatus, SideFlag, Task},
+    models::{Annotation, LifecycleStatus, SideFlag, Task},
     output::{
-        CockpitProjection, CockpitResponse, InboxResponse, InspectResponse, NextResponse,
-        RepoSummary, ReposResponse, TasksResponse,
+        AnnotationItem, CockpitProjection, CockpitResponse, InboxResponse, InspectResponse,
+        NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
+    recommended::evidence_label,
     registry::{Registry, RegistryError},
 };
 use lookup::find_task;
@@ -189,13 +190,42 @@ pub fn inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
         .collect::<Vec<_>>();
 
     InboxResponse {
-        items: derive_attention_items(&tasks),
+        items: annotation_items(&tasks),
     }
 }
 
 pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     NextResponse {
         item: inbox(context).items.into_iter().next(),
+    }
+}
+
+fn annotation_items(tasks: &[Task]) -> Vec<AnnotationItem> {
+    let mut items = tasks
+        .iter()
+        .filter_map(|task| {
+            annotate(task)
+                .into_iter()
+                .min_by_key(|annotation| annotation.severity)
+                .map(|annotation| annotation_item(task, annotation))
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.severity
+            .cmp(&right.severity)
+            .then_with(|| left.task_handle.cmp(&right.task_handle))
+            .then_with(|| left.reason.cmp(&right.reason))
+    });
+    items
+}
+
+fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
+    AnnotationItem {
+        task_id: task.id.clone(),
+        task_handle: task.qualified_handle(),
+        reason: evidence_label(&annotation.evidence).to_string(),
+        severity: annotation.severity,
+        action: annotation.suggests,
     }
 }
 
@@ -230,7 +260,7 @@ pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitPr
     let inbox = inbox(context);
     let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     let all_tasks = context.registry.list_tasks();
-    build_cockpit_projection(all_tasks.as_slice(), summary, inbox.items)
+    build_cockpit_projection(all_tasks.as_slice(), summary)
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
@@ -339,7 +369,7 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveObservation, RecommendedAction, SideFlag,
+            AgentClient, GitStatus, LifecycleStatus, LiveObservation, OperatorAction, SideFlag,
             Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
@@ -840,11 +870,11 @@ mod tests {
         let response = list_repos(&context);
 
         assert_eq!(response.repos[0].active_tasks, 1);
-        assert_eq!(response.repos[0].attention_items, 1);
+        assert_eq!(response.repos[0].attention_items, 0);
     }
 
     #[test]
-    fn repo_attention_count_sums_multiple_attention_items() {
+    fn repo_attention_count_counts_tasks_once() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -854,7 +884,7 @@ mod tests {
 
         let response = list_repos(&context);
 
-        assert_eq!(response.repos[0].attention_items, 2);
+        assert_eq!(response.repos[0].attention_items, 1);
     }
 
     #[test]
@@ -917,8 +947,8 @@ mod tests {
         assert_eq!(
             active.tasks[0].actions,
             vec![
-                RecommendedAction::OpenTask.as_str().to_string(),
-                RecommendedAction::RemoveTask.as_str().to_string(),
+                OperatorAction::Resume.as_str().to_string(),
+                OperatorAction::Drop.as_str().to_string(),
             ]
         );
 
@@ -931,9 +961,9 @@ mod tests {
         assert_eq!(
             reviewable.tasks[0].actions,
             vec![
-                RecommendedAction::OpenTask.as_str().to_string(),
-                RecommendedAction::MergeTask.as_str().to_string(),
-                RecommendedAction::RemoveTask.as_str().to_string(),
+                OperatorAction::Resume.as_str().to_string(),
+                OperatorAction::Ship.as_str().to_string(),
+                OperatorAction::Drop.as_str().to_string(),
             ]
         );
 
@@ -946,9 +976,8 @@ mod tests {
         assert_eq!(
             cleanable.tasks[0].actions,
             vec![
-                RecommendedAction::OpenTask.as_str().to_string(),
-                RecommendedAction::CleanTask.as_str().to_string(),
-                RecommendedAction::RemoveTask.as_str().to_string(),
+                OperatorAction::Resume.as_str().to_string(),
+                OperatorAction::Drop.as_str().to_string(),
             ]
         );
     }
@@ -968,12 +997,12 @@ mod tests {
 
             assert_eq!(
                 response.tasks[0].actions,
-                vec![RecommendedAction::OpenTask.as_str().to_string()],
+                vec![OperatorAction::Repair.as_str().to_string()],
                 "{flag:?}"
             );
             assert_eq!(
-                inbox(&context).items[0].recommended_action,
-                RecommendedAction::OpenTask.as_str(),
+                inbox(&context).items[0].action,
+                OperatorAction::Repair,
                 "{flag:?}"
             );
         }
@@ -1141,27 +1170,27 @@ mod tests {
     }
 
     #[test]
-    fn inbox_returns_attention_items_from_side_flags() {
+    fn inbox_returns_annotation_items_from_task_annotations() {
         let context = context_with_tasks();
 
         let response = inbox(&context);
 
         assert_eq!(response.items.len(), 1);
         assert_eq!(response.items[0].task_handle, "web/fix-login");
-        assert_eq!(response.items[0].reason, "agent needs input");
-        assert_eq!(response.items[0].priority, 10);
-        assert_eq!(response.items[0].recommended_action, "open task");
+        assert_eq!(response.items[0].reason, "needs_input");
+        assert_eq!(response.items[0].severity, 1);
+        assert_eq!(response.items[0].action, OperatorAction::Resume);
     }
 
     #[test]
-    fn next_returns_first_attention_item() {
+    fn next_returns_first_annotation_item() {
         let context = context_with_tasks();
 
         let response = next(&context);
 
         let item = response.item.unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.reason, "agent needs input");
+        assert_eq!(item.reason, "needs_input");
     }
 
     #[test]

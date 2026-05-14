@@ -49,54 +49,42 @@ pub(crate) fn render_matches_with_paths(
             let response = commands::inspect_task(context, task).map_err(command_error)?;
             render_response(response, subcommand.get_flag("json"), render_inspect_human)
         }
-        Some(("new", subcommand)) => {
+        Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
             let plan = commands::new_task_plan(context, request).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("open", subcommand)) => {
+        Some(("resume", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::open_task_plan(context, task, current_open_mode())
                 .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("trunk", subcommand)) => {
+        Some(("repair", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::trunk_task_plan_with_open_mode(context, task, current_open_mode())
+            let operation = crate::dispatch::TaskCommandOperation::Repair;
+            let plan = operation
+                .plan_with_open_mode(context, task, current_open_mode())
                 .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("check", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::check_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("diff", subcommand)) => {
+        Some(("review", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::diff_task_plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("merge", subcommand)) => {
+        Some(("ship", subcommand)) => {
             let task = task_arg(subcommand)?;
             let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("cleanup", subcommand)) => {
+        Some(("drop", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
+            let operation = crate::dispatch::TaskCommandOperation::Drop;
+            let plan = operation.plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("clean", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::clean_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("remove", subcommand)) => {
-            let task = task_arg(subcommand)?;
-            let plan = commands::remove_task_plan(context, task).map_err(command_error)?;
-            render_readonly_plan(plan, subcommand)
-        }
-        Some(("sweep", subcommand)) => {
+        Some(("tidy", subcommand)) => {
             render_readonly_plan(commands::sweep_cleanup_plan(context), subcommand)
         }
         Some(("next", subcommand)) => render_response(
@@ -109,7 +97,7 @@ pub(crate) fn render_matches_with_paths(
             subcommand.get_flag("json"),
             render_inbox_human,
         ),
-        Some(("review", subcommand)) => render_response(
+        Some(("ready", subcommand)) => render_response(
             commands::review_queue(context),
             subcommand.get_flag("json"),
             render_tasks_human,

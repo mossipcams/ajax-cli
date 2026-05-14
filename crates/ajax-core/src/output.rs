@@ -1,6 +1,6 @@
 use crate::{
     config::{Config, ManagedRepo},
-    models::{AttentionItem, LifecycleStatus, LiveObservation, RecommendedAction, Task, TaskId},
+    models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
     ui_state::UiState,
 };
@@ -13,11 +13,10 @@ pub struct TaskCard {
     pub title: String,
     pub ui_state: UiState,
     pub lifecycle: LifecycleStatus,
-    pub recommended_action: RecommendedAction,
-    pub action_reason: String,
-    pub available_actions: Vec<RecommendedAction>,
+    pub annotations: Vec<Annotation>,
+    pub primary_action: OperatorAction,
+    pub available_actions: Vec<OperatorAction>,
     pub live_summary: Option<String>,
-    pub blocker_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -25,7 +24,7 @@ pub struct CockpitNextStep {
     pub task_id: TaskId,
     pub task_handle: String,
     pub ui_state: UiState,
-    pub action: RecommendedAction,
+    pub action: OperatorAction,
     pub reason: String,
 }
 
@@ -33,7 +32,6 @@ pub struct CockpitNextStep {
 pub struct CockpitProjection {
     pub counts: CockpitSummary,
     pub cards: Vec<TaskCard>,
-    pub attention: Vec<AttentionItem>,
     pub next: Option<CockpitNextStep>,
 }
 
@@ -80,12 +78,21 @@ pub struct InspectResponse {
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct InboxResponse {
-    pub items: Vec<AttentionItem>,
+    pub items: Vec<AnnotationItem>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct NextResponse {
-    pub item: Option<AttentionItem>,
+    pub item: Option<AnnotationItem>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct AnnotationItem {
+    pub task_id: TaskId,
+    pub task_handle: String,
+    pub reason: String,
+    pub severity: u32,
+    pub action: OperatorAction,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -194,10 +201,7 @@ mod tests {
         TaskSummary, TasksResponse,
     };
     use crate::{
-        models::{
-            AgentClient, AttentionItem, LiveObservation, LiveStatusKind, RecommendedAction, Task,
-            TaskId,
-        },
+        models::{AgentClient, LiveObservation, LiveStatusKind, OperatorAction, Task, TaskId},
         registry::{InMemoryRegistry, Registry, RegistryEventKind},
     };
 
@@ -224,7 +228,7 @@ mod tests {
                     LiveStatusKind::WaitingForApproval,
                     "waiting for approval",
                 )),
-                actions: vec![RecommendedAction::OpenTask.as_str().to_string()],
+                actions: vec![OperatorAction::Resume.as_str().to_string()],
             }],
         };
         let inspect = InspectResponse {
@@ -235,12 +239,12 @@ mod tests {
             flags: vec!["dirty".to_string()],
         };
         let inbox = InboxResponse {
-            items: vec![AttentionItem {
+            items: vec![super::AnnotationItem {
                 task_id: crate::models::TaskId::new("task-1"),
                 task_handle: "web/fix-login".to_string(),
-                reason: "agent needs input".to_string(),
-                priority: 10,
-                recommended_action: "open task".to_string(),
+                reason: "needs_input".to_string(),
+                severity: 1,
+                action: OperatorAction::Resume,
             }],
         };
         let next = NextResponse {
@@ -314,9 +318,9 @@ mod tests {
                 "items": [{
                     "task_id": "task-1",
                     "task_handle": "web/fix-login",
-                    "reason": "agent needs input",
-                    "priority": 10,
-                    "recommended_action": RecommendedAction::OpenTask.as_str()
+                    "reason": "needs_input",
+                    "severity": 1,
+                    "action": "Resume"
                 }]
             })
         );

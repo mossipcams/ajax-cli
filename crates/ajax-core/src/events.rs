@@ -374,10 +374,12 @@ mod tests {
         assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
 
-        let attention = crate::attention::derive_attention_items(&[task]);
-        assert!(attention
-            .iter()
-            .any(|item| item.reason == "command failed" && item.task_handle == "web/fix-login"));
+        let annotations = crate::attention::annotate(&task);
+        assert!(annotations.iter().any(|annotation| {
+            annotation.kind == crate::models::AnnotationKind::NeedsMe
+                && annotation.evidence
+                    == crate::models::Evidence::LiveStatus(LiveStatusKind::CommandFailed)
+        }));
     }
 
     #[test]
@@ -417,10 +419,12 @@ mod tests {
             Some(LiveStatusKind::MergeConflict)
         );
 
-        let attention = crate::attention::derive_attention_items(&[task]);
-        assert!(attention
-            .iter()
-            .any(|item| item.reason == "merge conflict needs attention"));
+        let annotations = crate::attention::annotate(&task);
+        assert!(annotations.iter().any(|annotation| {
+            annotation.kind == crate::models::AnnotationKind::Broken
+                && annotation.evidence
+                    == crate::models::Evidence::LiveStatus(LiveStatusKind::MergeConflict)
+        }));
     }
 
     #[test]

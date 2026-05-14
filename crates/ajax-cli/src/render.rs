@@ -90,7 +90,7 @@ pub(crate) fn render_inbox_human(response: &InboxResponse) -> String {
     response
         .items
         .iter()
-        .map(render_attention_item_human)
+        .map(render_annotation_item_human)
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -99,7 +99,7 @@ pub(crate) fn render_next_human(response: &NextResponse) -> String {
     response
         .item
         .as_ref()
-        .map(render_attention_item_human)
+        .map(render_annotation_item_human)
         .unwrap_or_else(|| "no tasks need attention".to_string())
 }
 
@@ -119,10 +119,12 @@ fn render_task_summary(task: &TaskSummary) -> String {
     )
 }
 
-fn render_attention_item_human(item: &ajax_core::models::AttentionItem) -> String {
+fn render_annotation_item_human(item: &ajax_core::output::AnnotationItem) -> String {
     format!(
         "{}: {} -> {}",
-        item.task_handle, item.reason, item.recommended_action
+        item.task_handle,
+        item.reason,
+        item.action.as_str()
     )
 }
 
@@ -178,8 +180,8 @@ mod tests {
     use ajax_core::{
         adapters::CommandSpec,
         commands::CommandPlan,
-        models::{AttentionItem, TaskId},
-        output::{InboxResponse, InspectResponse, TaskSummary},
+        models::{OperatorAction, TaskId},
+        output::{AnnotationItem, InboxResponse, InspectResponse, TaskSummary},
     };
 
     use super::{render_inbox_human, render_inspect_human, render_plan, render_plan_human};
@@ -229,7 +231,7 @@ mod tests {
                 lifecycle_status: "Reviewable".to_string(),
                 needs_attention: true,
                 live_status: None,
-                actions: vec!["open task".to_string()],
+                actions: vec!["resume".to_string()],
             },
             branch: "ajax/fix-login".to_string(),
             worktree_path: "/tmp/worktrees/web-fix-login".to_string(),
@@ -244,17 +246,17 @@ mod tests {
     }
 
     #[test]
-    fn inbox_human_renders_attention_item_action_lines() {
+    fn inbox_human_renders_annotation_item_action_lines() {
         let rendered = render_inbox_human(&InboxResponse {
-            items: vec![AttentionItem {
+            items: vec![AnnotationItem {
                 task_id: TaskId::new("task-1"),
                 task_handle: "web/fix-login".to_string(),
-                reason: "agent needs input".to_string(),
-                priority: 75,
-                recommended_action: "open task".to_string(),
+                reason: "needs_input".to_string(),
+                severity: 1,
+                action: OperatorAction::Resume,
             }],
         });
 
-        assert_eq!(rendered, "web/fix-login: agent needs input -> open task");
+        assert_eq!(rendered, "web/fix-login: needs_input -> resume");
     }
 }

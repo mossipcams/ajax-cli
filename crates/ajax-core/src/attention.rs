@@ -1,191 +1,129 @@
-use crate::{
-    models::{
-        AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, RecommendedAction,
-        SideFlag, Task,
-    },
-    recommended::opportunity_attention_for,
+use crate::models::{
+    AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusKind,
+    SideFlag, SubstrateGap, Task,
 };
 
-pub fn derive_attention_items(tasks: &[Task]) -> Vec<AttentionItem> {
-    let mut items = tasks
-        .iter()
-        .flat_map(attention_items_for_task)
-        .collect::<Vec<_>>();
-
-    for task in tasks {
-        if let Some(item) = opportunity_attention_for(task) {
-            items.push(item);
-        }
-    }
-
-    items = deduplicate_attention_items(items);
-
-    items.sort_by(|left, right| {
-        left.priority
-            .cmp(&right.priority)
-            .then_with(|| left.task_handle.cmp(&right.task_handle))
-            .then_with(|| left.reason.cmp(&right.reason))
-    });
-
-    items
-}
-
-fn deduplicate_attention_items(items: Vec<AttentionItem>) -> Vec<AttentionItem> {
-    let mut deduplicated: Vec<AttentionItem> = Vec::new();
-
-    for item in items {
-        if let Some(existing) = deduplicated
-            .iter_mut()
-            .find(|existing| equivalent_attention_item(existing, &item))
-        {
-            if item.priority < existing.priority {
-                *existing = item;
-            }
-        } else {
-            deduplicated.push(item);
-        }
-    }
-
-    deduplicated
-}
-
-fn equivalent_attention_item(left: &AttentionItem, right: &AttentionItem) -> bool {
-    left.task_id == right.task_id
-        && left.recommended_action == right.recommended_action
-        && (left.reason == right.reason
-            || (operator_waiting_reason(&left.reason) && operator_waiting_reason(&right.reason)))
-}
-
-fn operator_waiting_reason(reason: &str) -> bool {
-    matches!(
-        reason,
-        "agent needs input" | "agent is waiting" | "waiting for approval" | "waiting for input"
-    )
-}
-
-fn attention_items_for_task(task: &Task) -> Vec<AttentionItem> {
-    let mut items = Vec::new();
-
-    for flag in task.side_flags() {
-        if flag == SideFlag::AgentRunning {
-            continue;
-        }
-        let (reason, priority, recommended_action) = attention_for_flag(flag);
-        items.push(AttentionItem {
-            task_id: task.id.clone(),
-            task_handle: task.qualified_handle(),
-            reason: reason.to_string(),
-            priority,
-            recommended_action: recommended_action.as_str().to_string(),
-        });
-    }
-
-    if task.lifecycle_status == LifecycleStatus::Cleanable {
-        items.push(AttentionItem {
-            task_id: task.id.clone(),
-            task_handle: task.qualified_handle(),
-            reason: "task is cleanable".to_string(),
-            priority: 80,
-            recommended_action: RecommendedAction::CleanTask.as_str().to_string(),
-        });
-    }
+pub fn annotate(task: &Task) -> Vec<Annotation> {
+    let mut annotations = Vec::new();
 
     if let Some(live_status) = task.live_status.as_ref() {
-        if let Some((reason, priority, recommended_action)) =
-            attention_for_live_status(live_status.kind)
-        {
-            items.push(AttentionItem {
-                task_id: task.id.clone(),
-                task_handle: task.qualified_handle(),
-                reason: reason.to_string(),
-                priority,
-                recommended_action: recommended_action.as_str().to_string(),
-            });
+        if let Some(kind) = annotation_kind_for_live_status(live_status.kind) {
+            push_collapsed_annotation(
+                &mut annotations,
+                Annotation::new(kind, Evidence::LiveStatus(live_status.kind)),
+            );
         }
     }
 
-    if let Some((reason, priority, recommended_action)) =
-        attention_for_agent_status(task.agent_status)
+    for flag in task.side_flags() {
+        if let Some(kind) = annotation_kind_for_side_flag(flag) {
+            let evidence = substrate_gap_for_side_flag(flag)
+                .map(Evidence::Substrate)
+                .unwrap_or(Evidence::SideFlag(flag));
+            push_collapsed_annotation(&mut annotations, Annotation::new(kind, evidence));
+        }
+    }
+
+    if let Some(kind) = annotation_kind_for_agent_status(task.agent_status) {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(kind, Evidence::Lifecycle(task.lifecycle_status)),
+        );
+    }
+
+    if let Some(kind) = annotation_kind_for_lifecycle(task.lifecycle_status) {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(kind, Evidence::Lifecycle(task.lifecycle_status)),
+        );
+    }
+
+    annotations.sort_by_key(|annotation| annotation.severity);
+    annotations
+}
+
+fn push_collapsed_annotation(annotations: &mut Vec<Annotation>, annotation: Annotation) {
+    if let Some(existing) = annotations
+        .iter_mut()
+        .find(|existing| existing.kind == annotation.kind)
     {
-        items.push(AttentionItem {
-            task_id: task.id.clone(),
-            task_handle: task.qualified_handle(),
-            reason: reason.to_string(),
-            priority,
-            recommended_action: recommended_action.as_str().to_string(),
-        });
-    }
-
-    items
-}
-
-fn attention_for_flag(flag: SideFlag) -> (&'static str, u32, RecommendedAction) {
-    match flag {
-        SideFlag::NeedsInput => ("agent needs input", 10, RecommendedAction::OpenTask),
-        SideFlag::TestsFailed => ("tests failed", 15, RecommendedAction::OpenTask),
-        SideFlag::WorktrunkMissing => ("worktrunk missing", 20, RecommendedAction::OpenTask),
-        SideFlag::TmuxMissing => ("tmux session missing", 25, RecommendedAction::OpenTask),
-        SideFlag::WorktreeMissing => ("worktree missing", 30, RecommendedAction::OpenTask),
-        SideFlag::BranchMissing => ("branch missing", 35, RecommendedAction::OpenTask),
-        SideFlag::Conflicted => ("git conflicts detected", 40, RecommendedAction::OpenTask),
-        SideFlag::AgentDead => ("agent appears dead", 45, RecommendedAction::OpenTask),
-        SideFlag::Dirty => ("worktree is dirty", 50, RecommendedAction::OpenTask),
-        SideFlag::Unpushed => ("branch has unpushed work", 55, RecommendedAction::OpenTask),
-        SideFlag::Stale => ("task is stale", 60, RecommendedAction::OpenTask),
-        SideFlag::AgentRunning => ("agent is running", 90, RecommendedAction::OpenTask),
+        if evidence_preference(annotation.kind, &annotation.evidence)
+            < evidence_preference(existing.kind, &existing.evidence)
+        {
+            *existing = annotation;
+        }
+    } else {
+        annotations.push(annotation);
     }
 }
 
-fn attention_for_live_status(
-    status: LiveStatusKind,
-) -> Option<(&'static str, u32, RecommendedAction)> {
+fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
+    match kind {
+        AnnotationKind::NeedsMe => match evidence {
+            Evidence::LiveStatus(_) => 0,
+            Evidence::SideFlag(_) => 1,
+            Evidence::Lifecycle(_) => 2,
+            Evidence::Substrate(_) => 3,
+        },
+        AnnotationKind::Broken => match evidence {
+            Evidence::LiveStatus(_) => 0,
+            Evidence::Substrate(_) => 1,
+            Evidence::SideFlag(_) => 2,
+            Evidence::Lifecycle(_) => 3,
+        },
+        AnnotationKind::Reviewable | AnnotationKind::Cleanable => match evidence {
+            Evidence::Lifecycle(_) => 0,
+            Evidence::LiveStatus(_) => 1,
+            Evidence::SideFlag(_) => 2,
+            Evidence::Substrate(_) => 3,
+        },
+    }
+}
+
+fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationKind> {
     match status {
-        LiveStatusKind::WaitingForApproval => {
-            Some(("waiting for approval", 5, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::WaitingForInput => {
-            Some(("waiting for input", 6, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::AuthRequired => {
-            Some(("authentication required", 7, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::RateLimited => Some(("rate limited", 8, RecommendedAction::OpenTask)),
-        LiveStatusKind::ContextLimit => {
-            Some(("context limit reached", 9, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::MergeConflict => Some((
-            "merge conflict needs attention",
-            10,
-            RecommendedAction::OpenTask,
-        )),
-        LiveStatusKind::CommandFailed => Some(("command failed", 15, RecommendedAction::OpenTask)),
-        LiveStatusKind::CiFailed => Some(("ci failed", 11, RecommendedAction::OpenTask)),
-        LiveStatusKind::Blocked => Some(("agent is blocked", 12, RecommendedAction::OpenTask)),
-        LiveStatusKind::WorktreeMissing => {
-            Some(("worktree missing", 30, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::TmuxMissing => {
-            Some(("tmux session missing", 25, RecommendedAction::OpenTask))
-        }
-        LiveStatusKind::WorktrunkMissing => {
-            Some(("worktrunk missing", 20, RecommendedAction::OpenTask))
-        }
+        LiveStatusKind::WaitingForApproval
+        | LiveStatusKind::WaitingForInput
+        | LiveStatusKind::AuthRequired
+        | LiveStatusKind::RateLimited
+        | LiveStatusKind::ContextLimit
+        | LiveStatusKind::CommandFailed
+        | LiveStatusKind::Blocked => Some(AnnotationKind::NeedsMe),
+        LiveStatusKind::WorktreeMissing
+        | LiveStatusKind::TmuxMissing
+        | LiveStatusKind::WorktrunkMissing
+        | LiveStatusKind::MergeConflict => Some(AnnotationKind::Broken),
+        LiveStatusKind::Done => Some(AnnotationKind::Reviewable),
         LiveStatusKind::ShellIdle
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning
         | LiveStatusKind::AgentRunning
-        | LiveStatusKind::Done
+        | LiveStatusKind::CiFailed
         | LiveStatusKind::Unknown => None,
     }
 }
 
-fn attention_for_agent_status(
-    status: AgentRuntimeStatus,
-) -> Option<(&'static str, u32, RecommendedAction)> {
+fn annotation_kind_for_side_flag(flag: SideFlag) -> Option<AnnotationKind> {
+    match flag {
+        SideFlag::NeedsInput | SideFlag::AgentDead => Some(AnnotationKind::NeedsMe),
+        SideFlag::TmuxMissing
+        | SideFlag::WorktreeMissing
+        | SideFlag::WorktrunkMissing
+        | SideFlag::BranchMissing
+        | SideFlag::Conflicted => Some(AnnotationKind::Broken),
+        SideFlag::Dirty
+        | SideFlag::AgentRunning
+        | SideFlag::TestsFailed
+        | SideFlag::Stale
+        | SideFlag::Unpushed => None,
+    }
+}
+
+fn annotation_kind_for_agent_status(status: AgentRuntimeStatus) -> Option<AnnotationKind> {
     match status {
-        AgentRuntimeStatus::Waiting => Some(("agent is waiting", 10, RecommendedAction::OpenTask)),
-        AgentRuntimeStatus::Blocked => Some(("agent is blocked", 12, RecommendedAction::OpenTask)),
-        AgentRuntimeStatus::Dead => Some(("agent appears dead", 45, RecommendedAction::OpenTask)),
+        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked | AgentRuntimeStatus::Dead => {
+            Some(AnnotationKind::NeedsMe)
+        }
         AgentRuntimeStatus::NotStarted
         | AgentRuntimeStatus::Running
         | AgentRuntimeStatus::Done
@@ -193,12 +131,38 @@ fn attention_for_agent_status(
     }
 }
 
+fn annotation_kind_for_lifecycle(status: LifecycleStatus) -> Option<AnnotationKind> {
+    match status {
+        LifecycleStatus::Reviewable | LifecycleStatus::Mergeable => {
+            Some(AnnotationKind::Reviewable)
+        }
+        LifecycleStatus::Merged | LifecycleStatus::Cleanable => Some(AnnotationKind::Cleanable),
+        LifecycleStatus::Created
+        | LifecycleStatus::Provisioning
+        | LifecycleStatus::Active
+        | LifecycleStatus::Waiting
+        | LifecycleStatus::Removed
+        | LifecycleStatus::Orphaned
+        | LifecycleStatus::Error => None,
+    }
+}
+
+fn substrate_gap_for_side_flag(flag: SideFlag) -> Option<SubstrateGap> {
+    match flag {
+        SideFlag::WorktreeMissing => Some(SubstrateGap::WorktreeMissing),
+        SideFlag::TmuxMissing => Some(SubstrateGap::TmuxMissing),
+        SideFlag::WorktrunkMissing => Some(SubstrateGap::WorktrunkMissing),
+        SideFlag::BranchMissing => Some(SubstrateGap::BranchMissing),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::lifecycle::{mark_active, mark_cleanable, mark_merged, mark_reviewable};
     use crate::models::{
-        AgentClient, AgentRuntimeStatus, AttentionItem, LiveObservation, LiveStatusKind, SideFlag,
-        Task, TaskId,
+        AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LiveObservation,
+        LiveStatusKind, OperatorAction, SideFlag, SubstrateGap, Task, TaskId,
     };
 
     fn task_with_flags(handle: &str, flags: &[SideFlag]) -> Task {
@@ -232,217 +196,71 @@ mod tests {
     }
 
     #[test]
-    fn attention_items_are_structured_and_prioritized() {
-        let cleanable = cleanable_task("merged-task");
-        let waiting = task_with_flags("needs-input", &[SideFlag::NeedsInput]);
-        let broken = task_with_flags("broken", &[SideFlag::WorktrunkMissing]);
-
-        let items = super::derive_attention_items(&[cleanable, broken, waiting]);
-
-        assert_eq!(
-            items,
-            vec![
-                AttentionItem {
-                    task_id: TaskId::new("task-needs-input"),
-                    task_handle: "web/needs-input".to_string(),
-                    reason: "agent needs input".to_string(),
-                    priority: 10,
-                    recommended_action: "open task".to_string(),
-                },
-                AttentionItem {
-                    task_id: TaskId::new("task-broken"),
-                    task_handle: "web/broken".to_string(),
-                    reason: "worktrunk missing".to_string(),
-                    priority: 20,
-                    recommended_action: "open task".to_string(),
-                },
-                AttentionItem {
-                    task_id: TaskId::new("task-merged-task"),
-                    task_handle: "web/merged-task".to_string(),
-                    reason: "task is cleanable".to_string(),
-                    priority: 80,
-                    recommended_action: "clean task".to_string(),
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn blocked_agent_status_creates_attention_item() {
-        let mut task = task_with_flags("blocked-agent", &[]);
-        task.agent_status = AgentRuntimeStatus::Blocked;
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].reason, "agent is blocked");
-        assert_eq!(items[0].priority, 12);
-        assert_eq!(items[0].recommended_action, "open task");
-    }
-
-    #[test]
-    fn equivalent_waiting_attention_collapses_to_one_open_task_item() {
-        let mut task = task_with_flags("tech-debt", &[SideFlag::NeedsInput]);
+    fn annotate_collapses_blocker_evidence_into_needs_me() {
+        let mut task = task_with_flags("blocked", &[SideFlag::NeedsInput, SideFlag::AgentDead]);
         task.agent_status = AgentRuntimeStatus::Waiting;
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
             "waiting for approval",
         ));
 
-        let items = super::derive_attention_items(&[task]);
+        let annotations = super::annotate(&task);
 
         assert_eq!(
-            items,
-            vec![AttentionItem {
-                task_id: TaskId::new("task-tech-debt"),
-                task_handle: "web/tech-debt".to_string(),
-                reason: "waiting for approval".to_string(),
-                priority: 5,
-                recommended_action: "open task".to_string(),
-            }]
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::NeedsMe,
+                Evidence::LiveStatus(LiveStatusKind::WaitingForApproval),
+            )]
         );
+        assert_eq!(annotations[0].suggests, OperatorAction::Resume);
     }
 
     #[test]
-    fn unrelated_open_task_reasons_remain_distinct() {
-        let task = task_with_flags(
-            "conflicted-input",
-            &[SideFlag::NeedsInput, SideFlag::Conflicted],
-        );
+    fn annotate_emits_broken_for_missing_substrate() {
+        let task = task_with_flags("broken", &[SideFlag::WorktreeMissing]);
 
-        let items = super::derive_attention_items(&[task]);
+        let annotations = super::annotate(&task);
 
         assert_eq!(
-            items
-                .iter()
-                .map(|item| item.reason.as_str())
-                .collect::<Vec<_>>(),
-            vec!["agent needs input", "git conflicts detected"]
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::Broken,
+                Evidence::Substrate(SubstrateGap::WorktreeMissing),
+            )]
         );
     }
 
     #[test]
-    fn missing_worktree_attention_is_visible() {
-        let mut task = task_with_flags("missing-worktree", &[SideFlag::WorktreeMissing]);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::WorktreeMissing,
-            "worktree missing",
-        ));
+    fn annotate_emits_reviewable_when_lifecycle_reviewable() {
+        let mut task = task_with_flags("review", &[]);
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
 
-        let items = super::derive_attention_items(&[task]);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].reason, "worktree missing");
-        assert_eq!(items[0].priority, 30);
-        assert_eq!(items[0].recommended_action, "open task");
-    }
-
-    #[test]
-    fn live_missing_tmux_attention_is_visible_without_side_flag() {
-        let mut task = task_with_flags("missing-tmux", &[]);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::TmuxMissing,
-            "tmux session missing",
-        ));
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].reason, "tmux session missing");
-        assert_eq!(items[0].priority, 25);
-    }
-
-    #[test]
-    fn matching_flag_and_live_missing_evidence_deduplicates_attention() {
-        let mut task = task_with_flags("missing-tmux", &[SideFlag::TmuxMissing]);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::TmuxMissing,
-            "tmux session missing",
-        ));
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].reason, "tmux session missing");
-    }
-
-    #[test]
-    fn broken_resource_flags_create_attention() {
-        let task = task_with_flags(
-            "broken",
-            &[
-                SideFlag::WorktrunkMissing,
-                SideFlag::TmuxMissing,
-                SideFlag::WorktreeMissing,
-                SideFlag::BranchMissing,
-            ],
-        );
-
-        let items = super::derive_attention_items(&[task]);
+        let annotations = super::annotate(&task);
 
         assert_eq!(
-            items
-                .iter()
-                .map(|item| item.reason.as_str())
-                .collect::<Vec<_>>(),
-            vec![
-                "worktrunk missing",
-                "tmux session missing",
-                "worktree missing",
-                "branch missing",
-            ]
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::Reviewable,
+                Evidence::Lifecycle(crate::models::LifecycleStatus::Reviewable),
+            )]
         );
     }
 
     #[test]
-    fn missing_resources_suppress_stale_agent_running_item() {
-        let task = task_with_flags(
-            "broken-running",
-            &[SideFlag::WorktreeMissing, SideFlag::AgentRunning],
+    fn annotate_emits_cleanable_when_lifecycle_cleanable() {
+        let task = cleanable_task("clean");
+
+        let annotations = super::annotate(&task);
+
+        assert_eq!(
+            annotations,
+            vec![Annotation::new(
+                AnnotationKind::Cleanable,
+                Evidence::Lifecycle(crate::models::LifecycleStatus::Cleanable),
+            )]
         );
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].reason, "worktree missing");
-    }
-
-    #[test]
-    fn agent_running_flag_alone_does_not_need_operator_attention() {
-        let task = task_with_flags("running-agent", &[SideFlag::AgentRunning]);
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert!(
-            items.is_empty(),
-            "agent running is operational state, not operator attention: {items:?}"
-        );
-    }
-
-    #[test]
-    fn specific_running_live_status_suppresses_generic_running_attention() {
-        let mut task = task_with_flags("tech-debt", &[SideFlag::AgentRunning]);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::TestsRunning,
-            "tests running",
-        ));
-
-        let items = super::derive_attention_items(&[task]);
-
-        assert!(
-            items.iter().all(|item| item.reason != "agent is running"),
-            "specific live status should be enough without generic monitor attention: {items:?}"
-        );
-    }
-
-    #[test]
-    fn deriving_attention_does_not_mutate_task_lifecycle() {
-        let task = cleanable_task("read-only");
-        let before = task.lifecycle_status;
-
-        let _items = super::derive_attention_items(std::slice::from_ref(&task));
-
-        assert_eq!(task.lifecycle_status, before);
     }
 
     #[test]

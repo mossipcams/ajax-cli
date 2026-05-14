@@ -256,7 +256,7 @@ mod tests {
         config::{Config, ManagedRepo},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, RecommendedAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
@@ -307,7 +307,7 @@ mod tests {
         let matches = build_cli()
             .try_get_matches_from([
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -590,13 +590,13 @@ mod tests {
         assert!(!stderr.contains("CommandFailed"));
     }
 
-    fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::AttentionItem {
-        ajax_core::models::AttentionItem {
+    fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::CockpitActionItem {
+        ajax_core::models::CockpitActionItem {
             task_id: TaskId::new(format!("__cockpit_action__{action}")),
             task_handle: handle.to_string(),
             reason: action.to_string(),
             priority: 0,
-            recommended_action: action.to_string(),
+            action: action.to_string(),
         }
     }
 
@@ -606,17 +606,17 @@ mod tests {
             vec!["ajax", "repos"],
             vec!["ajax", "tasks"],
             vec!["ajax", "inspect", "web/fix-login"],
-            vec!["ajax", "new"],
-            vec!["ajax", "open", "web/fix-login"],
-            vec!["ajax", "trunk", "web/fix-login"],
-            vec!["ajax", "check", "web/fix-login"],
-            vec!["ajax", "diff", "web/fix-login"],
-            vec!["ajax", "merge", "web/fix-login"],
-            vec!["ajax", "clean", "web/fix-login"],
-            vec!["ajax", "sweep"],
+            vec!["ajax", "start"],
+            vec!["ajax", "resume", "web/fix-login"],
+            vec!["ajax", "repair", "web/fix-login"],
+            vec!["ajax", "repair", "web/fix-login"],
+            vec!["ajax", "review", "web/fix-login"],
+            vec!["ajax", "ship", "web/fix-login"],
+            vec!["ajax", "drop", "web/fix-login"],
+            vec!["ajax", "tidy"],
             vec!["ajax", "next"],
             vec!["ajax", "inbox"],
-            vec!["ajax", "review"],
+            vec!["ajax", "ready"],
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
@@ -690,7 +690,7 @@ mod tests {
         assert!(output.contains("Ajax Cockpit"));
         assert!(output.contains("Inbox"));
         assert!(output.contains("web/fix-login"));
-        assert!(output.contains("agent needs input"));
+        assert!(output.contains("needs_input"));
     }
 
     #[test]
@@ -868,7 +868,7 @@ mod tests {
             vec!["ajax", "tasks", "--json"],
             vec!["ajax", "inbox", "--json"],
             vec!["ajax", "next", "--json"],
-            vec!["ajax", "review", "--json"],
+            vec!["ajax", "ready", "--json"],
             vec!["ajax", "status", "--json"],
             vec!["ajax", "cockpit", "--json"],
         ] {
@@ -1657,7 +1657,7 @@ mod tests {
             ["ajax", "inspect", "web/fix-login", "--json"],
             ["ajax", "inbox", "--json", ""],
             ["ajax", "next", "--json", ""],
-            ["ajax", "review", "--json", ""],
+            ["ajax", "ready", "--json", ""],
             ["ajax", "status", "--json", ""],
             ["ajax", "doctor", "--json", ""],
             ["ajax", "cockpit", "--json", ""],
@@ -1753,13 +1753,13 @@ mod tests {
     #[test]
     fn executable_commands_accept_execute_and_yes_flags() {
         for args in [
-            vec!["ajax", "new", "--repo", "web", "--execute"],
-            vec!["ajax", "open", "web/fix-login", "--execute"],
-            vec!["ajax", "check", "web/fix-login", "--execute"],
-            vec!["ajax", "diff", "web/fix-login", "--execute"],
-            vec!["ajax", "merge", "web/fix-login", "--execute", "--yes"],
-            vec!["ajax", "clean", "web/fix-login", "--execute", "--yes"],
-            vec!["ajax", "sweep", "--execute", "--yes"],
+            vec!["ajax", "start", "--repo", "web", "--execute"],
+            vec!["ajax", "resume", "web/fix-login", "--execute"],
+            vec!["ajax", "repair", "web/fix-login", "--execute"],
+            vec!["ajax", "review", "web/fix-login", "--execute"],
+            vec!["ajax", "ship", "web/fix-login", "--execute", "--yes"],
+            vec!["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+            vec!["ajax", "tidy", "--execute", "--yes"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
             assert!(matches.is_ok(), "{args:?} should parse");
@@ -1769,12 +1769,12 @@ mod tests {
     #[test]
     fn task_scoped_commands_require_explicit_task_handle() {
         for args in [
-            vec!["ajax", "open"],
-            vec!["ajax", "trunk"],
-            vec!["ajax", "check"],
-            vec!["ajax", "diff"],
-            vec!["ajax", "merge"],
-            vec!["ajax", "clean"],
+            vec!["ajax", "resume"],
+            vec!["ajax", "repair"],
+            vec!["ajax", "repair"],
+            vec!["ajax", "review"],
+            vec!["ajax", "ship"],
+            vec!["ajax", "drop"],
         ] {
             let error = run_with_context(args.clone(), &sample_context()).unwrap_err();
             assert!(
@@ -1979,7 +1979,7 @@ mod tests {
         let output = run_with_context(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2000,7 +2000,7 @@ mod tests {
     #[test]
     fn new_command_requires_task_title() {
         let error =
-            run_with_context(["ajax", "new", "--repo", "web"], &sample_context()).unwrap_err();
+            run_with_context(["ajax", "start", "--repo", "web"], &sample_context()).unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
             if message.contains("task title is required")));
@@ -2038,7 +2038,7 @@ mod tests {
     #[test]
     fn open_command_renders_command_plan() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "open", "web/fix-login"], &context).unwrap();
+        let output = run_with_context(["ajax", "resume", "web/fix-login"], &context).unwrap();
 
         assert!(output.contains("tmux select-window -t ajax-web-fix-login:worktrunk"));
         match super::current_open_mode() {
@@ -2056,7 +2056,7 @@ mod tests {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "open", "web/fix-login", "--execute"])
+            .try_get_matches_from(["ajax", "resume", "web/fix-login", "--execute"])
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
@@ -2086,8 +2086,8 @@ mod tests {
     fn readonly_context_rejects_execute_before_running_external_commands() {
         let context = sample_context();
 
-        let error =
-            run_with_context(["ajax", "open", "web/fix-login", "--execute"], &context).unwrap_err();
+        let error = run_with_context(["ajax", "resume", "web/fix-login", "--execute"], &context)
+            .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
                 if message.contains("execution requires mutable context and runner support")));
@@ -2097,7 +2097,7 @@ mod tests {
     fn merge_command_renders_json_plan() {
         let context = sample_context();
         let output =
-            run_with_context(["ajax", "merge", "web/fix-login", "--json"], &context).unwrap();
+            run_with_context(["ajax", "ship", "web/fix-login", "--json"], &context).unwrap();
 
         assert!(output.contains("\"requires_confirmation\": true"));
         assert!(output.contains("\"program\": \"git\""));
@@ -2105,21 +2105,21 @@ mod tests {
     }
 
     #[test]
-    fn check_command_renders_configured_test_plan() {
+    fn repair_command_renders_configured_test_plan() {
         let mut context = sample_context();
         context.config.test_commands =
             vec![ajax_core::config::TestCommand::new("web", "cargo test")];
 
-        let output = run_with_context(["ajax", "check", "web/fix-login"], &context).unwrap();
+        let output = run_with_context(["ajax", "repair", "web/fix-login"], &context).unwrap();
 
-        assert!(output.contains("check task: web/fix-login"));
+        assert!(output.contains("repair task: web/fix-login"));
         assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
     }
 
     #[test]
-    fn diff_command_renders_diff_summary_plan() {
+    fn review_command_renders_diff_summary_plan() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "diff", "web/fix-login"], &context).unwrap();
+        let output = run_with_context(["ajax", "review", "web/fix-login"], &context).unwrap();
 
         assert!(output.contains("diff task: web/fix-login"));
         assert!(output.contains(
@@ -2132,13 +2132,13 @@ mod tests {
         let context = sample_context();
         let output = run_with_context(["ajax", "next"], &context).unwrap();
 
-        assert_eq!(output, "web/fix-login: agent needs input -> open task");
+        assert_eq!(output, "web/fix-login: needs_input -> resume");
     }
 
     #[test]
-    fn review_command_renders_review_queue() {
+    fn ready_command_renders_review_queue() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "review", "--json"], &context).unwrap();
+        let output = run_with_context(["ajax", "ready", "--json"], &context).unwrap();
 
         assert!(output.contains("\"tasks\""));
         assert!(output.contains("web/fix-login"));
@@ -2261,7 +2261,7 @@ mod tests {
         let output = run_with_context_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2328,7 +2328,7 @@ mod tests {
             .iter()
             .find(|task| task.qualified_handle() == "web/fix-login")
             .cloned()
-            .expect("new task should be recorded");
+            .expect("start task should be recorded");
         assert_eq!(
             recorded.worktree_path.to_string_lossy(),
             "/Users/matt/projects/web__worktrees/ajax-fix-login"
@@ -2349,7 +2349,7 @@ mod tests {
         let error = run_with_context_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2387,7 +2387,7 @@ mod tests {
         let error = run_with_context_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2465,7 +2465,7 @@ mod tests {
         let error = run_with_context_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2519,7 +2519,7 @@ mod tests {
         let output = run_with_context_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2594,7 +2594,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         let error = run_with_context_and_runner(
-            ["ajax", "new", "--repo", "web", "--execute"],
+            ["ajax", "start", "--repo", "web", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -2630,7 +2630,7 @@ mod tests {
         let output = run_with_context_paths_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2650,7 +2650,7 @@ mod tests {
             .iter()
             .find(|task| task.qualified_handle() == "web/fix-login")
             .cloned()
-            .expect("new task should be persisted");
+            .expect("start task should be persisted");
         assert_eq!(
             recorded.worktree_path.to_string_lossy(),
             "/Users/matt/projects/web__worktrees/ajax-fix-login"
@@ -2692,7 +2692,7 @@ mod tests {
         let error = run_with_context_paths_and_runner(
             [
                 "ajax",
-                "new",
+                "start",
                 "--repo",
                 "web",
                 "--title",
@@ -2725,7 +2725,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "open", "web/fix-login", "--execute"],
+            ["ajax", "resume", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -2747,7 +2747,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         let error = run_with_context_and_runner(
-            ["ajax", "merge", "web/fix-login", "--execute"],
+            ["ajax", "ship", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -2773,7 +2773,7 @@ mod tests {
         let mut runner = QueuedRunner::new(vec![output(0, ""), output(42, "")]);
 
         let error = run_with_context_and_runner(
-            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "ship", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2806,7 +2806,7 @@ mod tests {
         ]);
 
         let error = run_with_context_and_runner(
-            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "ship", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2825,7 +2825,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "ship", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2864,7 +2864,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "merge", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "ship", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2891,7 +2891,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -2924,7 +2924,7 @@ mod tests {
         ]);
 
         run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -2976,7 +2976,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "cleanup", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3033,7 +3033,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         let error = run_with_context_and_runner(
-            ["ajax", "remove", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3078,7 +3078,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "remove", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -3135,7 +3135,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         let error = run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3182,7 +3182,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute", "--yes"],
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
             &mut context,
             &mut runner,
         )
@@ -3257,7 +3257,7 @@ mod tests {
         ]);
 
         let error = run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3296,7 +3296,7 @@ mod tests {
         ]);
 
         let error = run_with_context_and_runner(
-            ["ajax", "clean", "web/fix-login", "--execute"],
+            ["ajax", "drop", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3319,16 +3319,16 @@ mod tests {
     }
 
     #[test]
-    fn trunk_execute_uses_injected_runner() {
+    fn repair_execute_repairs_trunk_with_injected_runner() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "trunk", "web/fix-login", "--execute"])
+            .try_get_matches_from(["ajax", "repair", "web/fix-login", "--execute"])
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Trunk,
+            super::TaskCommandOperation::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -3363,16 +3363,16 @@ mod tests {
     }
 
     #[test]
-    fn trunk_execute_switches_client_when_inside_tmux() {
+    fn repair_execute_switches_client_when_inside_tmux() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "trunk", "web/fix-login", "--execute"])
+            .try_get_matches_from(["ajax", "repair", "web/fix-login", "--execute"])
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Trunk,
+            super::TaskCommandOperation::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -3390,7 +3390,7 @@ mod tests {
     }
 
     #[test]
-    fn trunk_execute_clears_missing_tmux_and_worktrunk_flags() {
+    fn repair_execute_clears_missing_tmux_and_worktrunk_flags() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -3411,7 +3411,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "trunk", "web/fix-login", "--execute"],
+            ["ajax", "repair", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3434,14 +3434,14 @@ mod tests {
     }
 
     #[test]
-    fn check_execute_uses_injected_runner() {
+    fn repair_execute_uses_injected_runner() {
         let mut context = sample_context();
         context.config.test_commands =
             vec![ajax_core::config::TestCommand::new("web", "cargo test")];
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "check", "web/fix-login", "--execute"],
+            ["ajax", "repair", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3449,13 +3449,34 @@ mod tests {
 
         assert_eq!(
             runner.commands(),
-            &[CommandSpec::new("sh", ["-lc", "cargo test"])
-                .with_cwd("/tmp/worktrees/web-fix-login")]
+            &[
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login",
+                    ],
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+                ),
+                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio),
+                CommandSpec::new("sh", ["-lc", "cargo test"])
+                    .with_cwd("/tmp/worktrees/web-fix-login")
+            ]
         );
     }
 
     #[test]
-    fn check_execute_failure_records_tests_failed_attention_without_lifecycle_corruption() {
+    fn repair_execute_failure_records_tests_failed_attention_without_lifecycle_corruption() {
         let mut context = sample_context();
         context.config.test_commands =
             vec![ajax_core::config::TestCommand::new("web", "cargo test")];
@@ -3464,14 +3485,19 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .unwrap()
             .lifecycle_status = LifecycleStatus::Active;
-        let mut runner = QueuedRunner::new(vec![CommandOutput {
-            status_code: 42,
-            stdout: String::new(),
-            stderr: "tests failed".to_string(),
-        }]);
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            CommandOutput {
+                status_code: 42,
+                stdout: String::new(),
+                stderr: "tests failed".to_string(),
+            },
+        ]);
 
         let error = run_with_context_and_runner(
-            ["ajax", "check", "web/fix-login", "--execute"],
+            ["ajax", "repair", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3506,7 +3532,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "check", "web/fix-login", "--execute"],
+            ["ajax", "repair", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3524,7 +3550,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
 
         run_with_context_and_runner(
-            ["ajax", "diff", "web/fix-login", "--execute"],
+            ["ajax", "review", "web/fix-login", "--execute"],
             &mut context,
             &mut runner,
         )
@@ -3544,7 +3570,7 @@ mod tests {
         let mut context = cleanable_context();
         let mut runner = RecordingCommandRunner::default();
 
-        run_with_context_and_runner(["ajax", "sweep", "--execute"], &mut context, &mut runner)
+        run_with_context_and_runner(["ajax", "tidy", "--execute"], &mut context, &mut runner)
             .unwrap();
 
         assert_eq!(
@@ -3617,7 +3643,7 @@ mod tests {
         ]);
 
         let error = run_with_context_paths_and_runner(
-            ["ajax", "sweep", "--execute"],
+            ["ajax", "tidy", "--execute"],
             &CliContextPaths::new(&config_file, &state_file),
             &mut runner,
         )
@@ -3660,12 +3686,12 @@ mod tests {
             },
             InMemoryRegistry::default(),
         );
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__project_action__api__new_task"),
             task_handle: "api".to_string(),
             reason: "+ New task".to_string(),
             priority: 0,
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -3677,9 +3703,9 @@ mod tests {
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
                 assert!(message.contains("select a project"));
-                assert!(message.contains("new task"));
+                assert!(message.contains("start"));
             }
-            _ => panic!("new task should remain inside Ajax cockpit"),
+            _ => panic!("start task should remain inside Ajax cockpit"),
         }
 
         assert!(runner.commands().is_empty());
@@ -3689,17 +3715,14 @@ mod tests {
 
     #[test]
     fn cockpit_actions_defer_to_executable_ajax_commands() {
-        for (handle, action) in [
-            ("web/fix-login", "open task"),
-            ("web/fix-login", "merge task"),
-        ] {
+        for (handle, action) in [("web/fix-login", "resume"), ("web/fix-login", "ship")] {
             let mut context = sample_context();
-            let item = ajax_core::models::AttentionItem {
+            let item = ajax_core::models::CockpitActionItem {
                 task_id: TaskId::new(format!("__cockpit_action__{action}")),
                 task_handle: handle.to_string(),
                 reason: action.to_string(),
                 priority: 0,
-                recommended_action: action.to_string(),
+                action: action.to_string(),
             };
             let mut runner = PanicRunner;
             let mut state_changed = false;
@@ -3711,7 +3734,7 @@ mod tests {
             match outcome {
                 ajax_tui::ActionOutcome::Defer(pending) => {
                     assert_eq!(pending.task_handle, handle);
-                    assert_eq!(pending.recommended_action, action);
+                    assert_eq!(pending.action, action);
                     assert!(pending.task_title.is_none());
                 }
                 ajax_tui::ActionOutcome::Message(message) => panic!(
@@ -3731,18 +3754,18 @@ mod tests {
     #[test]
     fn cockpit_known_actions_never_return_command_hints() {
         for (handle, action) in [
-            ("web/fix-login", "open task"),
-            ("web/fix-login", "merge task"),
-            ("web", "new task"),
+            ("web/fix-login", "resume"),
+            ("web/fix-login", "ship"),
+            ("web", "start"),
             ("web", "status"),
         ] {
             let mut context = sample_context();
-            let item = ajax_core::models::AttentionItem {
+            let item = ajax_core::models::CockpitActionItem {
                 task_id: TaskId::new(format!("__cockpit_action__{action}")),
                 task_handle: handle.to_string(),
                 reason: action.to_string(),
                 priority: 0,
-                recommended_action: action.to_string(),
+                action: action.to_string(),
             };
             let mut runner = PanicRunner;
             let mut state_changed = false;
@@ -3758,7 +3781,7 @@ mod tests {
         }
 
         let mut context = cleanable_context();
-        let item = cockpit_item("web/fix-login", "clean task");
+        let item = cockpit_item("web/fix-login", "drop");
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
@@ -3767,8 +3790,8 @@ mod tests {
                 .unwrap();
 
         if let ajax_tui::ActionOutcome::Message(message) = outcome {
-            assert!(!message.contains("try: ajax"), "clean task: {message}");
-            assert!(!message.contains("run `ajax"), "clean task: {message}");
+            assert!(!message.contains("try: ajax"), "drop task: {message}");
+            assert!(!message.contains("run `ajax"), "drop task: {message}");
         }
     }
 
@@ -3782,8 +3805,6 @@ mod tests {
             "monitor task",
             "review branch",
             "review diff",
-            "check task",
-            "diff task",
         ] {
             let item = cockpit_item("web/fix-login", action);
             let mut runner = PanicRunner;
@@ -3829,7 +3850,6 @@ mod tests {
     #[test]
     fn cockpit_action_contract_covers_all_current_actions() {
         enum Expected<'a> {
-            Confirm(&'a str),
             Defer,
             Message(&'a [&'a str]),
             Refresh,
@@ -3837,50 +3857,31 @@ mod tests {
 
         let cases = [
             (
-                RecommendedAction::NewTask,
+                "start",
                 "web",
-                Expected::Message(&["select a project", "new task"]),
+                Expected::Message(&["select a project", "start"]),
             ),
-            (
-                RecommendedAction::OpenTask,
-                "web/fix-login",
-                Expected::Defer,
-            ),
-            (
-                RecommendedAction::MergeTask,
-                "web/fix-login",
-                Expected::Defer,
-            ),
-            (
-                RecommendedAction::CleanTask,
-                "web/fix-login",
-                Expected::Refresh,
-            ),
-            (
-                RecommendedAction::RemoveTask,
-                "web/fix-login",
-                Expected::Confirm("remove task"),
-            ),
-            (
-                RecommendedAction::Status,
-                "web",
-                Expected::Message(&["web: 1 task(s)"]),
-            ),
+            ("resume", "web/fix-login", Expected::Defer),
+            ("review", "web/fix-login", Expected::Defer),
+            ("ship", "web/fix-login", Expected::Defer),
+            ("drop", "web/fix-login", Expected::Refresh),
+            ("repair", "web/fix-login", Expected::Defer),
+            ("status", "web", Expected::Message(&["web: 1 task(s)"])),
         ];
         let covered_actions = cases
             .iter()
             .map(|(action, _, _)| *action)
             .collect::<std::collections::BTreeSet<_>>();
-        let product_actions = RecommendedAction::cockpit_product_actions()
+        let product_actions = OperatorAction::all()
             .iter()
-            .copied()
+            .map(|action| action.as_str())
+            .chain(std::iter::once("status"))
             .collect::<std::collections::BTreeSet<_>>();
 
         assert_eq!(covered_actions, product_actions);
 
         for (action, handle, expected) in cases {
-            let action = action.as_str();
-            let mut context = if action == "clean task" {
+            let mut context = if action == "drop" {
                 cleanable_context()
             } else {
                 sample_context()
@@ -3894,29 +3895,10 @@ mod tests {
                     .unwrap();
 
             match expected {
-                Expected::Confirm(part) => match outcome {
-                    ajax_tui::ActionOutcome::Confirm(message) => {
-                        assert!(message.contains(part), "{action}: {message}");
-                        assert!(
-                            runner.commands().is_empty(),
-                            "{action} should not execute before confirmation"
-                        );
-                        assert!(!state_changed, "{action}");
-                    }
-                    ajax_tui::ActionOutcome::Defer(_) => {
-                        panic!("{action} should request confirmation, got defer");
-                    }
-                    ajax_tui::ActionOutcome::Message(message) => {
-                        panic!("{action} should request confirmation, got message: {message}");
-                    }
-                    ajax_tui::ActionOutcome::Refresh { .. } => {
-                        panic!("{action} should request confirmation, got refresh");
-                    }
-                },
                 Expected::Defer => match outcome {
                     ajax_tui::ActionOutcome::Defer(pending) => {
                         assert_eq!(pending.task_handle, handle, "{action}");
-                        assert_eq!(pending.recommended_action, action);
+                        assert_eq!(pending.action, action);
                         assert!(pending.task_title.is_none(), "{action}");
                         assert!(
                             runner.commands().is_empty(),
@@ -3958,7 +3940,7 @@ mod tests {
                 Expected::Refresh => match outcome {
                     ajax_tui::ActionOutcome::Refresh(snapshot) => {
                         assert_eq!(snapshot.repos.repos.len(), 1, "{action}");
-                        if action == "clean task" {
+                        if action == "drop" {
                             assert!(snapshot.cards.is_empty(), "{action}");
                             assert!(snapshot.inbox.items.is_empty(), "{action}");
                         } else {
@@ -3985,12 +3967,12 @@ mod tests {
     #[test]
     fn cockpit_merge_task_action_stays_inside_ajax() {
         let mut context = sample_context();
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__merge"),
             task_handle: "web/fix-login".to_string(),
             reason: "Merge task".to_string(),
             priority: 0,
-            recommended_action: "merge task".to_string(),
+            action: "ship".to_string(),
         };
         let mut runner = PanicRunner;
         let mut state_changed = false;
@@ -4002,7 +3984,7 @@ mod tests {
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
                 assert_eq!(pending.task_handle, "web/fix-login");
-                assert_eq!(pending.recommended_action, "merge task");
+                assert_eq!(pending.action, "ship");
                 assert!(pending.task_title.is_none());
             }
             _ => panic!("completed task action should defer for execution"),
@@ -4013,12 +3995,12 @@ mod tests {
     #[test]
     fn cockpit_task_action_return_stays_inside_ajax() {
         let mut context = sample_context();
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__open"),
             task_handle: "web/fix-login".to_string(),
             reason: "Open task".to_string(),
             priority: 0,
-            recommended_action: "open task".to_string(),
+            action: "resume".to_string(),
         };
         let mut runner = PanicRunner;
         let mut state_changed = false;
@@ -4030,7 +4012,7 @@ mod tests {
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
                 assert_eq!(pending.task_handle, "web/fix-login");
-                assert_eq!(pending.recommended_action, "open task");
+                assert_eq!(pending.action, "resume");
                 assert!(pending.task_title.is_none());
             }
             _ => panic!("task action should defer for execution"),
@@ -4052,7 +4034,7 @@ mod tests {
         );
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
             task_title: None,
         };
         let mut runner = PanicRunner;
@@ -4067,7 +4049,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("new task title is required")));
+                if message.contains("start task title is required")));
         assert!(context.registry.list_tasks().is_empty());
         assert!(!state_changed);
     }
@@ -4083,7 +4065,7 @@ mod tests {
         );
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
             task_title: None,
         };
         let mut runner = QueuedRunner::new(vec![output(1, "")]);
@@ -4098,7 +4080,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
-                if message.contains("new task title is required")));
+                if message.contains("start task title is required")));
         assert!(runner.commands.is_empty());
         assert!(context.registry.list_tasks().is_empty());
         assert!(!state_changed);
@@ -4115,7 +4097,7 @@ mod tests {
         );
         let pending = ajax_tui::PendingAction {
             task_handle: "web".to_string(),
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
             task_title: Some("Fix login".to_string()),
         };
         let mut runner = QueuedRunner::new(vec![CommandOutput {
@@ -4150,17 +4132,13 @@ mod tests {
         assert_eq!(
             tasks.tasks[0].actions,
             vec![
-                RecommendedAction::OpenTask.as_str().to_string(),
-                RecommendedAction::RemoveTask.as_str().to_string(),
+                OperatorAction::Resume.as_str().to_string(),
+                OperatorAction::Drop.as_str().to_string(),
             ]
         );
         let inbox = ajax_core::commands::inbox(&context);
         assert_eq!(inbox.items.len(), 1);
-        assert_eq!(
-            inbox.items[0].recommended_action,
-            RecommendedAction::OpenTask.as_str()
-        );
-        assert!(RecommendedAction::cockpit_product_actions().contains(&RecommendedAction::OpenTask));
+        assert_eq!(inbox.items[0].action, OperatorAction::Resume);
     }
 
     #[test]
@@ -4174,7 +4152,7 @@ mod tests {
         );
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
             task_title: Some("Fix login".to_string()),
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4241,7 +4219,7 @@ mod tests {
             .iter()
             .find(|task| task.qualified_handle() == "api/fix-login")
             .cloned()
-            .expect("new task should be recorded");
+            .expect("start task should be recorded");
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert!(state_changed);
     }
@@ -4249,75 +4227,42 @@ mod tests {
     #[test]
     fn task_command_operation_maps_cli_commands_and_cockpit_aliases() {
         assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("open"),
+            super::TaskCommandOperation::from_cli_subcommand("resume"),
             Some(super::TaskCommandOperation::Open)
         );
         assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("trunk"),
-            Some(super::TaskCommandOperation::Trunk)
+            super::TaskCommandOperation::from_cli_subcommand("repair"),
+            Some(super::TaskCommandOperation::Repair)
         );
         assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("check"),
-            Some(super::TaskCommandOperation::Check)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("diff"),
+            super::TaskCommandOperation::from_cli_subcommand("review"),
             Some(super::TaskCommandOperation::Diff)
         );
         assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("merge"),
+            super::TaskCommandOperation::from_cli_subcommand("ship"),
             Some(super::TaskCommandOperation::Merge)
         );
         assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("cleanup"),
-            Some(super::TaskCommandOperation::Cleanup)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("clean"),
-            Some(super::TaskCommandOperation::Clean)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("remove"),
-            Some(super::TaskCommandOperation::Remove)
+            super::TaskCommandOperation::from_cli_subcommand("drop"),
+            Some(super::TaskCommandOperation::Drop)
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("status"),
             None
         );
 
-        assert_eq!(
-            super::TaskCommandOperation::from_recommended_action(RecommendedAction::OpenTask),
-            Some(super::TaskCommandOperation::Open)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_recommended_action(RecommendedAction::MergeTask),
-            Some(super::TaskCommandOperation::Merge)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_recommended_action(RecommendedAction::CleanTask),
-            Some(super::TaskCommandOperation::Cleanup)
-        );
-        assert_eq!(RecommendedAction::from_label("reconcile"), None);
+        assert_eq!(OperatorAction::from_label("reconcile"), None);
     }
 
     #[test]
     fn task_command_operation_defines_cockpit_return_policy() {
-        for operation in [
-            super::TaskCommandOperation::Open,
-            super::TaskCommandOperation::Trunk,
-        ] {
-            assert!(
-                !operation.returns_to_cockpit_after_execute(),
-                "{operation:?} should exit to the external command output"
-            );
-        }
+        assert!(!super::TaskCommandOperation::Open.returns_to_cockpit_after_execute());
 
         for operation in [
-            super::TaskCommandOperation::Check,
             super::TaskCommandOperation::Diff,
             super::TaskCommandOperation::Merge,
-            super::TaskCommandOperation::Cleanup,
-            super::TaskCommandOperation::Remove,
+            super::TaskCommandOperation::Repair,
+            super::TaskCommandOperation::Drop,
         ] {
             assert!(
                 operation.returns_to_cockpit_after_execute(),
@@ -4327,23 +4272,21 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_and_remove_parse_as_distinct_executable_task_commands() {
-        for command in ["cleanup", "remove"] {
-            let matches = build_cli()
-                .try_get_matches_from(["ajax", command, "web/fix-login", "--execute", "--yes"])
-                .unwrap_or_else(|error| panic!("{command} should parse: {error}"));
-            let Some((name, subcommand)) = matches.subcommand() else {
-                panic!("{command} should parse as a subcommand");
-            };
+    fn drop_parses_as_executable_task_command() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "drop", "web/fix-login", "--execute", "--yes"])
+            .unwrap_or_else(|error| panic!("drop should parse: {error}"));
+        let Some((name, subcommand)) = matches.subcommand() else {
+            panic!("drop should parse as a subcommand");
+        };
 
-            assert_eq!(name, command);
-            assert_eq!(
-                subcommand.get_one::<String>("task").map(String::as_str),
-                Some("web/fix-login")
-            );
-            assert!(subcommand.get_flag("execute"));
-            assert!(subcommand.get_flag("yes"));
-        }
+        assert_eq!(name, "drop");
+        assert_eq!(
+            subcommand.get_one::<String>("task").map(String::as_str),
+            Some("web/fix-login")
+        );
+        assert!(subcommand.get_flag("execute"));
+        assert!(subcommand.get_flag("yes"));
     }
 
     #[test]
@@ -4353,7 +4296,7 @@ mod tests {
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "merge task".to_string(),
+            action: "ship".to_string(),
             task_title: None,
         };
 
@@ -4380,12 +4323,12 @@ mod tests {
     #[test]
     fn cockpit_remove_action_requires_confirmation_before_running() {
         let mut context = sample_context();
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__remove"),
             task_handle: "web/fix-login".to_string(),
             reason: "Remove task".to_string(),
             priority: 0,
-            recommended_action: "remove task".to_string(),
+            action: "drop".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -4395,7 +4338,7 @@ mod tests {
                 .unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
-            if message.contains("press enter again") && message.contains("remove task")));
+            if message.contains("press enter again") && message.contains("drop")));
         assert!(runner.commands().is_empty());
         assert!(!state_changed);
     }
@@ -4421,12 +4364,12 @@ mod tests {
             conflicted: false,
             last_commit: None,
         });
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__remove"),
             task_handle: "web/fix-login".to_string(),
             reason: "Remove task".to_string(),
             priority: 0,
-            recommended_action: "remove task".to_string(),
+            action: "drop".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -4491,7 +4434,7 @@ mod tests {
         let mut state_changed = true;
         let pending = ajax_tui::PendingAction {
             task_handle: "web".to_string(),
-            recommended_action: "reconcile".to_string(),
+            action: "reconcile".to_string(),
             task_title: None,
         };
 
@@ -4510,13 +4453,13 @@ mod tests {
 
     #[test]
     fn pending_cockpit_open_and_create_actions_exit_ajax() {
-        let action = "open task";
+        let action = "resume";
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: action.to_string(),
+            action: action.to_string(),
             task_title: None,
         };
 
@@ -4540,7 +4483,7 @@ mod tests {
         );
         let pending = ajax_tui::PendingAction {
             task_handle: "api".to_string(),
-            recommended_action: "new task".to_string(),
+            action: "start".to_string(),
             task_title: Some("Fix login".to_string()),
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4567,13 +4510,11 @@ mod tests {
             "monitor task",
             "review branch",
             "review diff",
-            "check task",
-            "diff task",
         ] {
             let mut context = sample_context();
             let pending = ajax_tui::PendingAction {
                 task_handle: "web/fix-login".to_string(),
-                recommended_action: action.to_string(),
+                action: action.to_string(),
                 task_title: None,
             };
             let mut runner = PanicRunner;
@@ -4594,11 +4535,11 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_worktrunk_runs_trunk_plan() {
+    fn pending_cockpit_repair_runs_trunk_plan() {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "open worktrunk".to_string(),
+            action: "repair".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4613,7 +4554,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert!(matches!(
+            outcome,
+            super::PendingCockpitOutcome::ReturnToCockpit
+        ));
         assert_eq!(
             runner.commands(),
             &[
@@ -4642,11 +4586,11 @@ mod tests {
     }
 
     #[test]
-    fn pending_cockpit_open_worktrunk_switches_client_when_inside_tmux() {
+    fn pending_cockpit_repair_switches_client_when_inside_tmux() {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "open worktrunk".to_string(),
+            action: "repair".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4673,11 +4617,11 @@ mod tests {
 
     #[test]
     fn pending_cockpit_open_alias_actions_run_open_plan_without_lifecycle_change() {
-        let action = "open task";
+        let action = "resume";
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: action.to_string(),
+            action: action.to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4721,7 +4665,7 @@ mod tests {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "mystery action".to_string(),
+            action: "mystery action".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4754,7 +4698,7 @@ mod tests {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "merge task".to_string(),
+            action: "ship".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4790,7 +4734,7 @@ mod tests {
         let mut context = safe_merge_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "merge task".to_string(),
+            action: "ship".to_string(),
             task_title: None,
         };
         let mut runner = QueuedRunner::new(vec![CommandOutput {
@@ -4851,7 +4795,7 @@ mod tests {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "open task".to_string(),
+            action: "resume".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4893,7 +4837,7 @@ mod tests {
         let mut context = sample_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "open task".to_string(),
+            action: "resume".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4927,7 +4871,7 @@ mod tests {
         let mut context = safe_merge_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "merge task".to_string(),
+            action: "ship".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -4973,7 +4917,7 @@ mod tests {
         let mut context = cleanable_context();
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
-            recommended_action: "clean task".to_string(),
+            action: "drop".to_string(),
             task_title: None,
         };
         let mut runner = RecordingCommandRunner::default();
@@ -5027,12 +4971,12 @@ mod tests {
     #[test]
     fn cockpit_reconcile_action_is_unknown() {
         let mut context = sample_context();
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__project_action__web__reconcile"),
             task_handle: "web".to_string(),
             reason: "Reconcile".to_string(),
             priority: 0,
-            recommended_action: "reconcile".to_string(),
+            action: "reconcile".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -5055,12 +4999,12 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .unwrap()
             .add_side_flag(SideFlag::Dirty);
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__clean"),
             task_handle: "web/fix-login".to_string(),
             reason: "Clean task".to_string(),
             priority: 0,
-            recommended_action: "clean task".to_string(),
+            action: "drop".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -5070,7 +5014,7 @@ mod tests {
                 .unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
-            if message.contains("press enter again") && message.contains("clean task")));
+            if message.contains("press enter again") && message.contains("drop")));
         assert!(runner.commands().is_empty());
         assert_eq!(
             context
@@ -5086,12 +5030,12 @@ mod tests {
     #[test]
     fn confirmed_cockpit_clean_action_runs_and_refreshes_inside_ajax() {
         let mut context = cleanable_context();
-        let item = ajax_core::models::AttentionItem {
+        let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__clean"),
             task_handle: "web/fix-login".to_string(),
             reason: "Clean task".to_string(),
             priority: 0,
-            recommended_action: "clean task".to_string(),
+            action: "drop".to_string(),
         };
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
@@ -5111,13 +5055,13 @@ mod tests {
                 assert!(snapshot.inbox.items.is_empty());
             }
             ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("clean task should refresh Ajax instead of deferring out")
+                panic!("drop task should refresh Ajax instead of deferring out")
             }
             ajax_tui::ActionOutcome::Message(message) => {
-                panic!("clean task should run instead of showing message: {message}")
+                panic!("drop task should run instead of showing message: {message}")
             }
             ajax_tui::ActionOutcome::Confirm(message) => {
-                panic!("confirmed clean task should run instead of confirming: {message}")
+                panic!("confirmed drop task should run instead of confirming: {message}")
             }
         }
         assert_eq!(

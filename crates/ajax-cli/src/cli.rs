@@ -15,21 +15,18 @@ pub fn build_cli() -> Command {
         .subcommand(repos_command())
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
-        .subcommand(executable_new_command())
-        .subcommand(executable_task_command("open"))
-        .subcommand(executable_task_command("trunk"))
-        .subcommand(executable_task_command("check"))
-        .subcommand(executable_task_command("diff"))
-        .subcommand(executable_task_command("merge"))
-        .subcommand(executable_task_command("cleanup"))
-        .subcommand(executable_task_command("clean"))
-        .subcommand(executable_task_command("remove"))
+        .subcommand(executable_new_command("start"))
+        .subcommand(executable_task_command("resume"))
+        .subcommand(executable_task_command("repair"))
+        .subcommand(executable_task_command("review"))
+        .subcommand(executable_task_command("ship"))
+        .subcommand(executable_task_command("drop"))
         .subcommand(executable_command(
-            json_command("sweep").about("Clean safe task environments across repos"),
+            json_command("tidy").about("Clean safe task environments across repos"),
         ))
         .subcommand(json_command("next").about("Show the next task needing attention"))
         .subcommand(json_command("inbox").about("Show global attention inbox"))
-        .subcommand(json_command("review").about("Show tasks ready for review"))
+        .subcommand(json_command("ready").about("Show tasks ready for review"))
         .subcommand(json_command("status").about("Show Ajax status"))
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
@@ -66,8 +63,8 @@ fn tasks_command() -> Command {
         .arg(Arg::new("repo").long("repo").value_name("REPO"))
 }
 
-fn executable_new_command() -> Command {
-    executable_command(json_command("new"))
+fn executable_new_command(name: &'static str) -> Command {
+    executable_command(json_command(name))
         .about("Create a new task environment")
         .arg(Arg::new("repo").long("repo").value_name("REPO"))
         .arg(Arg::new("title").long("title").value_name("TITLE"))

@@ -1,5 +1,9 @@
 # Ajax TUI UX Rework Plan
 
+Status note: this plan predates the information-model redesign. Current Cockpit
+inbox rows are annotation digests keyed by task id and operator action rather
+than `AttentionItem` rows with recommended actions.
+
 ## Goal
 
 Make the cockpit readable and useful on a narrow mobile/SSH terminal (iOS

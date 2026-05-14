@@ -58,13 +58,14 @@ pub struct InMemoryRegistry {
 }
 
 impl Registry for InMemoryRegistry {
-    fn create_task(&mut self, task: Task) -> Result<(), RegistryError> {
+    fn create_task(&mut self, mut task: Task) -> Result<(), RegistryError> {
         let task_id = task.id.clone();
 
         if self.tasks.contains_key(&task_id) {
             return Err(RegistryError::DuplicateTask(task_id));
         }
 
+        refresh_task_annotations(&mut task);
         self.tasks.insert(task_id.clone(), task);
         self.events.push(RegistryEvent::new(
             task_id,
@@ -101,6 +102,7 @@ impl Registry for InMemoryRegistry {
 
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
+        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::LifecycleChanged,
@@ -136,6 +138,7 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_git_status(status);
+        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -155,6 +158,7 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_tmux_status(status);
+        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -174,6 +178,7 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_worktrunk_status(status);
+        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -194,6 +199,7 @@ impl Registry for InMemoryRegistry {
         let previous_lifecycle = task.lifecycle_status;
 
         crate::live::apply_observation(task, observation);
+        refresh_task_annotations(task);
 
         if task.lifecycle_status != previous_lifecycle {
             self.events.push(RegistryEvent::new(
@@ -216,6 +222,10 @@ impl Registry for InMemoryRegistry {
             .filter(|event| &event.task_id == task_id)
             .collect()
     }
+}
+
+fn refresh_task_annotations(task: &mut Task) {
+    task.annotations = crate::attention::annotate(task);
 }
 
 pub trait RegistryStore {
@@ -314,8 +324,8 @@ mod tests {
         InMemoryRegistry, Registry, RegistryError, RegistryEventKind, RegistrySnapshotError,
     };
     use crate::models::{
-        AgentClient, GitStatus, LifecycleStatus, LiveObservation, SideFlag, Task, TaskId,
-        TmuxStatus, WorktrunkStatus,
+        AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, SideFlag, Task,
+        TaskId, TmuxStatus, WorktrunkStatus,
     };
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
@@ -406,6 +416,23 @@ mod tests {
 
         let updated = registry.get_task(&TaskId::new("task-1")).unwrap();
         assert_eq!(updated.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    #[test]
+    fn listed_tasks_carry_annotations() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+
+        registry
+            .update_lifecycle(&TaskId::new("task-1"), LifecycleStatus::Reviewable)
+            .unwrap();
+
+        let tasks = registry.list_tasks();
+
+        assert_eq!(tasks[0].annotations.len(), 1);
+        assert_eq!(tasks[0].annotations[0].kind, AnnotationKind::Reviewable);
     }
 
     #[test]

@@ -1,5 +1,10 @@
 # Ajax Derived UI State Plan
 
+Status note: this plan predates the information-model redesign. The current
+model uses task annotations plus `OperatorAction` (`start`, `resume`, `repair`,
+`review`, `ship`, `drop`) instead of `AttentionItem` and
+`RecommendedAction`.
+
 ## Goal
 
 Move all "what is this task?" classification into `ajax-core` and let

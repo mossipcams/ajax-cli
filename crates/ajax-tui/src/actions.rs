@@ -1,4 +1,4 @@
-use ajax_core::models::RecommendedAction;
+use ajax_core::models::OperatorAction;
 use ratatui::style::{Color, Modifier, Style};
 
 #[derive(Clone, Copy)]
@@ -35,42 +35,28 @@ impl ActionChrome {
     }
 }
 
-pub(crate) fn action_chrome(recommended_action: &str) -> ActionChrome {
-    match RecommendedAction::from_label(recommended_action) {
-        Some(action) => recommended_action_chrome(action),
-        None if recommended_action == "help" => {
+pub(crate) fn action_chrome(action_label: &str) -> ActionChrome {
+    match OperatorAction::from_label(action_label) {
+        Some(action) => operator_action_chrome(action),
+        None if action_label == "help" => {
             ActionChrome::new("?", Color::LightYellow, Color::White, true)
         }
         _ => ActionChrome::new(".", subtle_text(), muted_text(), false),
     }
 }
 
-pub(crate) fn recommended_action_chrome(action: RecommendedAction) -> ActionChrome {
+pub(crate) fn operator_action_chrome(action: OperatorAction) -> ActionChrome {
     match action {
-        RecommendedAction::SelectProject => {
-            ActionChrome::new("P", primary_accent(), primary_accent(), true)
+        OperatorAction::Start => ActionChrome::new("+", primary_accent(), primary_accent(), true),
+        OperatorAction::Resume => ActionChrome::new(">", primary_accent(), primary_accent(), true),
+        OperatorAction::Review => {
+            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
         }
-        RecommendedAction::NewTask => {
-            ActionChrome::new("+", primary_accent(), primary_accent(), true)
+        OperatorAction::Ship => {
+            ActionChrome::new("S", secondary_accent(), secondary_accent(), true)
         }
-        RecommendedAction::OpenTask => {
-            ActionChrome::new(">", primary_accent(), primary_accent(), true)
-        }
-        RecommendedAction::OpenTrunk => {
-            ActionChrome::new("T", primary_accent(), primary_accent(), true)
-        }
-        RecommendedAction::MergeTask => {
-            ActionChrome::new("M", secondary_accent(), secondary_accent(), true)
-        }
-        RecommendedAction::CleanTask => {
-            ActionChrome::new("X", danger_accent(), danger_accent(), true)
-        }
-        RecommendedAction::RemoveTask => {
-            ActionChrome::new("!", danger_accent(), danger_accent(), true)
-        }
-        RecommendedAction::Status => {
-            ActionChrome::new("S", primary_accent(), primary_accent(), true)
-        }
+        OperatorAction::Drop => ActionChrome::new("X", danger_accent(), danger_accent(), true),
+        OperatorAction::Repair => ActionChrome::new("T", primary_accent(), primary_accent(), true),
     }
 }
 
@@ -92,4 +78,26 @@ const fn muted_text() -> Color {
 
 const fn subtle_text() -> Color {
     Color::Indexed(240)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::action_chrome;
+
+    #[test]
+    fn action_chrome_uses_operator_verbs() {
+        for (label, glyph) in [
+            ("resume", ">"),
+            ("review", "R"),
+            ("ship", "S"),
+            ("drop", "X"),
+            ("repair", "T"),
+        ] {
+            let chrome = action_chrome(label);
+
+            assert_eq!(chrome.glyph, glyph, "{label}");
+            assert!(chrome.bold, "{label}");
+        }
+        assert_eq!(action_chrome("open task").glyph, ".");
+    }
 }

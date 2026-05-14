@@ -9,8 +9,10 @@ mod rendering;
 mod runtime;
 
 use ajax_core::{
-    models::AttentionItem,
-    output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+    models::{
+        CockpitActionItem, Evidence, LifecycleStatus, LiveStatusKind, SideFlag, SubstrateGap,
+    },
+    output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
     ui_state::UiState,
 };
 #[cfg(test)]
@@ -70,7 +72,9 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
         lines.extend(inbox.items.iter().map(|item| {
             format!(
                 "{}: {} -> {}",
-                item.task_handle, item.reason, item.recommended_action
+                item.task_handle,
+                item.reason,
+                item.action.as_str()
             )
         }));
     }
@@ -83,7 +87,7 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
 /// Returned when the TUI exits with a deferred action (e.g. open → tmux attach).
 pub struct PendingAction {
     pub task_handle: String,
-    pub recommended_action: String,
+    pub action: String,
     pub task_title: Option<String>,
 }
 
@@ -100,9 +104,9 @@ pub enum ActionOutcome {
 }
 
 pub trait CockpitEventHandler {
-    fn on_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome>;
+    fn on_action(&mut self, item: &CockpitActionItem) -> io::Result<ActionOutcome>;
 
-    fn on_confirmed_action(&mut self, item: &AttentionItem) -> io::Result<ActionOutcome> {
+    fn on_confirmed_action(&mut self, item: &CockpitActionItem) -> io::Result<ActionOutcome> {
         self.on_action(item)
     }
 
@@ -235,10 +239,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
             parts.push(crumb_sep());
             parts.push(Span::styled(repo.clone(), crumb_style));
             parts.push(crumb_sep());
-            parts.push(Span::styled(
-                "new task",
-                Style::default().fg(primary_accent()),
-            ));
+            parts.push(Span::styled("start", Style::default().fg(primary_accent())));
         }
         AppView::Help { .. } => {
             parts.push(crumb_sep());
@@ -323,7 +324,7 @@ pub(crate) fn show_attention_line(app: &App) -> bool {
     current_attention_item(app).is_some()
 }
 
-fn current_attention_item(app: &App) -> Option<&AttentionItem> {
+fn current_attention_item(app: &App) -> Option<&AnnotationItem> {
     match &app.view {
         AppView::Project { repo } => {
             app.inbox.items.iter().find(|item| {
@@ -466,7 +467,7 @@ fn group_of(kind: &SelectableKind) -> &'static str {
 fn section_header_label(group: &str) -> &'static str {
     match group {
         "hot" => "inbox",
-        "create" => "new task",
+        "create" => "start",
         "projects" => "projects",
         "tasks" => "tasks",
         "task-actions" => "actions",
@@ -497,13 +498,71 @@ fn task_handle_color(card: &TaskCard) -> Color {
 }
 
 fn task_status_label(card: &TaskCard) -> String {
-    if let Some(blocker) = card.blocker_reason.as_ref() {
-        return blocker.clone();
+    if let Some(annotation) = card.annotations.first() {
+        return evidence_label(&annotation.evidence).to_string();
     }
     if let Some(summary) = card.live_summary.as_ref() {
         return summary.clone();
     }
     card.ui_state.as_str().to_string()
+}
+
+pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
+    match evidence {
+        Evidence::LiveStatus(status) => match status {
+            LiveStatusKind::WaitingForApproval => "waiting for approval",
+            LiveStatusKind::WaitingForInput => "waiting for input",
+            LiveStatusKind::AuthRequired => "auth required",
+            LiveStatusKind::RateLimited => "rate limited",
+            LiveStatusKind::ContextLimit => "context limit",
+            LiveStatusKind::CommandFailed => "command failed",
+            LiveStatusKind::Blocked => "blocked",
+            LiveStatusKind::WorktreeMissing => "worktree missing",
+            LiveStatusKind::TmuxMissing => "tmux missing",
+            LiveStatusKind::WorktrunkMissing => "worktrunk missing",
+            LiveStatusKind::MergeConflict => "merge conflict",
+            LiveStatusKind::Done => "done",
+            LiveStatusKind::ShellIdle
+            | LiveStatusKind::CommandRunning
+            | LiveStatusKind::TestsRunning
+            | LiveStatusKind::AgentRunning
+            | LiveStatusKind::CiFailed
+            | LiveStatusKind::Unknown => "live status",
+        },
+        Evidence::SideFlag(flag) => match flag {
+            SideFlag::Dirty => "dirty",
+            SideFlag::AgentRunning => "agent running",
+            SideFlag::AgentDead => "agent dead",
+            SideFlag::NeedsInput => "needs input",
+            SideFlag::TestsFailed => "tests failed",
+            SideFlag::TmuxMissing => "tmux missing",
+            SideFlag::WorktreeMissing => "worktree missing",
+            SideFlag::WorktrunkMissing => "worktrunk missing",
+            SideFlag::BranchMissing => "branch missing",
+            SideFlag::Stale => "stale",
+            SideFlag::Conflicted => "conflicted",
+            SideFlag::Unpushed => "unpushed",
+        },
+        Evidence::Lifecycle(status) => match status {
+            LifecycleStatus::Created => "created",
+            LifecycleStatus::Provisioning => "provisioning",
+            LifecycleStatus::Active => "active",
+            LifecycleStatus::Waiting => "waiting",
+            LifecycleStatus::Reviewable => "reviewable",
+            LifecycleStatus::Mergeable => "mergeable",
+            LifecycleStatus::Merged => "merged",
+            LifecycleStatus::Cleanable => "cleanable",
+            LifecycleStatus::Removed => "removed",
+            LifecycleStatus::Orphaned => "orphaned",
+            LifecycleStatus::Error => "error",
+        },
+        Evidence::Substrate(gap) => match gap {
+            SubstrateGap::WorktreeMissing => "worktree missing",
+            SubstrateGap::TmuxMissing => "tmux missing",
+            SubstrateGap::WorktrunkMissing => "worktrunk missing",
+            SubstrateGap::BranchMissing => "branch missing",
+        },
+    }
 }
 
 fn project_glyph(repo: &RepoSummary) -> Span<'static> {
@@ -531,8 +590,8 @@ fn inbox_glyph(color: Color) -> Span<'static> {
     Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
 
-fn inbox_item_accent(item: &AttentionItem) -> Color {
-    priority_accent(item.priority)
+fn inbox_item_accent(item: &AnnotationItem) -> Color {
+    priority_accent(item.severity)
 }
 
 fn priority_accent(priority: u32) -> Color {
@@ -545,17 +604,17 @@ fn priority_accent(priority: u32) -> Color {
     }
 }
 
-fn action_chrome(recommended_action: &str) -> actions::ActionChrome {
-    actions::action_chrome(recommended_action)
+fn action_chrome(action: &str) -> actions::ActionChrome {
+    actions::action_chrome(action)
 }
 
-fn action_glyph(recommended_action: &str) -> Span<'static> {
-    let chrome = action_chrome(recommended_action);
+fn action_glyph(action: &str) -> Span<'static> {
+    let chrome = action_chrome(action);
     Span::styled(chrome.glyph, chrome.glyph_style())
 }
 
-fn action_label_style(recommended_action: &str) -> Style {
-    action_chrome(recommended_action).label_style()
+fn action_label_style(action: &str) -> Style {
+    action_chrome(action).label_style()
 }
 
 fn project_subtitle(repo: &RepoSummary) -> String {
@@ -617,7 +676,7 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
                     Span::styled(item.reason.clone(), Style::default().fg(accent)),
                     Span::styled("  ->  ", arrow),
                     Span::styled(
-                        item.recommended_action.clone(),
+                        item.action.as_str().to_string(),
                         Style::default().fg(primary_accent()).add_modifier(bold),
                     ),
                 ],
@@ -638,21 +697,16 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
         ),
         SelectableKind::NewTask { .. } => render_row(
             is_selected,
-            action_glyph("new task"),
+            action_glyph("start"),
             vec![Span::styled(
                 "start a new task",
                 Style::default().fg(primary_accent()).add_modifier(bold),
             )],
         ),
-        SelectableKind::TaskAction {
-            recommended_action, ..
-        } => render_row(
+        SelectableKind::TaskAction { action, .. } => render_row(
             is_selected,
-            action_glyph(recommended_action),
-            vec![Span::styled(
-                recommended_action.clone(),
-                action_label_style(recommended_action),
-            )],
+            action_glyph(action),
+            vec![Span::styled(action.clone(), action_label_style(action))],
         ),
         SelectableKind::Task(t) => render_row(
             is_selected,
@@ -682,7 +736,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         };
         rows.push(render_row(
             false,
-            action_glyph("new task"),
+            action_glyph("start"),
             vec![
                 Span::styled(
                     "Task name  ",
@@ -717,7 +771,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             ("mouse scroll", "move the selection"),
             ("mouse click", "select a visible row"),
             (
-                "new task input",
+                "start input",
                 "type a title; backspace erases before going back",
             ),
         ] {
@@ -821,8 +875,11 @@ mod tests {
         FLASH_TICKS,
     };
     use ajax_core::{
-        models::{AttentionItem, LifecycleStatus, RecommendedAction, TaskId},
-        output::{InboxResponse, RepoSummary, ReposResponse, TaskCard},
+        models::{
+            Annotation, AnnotationKind, CockpitActionItem, Evidence, LifecycleStatus,
+            OperatorAction, TaskId,
+        },
+        output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
         ui_state::UiState,
     };
     use crossterm::event::{
@@ -875,11 +932,10 @@ mod tests {
             title: title.to_string(),
             ui_state,
             lifecycle,
-            recommended_action: RecommendedAction::OpenTask,
-            action_reason: "open".to_string(),
-            available_actions: vec![RecommendedAction::OpenTask],
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![OperatorAction::Resume],
             live_summary: None,
-            blocker_reason: None,
         }
     }
 
@@ -909,12 +965,12 @@ mod tests {
 
     fn sample_inbox() -> InboxResponse {
         InboxResponse {
-            items: vec![AttentionItem {
+            items: vec![AnnotationItem {
                 task_id: TaskId::new("task-99"),
                 task_handle: "web/fix-login".to_string(),
-                reason: "agent needs input".to_string(),
-                priority: 30,
-                recommended_action: "open task".to_string(),
+                reason: "needs_input".to_string(),
+                severity: 30,
+                action: OperatorAction::Resume,
             }],
         }
     }
@@ -966,12 +1022,12 @@ mod tests {
             active_tasks: 0,
             ..active_repo.clone()
         };
-        let urgent_item = AttentionItem {
+        let urgent_item = AnnotationItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix".to_string(),
             reason: "waiting for input".to_string(),
-            priority: 30,
-            recommended_action: "open task".to_string(),
+            severity: 30,
+            action: OperatorAction::Resume,
         };
 
         assert_eq!(project_glyph(&active_repo).content.as_ref(), "*");
@@ -1108,7 +1164,10 @@ mod tests {
     fn waiting_for_input_task_attention_uses_needs_you_chrome() {
         let mut tasks = sample_tasks();
         tasks[0].ui_state = UiState::Blocked;
-        tasks[0].blocker_reason = Some("waiting for input".to_string());
+        tasks[0].annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput),
+        )];
         let card = &tasks[0];
 
         assert_eq!(card_bucket(card), StatusBucket::NeedsYou);
@@ -1120,6 +1179,61 @@ mod tests {
             task_handle_color(card),
             bucket_color(StatusBucket::NeedsYou)
         );
+    }
+
+    #[test]
+    fn cockpit_row_shows_annotation_label() {
+        let mut tasks = sample_tasks();
+        tasks[0].annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput),
+        )];
+
+        let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
+
+        assert!(content.contains("waiting for input"), "{content}");
+        assert!(!content.contains("LiveStatus"), "{content}");
+    }
+
+    #[test]
+    fn cockpit_inbox_lists_annotated_tasks_sorted_by_severity() {
+        let mut reviewable = sample_card(
+            "task-review",
+            "web/review",
+            "Review task",
+            UiState::ReviewReady,
+            LifecycleStatus::Reviewable,
+        );
+        reviewable.annotations = vec![Annotation::new(
+            AnnotationKind::Reviewable,
+            Evidence::Lifecycle(LifecycleStatus::Reviewable),
+        )];
+        let mut needs_me = sample_card(
+            "task-needs-me",
+            "web/needs-me",
+            "Needs me",
+            UiState::Blocked,
+            LifecycleStatus::Active,
+        );
+        needs_me.annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput),
+        )];
+
+        let app = App::new(
+            sample_repos(),
+            vec![reviewable, needs_me],
+            InboxResponse { items: vec![] },
+        );
+
+        assert!(matches!(
+            app.selectables.first(),
+            Some(SelectableKind::Inbox(item)) if item.task_handle == "web/needs-me"
+        ));
+        assert!(matches!(
+            app.selectables.get(1),
+            Some(SelectableKind::Inbox(item)) if item.task_handle == "web/review"
+        ));
     }
 
     #[test]
@@ -1154,7 +1268,7 @@ mod tests {
         // Counts strip no longer carries "next X" — the attention line owns it.
         assert!(!content.contains("next web/fix-login"));
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("agent needs input"));
+        assert!(content.contains("needs_input"));
     }
 
     #[test]
@@ -1325,7 +1439,7 @@ mod tests {
             "attention line should name the task"
         );
         assert!(
-            row1.contains("agent needs input"),
+            row1.contains("needs_input"),
             "attention line should carry the reason"
         );
         let danger = buffer[(2, 1)].fg;
@@ -1467,7 +1581,7 @@ mod tests {
     struct NoopHandler;
 
     impl CockpitEventHandler for NoopHandler {
-        fn on_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+        fn on_action(&mut self, _: &CockpitActionItem) -> std::io::Result<ActionOutcome> {
             Ok(ActionOutcome::Message("ignored".to_string()))
         }
     }
@@ -1475,10 +1589,10 @@ mod tests {
     struct DeferHandler;
 
     impl CockpitEventHandler for DeferHandler {
-        fn on_action(&mut self, item: &AttentionItem) -> std::io::Result<ActionOutcome> {
+        fn on_action(&mut self, item: &CockpitActionItem) -> std::io::Result<ActionOutcome> {
             Ok(ActionOutcome::Defer(PendingAction {
                 task_handle: item.task_handle.clone(),
-                recommended_action: item.recommended_action.clone(),
+                action: item.action.clone(),
                 task_title: None,
             }))
         }
@@ -1491,14 +1605,14 @@ mod tests {
     }
 
     impl CockpitEventHandler for ConfirmHandler {
-        fn on_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+        fn on_action(&mut self, _: &CockpitActionItem) -> std::io::Result<ActionOutcome> {
             self.asked += 1;
             Ok(ActionOutcome::Confirm(
                 "press enter again to confirm".to_string(),
             ))
         }
 
-        fn on_confirmed_action(&mut self, _: &AttentionItem) -> std::io::Result<ActionOutcome> {
+        fn on_confirmed_action(&mut self, _: &CockpitActionItem) -> std::io::Result<ActionOutcome> {
             self.confirmed += 1;
             Ok(ActionOutcome::Message("confirmed".to_string()))
         }
@@ -1805,9 +1919,9 @@ mod tests {
         assert!(matches!(
             action,
             EventLoopAction::Pending(PendingAction {
-                recommended_action,
+                action,
                 ..
-            }) if recommended_action == "open task"
+            }) if action == "resume"
         ));
     }
 
@@ -1931,7 +2045,7 @@ mod tests {
         assert!(rendered.contains("Ajax Cockpit"));
         assert!(rendered.contains("Repos: 1"));
         assert!(!rendered.contains("Review:"));
-        assert!(rendered.contains("web/fix-login: agent needs input -> open task"));
+        assert!(rendered.contains("web/fix-login: needs_input -> resume"));
     }
 
     #[test]
@@ -1942,7 +2056,7 @@ mod tests {
         app.select_next();
         app.activate_selected();
         let content = render_to_string(80, 30, &app);
-        let inbox_pos = content.find("agent needs input").unwrap();
+        let inbox_pos = content.find("needs_input").unwrap();
         let task_pos = content.find("blocked").unwrap();
         assert!(inbox_pos < task_pos);
     }
@@ -1972,7 +2086,7 @@ mod tests {
         let app = App::new(repos, sample_tasks(), sample_inbox());
 
         let content = render_to_string(80, 30, &app);
-        let inbox_pos = content.find("agent needs input").unwrap();
+        let inbox_pos = content.find("needs_input").unwrap();
         let autodoctor_pos = content.find("autodoctor").unwrap();
         let autosnooze_pos = content.find("autosnooze").unwrap();
 
@@ -1980,10 +2094,7 @@ mod tests {
         assert!(inbox_pos < autodoctor_pos);
         assert!(inbox_pos < autosnooze_pos);
         // Initial selection is the inbox item.
-        assert_eq!(
-            app.selected_action().unwrap().recommended_action,
-            "open task"
-        );
+        assert_eq!(app.selected_action().unwrap().action, "resume");
     }
 
     #[test]
@@ -2018,13 +2129,13 @@ mod tests {
             }
             app.select_next();
         }
-        // Enter on a Task opens the per-task action menu (default first row = "open task").
+        // Enter on a Task opens the per-task action menu (default first row = "resume").
         assert!(app.activate_selected().is_none());
         assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
+        assert_eq!(item.action, "resume");
     }
 
     #[test]
@@ -2033,12 +2144,12 @@ mod tests {
             sample_repos(),
             sample_tasks(),
             InboxResponse {
-                items: vec![AttentionItem {
+                items: vec![AnnotationItem {
                     task_id: TaskId::new("task-1"),
                     task_handle: "web/fix-login".to_string(),
                     reason: "waiting for input".to_string(),
-                    priority: 6,
-                    recommended_action: "open task".to_string(),
+                    severity: 6,
+                    action: OperatorAction::Resume,
                 }],
             },
         );
@@ -2074,12 +2185,12 @@ mod tests {
             sample_repos(),
             sample_tasks(),
             InboxResponse {
-                items: vec![AttentionItem {
+                items: vec![AnnotationItem {
                     task_id: TaskId::new("task-1"),
                     task_handle: "web/fix-login".to_string(),
                     reason: "waiting for input".to_string(),
-                    priority: 6,
-                    recommended_action: "open task".to_string(),
+                    severity: 6,
+                    action: OperatorAction::Resume,
                 }],
             },
         );
@@ -2354,7 +2465,7 @@ mod tests {
         );
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("> new task"));
+        assert!(content.contains("> start"));
         assert!(content.contains("Task name"));
         assert!(content.contains("<type a task name>"));
         assert!(!content.contains("Task name  x"));
@@ -2388,7 +2499,7 @@ mod tests {
             "q",
             "mouse scroll",
             "mouse click",
-            "new task input",
+            "start input",
         ] {
             assert!(content.contains(expected), "missing {expected}");
         }
@@ -2500,7 +2611,7 @@ mod tests {
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
+        assert_eq!(item.action, "resume");
     }
 
     #[test]
@@ -2526,21 +2637,21 @@ mod tests {
                 if task.qualified_handle == "web/fix-login"
         ));
 
-        // First action in a non-review menu is "open task".
+        // First action in a non-review menu is "resume".
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
+        assert_eq!(item.action, "resume");
 
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("> web/fix-login"));
-        assert!(content.contains("open task"));
-        assert!(!content.contains("merge task"));
-        assert!(!content.contains("clean task"));
+        assert!(content.contains("resume"));
+        assert!(!content.contains("ship"));
+        assert!(!content.contains("drop"));
         for hidden_entry in [
             "diff task",
             "check task",
             "review branch",
-            "open worktrunk",
+            "repair",
             "inspect task",
         ] {
             assert!(
@@ -2584,7 +2695,7 @@ mod tests {
     }
 
     #[test]
-    fn task_action_dispatches_recommended_action_on_enter() {
+    fn task_action_dispatches_action_on_enter() {
         let mut app = app_in_project_view();
         app.select_next();
         app.select_next();
@@ -2593,66 +2704,26 @@ mod tests {
         // All task status rows open the same task action menu.
         let item = app.activate_selected().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
-    }
-
-    #[test]
-    fn task_action_menu_uses_core_action_catalog_labels() {
-        let labels = RecommendedAction::task_picker_menu()
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(
-            labels,
-            vec![
-                RecommendedAction::OpenTask.as_str(),
-                RecommendedAction::MergeTask.as_str(),
-                RecommendedAction::CleanTask.as_str(),
-                RecommendedAction::RemoveTask.as_str(),
-            ]
-        );
-    }
-
-    #[test]
-    fn task_action_menu_uses_only_product_task_actions() {
-        let product_task_actions = RecommendedAction::cockpit_product_actions()
-            .iter()
-            .copied()
-            .filter(|action| {
-                matches!(
-                    action,
-                    RecommendedAction::OpenTask
-                        | RecommendedAction::MergeTask
-                        | RecommendedAction::CleanTask
-                        | RecommendedAction::RemoveTask
-                )
-            })
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-        let task_menu_actions = RecommendedAction::task_picker_menu()
-            .iter()
-            .map(|action| action.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(task_menu_actions, product_task_actions);
-        assert!(!task_menu_actions.contains(&RecommendedAction::OpenTrunk.as_str()));
-        assert!(!task_menu_actions.contains(&"check task"));
-        assert!(!task_menu_actions.contains(&"diff task"));
+        assert_eq!(item.action, "resume");
     }
 
     #[test]
     fn task_picker_actions_have_dedicated_render_metadata() {
-        for action in RecommendedAction::task_picker_menu() {
+        for action in [
+            OperatorAction::Resume,
+            OperatorAction::Review,
+            OperatorAction::Ship,
+            OperatorAction::Drop,
+        ] {
             let chrome = action_chrome(action.as_str());
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
 
-        let open = action_chrome(RecommendedAction::OpenTask.as_str());
+        let open = action_chrome(OperatorAction::Resume.as_str());
         assert_eq!(open.glyph_color, primary_accent());
         assert_eq!(open.label_color, primary_accent());
 
-        let action = RecommendedAction::MergeTask;
+        let action = OperatorAction::Ship;
         let chrome = action_chrome(action.as_str());
         assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
         assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
@@ -2660,7 +2731,7 @@ mod tests {
 
     #[test]
     fn current_core_actions_have_dedicated_render_metadata() {
-        for action in RecommendedAction::all() {
+        for action in OperatorAction::all() {
             let chrome = action_chrome(action.as_str());
 
             assert_ne!(chrome.glyph, ".", "{action:?}");
@@ -2669,7 +2740,7 @@ mod tests {
 
     #[test]
     fn actions_module_exposes_typed_action_chrome() {
-        let chrome = crate::actions::recommended_action_chrome(RecommendedAction::OpenTask);
+        let chrome = crate::actions::operator_action_chrome(OperatorAction::Resume);
 
         assert_eq!(chrome.glyph, ">");
         assert_eq!(chrome.label_color, primary_accent());
@@ -2765,12 +2836,12 @@ mod tests {
     #[test]
     fn enter_on_inbox_row_opens_task_actions_with_recommendation_preselected() {
         let inbox = InboxResponse {
-            items: vec![AttentionItem {
+            items: vec![AnnotationItem {
                 task_id: TaskId::new("task-1"),
                 task_handle: "web/fix-login".to_string(),
                 reason: "agent is running".to_string(),
-                priority: 90,
-                recommended_action: "open task".to_string(),
+                severity: 90,
+                action: OperatorAction::Resume,
             }],
         };
         let mut app = App::new(sample_repos(), sample_tasks(), inbox);
@@ -2784,22 +2855,21 @@ mod tests {
         assert!(matches!(&app.view, AppView::TaskActions { .. }));
 
         let inbox = InboxResponse {
-            items: vec![AttentionItem {
+            items: vec![AnnotationItem {
                 task_id: TaskId::new("task-1"),
                 task_handle: "web/fix-login".to_string(),
                 reason: "review ready".to_string(),
-                priority: 30,
-                recommended_action: "merge task".to_string(),
+                severity: 30,
+                action: OperatorAction::Ship,
             }],
         };
         let mut tasks = sample_tasks();
         tasks[0].lifecycle = LifecycleStatus::Reviewable;
-        tasks[0].available_actions =
-            vec![RecommendedAction::OpenTask, RecommendedAction::MergeTask];
+        tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Ship];
         let mut app = App::new(sample_repos(), tasks, inbox);
         assert!(app.activate_selected().is_none());
         let item = app.selected_action().unwrap();
-        assert_eq!(item.recommended_action, "merge task");
+        assert_eq!(item.action, "ship");
     }
 
     #[test]
@@ -2854,19 +2924,19 @@ mod tests {
         ];
         let inbox = InboxResponse {
             items: vec![
-                AttentionItem {
+                AnnotationItem {
                     task_id: TaskId::new("task-1"),
                     task_handle: "web/fix-login".to_string(),
-                    reason: "agent needs input".to_string(),
-                    priority: 10,
-                    recommended_action: "open task".to_string(),
+                    reason: "needs_input".to_string(),
+                    severity: 10,
+                    action: OperatorAction::Resume,
                 },
-                AttentionItem {
+                AnnotationItem {
                     task_id: TaskId::new("task-2"),
                     task_handle: "api/add-cache".to_string(),
                     reason: "stale task".to_string(),
-                    priority: 60,
-                    recommended_action: "open task".to_string(),
+                    severity: 60,
+                    action: OperatorAction::Resume,
                 },
             ],
         };
@@ -2900,7 +2970,7 @@ mod tests {
         assert!(app.activate_selected().is_none());
 
         let content = render_to_string(80, 30, &app);
-        assert!(content.contains("> new task"));
+        assert!(content.contains("> start"));
         assert!(content.contains("Task name"));
     }
 
@@ -2920,7 +2990,7 @@ mod tests {
         let pending = app.submit_input().unwrap();
 
         assert_eq!(pending.task_handle, "web");
-        assert_eq!(pending.recommended_action, "new task");
+        assert_eq!(pending.action, "start");
         assert_eq!(pending.task_title.as_deref(), Some("Fix"));
     }
 
@@ -2950,7 +3020,7 @@ mod tests {
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
         assert!(!content.contains("> web"));
-        assert!(!content.contains("> new task"));
+        assert!(!content.contains("> start"));
     }
 
     #[test]
@@ -2968,7 +3038,7 @@ mod tests {
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
         assert!(!content.contains("> web"));
-        assert!(!content.contains("> new task"));
+        assert!(!content.contains("> start"));
         assert!(!content.contains("Task name"));
     }
 
@@ -2977,18 +3047,18 @@ mod tests {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("agent needs input"));
-        assert!(content.contains("open task"));
+        assert!(content.contains("needs_input"));
+        assert!(content.contains("resume"));
     }
 
     #[test]
     fn waiting_for_input_inbox_items_use_yellow_chrome() {
-        let item = AttentionItem {
+        let item = AnnotationItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix-login".to_string(),
             reason: "waiting for input".to_string(),
-            priority: 30,
-            recommended_action: "open task".to_string(),
+            severity: 30,
+            action: OperatorAction::Resume,
         };
 
         assert_eq!(inbox_item_accent(&item), secondary_accent());
@@ -3000,7 +3070,7 @@ mod tests {
         let content = render_to_string(50, 24, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("agent needs input"));
+        assert!(content.contains("needs_input"));
     }
 
     #[test]
@@ -3019,10 +3089,7 @@ mod tests {
         assert_eq!(app.selected, 1);
         app.select_next();
         assert_eq!(app.selected, 2);
-        assert_eq!(
-            app.selected_action().unwrap().recommended_action,
-            "open task"
-        );
+        assert_eq!(app.selected_action().unwrap().action, "resume");
         // clamps at last
         app.select_next();
         assert_eq!(app.selected, 2);
@@ -3077,16 +3144,16 @@ mod tests {
             Some(SelectableKind::NewTask { .. })
         ));
         let item = app.selected_action().unwrap();
-        assert_eq!(item.recommended_action, "new task");
+        assert_eq!(item.action, "start");
     }
 
     #[test]
-    fn selected_action_for_inbox_uses_recommended_action() {
+    fn selected_action_for_inbox_uses_action() {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         // Projects view: [inbox, project, NewTask] — inbox is the initial selection.
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
+        assert_eq!(item.action, "resume");
     }
 
     #[test]
@@ -3102,7 +3169,7 @@ mod tests {
         app.select_next();
         let item = app.selected_action().unwrap();
         assert_eq!(item.task_handle, "web/fix-login");
-        assert_eq!(item.recommended_action, "open task");
+        assert_eq!(item.action, "resume");
     }
 
     #[test]
@@ -3116,10 +3183,7 @@ mod tests {
         );
         // Only the project row remains at top level → clamps to it.
         assert_eq!(app.selected, 0);
-        assert_eq!(
-            app.selected_action().unwrap().recommended_action,
-            "select project"
-        );
+        assert_eq!(app.selected_action().unwrap().action, "status");
     }
 
     #[test]
@@ -3143,10 +3207,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(&app.view, AppView::Projects));
-        assert_eq!(
-            app.selected_action().unwrap().recommended_action,
-            "select project"
-        );
+        assert_eq!(app.selected_action().unwrap().action, "status");
     }
 
     #[test]
@@ -3400,12 +3461,12 @@ mod tests {
             .cloned()
             .expect("inbox row maps to task id");
 
-        let confirm_item = AttentionItem {
+        let confirm_item = CockpitActionItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix-login".to_string(),
             reason: "open".to_string(),
             priority: 50,
-            recommended_action: "open task".to_string(),
+            action: "resume".to_string(),
         };
 
         app.notify_task(
@@ -3716,12 +3777,12 @@ mod tests {
     #[test]
     fn view_change_via_go_home_invalidates_pending_confirm() {
         let mut app = app_in_project_view();
-        let confirm_item = AttentionItem {
+        let confirm_item = CockpitActionItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix-login".to_string(),
             reason: "open".to_string(),
             priority: 50,
-            recommended_action: "open task".to_string(),
+            action: "resume".to_string(),
         };
         app.notify_task(
             confirm_item.task_id.clone(),
@@ -3764,7 +3825,7 @@ mod tests {
             .as_bytes()
             .chunks(80)
             .map(|c| std::str::from_utf8(c).unwrap())
-            .find(|line| line.contains("web/fix-login") && line.contains("open task"))
+            .find(|line| line.contains("web/fix-login") && line.contains("resume"))
             .expect("selected inbox feed row should be in the rendered output");
         assert!(
             line.contains(" > "),

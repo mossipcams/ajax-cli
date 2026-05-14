@@ -1,90 +1,144 @@
 use crate::{
     models::{
-        AgentRuntimeStatus, AttentionItem, LifecycleStatus, LiveStatusKind, RecommendedAction,
-        SideFlag, Task, TaskId,
+        AgentRuntimeStatus, Annotation, Evidence, LifecycleStatus, LiveStatusKind, OperatorAction,
+        SideFlag, Task,
     },
     operation::{task_operation_eligibility, TaskOperation},
     ui_state::{derive_ui_state, UiState},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RecommendedActionPlan {
-    pub action: RecommendedAction,
+pub struct OperatorActionPlan {
+    pub action: OperatorAction,
     pub reason: String,
-    pub available_actions: Vec<RecommendedAction>,
+    pub available_actions: Vec<OperatorAction>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NextStep {
-    pub task_id: TaskId,
-    pub task_handle: String,
-    pub ui_state: UiState,
-    pub action: RecommendedAction,
-    pub reason: String,
-}
-
-pub fn recommended_action(task: &Task) -> RecommendedActionPlan {
-    let ui_state = derive_ui_state(task);
-    let action = primary_action_for(ui_state);
-    let reason = match ui_state {
-        UiState::Blocked => primary_blocker_reason(task).unwrap_or("resolve blocker"),
-        UiState::Running => "monitor",
-        UiState::ReviewReady => "review",
-        UiState::SafeMerge => "merge",
-        UiState::Cleanable => "clean",
-        UiState::Idle => "open",
-        UiState::Failed => "recover",
-        UiState::Archived => "remove",
+pub fn operator_action(task: &Task) -> OperatorActionPlan {
+    let derived_annotations;
+    let annotations = if task.annotations.is_empty() {
+        derived_annotations = crate::attention::annotate(task);
+        derived_annotations.as_slice()
+    } else {
+        task.annotations.as_slice()
     };
+    let primary_annotation = annotations
+        .iter()
+        .min_by_key(|annotation| annotation.severity);
+    let action = primary_annotation
+        .map(|annotation| annotation.suggests)
+        .unwrap_or_else(|| fallback_operator_action(task));
+    let reason = primary_annotation
+        .map(annotation_reason)
+        .unwrap_or_else(|| fallback_operator_reason(task).to_string());
 
-    RecommendedActionPlan {
+    OperatorActionPlan {
         action,
-        reason: reason.to_string(),
-        available_actions: available_task_actions(task),
+        reason,
+        available_actions: available_operator_actions(task),
     }
 }
 
-pub fn next_recommendation(tasks: &[Task]) -> Option<NextStep> {
-    let mut best: Option<(u32, NextStep)> = None;
-    for task in tasks {
-        let ui_state = derive_ui_state(task);
-        let Some(rank) = next_rank(ui_state) else {
-            continue;
-        };
-        let plan = recommended_action(task);
-        let candidate = NextStep {
-            task_id: task.id.clone(),
-            task_handle: task.qualified_handle(),
-            ui_state,
-            action: plan.action,
-            reason: plan.reason,
-        };
-        match &best {
-            Some((current_rank, _)) if *current_rank <= rank => {}
-            _ => best = Some((rank, candidate)),
+fn annotation_reason(annotation: &Annotation) -> String {
+    evidence_label(&annotation.evidence).to_string()
+}
+
+pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
+    match evidence {
+        Evidence::LiveStatus(status) => match status {
+            LiveStatusKind::WaitingForApproval => "waiting_for_approval",
+            LiveStatusKind::WaitingForInput => "waiting_for_input",
+            LiveStatusKind::AuthRequired => "auth_required",
+            LiveStatusKind::RateLimited => "rate_limited",
+            LiveStatusKind::ContextLimit => "context_limit",
+            LiveStatusKind::CommandFailed => "command_failed",
+            LiveStatusKind::Blocked => "blocked",
+            LiveStatusKind::WorktreeMissing => "worktree_missing",
+            LiveStatusKind::TmuxMissing => "tmux_missing",
+            LiveStatusKind::WorktrunkMissing => "worktrunk_missing",
+            LiveStatusKind::MergeConflict => "merge_conflict",
+            LiveStatusKind::Done => "done",
+            LiveStatusKind::ShellIdle
+            | LiveStatusKind::CommandRunning
+            | LiveStatusKind::TestsRunning
+            | LiveStatusKind::AgentRunning
+            | LiveStatusKind::CiFailed
+            | LiveStatusKind::Unknown => "live_status",
+        },
+        Evidence::SideFlag(flag) => match flag {
+            SideFlag::Dirty => "dirty",
+            SideFlag::AgentRunning => "agent_running",
+            SideFlag::AgentDead => "agent_dead",
+            SideFlag::NeedsInput => "needs_input",
+            SideFlag::TestsFailed => "tests_failed",
+            SideFlag::TmuxMissing => "tmux_missing",
+            SideFlag::WorktreeMissing => "worktree_missing",
+            SideFlag::WorktrunkMissing => "worktrunk_missing",
+            SideFlag::BranchMissing => "branch_missing",
+            SideFlag::Stale => "stale",
+            SideFlag::Conflicted => "conflicted",
+            SideFlag::Unpushed => "unpushed",
+        },
+        Evidence::Lifecycle(status) => match status {
+            LifecycleStatus::Created => "created",
+            LifecycleStatus::Provisioning => "provisioning",
+            LifecycleStatus::Active => "active",
+            LifecycleStatus::Waiting => "waiting",
+            LifecycleStatus::Reviewable => "reviewable",
+            LifecycleStatus::Mergeable => "mergeable",
+            LifecycleStatus::Merged => "merged",
+            LifecycleStatus::Cleanable => "cleanable",
+            LifecycleStatus::Removed => "removed",
+            LifecycleStatus::Orphaned => "orphaned",
+            LifecycleStatus::Error => "error",
+        },
+        Evidence::Substrate(gap) => match gap {
+            crate::models::SubstrateGap::WorktreeMissing => "worktree_missing",
+            crate::models::SubstrateGap::TmuxMissing => "tmux_missing",
+            crate::models::SubstrateGap::WorktrunkMissing => "worktrunk_missing",
+            crate::models::SubstrateGap::BranchMissing => "branch_missing",
+        },
+    }
+}
+
+fn fallback_operator_action(task: &Task) -> OperatorAction {
+    match derive_ui_state(task) {
+        UiState::SafeMerge => OperatorAction::Ship,
+        UiState::Cleanable | UiState::Archived => OperatorAction::Drop,
+        UiState::ReviewReady => OperatorAction::Review,
+        UiState::Blocked | UiState::Running | UiState::Idle | UiState::Failed => {
+            OperatorAction::Resume
         }
     }
-    best.map(|(_, step)| step)
 }
 
-fn next_rank(state: UiState) -> Option<u32> {
-    match state {
-        UiState::Blocked => Some(0),
-        UiState::SafeMerge => Some(1),
-        UiState::ReviewReady => Some(2),
-        UiState::Cleanable => Some(3),
-        UiState::Failed => Some(4),
-        UiState::Running | UiState::Idle | UiState::Archived => None,
+fn fallback_operator_reason(task: &Task) -> &'static str {
+    match derive_ui_state(task) {
+        UiState::Blocked => primary_blocker_reason(task).unwrap_or("resolve_blocker"),
+        UiState::Running => "monitor",
+        UiState::ReviewReady => "review",
+        UiState::SafeMerge => "ship",
+        UiState::Cleanable => "drop",
+        UiState::Idle => "resume",
+        UiState::Failed => "repair",
+        UiState::Archived => "drop",
     }
 }
 
-fn primary_action_for(state: UiState) -> RecommendedAction {
-    match state {
-        UiState::SafeMerge => RecommendedAction::MergeTask,
-        UiState::Cleanable => RecommendedAction::CleanTask,
-        UiState::Archived => RecommendedAction::RemoveTask,
-        _ => RecommendedAction::OpenTask,
+pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
+    if task.has_missing_substrate() {
+        return vec![OperatorAction::Repair];
     }
+    [
+        (TaskOperation::Open, OperatorAction::Resume),
+        (TaskOperation::Merge, OperatorAction::Ship),
+        (TaskOperation::Clean, OperatorAction::Drop),
+        (TaskOperation::Remove, OperatorAction::Drop),
+    ]
+    .into_iter()
+    .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
+    .map(|(_, action)| action)
+    .collect()
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
@@ -143,49 +197,12 @@ fn blocker_reason_for_live(kind: LiveStatusKind) -> Option<&'static str> {
     }
 }
 
-pub fn available_task_actions(task: &Task) -> Vec<RecommendedAction> {
-    if task.has_side_flag(SideFlag::TmuxMissing) || task.has_side_flag(SideFlag::WorktrunkMissing) {
-        return vec![RecommendedAction::OpenTask];
-    }
-    [
-        (TaskOperation::Open, RecommendedAction::OpenTask),
-        (TaskOperation::Merge, RecommendedAction::MergeTask),
-        (TaskOperation::Clean, RecommendedAction::CleanTask),
-        (TaskOperation::Remove, RecommendedAction::RemoveTask),
-    ]
-    .into_iter()
-    .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
-    .map(|(_, action)| action)
-    .collect()
-}
-
-pub fn opportunity_attention_for(task: &Task) -> Option<AttentionItem> {
-    let state = derive_ui_state(task);
-    let (reason, priority) = match state {
-        UiState::SafeMerge => ("safe to merge", 50_u32),
-        UiState::ReviewReady => ("ready for review", 55_u32),
-        UiState::Cleanable if task.lifecycle_status != LifecycleStatus::Cleanable => {
-            ("safe to clean", 60_u32)
-        }
-        _ => return None,
-    };
-    let action = primary_action_for(state);
-    Some(AttentionItem {
-        task_id: task.id.clone(),
-        task_handle: task.qualified_handle(),
-        reason: reason.to_string(),
-        priority,
-        recommended_action: action.as_str().to_string(),
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{next_recommendation, recommended_action, RecommendedActionPlan};
-    use crate::{
-        lifecycle::{mark_active, mark_cleanable, mark_mergeable, mark_merged, mark_reviewable},
-        models::{AgentClient, AgentRuntimeStatus, RecommendedAction, SideFlag, Task, TaskId},
-        ui_state::UiState,
+    use super::operator_action;
+    use crate::models::{
+        AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, OperatorAction,
+        SideFlag, Task, TaskId,
     };
 
     fn task(handle: &str) -> Task {
@@ -204,104 +221,22 @@ mod tests {
     }
 
     #[test]
-    fn blocked_task_recommends_open_with_blocker_reason() {
-        let mut t = task("blocked");
-        mark_active(&mut t).unwrap();
-        t.add_side_flag(SideFlag::NeedsInput);
+    fn operator_action_uses_lowest_severity_annotation() {
+        let mut t = task("annotated");
+        t.annotations = vec![
+            Annotation::new(
+                AnnotationKind::Reviewable,
+                Evidence::Lifecycle(LifecycleStatus::Reviewable),
+            ),
+            Annotation::new(
+                AnnotationKind::NeedsMe,
+                Evidence::SideFlag(SideFlag::NeedsInput),
+            ),
+        ];
 
-        let plan = recommended_action(&t);
+        let plan = operator_action(&t);
 
-        assert_eq!(plan.action, RecommendedAction::OpenTask);
-        assert_eq!(plan.reason, "agent needs input");
-    }
-
-    #[test]
-    fn mergeable_task_recommends_merge() {
-        let mut t = task("mergeable");
-        mark_active(&mut t).unwrap();
-        mark_reviewable(&mut t).unwrap();
-        mark_mergeable(&mut t).unwrap();
-
-        let plan = recommended_action(&t);
-
-        assert_eq!(plan.action, RecommendedAction::MergeTask);
-        assert_eq!(plan.reason, "merge");
-    }
-
-    #[test]
-    fn cleanable_task_recommends_clean() {
-        let mut t = task("clean");
-        mark_active(&mut t).unwrap();
-        mark_reviewable(&mut t).unwrap();
-        mark_merged(&mut t).unwrap();
-        mark_cleanable(&mut t).unwrap();
-
-        let plan = recommended_action(&t);
-
-        assert_eq!(plan.action, RecommendedAction::CleanTask);
-        assert_eq!(plan.reason, "clean");
-    }
-
-    #[test]
-    fn idle_task_recommends_open() {
-        let mut t = task("idle");
-        mark_active(&mut t).unwrap();
-
-        let plan: RecommendedActionPlan = recommended_action(&t);
-
-        assert_eq!(plan.action, RecommendedAction::OpenTask);
-        assert_eq!(plan.reason, "open");
-    }
-
-    #[test]
-    fn next_recommendation_prefers_blocked_over_other_states() {
-        let mut blocked = task("blocked");
-        mark_active(&mut blocked).unwrap();
-        blocked.add_side_flag(SideFlag::NeedsInput);
-
-        let mut mergeable = task("mergeable");
-        mark_active(&mut mergeable).unwrap();
-        mark_reviewable(&mut mergeable).unwrap();
-        mark_mergeable(&mut mergeable).unwrap();
-
-        let mut cleanable = task("cleanable");
-        mark_active(&mut cleanable).unwrap();
-        mark_reviewable(&mut cleanable).unwrap();
-        mark_merged(&mut cleanable).unwrap();
-        mark_cleanable(&mut cleanable).unwrap();
-
-        let next = next_recommendation(&[cleanable, mergeable, blocked]).unwrap();
-
-        assert_eq!(next.ui_state, UiState::Blocked);
-    }
-
-    #[test]
-    fn next_recommendation_falls_back_to_safe_merge_then_review_then_clean() {
-        let mut mergeable = task("mergeable");
-        mark_active(&mut mergeable).unwrap();
-        mark_reviewable(&mut mergeable).unwrap();
-        mark_mergeable(&mut mergeable).unwrap();
-
-        let mut cleanable = task("cleanable");
-        mark_active(&mut cleanable).unwrap();
-        mark_reviewable(&mut cleanable).unwrap();
-        mark_merged(&mut cleanable).unwrap();
-        mark_cleanable(&mut cleanable).unwrap();
-
-        let next = next_recommendation(&[cleanable.clone(), mergeable]).unwrap();
-        assert_eq!(next.ui_state, UiState::SafeMerge);
-
-        let next = next_recommendation(&[cleanable]).unwrap();
-        assert_eq!(next.ui_state, UiState::Cleanable);
-    }
-
-    #[test]
-    fn next_recommendation_returns_none_when_nothing_actionable() {
-        let mut idle = task("idle");
-        mark_active(&mut idle).unwrap();
-        idle.agent_status = AgentRuntimeStatus::Running;
-        idle.add_side_flag(SideFlag::AgentRunning);
-
-        assert!(next_recommendation(&[idle]).is_none());
+        assert_eq!(plan.action, OperatorAction::Resume);
+        assert_eq!(plan.reason, "needs_input");
     }
 }

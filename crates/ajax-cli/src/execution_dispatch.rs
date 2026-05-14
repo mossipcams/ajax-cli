@@ -26,10 +26,10 @@ pub(crate) fn render_matches_mut(
     runner: &mut impl CommandRunner,
 ) -> Result<RenderedCommand, CliError> {
     match matches.subcommand() {
-        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "review" | "status"), _)) => {
+        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "ready" | "status"), _)) => {
             render_refreshed_read_command(name, matches, context, runner)
         }
-        Some(("new", subcommand)) => {
+        Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
             let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
 
@@ -53,16 +53,13 @@ pub(crate) fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some((
-            name @ ("open" | "trunk" | "check" | "diff" | "merge" | "cleanup" | "clean" | "remove"),
-            subcommand,
-        )) => {
+        Some((name @ ("resume" | "repair" | "review" | "ship" | "drop"), subcommand)) => {
             let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
                 CliError::CommandFailed(format!("unsupported task command: {name}"))
             })?;
             render_task_command(operation, subcommand, context, runner, current_open_mode())
         }
-        Some(("sweep", subcommand)) => {
+        Some(("tidy", subcommand)) => {
             let plan = commands::sweep_cleanup_plan(context);
             let candidates = commands::sweep_cleanup_candidates(context);
             if !subcommand.get_flag("execute") {

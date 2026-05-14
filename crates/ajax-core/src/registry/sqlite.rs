@@ -6,7 +6,8 @@ use std::{
 use rusqlite::{params, Connection, Row, Transaction};
 
 use super::{
-    InMemoryRegistry, RegistryEvent, RegistryEventKind, RegistrySnapshotError, RegistryStore,
+    refresh_task_annotations, InMemoryRegistry, RegistryEvent, RegistryEventKind,
+    RegistrySnapshotError, RegistryStore,
 };
 use crate::lifecycle::hydrate_lifecycle_status;
 use crate::models::{
@@ -131,7 +132,10 @@ impl RegistryStore for SqliteRegistryStore {
         let connection = self.open()?;
         Self::migrate(&connection)?;
 
-        let tasks = load_tasks(&connection)?;
+        let mut tasks = load_tasks(&connection)?;
+        for task in &mut tasks {
+            refresh_task_annotations(task);
+        }
         let events = load_events(&connection)?;
 
         Ok(InMemoryRegistry {

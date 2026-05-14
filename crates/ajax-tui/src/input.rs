@@ -1,7 +1,7 @@
 use crossterm::event::{Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use std::io;
 
-use ajax_core::models::AttentionItem;
+use ajax_core::models::CockpitActionItem;
 
 use crate::{
     cockpit_state::{CockpitSnapshot, Origin, Severity},
@@ -119,7 +119,7 @@ pub(crate) fn handle_refresh_result(
 
 pub(crate) fn handle_action_result(
     app: &mut App,
-    item: &AttentionItem,
+    item: &CockpitActionItem,
     result: io::Result<ActionOutcome>,
 ) -> io::Result<Option<PendingAction>> {
     match result {

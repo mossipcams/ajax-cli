@@ -337,6 +337,10 @@ fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
         name = "web"
         path = "{}"
         default_branch = "main"
+
+        [[test_commands]]
+        repo = "web"
+        command = "cargo test"
         "#,
         repo_path.display()
     ));
@@ -378,7 +382,7 @@ fn live_cockpit_json_refreshes_recorded_state_from_tmux_without_repair() {
         .any(|item| {
             item["reason"]
                 .as_str()
-                .is_some_and(|reason| reason == "waiting for approval")
+                .is_some_and(|reason| reason == "waiting_for_approval")
         }));
 }
 
@@ -429,14 +433,13 @@ fn live_help_exposes_the_scriptable_command_surface() {
         "repos",
         "tasks",
         "inspect",
-        "new",
-        "open",
-        "trunk",
-        "check",
-        "diff",
-        "merge",
-        "clean",
-        "sweep",
+        "start",
+        "resume",
+        "repair",
+        "review",
+        "ship",
+        "drop",
+        "tidy",
         "next",
         "inbox",
         "review",
@@ -454,6 +457,29 @@ fn live_help_exposes_the_scriptable_command_surface() {
         !stdout.contains("reconcile"),
         "ajax --help should not list removed reconcile command:\n{stdout}"
     );
+}
+
+#[test]
+fn ajax_parses_new_operator_verbs() {
+    let home = IsolatedAjaxHome::new("operator-verbs-help");
+
+    for command in [
+        "start", "resume", "review", "ship", "drop", "repair", "tidy", "ready",
+    ] {
+        let output = home.ajax([command, "--help"]);
+
+        assert!(
+            output.status.success(),
+            "ajax {command} --help should succeed, stderr:\n{}",
+            stderr(&output)
+        );
+        assert_eq!(stderr(&output), "");
+        assert!(
+            stdout(&output).contains(command),
+            "ajax {command} --help should mention the command in:\n{}",
+            stdout(&output)
+        );
+    }
 }
 
 #[test]
@@ -492,12 +518,16 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         name = "web"
         path = "{}"
         default_branch = "main"
+
+        [[test_commands]]
+        repo = "web"
+        command = "cargo test"
         "#,
         repo_path.display()
     ));
 
     let output = home.ajax_with_fake_tools([
-        "new",
+        "start",
         "--repo",
         "web",
         "--title",
@@ -509,7 +539,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
 
     assert!(
         output.status.success(),
-        "ajax new --execute should succeed, stderr:\n{}",
+        "ajax start --execute should succeed, stderr:\n{}",
         stderr(&output)
     );
     assert_eq!(stderr(&output), "");
@@ -543,7 +573,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     );
     assert!(
         home.state_file().exists(),
-        "ajax new --execute should create SQLite state at {}",
+        "ajax start --execute should create SQLite state at {}",
         home.state_file().display()
     );
 
@@ -573,6 +603,155 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
 }
 
 #[test]
+fn ajax_start_creates_task_like_new() {
+    let home = IsolatedAjaxHome::new("start-execute");
+    let repo_path = home.create_managed_repo("web");
+    home.install_fake_native_lifecycle_tools();
+    home.write_config(&format!(
+        r#"
+        [[repos]]
+        name = "web"
+        path = "{}"
+        default_branch = "main"
+        "#,
+        repo_path.display()
+    ));
+
+    let output = home.ajax_with_fake_tools([
+        "start",
+        "--repo",
+        "web",
+        "--title",
+        "Fix Login!",
+        "--agent",
+        "codex",
+        "--execute",
+    ]);
+
+    assert!(
+        output.status.success(),
+        "ajax start --execute should succeed, stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).contains("recorded task: web/fix-login"));
+}
+
+#[test]
+fn ajax_resume_dispatches_like_open() {
+    assert_task_verb_succeeds("resume");
+}
+
+#[test]
+fn ajax_review_dispatches_like_diff() {
+    assert_task_verb_succeeds("review");
+}
+
+#[test]
+fn ajax_ship_dispatches_like_merge() {
+    assert_task_verb_succeeds("ship");
+}
+
+#[test]
+fn ajax_drop_dispatches_like_clean() {
+    assert_task_verb_succeeds("drop");
+}
+
+#[test]
+fn ajax_repair_dispatches_like_check() {
+    assert_task_verb_succeeds("repair");
+}
+
+#[test]
+fn ajax_tidy_dispatches_like_sweep() {
+    let home = home_with_seeded_reviewable_task("tidy-dispatch");
+
+    let output = home.ajax(["tidy", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "ajax tidy --json should dispatch like sweep, stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).contains("commands"));
+}
+
+#[test]
+fn ajax_ready_dispatches_like_review() {
+    let home = home_with_seeded_reviewable_task("ready-dispatch");
+
+    let output = home.ajax(["ready", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "ajax ready --json should dispatch like review list, stderr:\n{}",
+        stderr(&output)
+    );
+    let body: Value =
+        serde_json::from_str(&stdout(&output)).expect("ajax ready --json should emit JSON");
+    assert_eq!(body["tasks"][0]["qualified_handle"], "web/fix-login");
+}
+
+#[test]
+fn ajax_rejects_old_verbs() {
+    let home = home_with_seeded_reviewable_task("reject-old-verbs");
+
+    for args in [
+        vec!["new", "--help"],
+        vec!["open", "web/fix-login"],
+        vec!["trunk", "web/fix-login"],
+        vec!["check", "web/fix-login"],
+        vec!["diff", "web/fix-login"],
+        vec!["merge", "web/fix-login"],
+        vec!["clean", "web/fix-login"],
+        vec!["cleanup", "web/fix-login"],
+        vec!["remove", "web/fix-login"],
+        vec!["sweep"],
+        vec!["review", "--json"],
+    ] {
+        let output = home.ajax(args.clone());
+
+        assert!(
+            !output.status.success(),
+            "ajax {} should reject the old verb",
+            args.join(" ")
+        );
+    }
+}
+
+fn assert_task_verb_succeeds(command: &str) {
+    let home = home_with_seeded_reviewable_task(command);
+
+    let output = home.ajax([command, "web/fix-login", "--json"]);
+
+    assert!(
+        output.status.success(),
+        "ajax {command} web/fix-login --json should succeed, stderr:\n{}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).contains("web/fix-login"));
+}
+
+fn home_with_seeded_reviewable_task(test_name: &str) -> IsolatedAjaxHome {
+    let home = IsolatedAjaxHome::new(test_name);
+    let repo_path = home.create_managed_repo("web");
+    home.write_config(&format!(
+        r#"
+        [[repos]]
+        name = "web"
+        path = "{}"
+        default_branch = "main"
+
+        [[test_commands]]
+        repo = "web"
+        command = "cargo test"
+        "#,
+        repo_path.display()
+    ));
+    home.seed_risky_reviewable_task("web", &repo_path);
+    home
+}
+
+#[test]
 fn live_new_execute_requires_title_before_lifecycle_tools_can_run() {
     let home = IsolatedAjaxHome::new("new-execute-missing-title");
     let repo_path = home.create_managed_repo("web");
@@ -587,11 +766,11 @@ fn live_new_execute_requires_title_before_lifecycle_tools_can_run() {
         repo_path.display()
     ));
 
-    let output = home.ajax_with_fake_tools(["new", "--repo", "web", "--execute"]);
+    let output = home.ajax_with_fake_tools(["start", "--repo", "web", "--execute"]);
 
     assert!(
         !output.status.success(),
-        "ajax new --execute without a title should fail"
+        "ajax start --execute without a title should fail"
     );
     assert_eq!(stdout(&output), "");
     assert_eq!(stderr(&output), "task title is required; pass --title\n");
@@ -622,11 +801,11 @@ fn live_merge_execute_requires_yes_before_running_git_and_persists_success() {
     ));
     home.seed_risky_reviewable_task("web", &repo_path);
 
-    let rejected = home.ajax_with_fake_tools(["merge", "web/fix-login", "--execute"]);
+    let rejected = home.ajax_with_fake_tools(["ship", "web/fix-login", "--execute"]);
 
     assert!(
         !rejected.status.success(),
-        "ajax merge --execute should fail without --yes for risky task"
+        "ajax ship --execute should fail without --yes for risky task"
     );
     assert_eq!(stdout(&rejected), "");
     assert!(
@@ -639,11 +818,11 @@ fn live_merge_execute_requires_yes_before_running_git_and_persists_success() {
         "git should not run before confirmation"
     );
 
-    let merged = home.ajax_with_fake_tools(["merge", "web/fix-login", "--execute", "--yes"]);
+    let merged = home.ajax_with_fake_tools(["ship", "web/fix-login", "--execute", "--yes"]);
 
     assert!(
         merged.status.success(),
-        "ajax merge --execute --yes should succeed, stderr:\n{}",
+        "ajax ship --execute --yes should succeed, stderr:\n{}",
         stderr(&merged)
     );
     assert_eq!(stderr(&merged), "");

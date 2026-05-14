@@ -1,7 +1,7 @@
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
-    models::RecommendedAction,
+    models::OperatorAction,
     registry::InMemoryRegistry,
 };
 
@@ -40,7 +40,7 @@ pub(crate) fn handle_pending_cockpit_result(
 }
 
 pub(crate) fn tui_cockpit_action<R: CommandRunner>(
-    item: &ajax_core::models::AttentionItem,
+    item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
@@ -49,7 +49,7 @@ pub(crate) fn tui_cockpit_action<R: CommandRunner>(
 }
 
 pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
-    item: &ajax_core::models::AttentionItem,
+    item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
@@ -58,36 +58,33 @@ pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
 }
 
 fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
-    item: &ajax_core::models::AttentionItem,
+    item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
     confirmed: bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
-    let action = RecommendedAction::from_label(item.recommended_action.as_str());
+    let action = OperatorAction::from_label(item.action.as_str());
 
-    if let Some(operation) = action.and_then(TaskCommandOperation::from_recommended_action) {
-        if matches!(
-            operation,
-            TaskCommandOperation::Cleanup
-                | TaskCommandOperation::Clean
-                | TaskCommandOperation::Remove
-        ) {
+    if let Some(operation) = action.and_then(operation_from_operator_action) {
+        if operation == TaskCommandOperation::Drop {
             let plan = operation
                 .plan(context, handle)
                 .map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
                 return Ok(ajax_tui::ActionOutcome::Confirm(format!(
                     "press enter again to confirm {}",
-                    item.recommended_action
+                    item.action
                 )));
             }
             commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
-            let changed = operation
-                .apply_after_execute(context, handle)
-                .map_err(command_error_as_io)?;
-            *state_changed |= changed;
+            if plan.title.starts_with("remove task:") {
+                commands::mark_task_force_removed(context, handle).map_err(command_error_as_io)?;
+            } else {
+                commands::mark_task_removed(context, handle).map_err(command_error_as_io)?;
+            }
+            *state_changed = true;
             return Ok(ajax_tui::ActionOutcome::Refresh(build_cockpit_snapshot(
                 context,
             )));
@@ -95,16 +92,16 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
 
         return Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
-            recommended_action: item.recommended_action.clone(),
+            action: item.action.clone(),
             task_title: None,
         }));
     }
 
     match action {
-        Some(RecommendedAction::NewTask) => Ok(ajax_tui::ActionOutcome::Message(
-            "select a project, then choose new task to enter a task name".to_string(),
+        Some(OperatorAction::Start) => Ok(ajax_tui::ActionOutcome::Message(
+            "select a project, then choose start task to enter a task name".to_string(),
         )),
-        Some(RecommendedAction::Status) => {
+        None if item.action == "status" => {
             let task_count = commands::list_tasks(context, Some(handle)).tasks.len();
             Ok(ajax_tui::ActionOutcome::Message(format!(
                 "{handle}: {task_count} task(s)"
@@ -116,7 +113,7 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
         ))),
         None => Ok(ajax_tui::ActionOutcome::Message(format!(
             "cockpit action is not configured: {}",
-            item.recommended_action
+            item.action
         ))),
     }
 }
@@ -154,10 +151,10 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     state_changed: &mut bool,
     open_mode: commands::OpenMode,
 ) -> Result<PendingCockpitOutcome, CliError> {
-    if pending.recommended_action == RecommendedAction::NewTask.as_str() {
+    if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
             CliError::CommandFailed(
-                "new task title is required before cockpit can create the task".to_string(),
+                "start task title is required before cockpit can create the task".to_string(),
             )
         })?;
         let request = commands::NewTaskRequest {
@@ -181,26 +178,13 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
         )));
     }
 
-    let action = RecommendedAction::from_label(pending.recommended_action.as_str());
-    let operation = match action {
-        Some(action) => TaskCommandOperation::from_recommended_action(action),
-        None => None,
-    };
+    let action = OperatorAction::from_label(pending.action.as_str());
+    let operation = action.and_then(operation_from_operator_action);
     let Some(operation) = operation else {
-        match action {
-            Some(
-                RecommendedAction::NewTask
-                | RecommendedAction::SelectProject
-                | RecommendedAction::Status,
-            )
-            | None => {
-                return Err(CliError::CommandFailed(format!(
-                    "unknown cockpit action: {}",
-                    pending.recommended_action
-                )));
-            }
-            Some(_) => unreachable!("task actions are mapped by TaskCommandOperation"),
-        }
+        return Err(CliError::CommandFailed(format!(
+            "unknown cockpit action: {}",
+            pending.action
+        )));
     };
     let plan = operation
         .plan_with_open_mode(context, &pending.task_handle, open_mode)
@@ -217,4 +201,15 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
         &outputs, None,
     )))
+}
+
+fn operation_from_operator_action(action: OperatorAction) -> Option<TaskCommandOperation> {
+    match action {
+        OperatorAction::Start => None,
+        OperatorAction::Resume => Some(TaskCommandOperation::Open),
+        OperatorAction::Review => Some(TaskCommandOperation::Diff),
+        OperatorAction::Ship => Some(TaskCommandOperation::Merge),
+        OperatorAction::Drop => Some(TaskCommandOperation::Drop),
+        OperatorAction::Repair => Some(TaskCommandOperation::Repair),
+    }
 }

@@ -322,7 +322,7 @@ fn create_active_web_task(sandbox: &SmokeSandbox) {
 
 fn create_task(sandbox: &SmokeSandbox, repo: &str, title: &str) {
     let output = sandbox.ajax([
-        "new",
+        "start",
         "--repo",
         repo,
         "--title",
@@ -331,13 +331,13 @@ fn create_task(sandbox: &SmokeSandbox, repo: &str, title: &str) {
         "codex",
         "--execute",
     ]);
-    assert_success(&output, "ajax new --execute");
+    assert_success(&output, "ajax start --execute");
 }
 
 fn create_failing_task(sandbox: &SmokeSandbox, repo: &str, title: &str) {
     let output = sandbox.ajax_with_env(
         [
-            "new",
+            "start",
             "--repo",
             repo,
             "--title",
@@ -350,7 +350,7 @@ fn create_failing_task(sandbox: &SmokeSandbox, repo: &str, title: &str) {
     );
     assert!(
         !output.status.success(),
-        "ajax new should fail for simulated partial creation"
+        "ajax start should fail for simulated partial creation"
     );
 }
 
@@ -444,7 +444,7 @@ fn smoke_new_plan_has_no_side_effects() {
 
     let plan = assert_json(
         &sandbox.ajax([
-            "new",
+            "start",
             "--repo",
             "web",
             "--title",
@@ -453,7 +453,7 @@ fn smoke_new_plan_has_no_side_effects() {
             "codex",
             "--json",
         ]),
-        "ajax new --json",
+        "ajax start --json",
     );
 
     assert_eq!(plan["title"], "create task: fix login");
@@ -549,10 +549,10 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
     create_active_web_task(&sandbox);
 
     for command in [
-        ["open", "web/fix-login", "--execute"],
-        ["trunk", "web/fix-login", "--execute"],
-        ["open", "web/fix-login", "--execute"],
-        ["trunk", "web/fix-login", "--execute"],
+        ["resume", "web/fix-login", "--execute"],
+        ["repair", "web/fix-login", "--execute"],
+        ["resume", "web/fix-login", "--execute"],
+        ["repair", "web/fix-login", "--execute"],
     ] {
         let output = sandbox.ajax(command);
         assert_success(&output, &format!("ajax {}", command.join(" ")));
@@ -620,7 +620,7 @@ fn smoke_supervise_completion_makes_task_reviewable() {
     assert_eq!(tasks["tasks"][0]["qualified_handle"], "web/fix-login");
     assert_eq!(tasks["tasks"][0]["lifecycle_status"], "Reviewable");
 
-    let review = assert_json(&sandbox.ajax(["review", "--json"]), "ajax review --json");
+    let review = assert_json(&sandbox.ajax(["ready", "--json"]), "ajax ready --json");
     assert_eq!(review["tasks"][0]["qualified_handle"], "web/fix-login");
 
     let next = assert_json(&sandbox.ajax(["next", "--json"]), "ajax next --json");
@@ -651,15 +651,15 @@ fn smoke_merge_and_clean_completed_task() {
         .join("web__worktrees/ajax-fix-login");
     complete_web_task_to_reviewable(&sandbox);
 
-    let check = sandbox.ajax(["check", "web/fix-login", "--execute"]);
-    assert_success(&check, "ajax check --execute");
+    let check = sandbox.ajax(["repair", "web/fix-login", "--execute"]);
+    assert_success(&check, "ajax repair --execute");
     assert!(
         sandbox.command_log().contains("checked"),
         "check should run the configured test command"
     );
 
-    let diff = sandbox.ajax(["diff", "web/fix-login", "--execute"]);
-    assert_success(&diff, "ajax diff --execute");
+    let diff = sandbox.ajax(["review", "web/fix-login", "--execute"]);
+    assert_success(&diff, "ajax review --execute");
     assert!(
         stdout(&diff).contains("smoke.rs | 1 +"),
         "diff should render fake git diff output:\n{}",
@@ -667,8 +667,8 @@ fn smoke_merge_and_clean_completed_task() {
     );
 
     let merge_plan = assert_json(
-        &sandbox.ajax(["merge", "web/fix-login", "--json"]),
-        "ajax merge --json",
+        &sandbox.ajax(["ship", "web/fix-login", "--json"]),
+        "ajax ship --json",
     );
     assert_eq!(merge_plan["title"], "merge task: web/fix-login");
     assert!(merge_plan["commands"]
@@ -678,8 +678,8 @@ fn smoke_merge_and_clean_completed_task() {
         .any(|command| command["program"] == "git"));
     let log_before_merge = sandbox.command_log();
 
-    let merge = sandbox.ajax(["merge", "web/fix-login", "--execute", "--yes"]);
-    assert_success(&merge, "ajax merge --execute --yes");
+    let merge = sandbox.ajax(["ship", "web/fix-login", "--execute", "--yes"]);
+    assert_success(&merge, "ajax ship --execute --yes");
     let tasks = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
     assert_eq!(tasks["tasks"][0]["qualified_handle"], "web/fix-login");
     assert_eq!(tasks["tasks"][0]["lifecycle_status"], "Merged");
@@ -701,16 +701,16 @@ fn smoke_merge_and_clean_completed_task() {
         repo.display()
     )));
 
-    let clean_plan = sandbox.ajax(["clean", "web/fix-login"]);
-    assert_success(&clean_plan, "ajax clean plan");
+    let clean_plan = sandbox.ajax(["drop", "web/fix-login"]);
+    assert_success(&clean_plan, "ajax drop plan");
     assert!(
         stdout(&clean_plan).contains("clean task: web/fix-login"),
         "clean should return a cleanup plan before execution"
     );
     let log_before_clean = sandbox.command_log();
 
-    let clean = sandbox.ajax(["clean", "web/fix-login", "--execute", "--yes"]);
-    assert_success(&clean, "ajax clean --execute --yes");
+    let clean = sandbox.ajax(["drop", "web/fix-login", "--execute", "--yes"]);
+    assert_success(&clean, "ajax drop --execute --yes");
     let log_after_clean = sandbox.command_log();
     assert_ne!(
         log_before_clean, log_after_clean,
@@ -755,7 +755,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
 
     let failed = sandbox.ajax_with_env(
         [
-            "new",
+            "start",
             "--repo",
             "web",
             "--title",
@@ -768,7 +768,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     );
     assert!(
         !failed.status.success(),
-        "ajax new should fail when tmux provisioning fails"
+        "ajax start should fail when tmux provisioning fails"
     );
     assert!(
         stderr(&failed).contains("simulated tmux startup failure"),
@@ -883,12 +883,12 @@ fn smoke_cockpit_tracks_cli_workflow() {
     assert_success(&supervise, "ajax supervise --task --json");
     assert_cockpit_matches_tasks(&sandbox, Some("Reviewable"));
 
-    let merge = sandbox.ajax(["merge", "web/fix-login", "--execute", "--yes"]);
-    assert_success(&merge, "ajax merge --execute --yes");
+    let merge = sandbox.ajax(["ship", "web/fix-login", "--execute", "--yes"]);
+    assert_success(&merge, "ajax ship --execute --yes");
     assert_cockpit_matches_tasks(&sandbox, Some("Merged"));
 
-    let clean = sandbox.ajax(["clean", "web/fix-login", "--execute", "--yes"]);
-    assert_success(&clean, "ajax clean --execute --yes");
+    let clean = sandbox.ajax(["drop", "web/fix-login", "--execute", "--yes"]);
+    assert_success(&clean, "ajax drop --execute --yes");
     assert_cockpit_matches_tasks(&sandbox, None);
 }
 
@@ -933,7 +933,7 @@ fn smoke_multi_repo_attention_routing() {
         .any(|task| task["qualified_handle"] == "api/break-cache"
             && task["lifecycle_status"] == "Error"));
 
-    let review = assert_json(&sandbox.ajax(["review", "--json"]), "ajax review --json");
+    let review = assert_json(&sandbox.ajax(["ready", "--json"]), "ajax ready --json");
     assert_eq!(review["tasks"].as_array().unwrap().len(), 1);
     assert_eq!(review["tasks"][0]["qualified_handle"], "api/add-search");
 
@@ -970,21 +970,21 @@ fn smoke_destructive_commands_require_confirmation() {
     sandbox.write_config(&["web"]);
     complete_web_task_to_reviewable(&sandbox);
 
-    let merge_without_yes = sandbox.ajax(["merge", "web/fix-login", "--execute"]);
+    let merge_without_yes = sandbox.ajax(["ship", "web/fix-login", "--execute"]);
     assert_success(
         &merge_without_yes,
-        "safe ajax merge --execute without explicit --yes",
+        "safe ajax ship --execute without explicit --yes",
     );
 
-    let clean_without_yes = sandbox.ajax(["clean", "web/fix-login", "--execute"]);
+    let clean_without_yes = sandbox.ajax(["drop", "web/fix-login", "--execute"]);
     assert_success(
         &clean_without_yes,
-        "safe ajax clean --execute without explicit --yes",
+        "safe ajax drop --execute without explicit --yes",
     );
 
     create_active_web_task(&sandbox);
     let before_remove = sandbox.command_log();
-    let remove_without_yes = sandbox.ajax(["remove", "web/fix-login", "--execute"]);
+    let remove_without_yes = sandbox.ajax(["drop", "web/fix-login", "--execute"]);
     assert!(
         !remove_without_yes.status.success(),
         "remove --execute should require explicit --yes"
@@ -1000,8 +1000,8 @@ fn smoke_destructive_commands_require_confirmation() {
         "remove without --yes must not run external commands"
     );
 
-    let remove = sandbox.ajax(["remove", "web/fix-login", "--execute", "--yes"]);
-    assert_success(&remove, "ajax remove --execute --yes");
+    let remove = sandbox.ajax(["drop", "web/fix-login", "--execute", "--yes"]);
+    assert_success(&remove, "ajax drop --execute --yes");
     let tasks = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
     assert_eq!(tasks["tasks"], Value::Array(vec![]));
 }
