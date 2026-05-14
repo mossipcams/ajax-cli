@@ -237,113 +237,27 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    frame.render_widget(Paragraph::new(Line::from(parts)), area);
-}
-
-fn render_counts_strip(frame: &mut Frame, app: &App, area: Rect) {
-    let dot_sep = || Span::styled(" - ", Style::default().fg(subtle_text()));
-    let mut parts: Vec<Span<'static>> = vec![Span::raw(" ")];
-
-    parts.push(Span::styled(
-        format!("{} repos", app.repos.repos.len()),
-        Style::default().fg(secondary_accent()),
-    ));
-    parts.push(dot_sep());
-    parts.push(Span::styled(
-        format!("{} tasks", app.cards.len()),
-        Style::default().fg(primary_accent()),
-    ));
-    if !app.inbox.items.is_empty() {
-        parts.push(dot_sep());
+    if matches!(app.view, AppView::Projects) {
+        let right_text = format!("{} repos", app.repos.repos.len());
+        let left_width: usize = parts.iter().map(|s| s.content.chars().count()).sum();
+        let right_width = right_text.chars().count();
+        let pad = (area.width as usize)
+            .saturating_sub(left_width + right_width)
+            .saturating_sub(1);
+        parts.push(Span::raw(" ".repeat(pad)));
         parts.push(Span::styled(
-            format!("{} inbox", app.inbox.items.len()),
-            Style::default()
-                .fg(danger_accent())
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let reviewable_tasks: u32 = app
-        .repos
-        .repos
-        .iter()
-        .map(|repo| repo.reviewable_tasks)
-        .sum();
-    if reviewable_tasks > 0 {
-        parts.push(dot_sep());
-        parts.push(Span::styled(
-            format!("{reviewable_tasks} review"),
-            Style::default()
-                .fg(secondary_accent())
-                .add_modifier(Modifier::BOLD),
-        ));
-    }
-    let cleanable_tasks: u32 = app
-        .repos
-        .repos
-        .iter()
-        .map(|repo| repo.cleanable_tasks)
-        .sum();
-    if cleanable_tasks > 0 {
-        parts.push(dot_sep());
-        parts.push(Span::styled(
-            format!("{cleanable_tasks} clean"),
-            Style::default()
-                .fg(danger_accent())
-                .add_modifier(Modifier::BOLD),
+            right_text,
+            Style::default().fg(secondary_accent()),
         ));
     }
 
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
-}
-
-/// Show the counts strip only on the Projects view; subviews drop it to
-/// preserve vertical space for the feed.
-pub(crate) fn show_counts_strip(view: &AppView) -> bool {
-    matches!(view, AppView::Projects)
-}
-
-/// Show the persistent attention line when the inbox has work for the
-/// current view's scope.
-pub(crate) fn show_attention_line(app: &App) -> bool {
-    if !matches!(app.view, AppView::Projects | AppView::Project { .. }) {
-        return false;
-    }
-    current_attention_item(app).is_some()
-}
-
-fn current_attention_item(app: &App) -> Option<&AnnotationItem> {
-    match &app.view {
-        AppView::Project { repo } => {
-            app.inbox.items.iter().find(|item| {
-                cockpit_state::task_handle_repo(&item.task_handle) == Some(repo.as_str())
-            })
-        }
-        _ => app.inbox.items.first(),
-    }
-}
-
-fn render_attention_line(frame: &mut Frame, app: &App, area: Rect) {
-    let Some(item) = current_attention_item(app) else {
-        return;
-    };
-    let style = Style::default()
-        .fg(danger_accent())
-        .add_modifier(Modifier::BOLD);
-    let text = format!(" ! {}: {}", item.task_handle, item.reason);
-    frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
 /// Screen row at which the feed starts. Mouse handling must use this to map
 /// terminal rows back to feed-internal coordinates.
-pub(crate) fn feed_top_row(app: &App) -> usize {
-    let mut top = 1; // breadcrumb
-    if show_attention_line(app) {
-        top += 1;
-    }
-    if show_counts_strip(&app.view) {
-        top += 1;
-    }
-    top
+pub(crate) fn feed_top_row(_app: &App) -> usize {
+    1 // breadcrumb only; counts moved into the header
 }
 
 pub(crate) fn show_notice_row(app: &App) -> bool {
@@ -461,10 +375,15 @@ fn section_header_label(group: &str) -> &'static str {
     }
 }
 
-fn section_header_row(group: &str) -> ListItem<'static> {
+fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
     let label = section_header_label(group);
+    let count_suffix = if group == "hot" {
+        format!(" ({})", app.inbox.items.len())
+    } else {
+        String::new()
+    };
     ListItem::new(Line::from(vec![Span::styled(
-        format!("   -- {label} --"),
+        format!("   -- {label}{count_suffix} --"),
         Style::default().fg(subtle_text()),
     )]))
 }
@@ -497,7 +416,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
     match evidence {
         Evidence::LiveStatus(status) => match status {
             LiveStatusKind::WaitingForApproval => "waiting for approval",
-            LiveStatusKind::WaitingForInput => "waiting for input",
+            LiveStatusKind::WaitingForInput => "needs input",
             LiveStatusKind::AuthRequired => "auth required",
             LiveStatusKind::RateLimited => "rate limited",
             LiveStatusKind::ContextLimit => "context limit",
@@ -560,7 +479,7 @@ fn project_glyph(repo: &RepoSummary) -> Span<'static> {
                 .add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled(".", Style::default().fg(subtle_text()))
+        Span::raw(" ")
     }
 }
 
@@ -609,7 +528,12 @@ fn project_subtitle(repo: &RepoSummary) -> String {
         parts.push(format!("{} active", repo.active_tasks));
     }
     if repo.attention_items > 0 {
-        parts.push(format!("{} attention", repo.attention_items));
+        let verb = if repo.attention_items == 1 {
+            "needs"
+        } else {
+            "need"
+        };
+        parts.push(format!("{} {verb} you", repo.attention_items));
     }
     if repo.reviewable_tasks > 0 {
         parts.push(format!("{} review", repo.reviewable_tasks));
@@ -685,21 +609,23 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
             let _ = arrow;
-            let chrome = crate::actions::operator_action_chrome(item.action);
+            let (repo, task_id) = item
+                .task_handle
+                .split_once('/')
+                .unwrap_or((item.task_handle.as_str(), ""));
             render_row(
                 is_selected,
                 inbox_glyph(accent),
                 vec![
                     Span::styled(
-                        format!("{:<28}", item.task_handle),
+                        format!("{repo:<16}"),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
-                    Span::styled(format!("{:<36}", item.reason), Style::default().fg(accent)),
                     Span::styled(
-                        format!("{:>8}  ", title_case(item.action.as_str())),
-                        chrome.label_style(),
+                        format!("{task_id:<18}"),
+                        Style::default().fg(accent).add_modifier(bold),
                     ),
-                    Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
+                    Span::styled(item.reason.clone(), Style::default().fg(accent)),
                 ],
             )
         }
@@ -812,10 +738,8 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
         let group = group_of(selectable);
-        if let Some(prev) = prev_group {
-            if prev != group {
-                rows.push(section_header_row(group));
-            }
+        if prev_group != Some(group) {
+            rows.push(section_header_row(group, app));
         }
         sel_to_row.push(rows.len());
         rows.push(render_selectable(selectable, app.selected == idx));
@@ -1044,7 +968,7 @@ mod tests {
         };
 
         assert_eq!(project_glyph(&active_repo).content.as_ref(), "*");
-        assert_eq!(project_glyph(&idle_repo).content.as_ref(), ".");
+        assert_eq!(project_glyph(&idle_repo).content.as_ref(), " ");
         assert_eq!(project_name_color(&active_repo), primary_accent());
         assert_eq!(project_name_color(&idle_repo), muted_text());
         assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
@@ -1100,7 +1024,7 @@ mod tests {
         assert_eq!(project_subtitle(&idle), "idle");
         assert_eq!(
             project_subtitle(&busy),
-            "1 active - 2 attention - 3 review - 4 clean"
+            "1 active - 2 need you - 3 review - 4 clean"
         );
     }
 
@@ -1323,8 +1247,35 @@ mod tests {
 
         let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-        assert!(content.contains("waiting for input"), "{content}");
+        assert!(content.contains("needs input"), "{content}");
         assert!(!content.contains("LiveStatus"), "{content}");
+    }
+
+    #[rstest]
+    #[case(Evidence::SideFlag(ajax_core::models::SideFlag::NeedsInput))]
+    #[case(Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput))]
+    fn evidence_label_collapses_needs_input_variants(#[case] evidence: Evidence) {
+        assert_eq!(crate::evidence_label(&evidence), "needs input");
+    }
+
+    #[test]
+    fn inbox_section_renders_labeled_header_with_count() {
+        let inbox = InboxResponse {
+            items: (0..3)
+                .map(|i| AnnotationItem {
+                    task_id: TaskId::new(format!("t{i}").as_str()),
+                    task_handle: format!("web/task-{i}"),
+                    reason: "needs input".to_string(),
+                    severity: 30,
+                    action: OperatorAction::Resume,
+                })
+                .collect(),
+        };
+        let app = App::new(sample_repos(), sample_tasks(), inbox);
+
+        let content = render_to_string(80, 30, &app);
+
+        assert!(content.contains("-- inbox (3) --"), "{content}");
     }
 
     #[test]
@@ -1335,7 +1286,19 @@ mod tests {
             AnnotationKind::Reviewable,
             Evidence::Lifecycle(LifecycleStatus::Reviewable),
         )];
-        let app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        // Drill into the project so the Task row renders (top-level promotes
+        // annotated cards to the inbox, which has its own minimal layout).
+        while !matches!(app.view, AppView::Project { .. }) {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Project(_))
+            ) {
+                app.activate_selected();
+            } else {
+                app.select_next();
+            }
+        }
 
         let content = render_to_string(80, 30, &app);
 
@@ -1408,19 +1371,110 @@ mod tests {
 
         let content = render_to_string(80, 30, &app);
 
-        assert!(content.contains("1 active - 1 attention - 1 review - 1 clean"));
+        assert!(content.contains("1 active - 1 needs you - 1 review - 1 clean"));
+    }
+
+    #[rstest]
+    #[case(1, "1 needs you")]
+    #[case(2, "2 need you")]
+    fn project_subtitle_pluralizes_attention_count(#[case] attention: u32, #[case] expected: &str) {
+        let repo = RepoSummary {
+            name: "web".to_string(),
+            path: "/repo".to_string(),
+            active_tasks: 0,
+            attention_items: attention,
+            reviewable_tasks: 0,
+            cleanable_tasks: 0,
+        };
+        let subtitle = project_subtitle(&repo);
+        assert!(
+            subtitle.contains(expected),
+            "subtitle {subtitle:?} should contain {expected:?}"
+        );
     }
 
     #[test]
-    fn cockpit_attention_line_names_next_inbox_task() {
+    fn project_glyph_blank_for_idle_repo() {
+        let idle = RepoSummary {
+            name: "web".to_string(),
+            path: "/repo".to_string(),
+            active_tasks: 0,
+            attention_items: 0,
+            reviewable_tasks: 0,
+            cleanable_tasks: 0,
+        };
+        assert_eq!(project_glyph(&idle).content.as_ref(), " ");
+    }
+
+    #[test]
+    fn inbox_row_uses_two_column_repo_task_layout() {
+        let inbox = InboxResponse {
+            items: vec![AnnotationItem {
+                task_id: TaskId::new("t-1"),
+                task_handle: "autosnooze/open-deps".to_string(),
+                reason: "needs input".to_string(),
+                severity: 30,
+                action: OperatorAction::Resume,
+            }],
+        };
+        let app = App::new(sample_repos(), Vec::<TaskCard>::new(), inbox);
+
+        let content = render_to_string(120, 30, &app);
+
+        assert!(content.contains("autosnooze"), "repo column: {content}");
+        assert!(content.contains("open-deps"), "task-id column: {content}");
+        assert!(
+            !content.contains("autosnooze/open-deps"),
+            "repo and task-id should render as separate columns: {content}"
+        );
+        assert!(
+            !content.contains("Resume"),
+            "right-side action chrome should not render on inbox rows: {content}"
+        );
+    }
+
+    #[test]
+    fn header_shows_repo_count_right_aligned() {
+        let mut repos = sample_repos();
+        repos.repos.push(RepoSummary {
+            name: "api".to_string(),
+            path: "/repo/api".to_string(),
+            active_tasks: 0,
+            attention_items: 0,
+            reviewable_tasks: 0,
+            cleanable_tasks: 0,
+        });
+        let app = App::new(repos, sample_tasks(), sample_inbox());
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let row0: String = (0..buffer.area.width)
+            .map(|x| buffer[(x, 0)].symbol())
+            .collect();
+
+        assert!(
+            row0.contains("Ajax"),
+            "row 0 keeps the breadcrumb: {row0:?}"
+        );
+        assert!(
+            row0.trim_end().ends_with("2 repos"),
+            "repo count should sit at the right edge of the header: {row0:?}"
+        );
+    }
+
+    #[test]
+    fn projects_view_omits_attention_banner_when_inbox_visible() {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-        let content = render_to_string(80, 30, &app);
+        let content = render_to_string(120, 30, &app);
 
-        // Counts strip no longer carries "next X" — the attention line owns it.
-        assert!(!content.contains("next web/fix-login"));
-        assert!(content.contains("web/fix-login"));
-        assert!(content.contains("needs_input"));
+        // The legacy banner rendered " ! <handle>: <reason>" above the feed.
+        // With the labeled "-- inbox (n) --" section, the banner is redundant.
+        assert!(
+            !content.contains("fix-login: needs_input"),
+            "attention banner should be gone: {content}"
+        );
     }
 
     #[test]
@@ -1484,136 +1538,14 @@ mod tests {
     }
 
     #[test]
-    fn counts_strip_renders_below_breadcrumb_on_projects_view() {
-        let mut repos = sample_repos();
-        repos.repos[0].cleanable_tasks = 1;
-        let app = App::new(repos, sample_tasks(), sample_inbox());
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let row0: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 0)].symbol())
-            .collect();
-        // Inbox non-empty → attention on row 1, counts on row 2.
-        let counts: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 2)].symbol())
-            .collect();
-
-        assert!(row0.contains("Ajax"), "row 0 should carry the breadcrumb");
-        assert!(
-            !row0.contains("1 repos"),
-            "counts must not stay in breadcrumb row"
-        );
-        assert!(
-            counts.contains("1 repos"),
-            "counts row should contain repos count"
-        );
-        assert!(
-            counts.contains("1 tasks"),
-            "counts row should contain tasks count"
-        );
-        assert!(
-            counts.contains("1 inbox"),
-            "counts row should contain inbox count"
-        );
-        assert!(
-            counts.contains("1 review"),
-            "counts row should contain review count"
-        );
-        assert!(
-            counts.contains("1 clean"),
-            "counts row should contain clean count"
-        );
-    }
-
-    #[test]
-    fn counts_strip_is_absent_on_subviews() {
-        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        // Walk to the project row and drill in.
-        app.select_next();
-        app.activate_selected();
-        assert!(matches!(&app.view, AppView::Project { .. }));
-
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-
-        let buffer = terminal.backend().buffer();
-        let row1: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 1)].symbol())
-            .collect();
-        assert!(
-            !row1.contains("repos"),
-            "counts strip must not appear off Projects view"
-        );
-        assert!(
-            !row1.contains("review"),
-            "counts strip must not appear off Projects view"
-        );
-    }
-
-    #[test]
-    fn feed_top_row_accounts_for_counts_strip_on_projects_view() {
+    fn feed_top_row_is_breadcrumb_row_only() {
         let projects_app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        // breadcrumb + attention + counts = 3
-        assert_eq!(feed_top_row(&projects_app), 3);
+        assert_eq!(feed_top_row(&projects_app), 1);
 
         let mut subview_app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         subview_app.select_next();
         subview_app.activate_selected();
-        // breadcrumb + attention = 2
-        assert_eq!(feed_top_row(&subview_app), 2);
-
-        let empty_app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            InboxResponse { items: vec![] },
-        );
-        // breadcrumb + counts = 2 (no attention since inbox empty)
-        assert_eq!(feed_top_row(&empty_app), 2);
-    }
-
-    #[test]
-    fn attention_line_renders_when_inbox_non_empty() {
-        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let row1: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 1)].symbol())
-            .collect();
-        assert!(
-            row1.contains("web/fix-login"),
-            "attention line should name the task"
-        );
-        assert!(
-            row1.contains("needs_input"),
-            "attention line should carry the reason"
-        );
-        let danger = buffer[(2, 1)].fg;
-        assert_eq!(danger, super::danger_accent());
-    }
-
-    #[test]
-    fn attention_line_absent_when_inbox_empty() {
-        let app = App::new(
-            sample_repos(),
-            sample_tasks(),
-            InboxResponse { items: vec![] },
-        );
-        let backend = TestBackend::new(80, 30);
-        let mut terminal = Terminal::new(backend).unwrap();
-        terminal.draw(|f| render_ui(f, &app)).unwrap();
-        let buffer = terminal.backend().buffer();
-        let row1: String = (0..buffer.area.width)
-            .map(|x| buffer[(x, 1)].symbol())
-            .collect();
-        // With inbox empty, row 1 is counts strip, not attention.
-        assert!(row1.contains("repos"));
+        assert_eq!(feed_top_row(&subview_app), 1);
     }
 
     #[test]
@@ -3177,8 +3109,8 @@ mod tests {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let content = render_to_string(50, 24, &app);
         assert!(content.contains("Ajax"));
+        // Unannotated task row in Projects view keeps its qualified handle.
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("needs_input"));
     }
 
     #[test]
@@ -3206,21 +3138,22 @@ mod tests {
     #[test]
     fn select_at_feed_row_lands_on_correct_selectable() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-        // Layout on Projects view (no headers, blank row between groups):
+        // Layout on Projects view (every group gets a header row):
         //   0 blank (top breathing space)
-        //   1 inbox     ← selectable 0
-        //   2 blank (hot → projects)
-        //   3 project   ← selectable 1
-        //   4 blank (projects → actions)
-        //   5 NewTask   ← selectable 2
-        app.select_at_feed_row(1);
-        assert_eq!(app.selected, 0);
-        app.select_at_feed_row(3);
-        assert_eq!(app.selected, 1);
-        app.select_at_feed_row(5);
-        assert_eq!(app.selected, 2);
-        // blank separator row → no change
+        //   1 -- inbox (n) --
+        //   2 inbox     ← selectable 0
+        //   3 -- projects --
+        //   4 project   ← selectable 1
+        //   5 -- start --
+        //   6 NewTask   ← selectable 2
         app.select_at_feed_row(2);
+        assert_eq!(app.selected, 0);
+        app.select_at_feed_row(4);
+        assert_eq!(app.selected, 1);
+        app.select_at_feed_row(6);
+        assert_eq!(app.selected, 2);
+        // header row → no change
+        app.select_at_feed_row(3);
         assert_eq!(app.selected, 2);
     }
 
@@ -3937,7 +3870,7 @@ mod tests {
             .as_bytes()
             .chunks(80)
             .map(|c| std::str::from_utf8(c).unwrap())
-            .find(|line| line.contains("web/fix-login") && line.contains("Resume"))
+            .find(|line| line.contains(" > ") && line.contains("fix-login"))
             .expect("selected inbox feed row should be in the rendered output");
         assert!(
             line.contains(" > "),

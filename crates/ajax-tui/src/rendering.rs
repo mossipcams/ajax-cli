@@ -36,16 +36,8 @@ pub(crate) fn bucket_glyph(bucket: StatusBucket) -> &'static str {
 }
 
 pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
-    let show_attention = crate::show_attention_line(app);
-    let show_counts = crate::show_counts_strip(&app.view);
     let show_notice = crate::show_notice_row(app);
     let mut constraints: Vec<Constraint> = vec![Constraint::Length(1)];
-    if show_attention {
-        constraints.push(Constraint::Length(1));
-    }
-    if show_counts {
-        constraints.push(Constraint::Length(1));
-    }
     constraints.push(Constraint::Min(0));
     if show_notice {
         constraints.push(Constraint::Length(1));
@@ -56,14 +48,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
     let mut idx = 0;
     crate::render_header(frame, app, chunks[idx]);
     idx += 1;
-    if show_attention {
-        crate::render_attention_line(frame, app, chunks[idx]);
-        idx += 1;
-    }
-    if show_counts {
-        crate::render_counts_strip(frame, app, chunks[idx]);
-        idx += 1;
-    }
     crate::render_feed(frame, app, chunks[idx]);
     idx += 1;
     if show_notice {
