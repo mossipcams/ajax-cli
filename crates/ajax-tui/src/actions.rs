@@ -86,11 +86,11 @@ const fn danger_accent() -> Color {
 }
 
 const fn muted_text() -> Color {
-    Color::Indexed(244)
+    Color::Indexed(248)
 }
 
 const fn subtle_text() -> Color {
-    Color::Indexed(240)
+    Color::Indexed(244)
 }
 
 #[cfg(test)]

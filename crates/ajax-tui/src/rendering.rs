@@ -21,7 +21,7 @@ pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
         StatusBucket::NeedsYou => Color::Indexed(179),
         StatusBucket::Stuck => Color::Indexed(174),
         StatusBucket::Done => Color::Indexed(108),
-        StatusBucket::Idle => Color::Indexed(244),
+        StatusBucket::Idle => Color::Indexed(248),
     }
 }
 

@@ -175,7 +175,7 @@ fn muted_text() -> Color {
 }
 
 fn subtle_text() -> Color {
-    Color::Indexed(240)
+    Color::Indexed(244)
 }
 
 fn bucket_color(bucket: StatusBucket) -> Color {
@@ -337,7 +337,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 fn selected_highlight() -> Style {
     Style::default()
-        .bg(Color::Indexed(237))
+        .add_modifier(Modifier::REVERSED)
         .add_modifier(Modifier::BOLD)
 }
 
@@ -382,9 +382,16 @@ fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
     } else {
         String::new()
     };
+    let style = if group == "hot" {
+        Style::default()
+            .fg(secondary_accent())
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(subtle_text())
+    };
     ListItem::new(Line::from(vec![Span::styled(
         format!("   -- {label}{count_suffix} --"),
-        Style::default().fg(subtle_text()),
+        style,
     )]))
 }
 
@@ -918,7 +925,27 @@ mod tests {
         assert_eq!(secondary_accent(), bucket_color(StatusBucket::NeedsYou));
         assert_eq!(danger_accent(), bucket_color(StatusBucket::Stuck));
         assert_eq!(muted_text(), bucket_color(StatusBucket::Idle));
-        assert_eq!(subtle_text(), Color::Indexed(240));
+        assert_eq!(subtle_text(), Color::Indexed(244));
+    }
+
+    #[test]
+    fn palette_tiers_are_legible_on_dark_terminals() {
+        let subtle = match subtle_text() {
+            Color::Indexed(v) => v,
+            other => panic!("subtle_text should be Indexed; got {other:?}"),
+        };
+        let muted = match muted_text() {
+            Color::Indexed(v) => v,
+            other => panic!("muted_text should be Indexed; got {other:?}"),
+        };
+        assert!(
+            subtle > 240,
+            "subtle_text {subtle} must clear the near-black greyscale band"
+        );
+        assert!(
+            muted > subtle,
+            "muted_text {muted} must stay brighter than subtle_text {subtle} so quiet data outranks chrome"
+        );
     }
 
     #[rstest]
@@ -1033,8 +1060,46 @@ mod tests {
         assert_eq!(
             selected_highlight(),
             Style::default()
-                .bg(Color::Indexed(237))
+                .add_modifier(Modifier::REVERSED)
                 .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    #[test]
+    fn inbox_section_header_styled_as_attention() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let backend = TestBackend::new(80, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let width = buffer.area.width;
+        let height = buffer.area.height;
+
+        let row_text = |y: u16| -> String { (0..width).map(|x| buffer[(x, y)].symbol()).collect() };
+
+        let inbox_y = (0..height)
+            .find(|&y| row_text(y).contains("-- inbox"))
+            .expect("inbox section header should render in the Projects view");
+        let inbox_styled = (0..width).any(|x| {
+            let cell = &buffer[(x, inbox_y)];
+            cell.fg == secondary_accent() && cell.modifier.contains(Modifier::BOLD)
+        });
+        assert!(
+            inbox_styled,
+            "inbox header should render in secondary_accent + BOLD so it owns inbox prominence"
+        );
+
+        let projects_y = (0..height)
+            .find(|&y| row_text(y).contains("-- projects"))
+            .expect("projects section header should render in the Projects view");
+        let projects_uses_subtle = (0..width).any(|x| {
+            let cell = &buffer[(x, projects_y)];
+            cell.fg == subtle_text() && !cell.modifier.contains(Modifier::BOLD)
+        });
+        assert!(
+            projects_uses_subtle,
+            "non-hot section headers should stay in subtle chrome (no BOLD)"
         );
     }
 
@@ -1065,7 +1130,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let selected_row_has_highlight = (0..buffer.area.width).any(|x| {
             let cell = &buffer[(x, selected_screen_row as u16)];
-            cell.bg == Color::Indexed(237) && cell.modifier.contains(Modifier::BOLD)
+            cell.modifier.contains(Modifier::REVERSED) && cell.modifier.contains(Modifier::BOLD)
         });
         assert!(selected_row_has_highlight);
     }
