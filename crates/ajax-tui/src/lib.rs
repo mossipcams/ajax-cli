@@ -564,82 +564,24 @@ fn task_row_label(card: &TaskCard) -> String {
     }
 }
 
-#[derive(Default)]
-struct ColumnWidths {
-    task_handle: usize,
-    task_label: usize,
-    task_action: usize,
-    inbox_repo: usize,
-    inbox_task_id: usize,
-    project_name: usize,
-}
-
-fn compute_column_widths(app: &App) -> ColumnWidths {
-    let mut w = ColumnWidths::default();
-    for sel in &app.selectables {
-        match sel {
-            SelectableKind::Task(card) => {
-                w.task_handle = w.task_handle.max(card.qualified_handle.chars().count());
-                w.task_label = w.task_label.max(task_row_label(card).chars().count());
-                w.task_action = w
-                    .task_action
-                    .max(title_case(card.primary_action.as_str()).chars().count());
-            }
-            SelectableKind::Inbox(item) => {
-                let (repo, task_id) = item
-                    .task_handle
-                    .split_once('/')
-                    .unwrap_or((item.task_handle.as_str(), ""));
-                w.inbox_repo = w.inbox_repo.max(repo.chars().count());
-                w.inbox_task_id = w.inbox_task_id.max(task_id.chars().count());
-            }
-            SelectableKind::Project(repo) => {
-                w.project_name = w.project_name.max(repo.name.chars().count());
-            }
-            _ => {}
-        }
-    }
-    w
-}
-
-fn pad_right(s: &str, width: usize) -> String {
-    let cur = s.chars().count();
-    if cur >= width {
-        s.to_string()
-    } else {
-        let mut out = String::with_capacity(s.len() + (width - cur));
-        out.push_str(s);
-        for _ in 0..(width - cur) {
-            out.push(' ');
-        }
-        out
-    }
-}
-
 fn column_separator() -> Span<'static> {
-    Span::styled(" | ", Style::default().fg(palette::text_chrome()))
+    Span::styled("|", Style::default().fg(palette::text_chrome()))
 }
 
-fn task_row_spans(t: &TaskCard, widths: &ColumnWidths) -> Vec<Span<'static>> {
+fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
     let bold = Modifier::BOLD;
     let label = task_row_label(t);
     let action_label = title_case(t.primary_action.as_str());
     let chrome = crate::actions::operator_action_chrome(t.primary_action);
     vec![
         Span::styled(
-            pad_right(&t.qualified_handle, widths.task_handle),
+            t.qualified_handle.clone(),
             Style::default().fg(task_handle_color(t)).add_modifier(bold),
         ),
         column_separator(),
-        Span::styled(
-            pad_right(&label, widths.task_label),
-            Style::default().fg(palette::text_data()),
-        ),
+        Span::styled(label, Style::default().fg(palette::text_data())),
         column_separator(),
-        Span::styled(
-            pad_right(&action_label, widths.task_action),
-            chrome.label_style(),
-        ),
+        Span::styled(action_label, chrome.label_style()),
         Span::raw(" "),
         Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
     ]
@@ -660,24 +602,20 @@ fn render_row(
 ) -> ListItem<'static> {
     let prefix = if is_selected {
         Span::styled(
-            " > ",
+            ">",
             Style::default()
                 .fg(primary_accent())
                 .add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::raw("   ")
+        Span::raw(" ")
     };
-    let mut all = vec![prefix, glyph, Span::raw("  ")];
+    let mut all = vec![prefix, glyph, Span::raw(" ")];
     all.append(&mut spans);
     ListItem::new(Line::from(all))
 }
 
-fn render_selectable(
-    s: &SelectableKind,
-    is_selected: bool,
-    widths: &ColumnWidths,
-) -> ListItem<'static> {
+fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static> {
     let bold = Modifier::BOLD;
     let dim = Style::default().fg(palette::text_data());
     match s {
@@ -692,12 +630,12 @@ fn render_selectable(
                 inbox_glyph(accent),
                 vec![
                     Span::styled(
-                        pad_right(repo, widths.inbox_repo),
+                        repo.to_string(),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
                     column_separator(),
                     Span::styled(
-                        pad_right(task_id, widths.inbox_task_id),
+                        task_id.to_string(),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
                     column_separator(),
@@ -710,7 +648,7 @@ fn render_selectable(
             project_glyph(repo),
             vec![
                 Span::styled(
-                    pad_right(&repo.name, widths.project_name),
+                    repo.name.clone(),
                     Style::default()
                         .fg(project_name_color(repo))
                         .add_modifier(bold),
@@ -732,9 +670,7 @@ fn render_selectable(
             action_glyph(action),
             vec![Span::styled(action.clone(), action_label_style(action))],
         ),
-        SelectableKind::Task(t) => {
-            render_row(is_selected, task_glyph(t), task_row_spans(t, widths))
-        }
+        SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
     }
 }
 
@@ -817,7 +753,6 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         return (rows, sel_to_row);
     }
 
-    let widths = compute_column_widths(app);
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
         let group = group_of(selectable);
@@ -825,7 +760,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             rows.push(section_header_row(group, app));
         }
         sel_to_row.push(rows.len());
-        rows.push(render_selectable(selectable, app.selected == idx, &widths));
+        rows.push(render_selectable(selectable, app.selected == idx));
         // Inline annotation lines under an expanded task or inbox row.
         if let Some(card) = expanded_card_for(selectable, app) {
             for annotation in &card.annotations {
@@ -1076,9 +1011,7 @@ mod tests {
         }
         assert_eq!(
             palette::selected_highlight(),
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .add_modifier(Modifier::BOLD)
+            Style::default().add_modifier(Modifier::BOLD)
         );
     }
 
@@ -1213,9 +1146,7 @@ mod tests {
     fn selected_rows_use_highlight_style() {
         assert_eq!(
             selected_highlight(),
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .add_modifier(Modifier::BOLD)
+            Style::default().add_modifier(Modifier::BOLD)
         );
     }
 
@@ -1242,34 +1173,46 @@ mod tests {
             .find(|t| t.contains("web/task-0"))
             .expect("task row should render");
         assert!(
-            task_row.contains("web/task-0 | "),
-            "task row should follow handle with ' | ' separator: {task_row:?}"
+            task_row.contains("web/task-0|"),
+            "task row should follow handle directly with '|' separator (no surrounding space): {task_row:?}"
         );
         assert!(
-            task_row.contains(" | Resume"),
-            "task row should precede action label with ' | ' separator: {task_row:?}"
+            task_row.contains("|Resume"),
+            "task row should precede action label directly with '|': {task_row:?}"
         );
     }
 
     #[test]
-    fn task_row_has_no_excessive_padding_for_single_task() {
-        let app = app_in_project_view_with_task_count(1);
-        let buffer = render_buffer(80, 20, &app);
+    fn task_rows_have_no_trailing_padding_when_handle_lengths_vary() {
+        let mut cards = sample_tasks_with_count(2);
+        cards[0].qualified_handle = "web/x".to_string();
+        cards[1].qualified_handle = "web/very-long-handle-name".to_string();
+        let app = App::new(
+            sample_repos(),
+            cards.clone(),
+            InboxResponse { items: vec![] },
+        );
+        let mut app = app;
+        app.activate_selected();
+        let buffer = render_buffer(120, 20, &app);
         let row_text = row_text_finder(&buffer);
 
-        let task_row = (0..buffer.area.height)
-            .map(&row_text)
-            .find(|t| t.contains("web/task-0"))
-            .expect("task row should render");
-        let after_handle = task_row
-            .split("web/task-0")
-            .nth(1)
-            .expect("handle present in row");
-        let leading_spaces = after_handle.chars().take_while(|c| *c == ' ').count();
-        assert!(
-            leading_spaces <= 1,
-            "with one task the column width should equal the handle length; got {leading_spaces} leading spaces after handle in row {task_row:?}"
-        );
+        for card in &cards {
+            let row = (0..buffer.area.height)
+                .map(&row_text)
+                .find(|t| t.contains(&card.qualified_handle))
+                .unwrap_or_else(|| panic!("row for {} should render", card.qualified_handle));
+            let after_handle = row
+                .split(card.qualified_handle.as_str())
+                .nth(1)
+                .expect("handle present");
+            let leading = after_handle.chars().take_while(|c| *c == ' ').count();
+            assert_eq!(
+                leading, 0,
+                "row for {} should follow handle immediately with '|' (no leading space), got {leading}: {row:?}",
+                card.qualified_handle
+            );
+        }
     }
 
     #[test]
@@ -1282,10 +1225,10 @@ mod tests {
             .map(&row_text)
             .find(|t| t.contains("fix-login") && t.contains("needs_input"))
             .expect("inbox row should render");
-        let pipe_count = inbox_row.matches(" | ").count();
+        let pipe_count = inbox_row.matches('|').count();
         assert_eq!(
             pipe_count, 2,
-            "inbox row should separate repo, task_id, and reason with pipes: {inbox_row:?}"
+            "inbox row should separate repo, task_id, and reason with two pipes: {inbox_row:?}"
         );
     }
 
@@ -1303,10 +1246,10 @@ mod tests {
             .map(&row_text)
             .find(|t| t.contains("web") && t.contains("active"))
             .expect("project row should render");
-        let pipe_count = project_row.matches(" | ").count();
+        let pipe_count = project_row.matches('|').count();
         assert!(
             pipe_count >= 1,
-            "project row should use ' | ' between name and subtitle: {project_row:?}"
+            "project row should use a pipe between name and subtitle: {project_row:?}"
         );
     }
 
@@ -1375,7 +1318,7 @@ mod tests {
         let buffer = terminal.backend().buffer();
         let selected_row_has_highlight = (0..buffer.area.width).any(|x| {
             let cell = &buffer[(x, selected_screen_row as u16)];
-            cell.modifier.contains(Modifier::REVERSED) && cell.modifier.contains(Modifier::BOLD)
+            cell.modifier.contains(Modifier::BOLD)
         });
         assert!(selected_row_has_highlight);
     }

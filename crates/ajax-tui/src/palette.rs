@@ -25,7 +25,5 @@ pub(crate) const fn text_chrome() -> Color {
 }
 
 pub(crate) fn selected_highlight() -> Style {
-    Style::default()
-        .add_modifier(Modifier::REVERSED)
-        .add_modifier(Modifier::BOLD)
+    Style::default().add_modifier(Modifier::BOLD)
 }
