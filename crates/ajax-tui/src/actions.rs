@@ -1,6 +1,8 @@
 use ajax_core::models::{AnnotationKind, OperatorAction};
 use ratatui::style::{Color, Modifier, Style};
 
+use crate::palette::{accent_danger, accent_primary, accent_warning, text_chrome, text_data};
+
 #[derive(Clone, Copy)]
 pub(crate) struct ActionChrome {
     pub(crate) glyph: &'static str,
@@ -39,58 +41,32 @@ pub(crate) fn action_chrome(action_label: &str) -> ActionChrome {
     match OperatorAction::from_label(action_label) {
         Some(action) => operator_action_chrome(action),
         None if action_label == "help" => {
-            ActionChrome::new("?", Color::LightYellow, Color::White, true)
+            ActionChrome::new("?", accent_warning(), accent_primary(), true)
         }
-        _ => ActionChrome::new(".", subtle_text(), muted_text(), false),
+        _ => ActionChrome::new(".", text_chrome(), text_data(), false),
     }
 }
 
 pub(crate) fn annotation_chrome(kind: AnnotationKind) -> ActionChrome {
     match kind {
-        AnnotationKind::NeedsMe => {
-            ActionChrome::new("?", secondary_accent(), secondary_accent(), true)
-        }
-        AnnotationKind::Broken => ActionChrome::new("!", danger_accent(), danger_accent(), true),
+        AnnotationKind::NeedsMe => ActionChrome::new("?", accent_warning(), accent_warning(), true),
+        AnnotationKind::Broken => ActionChrome::new("!", accent_danger(), accent_danger(), true),
         AnnotationKind::Reviewable => {
-            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
+            ActionChrome::new("R", accent_warning(), accent_warning(), true)
         }
-        AnnotationKind::Cleanable => ActionChrome::new("~", muted_text(), muted_text(), true),
+        AnnotationKind::Cleanable => ActionChrome::new("~", text_data(), text_data(), true),
     }
 }
 
 pub(crate) fn operator_action_chrome(action: OperatorAction) -> ActionChrome {
     match action {
-        OperatorAction::Start => ActionChrome::new("+", primary_accent(), primary_accent(), true),
-        OperatorAction::Resume => ActionChrome::new(">", primary_accent(), primary_accent(), true),
-        OperatorAction::Review => {
-            ActionChrome::new("R", secondary_accent(), secondary_accent(), true)
-        }
-        OperatorAction::Ship => {
-            ActionChrome::new("S", secondary_accent(), secondary_accent(), true)
-        }
-        OperatorAction::Drop => ActionChrome::new("X", danger_accent(), danger_accent(), true),
-        OperatorAction::Repair => ActionChrome::new("T", primary_accent(), primary_accent(), true),
+        OperatorAction::Start => ActionChrome::new("+", accent_primary(), accent_primary(), true),
+        OperatorAction::Resume => ActionChrome::new(">", accent_primary(), accent_primary(), true),
+        OperatorAction::Review => ActionChrome::new("R", accent_warning(), accent_warning(), true),
+        OperatorAction::Ship => ActionChrome::new("S", accent_warning(), accent_warning(), true),
+        OperatorAction::Drop => ActionChrome::new("X", accent_danger(), accent_danger(), true),
+        OperatorAction::Repair => ActionChrome::new("T", accent_primary(), accent_primary(), true),
     }
-}
-
-const fn primary_accent() -> Color {
-    Color::Indexed(110)
-}
-
-const fn secondary_accent() -> Color {
-    Color::Indexed(179)
-}
-
-const fn danger_accent() -> Color {
-    Color::Indexed(174)
-}
-
-const fn muted_text() -> Color {
-    Color::Indexed(248)
-}
-
-const fn subtle_text() -> Color {
-    Color::Indexed(244)
 }
 
 #[cfg(test)]

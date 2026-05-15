@@ -4,6 +4,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::palette;
 use crate::App;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,11 +18,11 @@ pub(crate) enum StatusBucket {
 
 pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
     match bucket {
-        StatusBucket::Active => Color::Indexed(110),
-        StatusBucket::NeedsYou => Color::Indexed(179),
-        StatusBucket::Stuck => Color::Indexed(174),
-        StatusBucket::Done => Color::Indexed(108),
-        StatusBucket::Idle => Color::Indexed(248),
+        StatusBucket::Active => palette::accent_primary(),
+        StatusBucket::NeedsYou => palette::accent_warning(),
+        StatusBucket::Stuck => palette::accent_danger(),
+        StatusBucket::Done => palette::accent_success(),
+        StatusBucket::Idle => palette::text_data(),
     }
 }
 

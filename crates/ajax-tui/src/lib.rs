@@ -5,6 +5,7 @@ mod cockpit_state;
 mod input;
 mod layout;
 mod navigation;
+mod palette;
 mod rendering;
 mod runtime;
 
@@ -159,23 +160,23 @@ fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
 // ── Rendering ─────────────────────────────────────────────────────────────────
 
 fn primary_accent() -> Color {
-    bucket_color(StatusBucket::Active)
+    palette::accent_primary()
 }
 
 fn secondary_accent() -> Color {
-    bucket_color(StatusBucket::NeedsYou)
+    palette::accent_warning()
 }
 
 fn danger_accent() -> Color {
-    bucket_color(StatusBucket::Stuck)
+    palette::accent_danger()
 }
 
 fn muted_text() -> Color {
-    bucket_color(StatusBucket::Idle)
+    palette::text_data()
 }
 
 fn subtle_text() -> Color {
-    Color::Indexed(244)
+    palette::text_chrome()
 }
 
 fn bucket_color(bucket: StatusBucket) -> Color {
@@ -336,9 +337,7 @@ fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn selected_highlight() -> Style {
-    Style::default()
-        .add_modifier(Modifier::REVERSED)
-        .add_modifier(Modifier::BOLD)
+    palette::selected_highlight()
 }
 
 fn empty_state(text: &str) -> ListItem<'static> {
@@ -555,29 +554,95 @@ fn project_subtitle(repo: &RepoSummary) -> String {
     }
 }
 
-fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
-    let bold = Modifier::BOLD;
-    let dim = Style::default().fg(subtle_text());
-    let mut spans = vec![Span::styled(
-        format!("{:<28}", t.qualified_handle),
-        Style::default().fg(task_handle_color(t)).add_modifier(bold),
-    )];
-    let label = if let Some(annotation) = t.annotations.first() {
+fn task_row_label(card: &TaskCard) -> String {
+    if let Some(annotation) = card.annotations.first() {
         annotation.row_label()
-    } else if let Some(summary) = t.live_summary.as_ref() {
+    } else if let Some(summary) = card.live_summary.as_ref() {
         summary.clone()
     } else {
-        t.ui_state.as_str().to_string()
-    };
-    spans.push(Span::styled(format!("{label:<36}"), dim));
-    let action_label = t.primary_action.as_str();
+        card.ui_state.as_str().to_string()
+    }
+}
+
+#[derive(Default)]
+struct ColumnWidths {
+    task_handle: usize,
+    task_label: usize,
+    task_action: usize,
+    inbox_repo: usize,
+    inbox_task_id: usize,
+    project_name: usize,
+}
+
+fn compute_column_widths(app: &App) -> ColumnWidths {
+    let mut w = ColumnWidths::default();
+    for sel in &app.selectables {
+        match sel {
+            SelectableKind::Task(card) => {
+                w.task_handle = w.task_handle.max(card.qualified_handle.chars().count());
+                w.task_label = w.task_label.max(task_row_label(card).chars().count());
+                w.task_action = w
+                    .task_action
+                    .max(title_case(card.primary_action.as_str()).chars().count());
+            }
+            SelectableKind::Inbox(item) => {
+                let (repo, task_id) = item
+                    .task_handle
+                    .split_once('/')
+                    .unwrap_or((item.task_handle.as_str(), ""));
+                w.inbox_repo = w.inbox_repo.max(repo.chars().count());
+                w.inbox_task_id = w.inbox_task_id.max(task_id.chars().count());
+            }
+            SelectableKind::Project(repo) => {
+                w.project_name = w.project_name.max(repo.name.chars().count());
+            }
+            _ => {}
+        }
+    }
+    w
+}
+
+fn pad_right(s: &str, width: usize) -> String {
+    let cur = s.chars().count();
+    if cur >= width {
+        s.to_string()
+    } else {
+        let mut out = String::with_capacity(s.len() + (width - cur));
+        out.push_str(s);
+        for _ in 0..(width - cur) {
+            out.push(' ');
+        }
+        out
+    }
+}
+
+fn column_separator() -> Span<'static> {
+    Span::styled(" | ", Style::default().fg(palette::text_chrome()))
+}
+
+fn task_row_spans(t: &TaskCard, widths: &ColumnWidths) -> Vec<Span<'static>> {
+    let bold = Modifier::BOLD;
+    let label = task_row_label(t);
+    let action_label = title_case(t.primary_action.as_str());
     let chrome = crate::actions::operator_action_chrome(t.primary_action);
-    spans.push(Span::styled(
-        format!("{:>8}  ", title_case(action_label)),
-        chrome.label_style(),
-    ));
-    spans.push(Span::styled(chrome.glyph.to_string(), chrome.glyph_style()));
-    spans
+    vec![
+        Span::styled(
+            pad_right(&t.qualified_handle, widths.task_handle),
+            Style::default().fg(task_handle_color(t)).add_modifier(bold),
+        ),
+        column_separator(),
+        Span::styled(
+            pad_right(&label, widths.task_label),
+            Style::default().fg(palette::text_data()),
+        ),
+        column_separator(),
+        Span::styled(
+            pad_right(&action_label, widths.task_action),
+            chrome.label_style(),
+        ),
+        Span::raw(" "),
+        Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
+    ]
 }
 
 fn title_case(s: &str) -> String {
@@ -608,14 +673,16 @@ fn render_row(
     ListItem::new(Line::from(all))
 }
 
-fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static> {
+fn render_selectable(
+    s: &SelectableKind,
+    is_selected: bool,
+    widths: &ColumnWidths,
+) -> ListItem<'static> {
     let bold = Modifier::BOLD;
-    let dim = Style::default().fg(subtle_text());
-    let arrow = Style::default().fg(subtle_text());
+    let dim = Style::default().fg(palette::text_data());
     match s {
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
-            let _ = arrow;
             let (repo, task_id) = item
                 .task_handle
                 .split_once('/')
@@ -625,13 +692,15 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
                 inbox_glyph(accent),
                 vec![
                     Span::styled(
-                        format!("{repo:<16}"),
+                        pad_right(repo, widths.inbox_repo),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
+                    column_separator(),
                     Span::styled(
-                        format!("{task_id:<18}"),
+                        pad_right(task_id, widths.inbox_task_id),
                         Style::default().fg(accent).add_modifier(bold),
                     ),
+                    column_separator(),
                     Span::styled(item.reason.clone(), Style::default().fg(accent)),
                 ],
             )
@@ -641,11 +710,12 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
             project_glyph(repo),
             vec![
                 Span::styled(
-                    format!("{:<20}", repo.name),
+                    pad_right(&repo.name, widths.project_name),
                     Style::default()
                         .fg(project_name_color(repo))
                         .add_modifier(bold),
                 ),
+                column_separator(),
                 Span::styled(project_subtitle(repo), dim),
             ],
         ),
@@ -662,7 +732,9 @@ fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static>
             action_glyph(action),
             vec![Span::styled(action.clone(), action_label_style(action))],
         ),
-        SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
+        SelectableKind::Task(t) => {
+            render_row(is_selected, task_glyph(t), task_row_spans(t, widths))
+        }
     }
 }
 
@@ -685,7 +757,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
                 Span::styled(
                     "Task name  ",
                     Style::default()
-                        .fg(Color::White)
+                        .fg(palette::accent_primary())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(display_title, Style::default().fg(primary_accent())),
@@ -701,7 +773,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             vec![Span::styled(
                 "Keyboard shortcuts",
                 Style::default()
-                    .fg(Color::White)
+                    .fg(palette::accent_primary())
                     .add_modifier(Modifier::BOLD),
             )],
         ));
@@ -723,7 +795,10 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
                 false,
                 Span::styled(".", Style::default().fg(subtle_text())),
                 vec![
-                    Span::styled(format!("{key:<18}"), Style::default().fg(Color::Yellow)),
+                    Span::styled(
+                        format!("{key:<18}"),
+                        Style::default().fg(palette::accent_warning()),
+                    ),
                     Span::styled(label.to_string(), Style::default().fg(subtle_text())),
                 ],
             ));
@@ -742,6 +817,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         return (rows, sel_to_row);
     }
 
+    let widths = compute_column_widths(app);
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
         let group = group_of(selectable);
@@ -749,7 +825,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
             rows.push(section_header_row(group, app));
         }
         sel_to_row.push(rows.len());
-        rows.push(render_selectable(selectable, app.selected == idx));
+        rows.push(render_selectable(selectable, app.selected == idx, &widths));
         // Inline annotation lines under an expanded task or inbox row.
         if let Some(card) = expanded_card_for(selectable, app) {
             for annotation in &card.annotations {
@@ -929,6 +1005,84 @@ mod tests {
     }
 
     #[test]
+    fn palette_has_no_other_hardcoded_colors_in_production() {
+        let banned = [
+            "Color::White",
+            "Color::Yellow",
+            "Color::LightYellow",
+            "Color::LightCyan",
+            "Color::LightGreen",
+            "Color::LightBlue",
+            "Color::LightMagenta",
+            "Color::Red",
+            "Color::Green",
+            "Color::Blue",
+            "Color::Cyan",
+            "Color::Magenta",
+            "Color::Black",
+            "Color::Gray",
+            "Color::DarkGray",
+        ];
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for relative in ["src/lib.rs", "src/actions.rs", "src/rendering.rs"] {
+            let path = manifest_dir.join(relative);
+            let source = std::fs::read_to_string(&path).unwrap();
+            let cutoff = source.find("mod tests {").unwrap_or(source.len());
+            let production = &source[..cutoff];
+            for substring in banned {
+                assert!(
+                    !production.contains(substring),
+                    "{relative} production should not contain `{substring}` — route through palette.rs"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn palette_surface_is_four_accents_plus_two_greys() {
+        use crate::palette;
+        let entries = [
+            (
+                "accent_primary",
+                palette::accent_primary(),
+                Color::Indexed(110),
+            ),
+            (
+                "accent_warning",
+                palette::accent_warning(),
+                Color::Indexed(179),
+            ),
+            (
+                "accent_danger",
+                palette::accent_danger(),
+                Color::Indexed(174),
+            ),
+            (
+                "accent_success",
+                palette::accent_success(),
+                Color::Indexed(108),
+            ),
+            ("text_data", palette::text_data(), Color::Indexed(248)),
+            ("text_chrome", palette::text_chrome(), Color::Indexed(244)),
+        ];
+        for (name, actual, expected) in entries {
+            assert_eq!(actual, expected, "palette::{name} drift");
+        }
+        let colors: Vec<Color> = entries.iter().map(|(_, c, _)| *c).collect();
+        for (i, a) in colors.iter().enumerate() {
+            for b in &colors[i + 1..] {
+                assert_ne!(a, b, "palette entries should be distinct");
+            }
+        }
+        assert_eq!(
+            palette::selected_highlight(),
+            Style::default()
+                .add_modifier(Modifier::REVERSED)
+                .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    #[test]
     fn palette_tiers_are_legible_on_dark_terminals() {
         let subtle = match subtle_text() {
             Color::Indexed(v) => v,
@@ -1004,14 +1158,14 @@ mod tests {
         assert_eq!(
             action_glyph("help").style,
             Style::default()
-                .fg(Color::LightYellow)
+                .fg(crate::palette::accent_warning())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(action_glyph("unknown").content.as_ref(), ".");
         assert_eq!(
             action_label_style("help"),
             Style::default()
-                .fg(Color::White)
+                .fg(crate::palette::accent_primary())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(
@@ -1062,6 +1216,97 @@ mod tests {
             Style::default()
                 .add_modifier(Modifier::REVERSED)
                 .add_modifier(Modifier::BOLD)
+        );
+    }
+
+    fn row_text_finder<'a>(buffer: &'a ratatui::buffer::Buffer) -> impl Fn(u16) -> String + 'a {
+        let width = buffer.area.width;
+        move |y: u16| (0..width).map(|x| buffer[(x, y)].symbol()).collect()
+    }
+
+    fn render_buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_ui(f, app)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    #[test]
+    fn task_row_separates_columns_with_pipe() {
+        let app = app_in_project_view_with_task_count(1);
+        let buffer = render_buffer(80, 20, &app);
+        let row_text = row_text_finder(&buffer);
+
+        let task_row = (0..buffer.area.height)
+            .map(&row_text)
+            .find(|t| t.contains("web/task-0"))
+            .expect("task row should render");
+        assert!(
+            task_row.contains("web/task-0 | "),
+            "task row should follow handle with ' | ' separator: {task_row:?}"
+        );
+        assert!(
+            task_row.contains(" | Resume"),
+            "task row should precede action label with ' | ' separator: {task_row:?}"
+        );
+    }
+
+    #[test]
+    fn task_row_has_no_excessive_padding_for_single_task() {
+        let app = app_in_project_view_with_task_count(1);
+        let buffer = render_buffer(80, 20, &app);
+        let row_text = row_text_finder(&buffer);
+
+        let task_row = (0..buffer.area.height)
+            .map(&row_text)
+            .find(|t| t.contains("web/task-0"))
+            .expect("task row should render");
+        let after_handle = task_row
+            .split("web/task-0")
+            .nth(1)
+            .expect("handle present in row");
+        let leading_spaces = after_handle.chars().take_while(|c| *c == ' ').count();
+        assert!(
+            leading_spaces <= 1,
+            "with one task the column width should equal the handle length; got {leading_spaces} leading spaces after handle in row {task_row:?}"
+        );
+    }
+
+    #[test]
+    fn inbox_row_separates_columns_with_pipe() {
+        let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        let buffer = render_buffer(80, 20, &app);
+        let row_text = row_text_finder(&buffer);
+
+        let inbox_row = (0..buffer.area.height)
+            .map(&row_text)
+            .find(|t| t.contains("fix-login") && t.contains("needs_input"))
+            .expect("inbox row should render");
+        let pipe_count = inbox_row.matches(" | ").count();
+        assert_eq!(
+            pipe_count, 2,
+            "inbox row should separate repo, task_id, and reason with pipes: {inbox_row:?}"
+        );
+    }
+
+    #[test]
+    fn project_row_separates_name_and_subtitle_with_pipe() {
+        let app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+        let buffer = render_buffer(80, 20, &app);
+        let row_text = row_text_finder(&buffer);
+
+        let project_row = (0..buffer.area.height)
+            .map(&row_text)
+            .find(|t| t.contains("web") && t.contains("active"))
+            .expect("project row should render");
+        let pipe_count = project_row.matches(" | ").count();
+        assert!(
+            pipe_count >= 1,
+            "project row should use ' | ' between name and subtitle: {project_row:?}"
         );
     }
 
