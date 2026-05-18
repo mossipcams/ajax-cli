@@ -515,7 +515,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn native_new_task_agent_command_preserves_generated_title(
+        fn native_new_task_agent_command_does_not_send_generated_title(
             title in "[^\\x00]{0,80}"
         ) {
             let context = CommandContext::new(
@@ -546,7 +546,6 @@ mod tests {
                     "codex".to_string(),
                     "--cd".to_string(),
                     worktree_path,
-                    title,
                 ]
             );
         }
@@ -1350,7 +1349,7 @@ mod tests {
                         "send-keys",
                         "-t",
                         "ajax-web-fix-logout:worktrunk",
-                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout 'fix logout'",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout",
                         "Enter"
                     ]
                 )
@@ -1397,7 +1396,6 @@ mod tests {
                 "codex",
                 "--cd",
                 "/Users/matt/projects/web app__worktrees/ajax-fix-login",
-                "fix login"
             ]
         );
     }
@@ -1456,7 +1454,7 @@ mod tests {
         assert_eq!(plan.commands[2].args[2], "ajax-api-ship-oauth-v2:worktrunk");
         assert_eq!(
             plan.commands[2].args[3],
-            "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2 'Ship oauth v2!'"
+            "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
 
         let active_duplicate = new_task_plan(

@@ -50,7 +50,7 @@ pub fn new_task_plan<R: Registry>(
     let agent = AgentAdapter::new(&request.agent);
     let launch = agent.launch(&AgentLaunch {
         worktree_path: worktree_path_string.clone(),
-        prompt: request.title.clone(),
+        prompt: String::new(),
     });
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     plan.commands.push(git.add_worktree(

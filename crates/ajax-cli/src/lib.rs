@@ -2311,7 +2311,7 @@ mod tests {
                         "send-keys",
                         "-t",
                         "ajax-web-fix-login:worktrunk",
-                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
                         "Enter"
                     ]
                 ),
@@ -2567,7 +2567,7 @@ mod tests {
                         "send-keys",
                         "-t",
                         "ajax-web-fix-login:worktrunk",
-                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login 'Fix login'",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
                         "Enter"
                     ]
                 ),
@@ -4202,7 +4202,7 @@ mod tests {
                         "send-keys",
                         "-t",
                         "ajax-api-fix-login:worktrunk",
-                        "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login 'Fix login'",
+                        "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
                         "Enter"
                     ]
                 ),

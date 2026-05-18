@@ -477,6 +477,20 @@ mod tests {
     }
 
     #[test]
+    fn agent_adapter_omits_blank_launch_prompt() {
+        let adapter = AgentAdapter::new("codex");
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: String::new(),
+        };
+
+        assert_eq!(
+            adapter.launch(&launch),
+            CommandSpec::new("codex", ["--cd", "/tmp/worktree"])
+        );
+    }
+
+    #[test]
     fn recording_runner_captures_planned_commands_without_executing() {
         let mut runner = RecordingCommandRunner::default();
         let output = runner.run(&CommandSpec::new("git", ["status"])).unwrap();

@@ -19,13 +19,13 @@ impl AgentAdapter {
     }
 
     pub fn launch(&self, launch: &AgentLaunch) -> CommandSpec {
+        let mut args = vec!["--cd".to_string(), launch.worktree_path.clone()];
+        if !launch.prompt.is_empty() {
+            args.push(launch.prompt.clone());
+        }
         CommandSpec {
             program: self.program.clone(),
-            args: vec![
-                "--cd".to_string(),
-                launch.worktree_path.clone(),
-                launch.prompt.clone(),
-            ],
+            args,
             cwd: None,
             mode: super::command::CommandMode::Capture,
         }

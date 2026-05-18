@@ -530,7 +530,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:worktrunk codex --cd {} 'fix login' Enter",
+            "tmux send-keys -t ajax-web-fix-login:worktrunk codex --cd {} Enter",
             worktree.display()
         )),
         "fake tmux log should include agent launch:\n{log}"

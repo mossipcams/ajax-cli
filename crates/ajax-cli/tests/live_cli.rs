@@ -563,9 +563,13 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         worktree = worktree.display()
     )));
     assert!(lifecycle_log.contains(&format!(
-        "args=send-keys -t ajax-web-fix-login:worktrunk codex --cd {worktree} 'Fix Login!' Enter",
+        "args=send-keys -t ajax-web-fix-login:worktrunk codex --cd {worktree} Enter",
         worktree = worktree.display()
     )));
+    assert!(
+        !lifecycle_log.contains("'Fix Login!'"),
+        "ajax start should not send the task title as the initial agent prompt:\n{lifecycle_log}"
+    );
     assert!(lifecycle_log.contains("args=select-window -t ajax-web-fix-login:worktrunk"));
     assert!(
         lifecycle_log.contains("args=attach-session -t ajax-web-fix-login")
