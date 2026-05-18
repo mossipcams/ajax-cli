@@ -3439,11 +3439,22 @@ mod tests {
         context.config.test_commands =
             vec![ajax_core::config::TestCommand::new("web", "cargo test")];
         let mut runner = RecordingCommandRunner::default();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "repair", "web/fix-login", "--execute"])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
 
-        run_with_context_and_runner(
-            ["ajax", "repair", "web/fix-login", "--execute"],
+        // Inject the open mode explicitly. The `run_with_context_and_runner`
+        // dispatch path resolves it from the ambient `$TMUX` env var, which
+        // makes this assertion non-deterministic across environments (passing
+        // inside tmux, failing in CI). Pin the env-independent `Attach`
+        // default so the full command sequence is asserted deterministically.
+        super::render_task_command(
+            super::TaskCommandOperation::Repair,
+            subcommand,
             &mut context,
             &mut runner,
+            OpenMode::Attach,
         )
         .unwrap();
 
@@ -3467,7 +3478,7 @@ mod tests {
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
                 ),
-                CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio),
                 CommandSpec::new("sh", ["-lc", "cargo test"])
                     .with_cwd("/tmp/worktrees/web-fix-login")
