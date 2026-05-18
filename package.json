@@ -5,9 +5,11 @@
   "scripts": {
     "test": "npm run verify",
     "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features && cargo test --doc",
+    "verify:probity": "node scripts/verify-probity.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
+    "@nizos/probity": "^1.5.0",
     "husky": "^9.1.7"
   }
 }
