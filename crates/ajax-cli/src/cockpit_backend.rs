@@ -193,6 +193,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             {
                 if let Some(task) = context.registry.get_task_mut(&task_id) {
                     task.remove_side_flag(ajax_core::models::SideFlag::AgentRunning);
+                    refresh_cached_annotations(task);
                     changed = true;
                 }
                 continue;
@@ -207,6 +208,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                     task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
                 );
+                refresh_cached_annotations(task);
                 changed = true;
             }
             continue;
@@ -246,6 +248,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                         task,
                         LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
                     );
+                    refresh_cached_annotations(task);
                     changed = true;
                 }
                 continue;
@@ -277,6 +280,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                     task,
                     LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
                 );
+                refresh_cached_annotations(task);
                 changed = true;
             }
             continue;
@@ -292,6 +296,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                         task,
                         LiveObservation::new(LiveStatusKind::CommandFailed, "live refresh failed"),
                     );
+                    refresh_cached_annotations(task);
                     changed = true;
                 }
                 continue;
@@ -303,11 +308,16 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             task.remove_side_flag(ajax_core::models::SideFlag::TmuxMissing);
             task.remove_side_flag(ajax_core::models::SideFlag::WorktrunkMissing);
             live::apply_observation(task, observation);
+            refresh_cached_annotations(task);
             changed |= *task != previous;
         }
     }
 
     Ok(changed)
+}
+
+fn refresh_cached_annotations(task: &mut ajax_core::models::Task) {
+    task.annotations = ajax_core::attention::annotate(task);
 }
 
 pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
@@ -376,4 +386,88 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
     value
         .parse::<u64>()
         .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::refresh_cockpit_snapshot;
+    use ajax_core::{
+        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        commands::CommandContext,
+        config::{Config, ManagedRepo},
+        models::{AgentClient, LifecycleStatus, Task, TaskId},
+        registry::{InMemoryRegistry, Registry},
+    };
+
+    #[derive(Default)]
+    struct LiveRefreshRunner;
+
+    impl CommandRunner for LiveRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [command, ..] if command == "list-windows" => {
+                    "worktrunk\t/tmp/worktrees/web-fix-login\n"
+                }
+                [command, ..] if command == "capture-pane" => "Do you want to proceed? y/n\n",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn context_with_active_task() -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(task).unwrap();
+
+        CommandContext::new(config, registry)
+    }
+
+    #[test]
+    fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
+        let mut context = context_with_active_task();
+        let mut runner = LiveRefreshRunner;
+        let mut state_changed = false;
+
+        let snapshot =
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+
+        assert!(state_changed);
+        assert_eq!(
+            snapshot.cards[0].live_summary.as_deref(),
+            Some("waiting for approval")
+        );
+        assert!(snapshot.inbox.items.iter().any(|item| {
+            item.reason == "waiting_for_approval" && item.task_handle == "web/fix-login"
+        }));
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .annotations
+            .iter()
+            .any(|annotation| annotation.evidence.label() == "waiting for approval"));
+    }
 }

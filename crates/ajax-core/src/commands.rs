@@ -31,7 +31,6 @@ pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
-    attention::annotate,
     config::Config,
     models::{Annotation, LifecycleStatus, SideFlag, Task},
     output::{
@@ -43,8 +42,8 @@ use crate::{
 };
 use lookup::find_task;
 use projection::{
-    cockpit_projection as build_cockpit_projection, cockpit_summary, count_active_tasks,
-    count_attention_items, count_lifecycle, is_visible_task, task_summary,
+    annotations_for_task, cockpit_projection as build_cockpit_projection, cockpit_summary,
+    count_active_tasks, count_attention_items, count_lifecycle, is_visible_task, task_summary,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
@@ -98,15 +97,18 @@ pub enum OpenMode {
 }
 
 pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
-    let repos = context
-        .config
+    let all_tasks = context.registry.list_tasks();
+    list_repos_from_tasks(&context.config, all_tasks.as_slice())
+}
+
+fn list_repos_from_tasks(config: &Config, all_tasks: &[&Task]) -> ReposResponse {
+    let repos = config
         .repos
         .iter()
         .map(|repo| {
-            let repo_tasks: Vec<&Task> = context
-                .registry
-                .list_tasks()
-                .into_iter()
+            let repo_tasks: Vec<&Task> = all_tasks
+                .iter()
+                .copied()
                 .filter(|task| task.repo == repo.name && is_visible_task(task))
                 .collect();
 
@@ -125,10 +127,14 @@ pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
 }
 
 pub fn list_tasks<R: Registry>(context: &CommandContext<R>, repo: Option<&str>) -> TasksResponse {
-    let tasks = context
-        .registry
-        .list_tasks()
-        .into_iter()
+    let all_tasks = context.registry.list_tasks();
+    list_tasks_from_tasks(all_tasks.as_slice(), repo)
+}
+
+fn list_tasks_from_tasks(tasks: &[&Task], repo: Option<&str>) -> TasksResponse {
+    let tasks = tasks
+        .iter()
+        .copied()
         .filter(|task| is_visible_task(task))
         .filter(|task| repo.is_none_or(|repo_name| task.repo == repo_name))
         .map(task_summary)
@@ -138,10 +144,14 @@ pub fn list_tasks<R: Registry>(context: &CommandContext<R>, repo: Option<&str>) 
 }
 
 pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
-    let tasks = context
-        .registry
-        .list_tasks()
-        .into_iter()
+    let all_tasks = context.registry.list_tasks();
+    review_queue_from_tasks(all_tasks.as_slice())
+}
+
+fn review_queue_from_tasks(tasks: &[&Task]) -> TasksResponse {
+    let tasks = tasks
+        .iter()
+        .copied()
         .filter(|task| is_visible_task(task))
         .filter(|task| {
             matches!(
@@ -186,11 +196,13 @@ pub fn inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
         .list_tasks()
         .into_iter()
         .filter(|task| is_visible_task(task))
-        .cloned()
         .collect::<Vec<_>>();
+    inbox_from_tasks(tasks.as_slice())
+}
 
+fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
     InboxResponse {
-        items: annotation_items(&tasks),
+        items: annotation_items(tasks),
     }
 }
 
@@ -200,11 +212,12 @@ pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     }
 }
 
-fn annotation_items(tasks: &[Task]) -> Vec<AnnotationItem> {
+fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
     let mut items = tasks
         .iter()
+        .copied()
         .filter_map(|task| {
-            annotate(task)
+            annotations_for_task(task)
                 .into_iter()
                 .min_by_key(|annotation| annotation.severity)
                 .map(|annotation| annotation_item(task, annotation))
@@ -234,10 +247,11 @@ pub fn status<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
 }
 
 pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
-    let repos = list_repos(context);
-    let tasks = list_tasks(context, None);
-    let review = review_queue(context);
-    let inbox = inbox(context);
+    let all_tasks = context.registry.list_tasks();
+    let repos = list_repos_from_tasks(&context.config, all_tasks.as_slice());
+    let tasks = list_tasks_from_tasks(all_tasks.as_slice(), None);
+    let review = review_queue_from_tasks(all_tasks.as_slice());
+    let inbox = inbox_from_tasks(all_tasks.as_slice());
     let summary = cockpit_summary(&repos, &tasks, &review, &inbox);
     let next = NextResponse {
         item: inbox.items.first().cloned(),
@@ -254,12 +268,12 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
 }
 
 pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitProjection {
-    let repos = list_repos(context);
-    let tasks_list = list_tasks(context, None);
-    let review = review_queue(context);
-    let inbox = inbox(context);
-    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     let all_tasks = context.registry.list_tasks();
+    let repos = list_repos_from_tasks(&context.config, all_tasks.as_slice());
+    let tasks_list = list_tasks_from_tasks(all_tasks.as_slice(), None);
+    let review = review_queue_from_tasks(all_tasks.as_slice());
+    let inbox = inbox_from_tasks(all_tasks.as_slice());
+    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     build_cockpit_projection(all_tasks.as_slice(), summary)
 }
 
@@ -369,14 +383,15 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveObservation, OperatorAction, SideFlag,
-            Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
+            LiveObservation, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
-        registry::{InMemoryRegistry, Registry},
+        registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
     };
     use proptest::prelude::*;
     use rstest::rstest;
+    use std::cell::Cell;
 
     fn context_with_tasks() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -404,6 +419,109 @@ mod tests {
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, registry)
+    }
+
+    #[derive(Default)]
+    struct CountingRegistry {
+        inner: InMemoryRegistry,
+        list_tasks_calls: Cell<u32>,
+    }
+
+    impl CountingRegistry {
+        fn from_registry(inner: InMemoryRegistry) -> Self {
+            Self {
+                inner,
+                list_tasks_calls: Cell::new(0),
+            }
+        }
+
+        fn list_tasks_calls(&self) -> u32 {
+            self.list_tasks_calls.get()
+        }
+    }
+
+    impl Registry for CountingRegistry {
+        fn create_task(&mut self, task: Task) -> Result<(), RegistryError> {
+            self.inner.create_task(task)
+        }
+
+        fn get_task(&self, task_id: &TaskId) -> Option<&Task> {
+            self.inner.get_task(task_id)
+        }
+
+        fn get_task_mut(&mut self, task_id: &TaskId) -> Option<&mut Task> {
+            self.inner.get_task_mut(task_id)
+        }
+
+        fn list_tasks(&self) -> Vec<&Task> {
+            self.list_tasks_calls.set(self.list_tasks_calls.get() + 1);
+            self.inner.list_tasks()
+        }
+
+        fn update_lifecycle(
+            &mut self,
+            task_id: &TaskId,
+            status: LifecycleStatus,
+        ) -> Result<(), RegistryError> {
+            self.inner.update_lifecycle(task_id, status)
+        }
+
+        fn record_event(
+            &mut self,
+            task_id: TaskId,
+            kind: RegistryEventKind,
+            message: impl Into<String>,
+        ) -> Result<(), RegistryError> {
+            self.inner.record_event(task_id, kind, message)
+        }
+
+        fn update_git_status(
+            &mut self,
+            task_id: &TaskId,
+            status: GitStatus,
+        ) -> Result<(), RegistryError> {
+            self.inner.update_git_status(task_id, status)
+        }
+
+        fn update_tmux_status(
+            &mut self,
+            task_id: &TaskId,
+            status: Option<TmuxStatus>,
+        ) -> Result<(), RegistryError> {
+            self.inner.update_tmux_status(task_id, status)
+        }
+
+        fn update_worktrunk_status(
+            &mut self,
+            task_id: &TaskId,
+            status: Option<WorktrunkStatus>,
+        ) -> Result<(), RegistryError> {
+            self.inner.update_worktrunk_status(task_id, status)
+        }
+
+        fn apply_live_observation(
+            &mut self,
+            task_id: &TaskId,
+            observation: LiveObservation,
+        ) -> Result<(), RegistryError> {
+            self.inner.apply_live_observation(task_id, observation)
+        }
+
+        fn list_events(&self) -> Vec<&RegistryEvent> {
+            self.inner.list_events()
+        }
+
+        fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent> {
+            self.inner.events_for_task(task_id)
+        }
+    }
+
+    fn counting_context_with_tasks() -> CommandContext<CountingRegistry> {
+        let context = context_with_tasks();
+        CommandContext::new(
+            context.config,
+            CountingRegistry::from_registry(context.registry),
+        )
     }
 
     fn context_with_cleanable_task() -> CommandContext<InMemoryRegistry> {
@@ -915,6 +1033,16 @@ mod tests {
     }
 
     #[test]
+    fn list_repos_scans_registry_once() {
+        let context = counting_context_with_tasks();
+
+        let response = list_repos(&context);
+
+        assert_eq!(response.repos.len(), 2);
+        assert_eq!(context.registry.list_tasks_calls(), 1);
+    }
+
+    #[test]
     fn task_summary_marks_live_attention_without_side_flags() {
         let mut context = context_with_tasks();
         let task = context
@@ -930,6 +1058,28 @@ mod tests {
         let response = list_tasks(&context, None);
 
         assert!(response.tasks[0].needs_attention);
+    }
+
+    #[test]
+    fn task_summary_and_inbox_reuse_cached_annotations() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(SideFlag::NeedsInput),
+        )];
+
+        let tasks = list_tasks(&context, None);
+        let inbox = inbox(&context);
+
+        assert!(tasks.tasks[0].needs_attention);
+        assert_eq!(inbox.items.len(), 1);
+        assert_eq!(inbox.items[0].reason, "needs_input");
     }
 
     #[test]
@@ -1103,6 +1253,28 @@ mod tests {
         assert_eq!(response.review.tasks.len(), 2);
         assert_eq!(response.review.tasks[0].qualified_handle, "web/fix-login");
         assert_eq!(response.review.tasks[1].qualified_handle, "api/add-cache");
+    }
+
+    #[test]
+    fn cockpit_scans_registry_once() {
+        let context = counting_context_with_tasks();
+
+        let response = cockpit(&context);
+
+        assert_eq!(response.summary.tasks, 1);
+        assert_eq!(response.inbox.items.len(), 1);
+        assert_eq!(context.registry.list_tasks_calls(), 1);
+    }
+
+    #[test]
+    fn cockpit_projection_scans_registry_once() {
+        let context = counting_context_with_tasks();
+
+        let response = super::cockpit_projection(&context);
+
+        assert_eq!(response.counts.tasks, 1);
+        assert_eq!(response.cards.len(), 1);
+        assert_eq!(context.registry.list_tasks_calls(), 1);
     }
 
     #[test]
