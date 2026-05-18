@@ -52,7 +52,11 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
       - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+        # Build cargo-audit with the stable toolchain provisioned above, not
+        # the project-pinned 1.88.0 from rust-toolchain.toml. This decouples
+        # the audit tool's moving MSRV from the project's pinned compiler so a
+        # cargo-audit (or transitive dependency) MSRV bump cannot break CI.
+        run: cargo +stable install cargo-audit --locked
 
       - name: Audit dependencies
         run: cargo audit
