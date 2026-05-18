@@ -74,12 +74,7 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     {
         reasons.push("task worktree is missing".to_string());
     }
-    if task.has_missing_substrate()
-        && !matches!(
-            operation,
-            TaskOperation::Check | TaskOperation::Diff | TaskOperation::Remove
-        )
-    {
+    if missing_substrate_blocks_operation(task, operation) {
         reasons.push("task has missing substrate".to_string());
     }
 
@@ -87,6 +82,25 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
         OperationEligibility::Allowed
     } else {
         OperationEligibility::Blocked(reasons)
+    }
+}
+
+fn missing_substrate_blocks_operation(task: &Task, operation: TaskOperation) -> bool {
+    match operation {
+        TaskOperation::Check | TaskOperation::Diff | TaskOperation::Remove => false,
+        TaskOperation::Merge => {
+            task.has_side_flag(SideFlag::WorktreeMissing)
+                || task.has_side_flag(SideFlag::BranchMissing)
+                || task
+                    .git_status
+                    .as_ref()
+                    .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
+                || task
+                    .live_status
+                    .as_ref()
+                    .is_some_and(|live| live.kind == crate::models::LiveStatusKind::WorktreeMissing)
+        }
+        _ => task.has_missing_substrate(),
     }
 }
 

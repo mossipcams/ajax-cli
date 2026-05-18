@@ -128,27 +128,36 @@ fn build_selectables(
     expanded_task: &Option<TaskId>,
 ) -> Vec<SelectableKind> {
     let mut out = Vec::new();
-    let push_with_drawer =
-        |out: &mut Vec<SelectableKind>, base: SelectableKind, drawer_task: &TaskCard| {
-            out.push(base);
-            if expanded_task.as_ref() == Some(&drawer_task.id) {
-                for action in &drawer_task.available_actions {
-                    out.push(SelectableKind::TaskAction {
-                        task: drawer_task.clone(),
-                        action: action.as_str().to_string(),
-                    });
+    let push_with_drawer = |out: &mut Vec<SelectableKind>,
+                            base: SelectableKind,
+                            drawer_task: &TaskCard,
+                            recommended_action: Option<OperatorAction>| {
+        out.push(base);
+        if expanded_task.as_ref() == Some(&drawer_task.id) {
+            let mut actions = drawer_task.available_actions.clone();
+            if let Some(action) = recommended_action {
+                if !actions.contains(&action) {
+                    actions.push(action);
                 }
             }
-        };
+            for action in &actions {
+                out.push(SelectableKind::TaskAction {
+                    task: drawer_task.clone(),
+                    action: action.as_str().to_string(),
+                });
+            }
+        }
+    };
     match view {
         AppView::Projects => {
             let annotation_items = annotation_inbox_items(cards, inbox);
             let inbox_task_ids = inbox_task_ids(annotation_items.iter());
             for item in annotation_items {
                 let drawer_card = cards.iter().find(|c| c.id == item.task_id).cloned();
+                let action = item.action;
                 let base = SelectableKind::Inbox(item);
                 if let Some(card) = drawer_card {
-                    push_with_drawer(&mut out, base, &card);
+                    push_with_drawer(&mut out, base, &card, Some(action));
                 } else {
                     out.push(base);
                 }
@@ -159,7 +168,7 @@ fn build_selectables(
                 .filter(|card| !inbox_task_ids.contains(&card.id))
                 .filter(|card| !matches!(card.ui_state, UiState::Archived))
             {
-                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card);
+                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card, None);
             }
         }
         AppView::Project { repo } => {
@@ -169,7 +178,7 @@ fn build_selectables(
                 .filter(|card| card_repo(card) == Some(repo.as_str()))
                 .filter(|card| !matches!(card.ui_state, UiState::Archived))
             {
-                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card);
+                push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card, None);
             }
         }
         AppView::NewTaskInput { .. } => {}

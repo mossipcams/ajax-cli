@@ -3166,6 +3166,29 @@ mod tests {
     }
 
     #[test]
+    fn enter_on_inbox_row_includes_recommended_action_missing_from_task_actions() {
+        let inbox = InboxResponse {
+            items: vec![AnnotationItem {
+                task_id: TaskId::new("task-1"),
+                task_handle: "web/fix-login".to_string(),
+                reason: "cleanable".to_string(),
+                severity: 40,
+                action: OperatorAction::Drop,
+            }],
+        };
+        let mut app = App::new(sample_repos(), sample_tasks(), inbox);
+
+        assert!(app.activate_selected().is_none());
+
+        assert!(app.selectables.iter().any(|selectable| matches!(
+            selectable,
+            SelectableKind::TaskAction { action, .. } if action == "drop"
+        )));
+        let item = app.selected_action().unwrap();
+        assert_eq!(item.action, "drop");
+    }
+
+    #[test]
     fn project_view_has_no_reconcile_action() {
         let app = app_in_project_view();
 

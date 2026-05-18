@@ -126,19 +126,37 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
-    if task.has_missing_substrate() {
+    if task.has_missing_substrate() && !has_only_shell_substrate_gap(task) {
         return vec![OperatorAction::Repair];
     }
-    [
-        (TaskOperation::Open, OperatorAction::Resume),
-        (TaskOperation::Merge, OperatorAction::Ship),
-        (TaskOperation::Clean, OperatorAction::Drop),
-        (TaskOperation::Remove, OperatorAction::Drop),
-    ]
-    .into_iter()
-    .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
-    .map(|(_, action)| action)
-    .collect()
+
+    let mut actions = if task.has_missing_substrate() {
+        vec![OperatorAction::Repair]
+    } else {
+        Vec::new()
+    };
+    actions.extend(
+        [
+            (TaskOperation::Open, OperatorAction::Resume),
+            (TaskOperation::Merge, OperatorAction::Ship),
+            (TaskOperation::Clean, OperatorAction::Drop),
+            (TaskOperation::Remove, OperatorAction::Drop),
+        ]
+        .into_iter()
+        .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
+        .map(|(_, action)| action),
+    );
+    actions.dedup();
+    actions
+}
+
+fn has_only_shell_substrate_gap(task: &Task) -> bool {
+    !task.has_side_flag(SideFlag::WorktreeMissing)
+        && !task.has_side_flag(SideFlag::BranchMissing)
+        && !task
+            .live_status
+            .as_ref()
+            .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
@@ -200,9 +218,12 @@ fn blocker_reason_for_live(kind: LiveStatusKind) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::operator_action;
-    use crate::models::{
-        AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, OperatorAction,
-        SideFlag, Task, TaskId,
+    use crate::{
+        lifecycle::{mark_active, mark_reviewable},
+        models::{
+            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
+            OperatorAction, SideFlag, Task, TaskId,
+        },
     };
 
     fn task(handle: &str) -> Task {
@@ -218,6 +239,66 @@ mod tests {
             "worktrunk",
             AgentClient::Codex,
         )
+    }
+
+    fn clean_reviewable_task(handle: &str) -> Task {
+        let mut t = task(handle);
+        mark_active(&mut t).unwrap();
+        mark_reviewable(&mut t).unwrap();
+        t.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some(format!("ajax/{handle}")),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: Some("abc123 Fix task".to_string()),
+        });
+        t
+    }
+
+    #[test]
+    fn operator_actions_keep_ship_available_when_only_shell_substrate_needs_repair() {
+        for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
+            let mut t = clean_reviewable_task("reviewable");
+            t.add_side_flag(flag);
+
+            let plan = operator_action(&t);
+
+            assert!(
+                plan.available_actions.contains(&OperatorAction::Ship),
+                "{flag:?} should not hide the ship action: {:?}",
+                plan.available_actions
+            );
+            assert!(
+                plan.available_actions.contains(&OperatorAction::Repair),
+                "{flag:?} should keep repair available: {:?}",
+                plan.available_actions
+            );
+        }
+    }
+
+    #[test]
+    fn operator_actions_hide_ship_when_git_substrate_is_missing() {
+        for mark_missing_git_substrate in [
+            |task: &mut Task| task.git_status.as_mut().unwrap().worktree_exists = false,
+            |task: &mut Task| task.git_status.as_mut().unwrap().branch_exists = false,
+        ] {
+            let mut t = clean_reviewable_task("reviewable");
+            mark_missing_git_substrate(&mut t);
+
+            let plan = operator_action(&t);
+
+            assert!(
+                !plan.available_actions.contains(&OperatorAction::Ship),
+                "missing git substrate should hide ship: {:?}",
+                plan.available_actions
+            );
+        }
     }
 
     #[test]
