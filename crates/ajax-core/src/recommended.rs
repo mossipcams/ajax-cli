@@ -23,13 +23,8 @@ pub fn operator_action(task: &Task) -> OperatorActionPlan {
         };
     }
 
-    let derived_annotations;
-    let annotations = if task.annotations.is_empty() {
-        derived_annotations = crate::attention::annotate(task);
-        derived_annotations.as_slice()
-    } else {
-        task.annotations.as_slice()
-    };
+    let derived_annotations = crate::attention::annotate(task);
+    let annotations = derived_annotations.as_slice();
     let primary_annotation = annotations
         .iter()
         .min_by_key(|annotation| annotation.severity);
@@ -264,8 +259,8 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            OperatorAction, RuntimeHealth, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth, SideFlag, Task,
+            TaskId, TmuxStatus, WorktrunkStatus,
         },
     };
 
@@ -411,16 +406,8 @@ mod tests {
     #[test]
     fn operator_action_uses_lowest_severity_annotation() {
         let mut t = task("annotated");
-        t.annotations = vec![
-            Annotation::new(
-                AnnotationKind::Reviewable,
-                Evidence::Lifecycle(LifecycleStatus::Reviewable),
-            ),
-            Annotation::new(
-                AnnotationKind::NeedsMe,
-                Evidence::SideFlag(SideFlag::NeedsInput),
-            ),
-        ];
+        t.lifecycle_status = LifecycleStatus::Reviewable;
+        t.add_side_flag(SideFlag::NeedsInput);
 
         let plan = operator_action(&t);
 

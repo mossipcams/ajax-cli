@@ -1078,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn task_summary_and_inbox_reuse_cached_annotations() {
+    fn task_summary_and_inbox_ignore_stale_cached_annotations() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1094,9 +1094,8 @@ mod tests {
         let tasks = list_tasks(&context, None);
         let inbox = inbox(&context);
 
-        assert!(tasks.tasks[0].needs_attention);
-        assert_eq!(inbox.items.len(), 1);
-        assert_eq!(inbox.items[0].reason, "needs_input");
+        assert!(!tasks.tasks[0].needs_attention);
+        assert!(inbox.items.is_empty());
     }
 
     #[test]

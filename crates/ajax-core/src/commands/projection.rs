@@ -84,11 +84,13 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
     let ui_state = derive_ui_state(task);
     let plan = operator_action(task);
     let annotations = annotations_for_task(task);
+    let status_label = task_status_label(task, ui_state);
     TaskCard {
         id: task.id.clone(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         ui_state,
+        status_label,
         lifecycle: task.lifecycle_status,
         annotations,
         primary_action: plan.action,
@@ -97,13 +99,15 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
     }
 }
 
+fn task_status_label(task: &Task, ui_state: crate::ui_state::UiState) -> String {
+    task.live_status
+        .as_ref()
+        .map(|live| live.summary.clone())
+        .unwrap_or_else(|| ui_state.as_str().to_string())
+}
+
 pub(super) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
-    let derived = annotate(task);
-    if derived.is_empty() && !task.annotations.is_empty() {
-        task.annotations.clone()
-    } else {
-        derived
-    }
+    annotate(task)
 }
 
 pub(super) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> CockpitProjection {
@@ -148,7 +152,8 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, AnnotationKind, LifecycleStatus, OperatorAction, SideFlag, Task, TaskId,
+            AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveObservation,
+            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId,
         },
         output::CockpitSummary,
     };
@@ -219,5 +224,64 @@ mod tests {
 
         assert_eq!(projection.cards.len(), 1);
         assert_eq!(projection.cards[0].qualified_handle, "web/healthy");
+    }
+
+    #[test]
+    fn task_card_status_label_comes_from_live_or_ui_state_not_annotation_row() {
+        let mut review_task = task("review");
+        mark_active(&mut review_task).unwrap();
+        mark_reviewable(&mut review_task).unwrap();
+        review_task.annotations = crate::attention::annotate(&review_task);
+
+        let card = task_card(&review_task);
+
+        assert_eq!(card.status_label, "review ready");
+        assert_ne!(card.status_label, card.annotations[0].row_label());
+
+        let mut running = task("running");
+        mark_active(&mut running).unwrap();
+        running.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TestsRunning,
+            "tests running",
+        ));
+
+        let running_card = task_card(&running);
+
+        assert_eq!(running_card.status_label, "tests running");
+    }
+
+    #[test]
+    fn current_empty_annotations_do_not_fall_back_to_stale_cached_annotations() {
+        let mut task = task("running");
+        mark_active(&mut task).unwrap();
+        task.annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(SideFlag::NeedsInput),
+        )];
+
+        let annotations = super::annotations_for_task(&task);
+
+        assert!(annotations.is_empty(), "{annotations:?}");
+        assert!(task_card(&task).annotations.is_empty());
+    }
+
+    #[test]
+    fn stale_cached_annotations_do_not_override_current_primary_action() {
+        let mut task = task("review");
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+        task.annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(SideFlag::NeedsInput),
+        )];
+
+        let card = task_card(&task);
+
+        assert_eq!(card.status_label, "review ready");
+        assert_eq!(card.primary_action, OperatorAction::Review);
+        assert!(card
+            .annotations
+            .iter()
+            .all(|annotation| annotation.kind != AnnotationKind::NeedsMe));
     }
 }

@@ -150,7 +150,7 @@ fn build_selectables(
     };
     match view {
         AppView::Projects => {
-            let annotation_items = annotation_inbox_items(cards, inbox);
+            let annotation_items = inbox.items.clone();
             let inbox_task_ids = inbox_task_ids(annotation_items.iter());
             for item in annotation_items {
                 let drawer_card = cards.iter().find(|c| c.id == item.task_id).cloned();
@@ -185,34 +185,6 @@ fn build_selectables(
         AppView::Help { .. } => {}
     }
     out
-}
-
-fn annotation_inbox_items(cards: &[TaskCard], fallback: &InboxResponse) -> Vec<AnnotationItem> {
-    let mut items = cards
-        .iter()
-        .filter_map(|card| {
-            let annotation = card
-                .annotations
-                .iter()
-                .min_by_key(|annotation| annotation.severity)?;
-            Some(AnnotationItem {
-                task_id: card.id.clone(),
-                task_handle: card.qualified_handle.clone(),
-                reason: crate::evidence_label(&annotation.evidence).to_string(),
-                severity: annotation.severity,
-                action: annotation.suggests,
-            })
-        })
-        .collect::<Vec<_>>();
-    if items.is_empty() {
-        items = fallback.items.clone();
-    }
-    items.sort_by(|left, right| {
-        left.severity
-            .cmp(&right.severity)
-            .then_with(|| left.task_handle.cmp(&right.task_handle))
-    });
-    items
 }
 
 fn inbox_task_ids<'a>(items: impl Iterator<Item = &'a AnnotationItem>) -> HashSet<TaskId> {

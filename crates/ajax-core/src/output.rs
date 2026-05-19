@@ -12,6 +12,7 @@ pub struct TaskCard {
     pub qualified_handle: String,
     pub title: String,
     pub ui_state: UiState,
+    pub status_label: String,
     pub lifecycle: LifecycleStatus,
     pub annotations: Vec<Annotation>,
     pub primary_action: OperatorAction,

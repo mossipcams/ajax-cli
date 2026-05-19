@@ -421,13 +421,7 @@ fn task_handle_color(card: &TaskCard) -> Color {
 }
 
 fn task_status_label(card: &TaskCard) -> String {
-    if let Some(annotation) = card.annotations.first() {
-        return evidence_label(&annotation.evidence).to_string();
-    }
-    if let Some(summary) = card.live_summary.as_ref() {
-        return summary.clone();
-    }
-    card.ui_state.as_str().to_string()
+    card.status_label.clone()
 }
 
 pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
@@ -567,13 +561,7 @@ fn project_subtitle(repo: &RepoSummary) -> String {
 }
 
 fn task_row_label(card: &TaskCard) -> String {
-    if let Some(annotation) = card.annotations.first() {
-        annotation.row_label()
-    } else if let Some(summary) = card.live_summary.as_ref() {
-        summary.clone()
-    } else {
-        card.ui_state.as_str().to_string()
-    }
+    card.status_label.clone()
 }
 
 fn column_separator() -> Span<'static> {
@@ -774,8 +762,11 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
         sel_to_row.push(rows.len());
         rows.push(render_selectable(selectable, app.selected == idx));
         // Inline annotation lines under an expanded task or inbox row.
-        if let Some(card) = expanded_card_for(selectable, app) {
+        if let Some((card, row_reason)) = expanded_card_for(selectable, app) {
             for annotation in &card.annotations {
+                if Some(annotation.row_label()) == row_reason {
+                    continue;
+                }
                 rows.push(render_annotation_line(annotation));
             }
         }
@@ -785,14 +776,24 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     (rows, sel_to_row)
 }
 
-fn expanded_card_for<'a>(s: &SelectableKind, app: &'a App) -> Option<&'a TaskCard> {
+fn expanded_card_for<'a>(
+    s: &SelectableKind,
+    app: &'a App,
+) -> Option<(&'a TaskCard, Option<String>)> {
     let open = app.expanded_task.as_ref()?;
-    let task_id = match s {
-        SelectableKind::Task(card) if &card.id == open => Some(&card.id),
-        SelectableKind::Inbox(item) if &item.task_id == open => Some(&item.task_id),
-        _ => None,
-    }?;
-    app.cards.iter().find(|c| &c.id == task_id)
+    let (task_id, row_reason) = match s {
+        SelectableKind::Task(card) if &card.id == open => {
+            (&card.id, Some(card.status_label.clone()))
+        }
+        SelectableKind::Inbox(item) if &item.task_id == open => {
+            (&item.task_id, Some(item.reason.clone()))
+        }
+        _ => return None,
+    };
+    app.cards
+        .iter()
+        .find(|c| &c.id == task_id)
+        .map(|card| (card, row_reason))
 }
 
 fn render_annotation_line(annotation: &ajax_core::models::Annotation) -> ListItem<'static> {
@@ -898,6 +899,7 @@ mod tests {
             qualified_handle: handle.to_string(),
             title: title.to_string(),
             ui_state,
+            status_label: ui_state.as_str().to_string(),
             lifecycle,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
@@ -1353,6 +1355,7 @@ mod tests {
     fn task_rows_render_live_status_when_present() {
         let mut tasks = sample_tasks();
         tasks[0].live_summary = Some("waiting for approval".to_string());
+        tasks[0].status_label = "waiting for approval".to_string();
         let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
         app.activate_selected();
 
@@ -1504,7 +1507,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_row_shows_annotation_label() {
+    fn cockpit_row_uses_card_status_label_instead_of_annotation_label() {
         let mut tasks = sample_tasks();
         tasks[0].annotations = vec![Annotation::new(
             AnnotationKind::NeedsMe,
@@ -1513,7 +1516,8 @@ mod tests {
 
         let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-        assert!(content.contains("needs input"), "{content}");
+        assert!(content.contains("blocked"), "{content}");
+        assert!(!content.contains("needs input"), "{content}");
         assert!(!content.contains("LiveStatus"), "{content}");
     }
 
@@ -1548,13 +1552,13 @@ mod tests {
     fn task_row_renders_primary_action_label_and_chrome() {
         let mut tasks = sample_tasks();
         tasks[0].primary_action = OperatorAction::Review;
+        tasks[0].status_label = "review ready".to_string();
         tasks[0].annotations = vec![Annotation::new(
             AnnotationKind::Reviewable,
             Evidence::Lifecycle(LifecycleStatus::Reviewable),
         )];
         let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
-        // Drill into the project so the Task row renders (top-level promotes
-        // annotated cards to the inbox, which has its own minimal layout).
+        // Drill into the project so the task row is unambiguously visible.
         while !matches!(app.view, AppView::Project { .. }) {
             if matches!(
                 app.selectables.get(app.selected),
@@ -1569,42 +1573,48 @@ mod tests {
         let content = render_to_string(80, 30, &app);
 
         assert!(content.contains("web/fix-login"), "handle: {content}");
-        assert!(
-            content.contains("reviewable"),
-            "annotation label: {content}"
-        );
+        assert!(content.contains("review ready"), "status label: {content}");
         assert!(content.contains("Review"), "action label: {content}");
     }
 
     #[test]
-    fn cockpit_inbox_lists_annotated_tasks_sorted_by_severity() {
-        let mut reviewable = sample_card(
+    fn cockpit_inbox_lists_supplied_items_in_order() {
+        let reviewable = sample_card(
             "task-review",
             "web/review",
             "Review task",
             UiState::ReviewReady,
             LifecycleStatus::Reviewable,
         );
-        reviewable.annotations = vec![Annotation::new(
-            AnnotationKind::Reviewable,
-            Evidence::Lifecycle(LifecycleStatus::Reviewable),
-        )];
-        let mut needs_me = sample_card(
+        let needs_me = sample_card(
             "task-needs-me",
             "web/needs-me",
             "Needs me",
             UiState::Blocked,
             LifecycleStatus::Active,
         );
-        needs_me.annotations = vec![Annotation::new(
-            AnnotationKind::NeedsMe,
-            Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput),
-        )];
 
         let app = App::new(
             sample_repos(),
             vec![reviewable, needs_me],
-            InboxResponse { items: vec![] },
+            InboxResponse {
+                items: vec![
+                    AnnotationItem {
+                        task_id: TaskId::new("task-needs-me"),
+                        task_handle: "web/needs-me".to_string(),
+                        reason: "waiting for input".to_string(),
+                        severity: 1,
+                        action: OperatorAction::Resume,
+                    },
+                    AnnotationItem {
+                        task_id: TaskId::new("task-review"),
+                        task_handle: "web/review".to_string(),
+                        reason: "review ready".to_string(),
+                        severity: 3,
+                        action: OperatorAction::Review,
+                    },
+                ],
+            },
         );
 
         assert!(matches!(
@@ -1754,6 +1764,7 @@ mod tests {
         let selected_before = app.selected;
         let mut refreshed_tasks = sample_tasks();
         refreshed_tasks[0].live_summary = Some("waiting for approval".to_string());
+        refreshed_tasks[0].status_label = "waiting for approval".to_string();
 
         app.apply_refresh(CockpitSnapshot {
             repos: sample_repos(),
@@ -2623,6 +2634,30 @@ mod tests {
 
         assert_eq!(inbox_rows, 1);
         assert_eq!(task_rows, 0);
+    }
+
+    #[test]
+    fn projects_view_uses_supplied_inbox_instead_of_rebuilding_from_cards() {
+        let mut tasks = sample_tasks();
+        tasks[0].annotations = vec![Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(ajax_core::models::SideFlag::NeedsInput),
+        )];
+        let app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+
+        let inbox_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| matches!(selectable, SelectableKind::Inbox(_)))
+            .count();
+        let task_rows = app
+            .selectables
+            .iter()
+            .filter(|selectable| matches!(selectable, SelectableKind::Task(_)))
+            .count();
+
+        assert_eq!(inbox_rows, 0);
+        assert_eq!(task_rows, 1);
     }
 
     #[test]
@@ -4346,5 +4381,32 @@ mod tests {
             .get(task_idx + 1)
             .expect("drawer action follows the task row");
         assert!(matches!(next, SelectableKind::TaskAction { .. }));
+    }
+
+    #[test]
+    fn expanded_drawer_does_not_repeat_primary_row_status() {
+        let mut tasks = sample_tasks();
+        let annotation = Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(ajax_core::models::SideFlag::NeedsInput),
+        );
+        let row_label = annotation.row_label();
+        tasks[0].status_label = row_label.clone();
+        tasks[0].annotations = vec![annotation];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Task(_))
+            ) {
+                break;
+            }
+            app.select_next();
+        }
+
+        app.activate_selected();
+        let content = render_to_string(100, 30, &app);
+
+        assert_eq!(content.matches(&row_label).count(), 1, "{content}");
     }
 }
