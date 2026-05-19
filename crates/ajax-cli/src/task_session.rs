@@ -13,14 +13,13 @@ use nix::{
         },
         wait::{waitpid, WaitPidFlag},
     },
+    unistd::{chdir, execvp},
 };
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
     fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::fd::{AsFd, OwnedFd},
-    os::raw::c_char,
-    os::unix::ffi::OsStrExt,
 };
 
 use crate::{command_error, CliError};
@@ -105,8 +104,9 @@ impl TaskSessionRunner for PtyTaskSessionRunner {
 }
 
 fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
-    let prepared = PreparedTaskCommand::new(command)?;
-    debug_assert_eq!(prepared.argv.len(), prepared.args.len() + 1);
+    let executable = CString::new(command.program.as_str())
+        .map_err(|_| CliError::CommandFailed("task command contains a nul byte".to_string()))?;
+    let argv = command_argv(command, &executable)?;
     let tty = OpenOptions::new()
         .read(true)
         .write(true)
@@ -125,6 +125,7 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
     tcsetattr(&tty, SetArg::TCSANOW, &raw_termios)
         .map_err(tty_error("failed to set raw terminal mode"))?;
 
+    let child_cwd = command.cwd.clone();
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
     // either execs the requested command or exits immediately.
@@ -132,15 +133,13 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
         .map_err(tty_error("failed to fork task PTY"))?
     {
         ForkptyResult::Child => {
-            if let Some(cwd) = prepared.cwd.as_ref() {
-                // SAFETY: cwd is a pre-fork CString with a stable nul-terminated pointer.
-                if unsafe { nix::libc::chdir(cwd.as_ptr()) } != 0 {
+            if let Some(cwd) = child_cwd.as_deref() {
+                if chdir(cwd).is_err() {
                     exit_child_after_exec_failure();
                 }
             }
-            // SAFETY: executable and argv are fully prepared before fork and
-            // remain alive in this child branch until execvp replaces the process.
-            unsafe { nix::libc::execvp(prepared.executable.as_ptr(), prepared.argv.as_ptr()) };
+            let args = argv.iter().map(CString::as_c_str).collect::<Vec<&CStr>>();
+            let _ = execvp(executable.as_c_str(), &args);
             exit_child_after_exec_failure();
         }
         ForkptyResult::Parent { child, master } => {
@@ -242,46 +241,15 @@ fn child_task_termios(original: &Termios) -> Termios {
     termios
 }
 
-struct PreparedTaskCommand {
-    executable: CString,
-    args: Vec<CString>,
-    argv: Vec<*const c_char>,
-    cwd: Option<CString>,
-}
-
-impl PreparedTaskCommand {
-    fn new(command: &CommandSpec) -> Result<Self, CliError> {
-        let executable = CString::new(command.program.as_str())
-            .map_err(|_| CliError::CommandFailed("task command contains a nul byte".to_string()))?;
-        let mut args = Vec::with_capacity(command.args.len() + 1);
-        args.push(executable.clone());
-        for arg in &command.args {
-            args.push(CString::new(arg.as_str()).map_err(|_| {
-                CliError::CommandFailed("task command argument contains a nul byte".to_string())
-            })?);
-        }
-        let mut argv = args
-            .iter()
-            .map(|arg| arg.as_ptr())
-            .collect::<Vec<*const c_char>>();
-        argv.push(std::ptr::null());
-        let cwd = command
-            .cwd
-            .as_ref()
-            .map(|path| {
-                CString::new(path.as_os_str().as_bytes()).map_err(|_| {
-                    CliError::CommandFailed("task command cwd contains a nul byte".to_string())
-                })
-            })
-            .transpose()?;
-
-        Ok(Self {
-            executable,
-            args,
-            argv,
-            cwd,
-        })
+fn command_argv(command: &CommandSpec, executable: &CString) -> Result<Vec<CString>, CliError> {
+    let mut argv = Vec::with_capacity(command.args.len() + 1);
+    argv.push(executable.clone());
+    for arg in &command.args {
+        argv.push(CString::new(arg.as_str()).map_err(|_| {
+            CliError::CommandFailed("task command argument contains a nul byte".to_string())
+        })?);
     }
+    Ok(argv)
 }
 
 struct TtyTermiosGuard {
@@ -378,37 +346,5 @@ mod tests {
         assert!(child.local_flags.contains(LocalFlags::ICANON));
         assert!(child.local_flags.contains(LocalFlags::ECHO));
         assert!(child.input_flags.contains(InputFlags::ICRNL));
-    }
-
-    #[test]
-    fn prepared_task_command_builds_exec_argv_before_fork() {
-        let command = ajax_core::adapters::CommandSpec::new("tmux", ["attach-session", "-t", "a"]);
-
-        let prepared = super::PreparedTaskCommand::new(&command).unwrap();
-
-        assert_eq!(prepared.executable.to_str().unwrap(), "tmux");
-        assert_eq!(
-            prepared
-                .args
-                .iter()
-                .map(|arg| arg.to_str().unwrap())
-                .collect::<Vec<_>>(),
-            vec!["tmux", "attach-session", "-t", "a"]
-        );
-        assert_eq!(prepared.argv.len(), 5);
-        assert!(prepared.argv.last().unwrap().is_null());
-    }
-
-    #[test]
-    fn prepared_task_command_builds_cwd_before_fork() {
-        let command =
-            ajax_core::adapters::CommandSpec::new("sh", ["-lc", "pwd"]).with_cwd("/tmp/ajax task");
-
-        let prepared = super::PreparedTaskCommand::new(&command).unwrap();
-
-        assert_eq!(
-            prepared.cwd.as_ref().unwrap().to_str().unwrap(),
-            "/tmp/ajax task"
-        );
     }
 }
