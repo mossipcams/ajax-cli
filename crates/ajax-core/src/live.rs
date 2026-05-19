@@ -250,7 +250,7 @@ fn should_keep_current_status(current: LiveStatusKind, next: LiveStatusKind) -> 
     }
 
     if is_waiting_status(current) {
-        return is_incidental_observation(next);
+        return is_passive_observation(next);
     }
 
     if is_failure_status(current) {
@@ -278,6 +278,10 @@ fn is_failure_status(kind: LiveStatusKind) -> bool {
             | LiveStatusKind::Blocked
             | LiveStatusKind::MergeConflict
     )
+}
+
+fn is_passive_observation(kind: LiveStatusKind) -> bool {
+    matches!(kind, LiveStatusKind::ShellIdle | LiveStatusKind::Unknown)
 }
 
 fn is_incidental_observation(kind: LiveStatusKind) -> bool {
@@ -605,24 +609,54 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
     }
 
     #[test]
-    fn waiting_observation_is_not_downgraded_by_incidental_activity() {
-        let mut task = base_task();
+    fn waiting_observation_is_not_downgraded_by_passive_terminal_evidence() {
+        for status in [LiveStatusKind::ShellIdle, LiveStatusKind::Unknown] {
+            let mut task = base_task();
 
-        apply_observation(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
-        );
-        apply_observation(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
-        );
+            apply_observation(
+                &mut task,
+                LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+            );
+            apply_observation(&mut task, LiveObservation::new(status, "passive evidence"));
 
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForApproval)
-        );
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting, "{status:?}");
+            assert!(task.has_side_flag(SideFlag::NeedsInput), "{status:?}");
+            assert_eq!(
+                task.live_status
+                    .as_ref()
+                    .map(|live_status| live_status.kind),
+                Some(LiveStatusKind::WaitingForApproval),
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn waiting_for_approval_is_cleared_by_resumed_activity() {
+        for status in [
+            LiveStatusKind::AgentRunning,
+            LiveStatusKind::CommandRunning,
+            LiveStatusKind::TestsRunning,
+        ] {
+            let mut task = base_task();
+
+            apply_observation(
+                &mut task,
+                LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+            );
+            apply_observation(&mut task, LiveObservation::new(status, "activity resumed"));
+
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Running, "{status:?}");
+            assert!(!task.has_side_flag(SideFlag::NeedsInput), "{status:?}");
+            assert!(task.has_side_flag(SideFlag::AgentRunning), "{status:?}");
+            assert_eq!(
+                task.live_status
+                    .as_ref()
+                    .map(|live_status| live_status.kind),
+                Some(status),
+                "{status:?}"
+            );
+        }
     }
 
     #[test]
