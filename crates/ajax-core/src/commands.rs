@@ -353,6 +353,14 @@ pub fn execute_plan(
     for command in &plan.commands {
         let output = runner.run(command).map_err(CommandError::CommandRun)?;
         if output.status_code != 0 {
+            if copy_mode_cancel_was_already_clear(command, &output) {
+                outputs.push(CommandOutput {
+                    status_code: 0,
+                    stdout: output.stdout,
+                    stderr: String::new(),
+                });
+                continue;
+            }
             return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
                 program: command.program.clone(),
                 status_code: output.status_code,
@@ -364,6 +372,14 @@ pub fn execute_plan(
     }
 
     Ok(outputs)
+}
+
+fn copy_mode_cancel_was_already_clear(command: &CommandSpec, output: &CommandOutput) -> bool {
+    command.program == "tmux"
+        && command.args.first().is_some_and(|arg| arg == "send-keys")
+        && command.args.iter().any(|arg| arg == "-X")
+        && command.args.iter().any(|arg| arg == "cancel")
+        && output.stderr.trim() == "not in a mode"
 }
 
 #[cfg(test)]
@@ -419,6 +435,19 @@ mod tests {
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, registry)
+    }
+
+    fn copy_mode_cancel_command() -> CommandSpec {
+        CommandSpec::new(
+            "tmux",
+            [
+                "send-keys",
+                "-t",
+                "ajax-web-fix-login:worktrunk",
+                "-X",
+                "cancel",
+            ],
+        )
     }
 
     #[derive(Default)]
@@ -816,8 +845,9 @@ mod tests {
 
             prop_assert!(plan.blocked_reasons.is_empty());
             prop_assert_eq!(
-                &plan.commands[plan.commands.len() - 2..],
+                &plan.commands[plan.commands.len() - 3..],
                 &[
+                    copy_mode_cancel_command(),
                     CommandSpec::new(
                         "tmux",
                         ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -827,7 +857,7 @@ mod tests {
                 ]
             );
 
-            let repair_commands = &plan.commands[..plan.commands.len() - 2];
+            let repair_commands = &plan.commands[..plan.commands.len() - 3];
             if !tmux_exists {
                 prop_assert_eq!(
                     repair_commands,
@@ -1834,6 +1864,7 @@ mod tests {
         assert_eq!(
             outside_tmux.commands,
             vec![
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -1845,6 +1876,7 @@ mod tests {
         assert_eq!(
             inside_tmux.commands,
             vec![
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -1863,9 +1895,43 @@ mod tests {
             super::open::open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
 
         assert_eq!(plan.title, "open task: web/fix-login");
+        assert_eq!(plan.commands.first(), Some(&copy_mode_cancel_command()));
+        assert_eq!(
+            plan.commands.get(1),
+            Some(&CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            ))
+        );
+    }
+
+    #[test]
+    fn trunk_task_plan_clears_copy_mode_before_opening_worktrunk() {
+        let context = context_with_tasks();
+
+        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(plan.commands.get(1), Some(&copy_mode_cancel_command()));
+        assert_eq!(
+            plan.commands.get(2),
+            Some(&CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            ))
+        );
+    }
+
+    #[test]
+    fn open_task_plan_commands_remain_ordered_after_copy_mode_guard() {
+        let context = context_with_tasks();
+
+        let plan =
+            super::open::open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
         assert_eq!(
             plan.commands,
             vec![
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -2088,6 +2154,7 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3381,6 +3448,7 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3450,6 +3518,7 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3495,6 +3564,7 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
+                copy_mode_cancel_command(),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3513,8 +3583,24 @@ mod tests {
 
         let outputs = super::execute_plan(&plan, false, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), 2);
+        assert_eq!(outputs.len(), 3);
         assert_eq!(runner.commands(), plan.commands.as_slice());
+    }
+
+    #[test]
+    fn execute_plan_treats_copy_mode_cancel_outside_copy_mode_as_noop() {
+        let mut plan = super::CommandPlan::new("cancel copy mode");
+        plan.commands.push(copy_mode_cancel_command());
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 1,
+            stdout: String::new(),
+            stderr: "not in a mode\n".to_string(),
+        }]);
+
+        let outputs = super::execute_plan(&plan, false, &mut runner).unwrap();
+
+        assert_eq!(outputs, vec![output(0, "")]);
+        assert_eq!(runner.commands, plan.commands);
     }
 
     #[test]

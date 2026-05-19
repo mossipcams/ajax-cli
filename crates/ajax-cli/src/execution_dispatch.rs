@@ -1,8 +1,8 @@
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner},
+    adapters::{CommandOutput, CommandRunError, CommandRunner, TmuxAdapter},
     commands::{self, CommandContext, CommandError},
     events::apply_monitor_event_to_registry,
-    models::LifecycleStatus,
+    models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
 };
 use clap::ArgMatches;
@@ -182,8 +182,7 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     }
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
-    let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
-        .map_err(|error| command_error(error).after_state_change())?;
+    let open_plan = newly_created_task_open_plan(&task, open_mode);
     outputs.extend(
         commands::execute_plan(&open_plan, true, runner)
             .map_err(|error| command_error(error).after_state_change())?,
@@ -198,6 +197,25 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
         .unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+fn newly_created_task_open_plan(
+    task: &Task,
+    open_mode: commands::OpenMode,
+) -> commands::CommandPlan {
+    let tmux = TmuxAdapter::new("tmux");
+    let mut plan = commands::CommandPlan::new(format!("open task: {}", task.qualified_handle()));
+    plan.commands
+        .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
+    match open_mode {
+        commands::OpenMode::Attach => plan
+            .commands
+            .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window)),
+        commands::OpenMode::SwitchClient => plan
+            .commands
+            .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+    };
+    plan
 }
 
 fn execute_sweep_cleanup<R: CommandRunner>(
