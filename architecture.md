@@ -135,8 +135,10 @@ or test-command operation.
 - `execution_dispatch` owns mutable command routing.
 - `cockpit_backend` owns Cockpit snapshots, live refresh, watch mode, and TUI
   backend glue.
-- `task_session` owns interactive task PTY entry from Cockpit, including
-  terminal mode setup, parent-side input filtering, and returning to Cockpit.
+- `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
+  foreground task bridge, forwards normal input to the attached tmux client,
+  filters Cockpit-owned shortcuts such as Ctrl-Q, and resumes Cockpit when the
+  task attach client detaches.
 - `classifiers` owns small operator-facing command-output heuristics.
 
 ## Cockpit Architecture

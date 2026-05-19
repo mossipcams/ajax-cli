@@ -4622,6 +4622,13 @@ mod tests {
 
         assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            )]
+        );
+        assert_eq!(
             task_session.commands,
             vec![
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
@@ -4664,6 +4671,19 @@ mod tests {
                     .with_mode(CommandMode::InheritStdio)
             ]
         );
+        assert!(!runner.commands().contains(&CommandSpec::new(
+            "tmux",
+            ["bind-key", "-n", "C-q", "detach-client"]
+        )));
+        assert!(runner.commands().iter().any(|command| {
+            command.program == "tmux"
+                && command.args.starts_with(&[
+                    "new-session".to_string(),
+                    "-d".to_string(),
+                    "-s".to_string(),
+                    "ajax-api-fix-login".to_string(),
+                ])
+        }));
         assert!(state_changed);
     }
 
