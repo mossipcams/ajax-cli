@@ -1705,6 +1705,127 @@ mod tests {
         )));
     }
 
+    struct RecoveryRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl RecoveryRunner {
+        fn new() -> Self {
+            Self {
+                commands: Vec::new(),
+            }
+        }
+    }
+
+    impl CommandRunner for RecoveryRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, action, flag]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /Users/matt/projects/web__worktrees/ajax-code\nHEAD 2222222\nbranch refs/heads/ajax/code\n\nworktree /Users/matt/projects/web__worktrees/other-topic\nHEAD 3333333\nbranch refs/heads/topic\n\n"
+                }
+                [command, ..] if command == "list-sessions" => {
+                    "ajax-web-existing\najax-web-code\n"
+                }
+                [command, ..] if command == "list-windows" => {
+                    "worktrunk\t/Users/matt/projects/web__worktrees/ajax-code\n"
+                }
+                [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn refreshed_read_persists_recovered_ajax_task_without_duplicates() {
+        let directory =
+            std::env::temp_dir().join(format!("ajax-recovery-save-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state").join("ajax.db");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+        let paths = CliContextPaths::new(&config_file, &state_file);
+        let mut registry = InMemoryRegistry::default();
+        let mut existing = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "existing",
+            "existing",
+            "ajax/existing",
+            "main",
+            "/Users/matt/projects/web__worktrees/ajax-existing",
+            "ajax-web-existing",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        existing.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(existing).unwrap();
+        SqliteRegistryStore::new(&state_file)
+            .save(&registry)
+            .unwrap();
+        let mut first_runner = RecoveryRunner::new();
+
+        let first_output =
+            run_with_context_paths_and_runner(["ajax", "tasks"], &paths, &mut first_runner)
+                .unwrap();
+
+        assert!(first_output.contains("web/code"));
+        let saved = SqliteRegistryStore::new(&state_file).load().unwrap();
+        assert_eq!(
+            saved
+                .list_tasks()
+                .into_iter()
+                .filter(|task| task.qualified_handle() == "web/code")
+                .count(),
+            1
+        );
+        assert_eq!(
+            saved
+                .list_tasks()
+                .into_iter()
+                .filter(|task| task.branch == "topic")
+                .count(),
+            0
+        );
+
+        let mut second_runner = RecoveryRunner::new();
+        let second_output =
+            run_with_context_paths_and_runner(["ajax", "tasks"], &paths, &mut second_runner)
+                .unwrap();
+        let saved_again = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+        assert!(second_output.contains("web/code"));
+        assert_eq!(
+            saved_again
+                .list_tasks()
+                .into_iter()
+                .filter(|task| task.qualified_handle() == "web/code")
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn state_export_writes_registry_snapshot_without_overwriting() {
         let directory =

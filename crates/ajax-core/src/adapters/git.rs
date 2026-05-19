@@ -6,6 +6,12 @@ pub struct GitAdapter {
     program: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GitWorktree {
+    pub path: String,
+    pub branch: Option<String>,
+}
+
 impl GitAdapter {
     pub fn new(program: impl Into<String>) -> Self {
         Self {
@@ -17,6 +23,13 @@ impl GitAdapter {
         CommandSpec::new(
             &self.program,
             ["-C", worktree_path, "status", "--porcelain=v1", "--branch"],
+        )
+    }
+
+    pub fn list_worktrees(&self, repo_path: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "worktree", "list", "--porcelain"],
         )
     }
 
@@ -177,6 +190,33 @@ impl GitAdapter {
         status.unpushed_commits = status.ahead;
         status
     }
+
+    pub fn parse_worktrees(porcelain_output: &str) -> Vec<GitWorktree> {
+        porcelain_output
+            .split("\n\n")
+            .filter_map(parse_worktree_entry)
+            .collect()
+    }
+}
+
+fn parse_worktree_entry(entry: &str) -> Option<GitWorktree> {
+    let mut path = None;
+    let mut branch = None;
+
+    for line in entry.lines() {
+        if let Some(value) = line.strip_prefix("worktree ") {
+            path = Some(value.to_string());
+            continue;
+        }
+        if let Some(value) = line.strip_prefix("branch refs/heads/") {
+            branch = Some(value.to_string());
+        }
+    }
+
+    path.zip(branch).map(|(path, branch)| GitWorktree {
+        path,
+        branch: Some(branch),
+    })
 }
 
 fn parse_current_branch(branch_line: &str) -> Option<String> {
@@ -212,5 +252,57 @@ fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
                 status.behind = value;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CommandMode, CommandSpec, GitAdapter};
+
+    #[test]
+    fn list_worktrees_uses_porcelain_for_repo_root() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.list_worktrees("/repos/ajax-cli"),
+            CommandSpec {
+                program: "git".to_string(),
+                args: vec![
+                    "-C".to_string(),
+                    "/repos/ajax-cli".to_string(),
+                    "worktree".to_string(),
+                    "list".to_string(),
+                    "--porcelain".to_string(),
+                ],
+                cwd: None,
+                mode: CommandMode::Capture,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_worktrees_keeps_paths_and_branches() {
+        let output = "\
+worktree /repos/ajax-cli
+HEAD abc123
+branch refs/heads/main
+
+worktree /repos/ajax-cli__worktrees/ajax-code
+HEAD def456
+branch refs/heads/ajax/code
+
+worktree /repos/ajax-cli__worktrees/manual
+HEAD fedcba
+detached
+
+";
+
+        let worktrees = GitAdapter::parse_worktrees(output);
+
+        assert_eq!(worktrees.len(), 2);
+        assert_eq!(worktrees[0].path, "/repos/ajax-cli");
+        assert_eq!(worktrees[0].branch.as_deref(), Some("main"));
+        assert_eq!(worktrees[1].path, "/repos/ajax-cli__worktrees/ajax-code");
+        assert_eq!(worktrees[1].branch.as_deref(), Some("ajax/code"));
     }
 }

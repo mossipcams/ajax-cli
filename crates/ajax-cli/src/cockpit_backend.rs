@@ -1,7 +1,8 @@
 use ajax_core::{
-    adapters::{CommandRunner, TmuxAdapter},
+    adapters::{CommandRunner, GitAdapter, TmuxAdapter},
     commands::{self, CommandContext},
     live::{self, LiveObservation, LiveStatusKind},
+    models::{AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TmuxStatus},
     registry::{InMemoryRegistry, Registry},
 };
 use ajax_tui::CockpitSnapshot;
@@ -155,14 +156,14 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let task_ids = context
+    let initial_task_ids = context
         .registry
         .list_tasks()
         .into_iter()
         .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
-    if task_ids.is_empty() {
+    if initial_task_ids.is_empty() {
         return Ok(false);
     }
 
@@ -176,7 +177,19 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     if sessions_output.trim().is_empty() {
         return Ok(false);
     }
-    let mut changed = false;
+
+    let mut changed = if has_unregistered_ajax_session(context, &sessions_output) {
+        recover_missing_tasks_from_substrate(context, runner, &sessions_output)?
+    } else {
+        false
+    };
+    let task_ids = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
 
     for task_id in task_ids {
         let Some(task_snapshot) = context.registry.get_task(&task_id).cloned() else {
@@ -310,6 +323,115 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             live::apply_observation(task, observation);
             refresh_cached_annotations(task);
             changed |= *task != previous;
+        }
+    }
+
+    Ok(changed)
+}
+
+fn has_unregistered_ajax_session(
+    context: &CommandContext<InMemoryRegistry>,
+    sessions_output: &str,
+) -> bool {
+    sessions_output.lines().map(str::trim).any(|session| {
+        context.config.repos.iter().any(|repo| {
+            let prefix = format!("ajax-{}-", repo.name);
+            let Some(handle) = session.strip_prefix(&prefix) else {
+                return false;
+            };
+            if handle.is_empty() {
+                return false;
+            }
+            !registered_task_exists(context, &repo.name, handle)
+        })
+    })
+}
+
+fn registered_task_exists(
+    context: &CommandContext<InMemoryRegistry>,
+    repo_name: &str,
+    handle: &str,
+) -> bool {
+    context.registry.list_tasks().into_iter().any(|task| {
+        task.repo == repo_name
+            && task.handle == handle
+            && task.lifecycle_status != LifecycleStatus::Removed
+    })
+}
+
+fn recover_missing_tasks_from_substrate<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    sessions_output: &str,
+) -> Result<bool, CliError> {
+    if context.config.repos.is_empty() {
+        return Ok(false);
+    }
+
+    let git = GitAdapter::new("git");
+    let mut changed = false;
+
+    for repo in context.config.repos.clone() {
+        let command = git.list_worktrees(&repo.path.display().to_string());
+        let output = match runner.run(&command) {
+            Ok(output) if output.status_code == 0 => output.stdout,
+            Ok(_) | Err(_) => continue,
+        };
+
+        for worktree in GitAdapter::parse_worktrees(&output) {
+            let Some(branch) = worktree.branch.as_deref() else {
+                continue;
+            };
+            let Some(handle) = branch.strip_prefix("ajax/") else {
+                continue;
+            };
+            if handle.is_empty() {
+                continue;
+            }
+
+            if registered_task_exists(context, &repo.name, handle) {
+                continue;
+            }
+
+            let task_id = TaskId::new(format!("{}/{}", repo.name, handle));
+            let tmux_session = format!("ajax-{}-{handle}", repo.name);
+            let tmux_status = TmuxAdapter::parse_session_status(&tmux_session, sessions_output);
+            if !tmux_status.exists {
+                continue;
+            }
+
+            let mut task = Task::new(
+                task_id.clone(),
+                repo.name.clone(),
+                handle.to_string(),
+                handle.replace('-', " "),
+                branch.to_string(),
+                repo.default_branch.clone(),
+                worktree.path,
+                tmux_session,
+                "worktrunk",
+                AgentClient::Codex,
+            );
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.git_status = Some(GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some(branch.to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+            task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
+            context
+                .registry
+                .create_task(task)
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+            changed = true;
         }
     }
 
@@ -469,5 +591,86 @@ mod tests {
             .annotations
             .iter()
             .any(|annotation| annotation.evidence.label() == "waiting for approval"));
+    }
+
+    #[derive(Default)]
+    struct SubstrateRecoveryRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for SubstrateRecoveryRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, action, flag]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /Users/matt/projects/web__worktrees/ajax-code\nHEAD 2222222\nbranch refs/heads/ajax/code\n\n"
+                }
+                [command, ..] if command == "list-sessions" => {
+                    "ajax-web-existing\najax-web-code\n"
+                }
+                [command, ..] if command == "list-windows" => {
+                    "worktrunk\t/Users/matt/projects/web__worktrees/ajax-code\n"
+                }
+                [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn refresh_recovers_missing_registry_task_from_existing_ajax_worktree_and_tmux() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut existing = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "existing",
+            "existing",
+            "ajax/existing",
+            "main",
+            "/Users/matt/projects/web__worktrees/ajax-existing",
+            "ajax-web-existing",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        existing.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(existing).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = SubstrateRecoveryRunner::default();
+        let mut state_changed = false;
+
+        let snapshot =
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+
+        assert!(state_changed);
+        assert!(snapshot
+            .cards
+            .iter()
+            .any(|card| card.qualified_handle == "web/code"));
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/code"))
+            .expect("missing Ajax worktree should be recovered into the registry");
+        assert_eq!(task.branch, "ajax/code");
+        assert_eq!(
+            task.worktree_path.to_string_lossy(),
+            "/Users/matt/projects/web__worktrees/ajax-code"
+        );
+        assert_eq!(task.tmux_session, "ajax-web-code");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
     }
 }
