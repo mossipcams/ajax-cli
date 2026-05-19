@@ -59,6 +59,10 @@ pub fn new_task_plan<R: Registry>(
         &branch,
         &repo.default_branch,
     ));
+    if let Some(bootstrap) = &repo.bootstrap {
+        plan.commands
+            .push(CommandSpec::new("sh", ["-lc", bootstrap.as_str()]).with_cwd(&worktree_path));
+    }
     plan.commands.push(tmux.new_detached_worktrunk_session(
         &tmux_session,
         "worktrunk",

@@ -2491,6 +2491,86 @@ mod tests {
     }
 
     #[test]
+    fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
+        let mut repo = ManagedRepo::new("web", "/Users/matt/projects/web", "main");
+        repo.bootstrap = Some("npm ci".to_string());
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![repo],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut runner = RecordingCommandRunner::default();
+
+        run_with_context_and_runner(
+            [
+                "ajax",
+                "start",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--agent",
+                "codex",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands(),
+            &[
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "add",
+                        "-b",
+                        "ajax/fix-login",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new("sh", ["-lc", "npm ci"])
+                    .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "worktrunk",
+                        "-c",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "send-keys",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "Enter"
+                    ]
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                expected_new_task_open_command("ajax-web-fix-login")
+            ]
+        );
+    }
+
+    #[test]
     fn new_execute_rejects_existing_task_before_native_provisioning() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
@@ -2592,6 +2672,76 @@ mod tests {
                         "/Users/matt/projects/web__worktrees/ajax-fix-login"
                     ]
                 )
+            ]
+        );
+    }
+
+    #[test]
+    fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
+        let mut repo = ManagedRepo::new("web", "/Users/matt/projects/web", "main");
+        repo.bootstrap = Some("npm ci".to_string());
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![repo],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            CommandOutput {
+                status_code: 42,
+                stdout: String::new(),
+                stderr: "npm failed".to_string(),
+            },
+        ]);
+
+        let error = run_with_context_and_runner(
+            [
+                "ajax",
+                "start",
+                "--repo",
+                "web",
+                "--title",
+                "Fix login",
+                "--execute",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message == "command failed: sh exited with status 42 in /Users/matt/projects/web__worktrees/ajax-fix-login: npm failed")
+        );
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "web/fix-login")
+            .expect("provisioning task should remain visible");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(task.agent_attempts.is_empty());
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "add",
+                        "-b",
+                        "ajax/fix-login",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                        "main"
+                    ]
+                ),
+                CommandSpec::new("sh", ["-lc", "npm ci"])
+                    .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login")
             ]
         );
     }

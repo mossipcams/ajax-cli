@@ -49,6 +49,7 @@ Minimal configuration:
 name = "web"
 path = "/Users/matt/projects/web"
 default_branch = "main"
+bootstrap = "npm ci"
 
 [[test_commands]]
 repo = "web"
@@ -57,6 +58,11 @@ command = "cargo nextest run --all-features"
 
 Each managed repo should have a matching test command so `ajax repair` and
 `ajax doctor` can verify the workflow end to end.
+
+Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
+inside each task worktree before the agent starts. Ajax runs the command from
+the newly created worktree after `git worktree add` succeeds and before tmux or
+the selected agent CLI are launched.
 
 ## First Run
 

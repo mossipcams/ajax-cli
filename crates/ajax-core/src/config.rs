@@ -58,6 +58,8 @@ pub struct ManagedRepo {
     pub name: String,
     pub path: PathBuf,
     pub default_branch: String,
+    #[serde(default)]
+    pub bootstrap: Option<String>,
 }
 
 impl ManagedRepo {
@@ -70,6 +72,7 @@ impl ManagedRepo {
             name: name.into(),
             path: path.into(),
             default_branch: default_branch.into(),
+            bootstrap: None,
         }
     }
 }
@@ -168,6 +171,22 @@ mod tests {
 
         assert_eq!(config.repos[0].name, "web");
         assert_eq!(config.test_commands[0].repo, "web");
+    }
+
+    #[test]
+    fn config_loads_repo_bootstrap_command() {
+        let config = Config::from_toml_str(
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            bootstrap = "npm ci"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.repos[0].bootstrap.as_deref(), Some("npm ci"));
     }
 
     #[test]
