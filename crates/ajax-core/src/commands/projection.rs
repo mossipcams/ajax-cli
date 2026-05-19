@@ -64,7 +64,7 @@ pub(super) fn task_summary(task: &Task) -> TaskSummary {
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
-        needs_attention: !annotate(task).is_empty(),
+        needs_attention: !annotations_for_task(task).is_empty(),
         live_status: task.live_status.clone(),
         actions: task_actions(task),
     }
@@ -106,11 +106,12 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
     }
 }
 
-fn annotations_for_task(task: &Task) -> Vec<Annotation> {
-    if task.annotations.is_empty() {
-        annotate(task)
-    } else {
+pub(super) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
+    let derived = annotate(task);
+    if derived.is_empty() && !task.annotations.is_empty() {
         task.annotations.clone()
+    } else {
+        derived
     }
 }
 
