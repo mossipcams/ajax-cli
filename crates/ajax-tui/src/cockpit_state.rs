@@ -276,6 +276,39 @@ impl App {
         self.collapse_drawer_if_left();
     }
 
+    pub fn select_page_prev(&mut self, page_size: usize) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        self.selected = self.selected.saturating_sub(page_size.max(1));
+        self.collapse_drawer_if_left();
+    }
+
+    pub fn select_page_next(&mut self, page_size: usize) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        let max = self.selectables.len() - 1;
+        self.selected = self.selected.saturating_add(page_size.max(1)).min(max);
+        self.collapse_drawer_if_left();
+    }
+
+    pub fn select_first(&mut self) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        self.selected = 0;
+        self.collapse_drawer_if_left();
+    }
+
+    pub fn select_last(&mut self) {
+        if self.selectables.is_empty() {
+            return;
+        }
+        self.selected = self.selectables.len() - 1;
+        self.collapse_drawer_if_left();
+    }
+
     fn collapse_drawer_if_left(&mut self) {
         let Some(open) = self.expanded_task.clone() else {
             return;
@@ -448,6 +481,12 @@ impl App {
     pub fn push_input_char(&mut self, character: char) {
         if let AppView::NewTaskInput { title, .. } = &mut self.view {
             title.push(character);
+        }
+    }
+
+    pub fn push_input_str(&mut self, input: &str) {
+        if let AppView::NewTaskInput { title, .. } = &mut self.view {
+            title.push_str(input);
         }
     }
 

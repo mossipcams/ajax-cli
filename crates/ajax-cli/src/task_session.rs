@@ -200,10 +200,15 @@ fn terminal_owned_sequence(input: &[u8]) -> Option<TerminalOwnedSequence> {
         return terminal_csi_report_len(input).map(|len| TerminalOwnedSequence::CsiReport { len });
     }
     if input.starts_with(b"\x1b[<") {
-        return sgr_mouse_sequence_len(input).map(|len| TerminalOwnedSequence::SgrMouse { len });
+        return sgr_mouse_sequence(input).and_then(|(button_code, len)| {
+            (!is_scroll_mouse_button_code(button_code))
+                .then_some(TerminalOwnedSequence::SgrMouse { len })
+        });
     }
     if input.starts_with(b"\x1b[M") && input.len() >= 6 {
-        return Some(TerminalOwnedSequence::X10Mouse { len: 6 });
+        let button_code = (input[3] as usize).saturating_sub(32);
+        return (!is_scroll_mouse_button_code(button_code))
+            .then_some(TerminalOwnedSequence::X10Mouse { len: 6 });
     }
     None
 }
@@ -218,14 +223,35 @@ fn terminal_csi_report_len(input: &[u8]) -> Option<usize> {
     None
 }
 
-fn sgr_mouse_sequence_len(input: &[u8]) -> Option<usize> {
-    for (offset, byte) in input.iter().enumerate().skip(3) {
+fn sgr_mouse_sequence(input: &[u8]) -> Option<(usize, usize)> {
+    let mut offset = 3;
+    let mut button_code = 0usize;
+    let mut saw_digit = false;
+    while let Some(byte) = input.get(offset) {
+        if !byte.is_ascii_digit() {
+            break;
+        }
+        saw_digit = true;
+        button_code = button_code
+            .checked_mul(10)?
+            .checked_add((byte - b'0') as usize)?;
+        offset += 1;
+    }
+    if !saw_digit || input.get(offset) != Some(&b';') {
+        return None;
+    }
+
+    for (offset, byte) in input.iter().enumerate().skip(offset + 1) {
         if byte.is_ascii_digit() || *byte == b';' {
             continue;
         }
-        return (*byte == b'M' || *byte == b'm').then_some(offset + 1);
+        return (*byte == b'M' || *byte == b'm').then_some((button_code, offset + 1));
     }
     None
+}
+
+fn is_scroll_mouse_button_code(button_code: usize) -> bool {
+    button_code & 64 != 0
 }
 
 fn task_child_shutdown_action(
@@ -924,6 +950,28 @@ mod tests {
     }
 
     #[test]
+    fn task_input_filter_forwards_sgr_scroll_reports() {
+        assert_eq!(
+            filter_task_input(b"a\x1b[<64;10;5Mb\x1b[<65;10;5Mc"),
+            FilteredTaskInput {
+                action: TaskInputAction::Forward,
+                bytes: b"a\x1b[<64;10;5Mb\x1b[<65;10;5Mc".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_input_filter_forwards_x10_scroll_reports() {
+        assert_eq!(
+            filter_task_input(b"a\x1b[M`!!b\x1b[Ma!!c"),
+            FilteredTaskInput {
+                action: TaskInputAction::Forward,
+                bytes: b"a\x1b[M`!!b\x1b[Ma!!c".to_vec(),
+            }
+        );
+    }
+
+    #[test]
     fn terminal_owned_sequence_parser_names_filtered_sequences() {
         assert_eq!(
             super::terminal_owned_sequence(b"\x1b[I"),
@@ -938,9 +986,10 @@ mod tests {
             Some(super::TerminalOwnedSequence::SgrMouse { len: 11 })
         );
         assert_eq!(
-            super::terminal_owned_sequence(b"\x1b[Mabc"),
+            super::terminal_owned_sequence(b"\x1b[M !!"),
             Some(super::TerminalOwnedSequence::X10Mouse { len: 6 })
         );
+        assert_eq!(super::terminal_owned_sequence(b"\x1b[M`!!"), None);
         assert_eq!(super::terminal_owned_sequence(b"\x1b[A"), None);
     }
 

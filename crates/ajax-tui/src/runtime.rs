@@ -166,7 +166,7 @@ fn run_event_loop<B: Backend>(
             .size()
             .map_err(|_| io::Error::other("terminal backend size error"))?
             .height as usize;
-        let feed_height = height.saturating_sub(2);
+        let feed_height = crate::visible_feed_height(app, height);
 
         app.tick_notices();
         if should_refresh(&mut last_refresh, refresh_interval) {

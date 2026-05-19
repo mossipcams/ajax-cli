@@ -22,23 +22,27 @@ pub(crate) fn handle_cockpit_event<H: CockpitEventHandler + ?Sized>(
 ) -> io::Result<EventLoopAction> {
     match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => {
-            handle_key_event(app, key.code, key.modifiers, handler)
+            handle_key_event(app, key.code, key.modifiers, height, handler)
         }
         Event::Mouse(mouse) => {
-            // Layout: row 0 = header, optional counts row, feed, status bar.
-            let feed_top: usize = crate::feed_top_row(app);
-            let feed_bottom = height.saturating_sub(1);
+            let feed_rows = crate::feed_screen_rows(app, height);
             match mouse.kind {
                 MouseEventKind::ScrollUp => app.select_prev(),
                 MouseEventKind::ScrollDown => app.select_next(),
                 MouseEventKind::Down(_) | MouseEventKind::Drag(_) => {
                     let mouse_row = mouse.row as usize;
-                    if mouse_row >= feed_top && mouse_row < feed_bottom {
-                        let feed_row = mouse_row - feed_top + app.viewport_scroll;
+                    if feed_rows.contains(&mouse_row) {
+                        let feed_row = mouse_row - feed_rows.start + app.viewport_scroll;
                         app.select_at_feed_row(feed_row);
                     }
                 }
                 _ => {}
+            }
+            Ok(EventLoopAction::Continue)
+        }
+        Event::Paste(text) => {
+            if app.is_collecting_input() {
+                app.push_input_str(&text);
             }
             Ok(EventLoopAction::Continue)
         }
@@ -50,6 +54,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
     app: &mut App,
     code: KeyCode,
     modifiers: KeyModifiers,
+    height: usize,
     handler: &mut H,
 ) -> io::Result<EventLoopAction> {
     match code {
@@ -76,6 +81,10 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
         }
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
+        KeyCode::PageUp => app.select_page_prev(feed_viewport_height(app, height)),
+        KeyCode::PageDown => app.select_page_next(feed_viewport_height(app, height)),
+        KeyCode::Home => app.select_first(),
+        KeyCode::End => app.select_last(),
         KeyCode::Enter => {
             if let Some(item) = app.activate_selected() {
                 let confirmed = app.has_pending_confirmation(&item);
@@ -101,6 +110,12 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
     }
 
     Ok(EventLoopAction::Continue)
+}
+
+fn feed_viewport_height(app: &App, height: usize) -> usize {
+    let feed_top = crate::feed_top_row(app);
+    let feed_bottom = height.saturating_sub(1);
+    feed_bottom.saturating_sub(feed_top).max(1)
 }
 
 pub(crate) fn handle_refresh_result(

@@ -262,6 +262,17 @@ pub(crate) fn feed_top_row(_app: &App) -> usize {
     1 // breadcrumb only; counts moved into the header
 }
 
+pub(crate) fn visible_feed_height(app: &App, terminal_height: usize) -> usize {
+    feed_screen_rows(app, terminal_height).len()
+}
+
+pub(crate) fn feed_screen_rows(app: &App, terminal_height: usize) -> Range<usize> {
+    let top = feed_top_row(app);
+    let notice_rows = usize::from(show_notice_row(app));
+    let bottom = terminal_height.saturating_sub(notice_rows + 1);
+    top..bottom.max(top)
+}
+
 pub(crate) fn show_notice_row(app: &App) -> bool {
     app.current_notice().is_some()
 }
@@ -1804,6 +1815,21 @@ mod tests {
     }
 
     #[test]
+    fn feed_screen_rows_match_rendered_layout_with_and_without_notice() {
+        let mut app = app_in_project_view_with_task_count(3);
+
+        assert_eq!(super::feed_screen_rows(&app, 10), 1..9);
+
+        app.notify_system(
+            "done".to_string(),
+            super::Severity::Success,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        assert_eq!(super::feed_screen_rows(&app, 10), 1..8);
+    }
+
+    #[test]
     fn cockpit_render_uses_orange_yellow_palette() {
         let mut app = app_in_project_view();
         app.select_next();
@@ -2117,6 +2143,29 @@ mod tests {
         }
     }
 
+    #[test]
+    fn paste_appends_text_while_collecting_task_input() {
+        let mut app = app_in_empty_new_task_input();
+
+        let action = handle_with_noop(&mut app, Event::Paste("Fix keyboard gaps".to_string()), 10);
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(
+            matches!(&app.view, AppView::NewTaskInput { title, .. } if title == "Fix keyboard gaps")
+        );
+    }
+
+    #[test]
+    fn paste_outside_task_input_is_ignored() {
+        let mut app = app_in_project_view_with_task_count(3);
+        let selected_before = app.selected;
+
+        let action = handle_with_noop(&mut app, Event::Paste("ignored".to_string()), 10);
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, selected_before);
+    }
+
     #[rstest]
     #[case(KeyCode::Char('?'), KeyModifiers::NONE)]
     #[case(KeyCode::Char('/'), KeyModifiers::SHIFT)]
@@ -2217,6 +2266,29 @@ mod tests {
             &mut app,
             Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
             10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, expected);
+    }
+
+    #[rstest]
+    #[case(KeyCode::PageDown, 0, 4)]
+    #[case(KeyCode::PageUp, 8, 4)]
+    #[case(KeyCode::Home, 8, 0)]
+    #[case(KeyCode::End, 0, 10)]
+    fn page_and_edge_navigation_keys_update_selection(
+        #[case] code: KeyCode,
+        #[case] start: usize,
+        #[case] expected: usize,
+    ) {
+        let mut app = app_in_project_view_with_task_count(10);
+        app.selected = start;
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(code, KeyModifiers::NONE)),
+            6,
         );
 
         assert!(matches!(action, EventLoopAction::Continue));
@@ -2369,6 +2441,32 @@ mod tests {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: 2,
                 row: 9,
+                modifiers: KeyModifiers::NONE,
+            }),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert_eq!(app.selected, 1);
+    }
+
+    #[test]
+    fn mouse_click_on_notice_row_is_ignored_even_when_scrolled() {
+        let mut app = app_in_project_view_with_task_count(12);
+        app.selected = 1;
+        app.viewport_scroll = 2;
+        app.notify_system(
+            "confirm action".to_string(),
+            super::Severity::Confirm,
+            super::cockpit_state::Origin::UserAction,
+        );
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 2,
+                row: 8,
                 modifiers: KeyModifiers::NONE,
             }),
             10,
