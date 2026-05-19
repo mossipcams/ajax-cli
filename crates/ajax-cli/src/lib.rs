@@ -3534,6 +3534,216 @@ mod tests {
     }
 
     #[test]
+    fn drop_execute_continues_when_tmux_session_is_already_missing() {
+        let mut context = cleanable_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "## ajax/fix-login\n"),
+            CommandOutput {
+                status_code: 1,
+                stdout: String::new(),
+                stderr: "can't find session: ajax-web-fix-login".to_string(),
+            },
+            output(0, ""),
+            output(0, ""),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists));
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+    }
+
+    #[test]
+    fn drop_execute_continues_when_worktree_is_already_missing() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            CommandOutput {
+                status_code: 128,
+                stdout: String::new(),
+                stderr: "fatal: cannot change to '/tmp/worktrees/web-fix-login': No such file or directory"
+                    .to_string(),
+            },
+            CommandOutput {
+                status_code: 128,
+                stdout: String::new(),
+                stderr: "fatal: '/tmp/worktrees/web-fix-login' is not a working tree"
+                    .to_string(),
+            },
+            output(0, ""),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+    }
+
+    #[test]
+    fn drop_execute_completes_when_branch_is_already_missing() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "## ajax/fix-login\n"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 1,
+                stdout: String::new(),
+                stderr: "error: branch 'ajax/fix-login' not found.".to_string(),
+            },
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-d",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+    }
+
+    #[test]
     fn clean_execute_partial_failure_after_tmux_kill_updates_tmux_evidence() {
         let mut context = cleanable_context();
         let task = context

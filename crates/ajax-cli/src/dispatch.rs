@@ -1,5 +1,5 @@
 use ajax_core::{
-    adapters::{CommandRunError, CommandRunner},
+    adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
     commands::{self, CommandContext, CommandError},
     registry::{InMemoryRegistry, Registry},
 };
@@ -128,7 +128,11 @@ pub(crate) fn render_task_command<R: CommandRunner>(
         && drop_should_refresh_cleanup_evidence(context, task)
         && execute
     {
-        commands::ensure_cleanup_git_status(context, task, runner).map_err(command_error)?;
+        match commands::ensure_cleanup_git_status(context, task, runner) {
+            Ok(()) => {}
+            Err(error) if drop_git_status_error_is_missing_worktree(&error) => {}
+            Err(error) => return Err(command_error(error)),
+        }
     }
     let mut plan = operation
         .plan_with_open_mode(context, task, open_mode)
@@ -283,6 +287,21 @@ fn execute_teardown_plan<R: CommandRunner>(
             }
         })?;
         if output.status_code != 0 {
+            if operation == TaskCommandOperation::Drop
+                && drop_cleanup_resource_is_already_missing(command, &output)
+            {
+                outputs.push(output);
+                state_changed |= commands::mark_task_cleanup_step_completed(context, task, command)
+                    .map_err(|error| {
+                        let cli_error = command_error(error);
+                        if state_changed {
+                            cli_error.after_state_change()
+                        } else {
+                            cli_error
+                        }
+                    })?;
+                continue;
+            }
             let cli_error = command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
                 program: command.program.clone(),
                 status_code: output.status_code,
@@ -316,4 +335,57 @@ fn execute_teardown_plan<R: CommandRunner>(
         output: render_execution_outputs(&outputs, None),
         state_changed: true,
     })
+}
+
+fn drop_cleanup_resource_is_already_missing(command: &CommandSpec, output: &CommandOutput) -> bool {
+    if output.status_code == 0 {
+        return false;
+    }
+
+    let stderr = output.stderr.to_ascii_lowercase();
+    if command.program == "tmux"
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg == "kill-session")
+    {
+        return stderr.contains("can't find session")
+            || stderr.contains("no server running")
+            || stderr.contains("session not found");
+    }
+
+    if command.program == "git"
+        && command.args.iter().any(|arg| arg == "worktree")
+        && command.args.iter().any(|arg| arg == "remove")
+    {
+        return git_error_says_worktree_missing(&stderr);
+    }
+
+    command.program == "git"
+        && command.args.iter().any(|arg| arg == "branch")
+        && (command.args.iter().any(|arg| arg == "-d")
+            || command.args.iter().any(|arg| arg == "-D"))
+        && git_error_says_branch_missing(&stderr)
+}
+
+fn drop_git_status_error_is_missing_worktree(error: &CommandError) -> bool {
+    matches!(
+        error,
+        CommandError::CommandRun(CommandRunError::NonZeroExit {
+            program,
+            stderr,
+            ..
+        }) if program == "git" && git_error_says_worktree_missing(&stderr.to_ascii_lowercase())
+    )
+}
+
+fn git_error_says_worktree_missing(stderr: &str) -> bool {
+    stderr.contains("no such file or directory")
+        || stderr.contains("is not a working tree")
+        || stderr.contains("is not a worktree")
+        || stderr.contains("does not exist")
+}
+
+fn git_error_says_branch_missing(stderr: &str) -> bool {
+    stderr.contains("not found") || stderr.contains("not a branch")
 }
