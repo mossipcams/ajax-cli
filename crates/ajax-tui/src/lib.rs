@@ -2162,6 +2162,23 @@ mod tests {
         assert!(matches!(action, EventLoopAction::Quit));
     }
 
+    #[test]
+    fn control_q_does_not_quit_cockpit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+    }
+
     #[rstest]
     #[case(KeyCode::Down, 0, 1)]
     #[case(KeyCode::Char('j'), 0, 1)]
