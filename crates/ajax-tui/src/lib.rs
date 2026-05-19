@@ -190,6 +190,7 @@ fn bucket_glyph(bucket: StatusBucket) -> &'static str {
 fn ui_state_bucket(state: UiState) -> StatusBucket {
     match state {
         UiState::Blocked => StatusBucket::NeedsYou,
+        UiState::NeedsInput => StatusBucket::NeedsYou,
         UiState::Running => StatusBucket::Active,
         UiState::ReviewReady => StatusBucket::NeedsYou,
         UiState::SafeMerge => StatusBucket::Done,
@@ -1048,6 +1049,7 @@ mod tests {
 
     #[rstest]
     #[case(UiState::Blocked, StatusBucket::NeedsYou)]
+    #[case(UiState::NeedsInput, StatusBucket::NeedsYou)]
     #[case(UiState::Running, StatusBucket::Active)]
     #[case(UiState::ReviewReady, StatusBucket::NeedsYou)]
     #[case(UiState::SafeMerge, StatusBucket::Done)]

@@ -8,6 +8,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UiState {
     Blocked,
+    NeedsInput,
     Running,
     ReviewReady,
     SafeMerge,
@@ -21,6 +22,7 @@ impl UiState {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Blocked => "blocked",
+            Self::NeedsInput => "needs input",
             Self::Running => "running",
             Self::ReviewReady => "review ready",
             Self::SafeMerge => "safe merge",
@@ -38,6 +40,12 @@ pub fn derive_ui_state(task: &Task) -> UiState {
     }
     if is_blocked(task) {
         return UiState::Blocked;
+    }
+    if needs_input(task) {
+        return UiState::NeedsInput;
+    }
+    if is_failed(task) {
+        return UiState::Failed;
     }
     match task.lifecycle_status {
         LifecycleStatus::Error => UiState::Failed,
@@ -73,20 +81,7 @@ pub fn derive_ui_state(task: &Task) -> UiState {
 }
 
 fn is_blocked(task: &Task) -> bool {
-    if task.has_missing_substrate() {
-        return true;
-    }
-    if task.has_side_flag(SideFlag::NeedsInput)
-        || task.has_side_flag(SideFlag::TestsFailed)
-        || task.has_side_flag(SideFlag::AgentDead)
-        || task.has_side_flag(SideFlag::Conflicted)
-    {
-        return true;
-    }
-    if matches!(
-        task.agent_status,
-        AgentRuntimeStatus::Blocked | AgentRuntimeStatus::Dead | AgentRuntimeStatus::Waiting
-    ) {
+    if task.has_side_flag(SideFlag::TestsFailed) || task.has_side_flag(SideFlag::Conflicted) {
         return true;
     }
     task.live_status
@@ -97,15 +92,49 @@ fn is_blocked(task: &Task) -> bool {
 fn is_blocking_live_status(kind: LiveStatusKind) -> bool {
     matches!(
         kind,
+        LiveStatusKind::MergeConflict | LiveStatusKind::CiFailed
+    )
+}
+
+fn needs_input(task: &Task) -> bool {
+    if task.has_side_flag(SideFlag::NeedsInput) {
+        return true;
+    }
+    if task.agent_status == AgentRuntimeStatus::Waiting {
+        return true;
+    }
+    task.live_status
+        .as_ref()
+        .is_some_and(|live| is_input_live_status(live.kind))
+}
+
+fn is_input_live_status(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
         LiveStatusKind::WaitingForApproval
             | LiveStatusKind::WaitingForInput
             | LiveStatusKind::AuthRequired
             | LiveStatusKind::RateLimited
             | LiveStatusKind::ContextLimit
-            | LiveStatusKind::MergeConflict
-            | LiveStatusKind::CiFailed
-            | LiveStatusKind::CommandFailed
-            | LiveStatusKind::Blocked
+    )
+}
+
+fn is_failed(task: &Task) -> bool {
+    if task.has_missing_substrate() || task.has_side_flag(SideFlag::AgentDead) {
+        return true;
+    }
+    if task.agent_status == AgentRuntimeStatus::Dead {
+        return true;
+    }
+    task.live_status
+        .as_ref()
+        .is_some_and(|live| is_failed_live_status(live.kind))
+}
+
+fn is_failed_live_status(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::CommandFailed | LiveStatusKind::Blocked
     )
 }
 
@@ -202,7 +231,16 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.add_side_flag(SideFlag::NeedsInput);
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
+    }
+
+    #[test]
+    fn needs_input_is_distinct_from_blocked() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.add_side_flag(SideFlag::NeedsInput);
+
+        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
     }
 
     #[test]
@@ -216,12 +254,12 @@ mod tests {
     }
 
     #[test]
-    fn waiting_agent_status_is_blocked() {
+    fn waiting_agent_status_needs_input() {
         let mut task = base_task();
         mark_active(&mut task).unwrap();
         task.agent_status = AgentRuntimeStatus::Waiting;
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
     }
 
     #[test]
@@ -237,12 +275,55 @@ mod tests {
     }
 
     #[test]
-    fn missing_substrate_is_blocked_even_with_otherwise_clean_lifecycle() {
+    fn missing_substrate_is_failed_even_with_otherwise_clean_lifecycle() {
         let mut task = base_task();
         mark_active(&mut task).unwrap();
         task.mark_resource_missing(SideFlag::WorktreeMissing);
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_ui_state(&task), UiState::Failed);
+    }
+
+    #[test]
+    fn waiting_live_statuses_need_input_instead_of_blocking() {
+        for live_status in [
+            LiveStatusKind::WaitingForApproval,
+            LiveStatusKind::WaitingForInput,
+        ] {
+            let mut task = base_task();
+            mark_active(&mut task).unwrap();
+            task.live_status = Some(LiveObservation::new(live_status, "waiting"));
+
+            assert_eq!(
+                derive_ui_state(&task),
+                UiState::NeedsInput,
+                "{live_status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_failed_ci_and_merge_conflicts_are_blocked() {
+        for live_status in [LiveStatusKind::CiFailed, LiveStatusKind::MergeConflict] {
+            let mut task = base_task();
+            mark_active(&mut task).unwrap();
+            task.live_status = Some(LiveObservation::new(live_status, "blocked"));
+
+            assert_eq!(derive_ui_state(&task), UiState::Blocked, "{live_status:?}");
+        }
+
+        for live_status in [
+            LiveStatusKind::AuthRequired,
+            LiveStatusKind::RateLimited,
+            LiveStatusKind::ContextLimit,
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::Blocked,
+        ] {
+            let mut task = base_task();
+            mark_active(&mut task).unwrap();
+            task.live_status = Some(LiveObservation::new(live_status, "attention"));
+
+            assert_ne!(derive_ui_state(&task), UiState::Blocked, "{live_status:?}");
+        }
     }
 
     #[test]

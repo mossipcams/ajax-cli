@@ -743,8 +743,18 @@ impl Annotation {
     }
 
     pub fn row_label(&self) -> String {
+        if self.kind == AnnotationKind::NeedsMe && is_waiting_evidence(&self.evidence) {
+            return self.evidence.label().to_string();
+        }
         format!("{} · {}", self.kind.label(), self.evidence.label())
     }
+}
+
+const fn is_waiting_evidence(evidence: &Evidence) -> bool {
+    matches!(
+        evidence,
+        Evidence::LiveStatus(LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput)
+    )
 }
 
 #[cfg(test)]
@@ -1242,13 +1252,30 @@ mod tests {
     }
 
     #[test]
-    fn annotation_row_label_combines_kind_and_evidence() {
+    fn annotation_row_label_does_not_duplicate_needs_you_for_waiting_states() {
         let annotation = Annotation::new(
             AnnotationKind::NeedsMe,
             Evidence::LiveStatus(LiveStatusKind::WaitingForInput),
         );
 
-        assert_eq!(annotation.row_label(), "needs you · waiting for input");
+        assert_eq!(annotation.row_label(), "waiting for input");
+
+        let annotation = Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::LiveStatus(LiveStatusKind::WaitingForApproval),
+        );
+
+        assert_eq!(annotation.row_label(), "waiting for approval");
+    }
+
+    #[test]
+    fn annotation_row_label_combines_kind_and_non_waiting_evidence() {
+        let annotation = Annotation::new(
+            AnnotationKind::NeedsMe,
+            Evidence::SideFlag(SideFlag::AgentDead),
+        );
+
+        assert_eq!(annotation.row_label(), "needs you · agent dead");
 
         let annotation = Annotation::new(
             AnnotationKind::Broken,

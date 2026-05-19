@@ -114,15 +114,18 @@ fn fallback_operator_action(task: &Task) -> OperatorAction {
         UiState::SafeMerge => OperatorAction::Ship,
         UiState::Cleanable | UiState::Archived => OperatorAction::Drop,
         UiState::ReviewReady => OperatorAction::Review,
-        UiState::Blocked | UiState::Running | UiState::Idle | UiState::Failed => {
-            OperatorAction::Resume
-        }
+        UiState::Blocked
+        | UiState::NeedsInput
+        | UiState::Running
+        | UiState::Idle
+        | UiState::Failed => OperatorAction::Resume,
     }
 }
 
 fn fallback_operator_reason(task: &Task) -> &'static str {
     match derive_ui_state(task) {
         UiState::Blocked => primary_blocker_reason(task).unwrap_or("resolve_blocker"),
+        UiState::NeedsInput => "needs_input",
         UiState::Running => "monitor",
         UiState::ReviewReady => "review",
         UiState::SafeMerge => "ship",
