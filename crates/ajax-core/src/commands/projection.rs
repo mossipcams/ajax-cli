@@ -1,12 +1,11 @@
 use crate::{
     attention::annotate,
-    models::{Annotation, LifecycleStatus, OperatorAction, SideFlag, Task},
-    operation::{task_operation_eligibility, TaskOperation},
+    models::{Annotation, LifecycleStatus, SideFlag, Task},
     output::{
         CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse, ReposResponse, TaskCard,
         TaskSummary, TasksResponse,
     },
-    recommended::operator_action,
+    recommended::{available_operator_actions, operator_action},
     ui_state::derive_ui_state,
 };
 
@@ -75,22 +74,10 @@ pub(super) fn task_summary(task: &Task) -> TaskSummary {
 }
 
 fn task_actions(task: &Task) -> Vec<String> {
-    if task.has_side_flag(SideFlag::TmuxMissing) || task.has_side_flag(SideFlag::WorktrunkMissing) {
-        return vec![OperatorAction::Repair.as_str().to_string()];
-    }
-
-    let mut actions = [
-        (TaskOperation::Open, OperatorAction::Resume),
-        (TaskOperation::Merge, OperatorAction::Ship),
-        (TaskOperation::Clean, OperatorAction::Drop),
-        (TaskOperation::Remove, OperatorAction::Drop),
-    ]
-    .into_iter()
-    .filter(|(operation, _)| task_operation_eligibility(task, *operation).is_allowed())
-    .map(|(_, action)| action.as_str().to_string())
-    .collect::<Vec<_>>();
-    actions.dedup();
-    actions
+    available_operator_actions(task)
+        .into_iter()
+        .map(|action| action.as_str().to_string())
+        .collect()
 }
 
 pub(super) fn task_card(task: &Task) -> TaskCard {

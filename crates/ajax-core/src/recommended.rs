@@ -15,6 +15,14 @@ pub struct OperatorActionPlan {
 }
 
 pub fn operator_action(task: &Task) -> OperatorActionPlan {
+    if task_is_known_invalid(task) {
+        return OperatorActionPlan {
+            action: OperatorAction::Drop,
+            reason: "invalid_task".to_string(),
+            available_actions: available_operator_actions(task),
+        };
+    }
+
     let derived_annotations;
     let annotations = if task.annotations.is_empty() {
         derived_annotations = crate::attention::annotate(task);
@@ -126,6 +134,10 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
+    if task_is_known_invalid(task) {
+        return vec![OperatorAction::Drop];
+    }
+
     if task.has_missing_substrate() && !has_only_shell_substrate_gap(task) {
         return vec![OperatorAction::Repair];
     }
@@ -157,6 +169,33 @@ fn has_only_shell_substrate_gap(task: &Task) -> bool {
             .live_status
             .as_ref()
             .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
+}
+
+fn task_is_known_invalid(task: &Task) -> bool {
+    task.has_side_flag(SideFlag::TmuxMissing)
+        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::WorktreeMissing)
+        || task.has_side_flag(SideFlag::BranchMissing)
+        || task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists)
+        || task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
+        || task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+        || task.live_status.as_ref().is_some_and(|live| {
+            matches!(
+                live.kind,
+                LiveStatusKind::WorktreeMissing
+                    | LiveStatusKind::TmuxMissing
+                    | LiveStatusKind::WorktrunkMissing
+            )
+        })
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
@@ -222,7 +261,7 @@ mod tests {
         lifecycle::{mark_active, mark_reviewable},
         models::{
             AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            OperatorAction, SideFlag, Task, TaskId,
+            OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
     };
 
@@ -262,23 +301,15 @@ mod tests {
     }
 
     #[test]
-    fn operator_actions_keep_ship_available_when_only_shell_substrate_needs_repair() {
+    fn operator_actions_prefer_drop_when_shell_substrate_is_missing() {
         for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
             let mut t = clean_reviewable_task("reviewable");
             t.add_side_flag(flag);
 
             let plan = operator_action(&t);
 
-            assert!(
-                plan.available_actions.contains(&OperatorAction::Ship),
-                "{flag:?} should not hide the ship action: {:?}",
-                plan.available_actions
-            );
-            assert!(
-                plan.available_actions.contains(&OperatorAction::Repair),
-                "{flag:?} should keep repair available: {:?}",
-                plan.available_actions
-            );
+            assert_eq!(plan.action, OperatorAction::Drop);
+            assert_eq!(plan.available_actions, vec![OperatorAction::Drop]);
         }
     }
 
@@ -296,6 +327,57 @@ mod tests {
             assert!(
                 !plan.available_actions.contains(&OperatorAction::Ship),
                 "missing git substrate should hide ship: {:?}",
+                plan.available_actions
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_tasks_prefer_drop_for_removal() {
+        for make_invalid in [
+            |task: &mut Task| task.add_side_flag(SideFlag::TmuxMissing),
+            |task: &mut Task| task.add_side_flag(SideFlag::WorktrunkMissing),
+            |task: &mut Task| task.add_side_flag(SideFlag::WorktreeMissing),
+            |task: &mut Task| task.add_side_flag(SideFlag::BranchMissing),
+            |task: &mut Task| {
+                task.tmux_status = Some(TmuxStatus {
+                    exists: false,
+                    session_name: task.tmux_session.clone(),
+                });
+            },
+            |task: &mut Task| {
+                task.worktrunk_status = Some(WorktrunkStatus {
+                    exists: false,
+                    window_name: task.worktrunk_window.clone(),
+                    current_path: task.worktree_path.clone(),
+                    points_at_expected_path: false,
+                });
+            },
+            |task: &mut Task| {
+                task.worktrunk_status = Some(WorktrunkStatus {
+                    exists: true,
+                    window_name: task.worktrunk_window.clone(),
+                    current_path: "/tmp/wrong".into(),
+                    points_at_expected_path: false,
+                });
+            },
+            |task: &mut Task| task.git_status.as_mut().unwrap().worktree_exists = false,
+            |task: &mut Task| task.git_status.as_mut().unwrap().branch_exists = false,
+        ] {
+            let mut t = clean_reviewable_task("reviewable");
+            make_invalid(&mut t);
+
+            let plan = operator_action(&t);
+
+            assert_eq!(plan.action, OperatorAction::Drop);
+            assert!(
+                plan.available_actions.contains(&OperatorAction::Drop),
+                "invalid task should stay removable: {:?}",
+                plan.available_actions
+            );
+            assert!(
+                !plan.available_actions.contains(&OperatorAction::Ship),
+                "invalid task should not offer ship: {:?}",
                 plan.available_actions
             );
         }

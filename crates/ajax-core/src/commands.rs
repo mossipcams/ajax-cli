@@ -37,7 +37,7 @@ use crate::{
         AnnotationItem, CockpitProjection, CockpitResponse, InboxResponse, InspectResponse,
         NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
-    recommended::evidence_label,
+    recommended::{evidence_label, operator_action},
     registry::{Registry, RegistryError},
 };
 use lookup::find_task;
@@ -249,7 +249,7 @@ fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
         task_handle: task.qualified_handle(),
         reason: evidence_label(&annotation.evidence).to_string(),
         severity: annotation.severity,
-        action: annotation.suggests,
+        action: operator_action(task).action,
     }
 }
 
@@ -1148,7 +1148,7 @@ mod tests {
     }
 
     #[test]
-    fn task_summaries_expose_trunk_repair_for_missing_tmux_evidence() {
+    fn task_summaries_expose_drop_for_invalid_task_evidence() {
         for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
             let mut context = context_with_tasks();
             let task = context
@@ -1162,12 +1162,12 @@ mod tests {
 
             assert_eq!(
                 response.tasks[0].actions,
-                vec![OperatorAction::Repair.as_str().to_string()],
+                vec![OperatorAction::Drop.as_str().to_string()],
                 "{flag:?}"
             );
             assert_eq!(
                 inbox(&context).items[0].action,
-                OperatorAction::Repair,
+                OperatorAction::Drop,
                 "{flag:?}"
             );
         }
@@ -2557,6 +2557,78 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn remove_task_plan_keeps_removing_remaining_resources_for_invalid_tasks() {
+        for arrange in [
+            |task: &mut Task| {
+                task.tmux_status = Some(TmuxStatus {
+                    exists: false,
+                    session_name: task.tmux_session.clone(),
+                });
+            },
+            |task: &mut Task| {
+                task.git_status.as_mut().unwrap().worktree_exists = false;
+            },
+            |task: &mut Task| {
+                task.git_status.as_mut().unwrap().branch_exists = false;
+            },
+            |task: &mut Task| {
+                task.worktrunk_status = Some(WorktrunkStatus {
+                    exists: false,
+                    window_name: task.worktrunk_window.clone(),
+                    current_path: task.worktree_path.clone(),
+                    points_at_expected_path: false,
+                });
+            },
+        ] {
+            let mut context = context_with_tasks();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.git_status = Some(GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some("ajax/fix-login".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+            task.tmux_status = Some(TmuxStatus {
+                exists: true,
+                session_name: task.tmux_session.clone(),
+            });
+            task.worktrunk_status = Some(WorktrunkStatus::present(
+                task.worktrunk_window.clone(),
+                task.worktree_path.clone(),
+            ));
+            arrange(task);
+
+            let plan = remove_task_plan(&context, "web/fix-login").unwrap();
+
+            assert!(plan.requires_confirmation);
+            assert!(plan.blocked_reasons.is_empty());
+            assert!(
+                !plan.commands.is_empty(),
+                "invalid task should still remove remaining resources"
+            );
+            assert!(
+                plan.commands
+                    .iter()
+                    .all(|command| { command.program == "tmux" || command.program == "git" }),
+                "unexpected teardown commands: {:?}",
+                plan.commands
+            );
+        }
     }
 
     #[test]

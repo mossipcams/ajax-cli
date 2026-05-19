@@ -166,14 +166,14 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let initial_task_ids = context
+    let task_ids = context
         .registry
         .list_tasks()
         .into_iter()
         .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
-    if initial_task_ids.is_empty() {
+    if task_ids.is_empty() {
         return Ok(false);
     }
 
@@ -184,22 +184,12 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         Ok(_output) => return Ok(false),
         Err(_error) => return Ok(false),
     };
-    if sessions_output.trim().is_empty() {
-        return Ok(false);
-    }
 
     let mut changed = if has_unregistered_ajax_session(context, &sessions_output) {
         recover_missing_tasks_from_substrate(context, runner, &sessions_output)?
     } else {
         false
     };
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
 
     for task_id in task_ids {
         let Some(task_snapshot) = context.registry.get_task(&task_id).cloned() else {
@@ -209,22 +199,28 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
         if !session_status.exists {
-            if task_snapshot
-                .tmux_status
-                .as_ref()
-                .is_some_and(|status| status.exists)
+            if task_snapshot.tmux_status.is_some()
+                && task_snapshot.live_status.is_none()
+                && !task_snapshot.has_side_flag(ajax_core::models::SideFlag::TmuxMissing)
             {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    task.remove_side_flag(ajax_core::models::SideFlag::AgentRunning);
-                    refresh_cached_annotations(task);
-                    changed = true;
-                }
                 continue;
             }
             changed |= task_snapshot.tmux_status.as_ref() != Some(&session_status);
             context
                 .registry
-                .update_tmux_status(&task_id, Some(session_status))
+                .update_tmux_status(&task_id, Some(session_status.clone()))
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+            context
+                .registry
+                .update_worktrunk_status(
+                    &task_id,
+                    Some(ajax_core::models::WorktrunkStatus {
+                        exists: false,
+                        window_name: task_snapshot.worktrunk_window.clone(),
+                        current_path: task_snapshot.worktree_path.clone(),
+                        points_at_expected_path: false,
+                    }),
+                )
                 .map_err(|error| CliError::CommandFailed(error.to_string()))?;
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 live::apply_observation(
@@ -527,7 +523,10 @@ mod tests {
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{AgentClient, LifecycleStatus, Task, TaskId},
+        models::{
+            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        },
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -577,6 +576,57 @@ mod tests {
         CommandContext::new(config, registry)
     }
 
+    #[derive(Default)]
+    struct EmptyTmuxRunner;
+
+    impl CommandRunner for EmptyTmuxRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn context_with_cached_running_task() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.agent_status = AgentRuntimeStatus::Running;
+        task.add_side_flag(SideFlag::AgentRunning);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "working on task",
+        ));
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        context
+    }
+
     #[test]
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
@@ -601,6 +651,41 @@ mod tests {
             .annotations
             .iter()
             .any(|annotation| annotation.evidence.label() == "waiting for approval"));
+    }
+
+    #[test]
+    fn live_refresh_marks_cached_running_task_invalid_when_tmux_sessions_are_empty() {
+        let mut context = context_with_cached_running_task();
+        let mut runner = EmptyTmuxRunner;
+        let mut state_changed = false;
+
+        let snapshot =
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+
+        assert!(state_changed);
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert!(task.has_side_flag(SideFlag::TmuxMissing));
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert_eq!(
+            task.tmux_status.as_ref().map(|status| status.exists),
+            Some(false)
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
+        assert!(!snapshot
+            .cards
+            .iter()
+            .any(|card| card.qualified_handle == "web/fix-login"));
+        assert!(snapshot.inbox.items.is_empty());
+        assert!(ajax_core::commands::inbox(&context)
+            .items
+            .iter()
+            .any(|item| {
+                item.task_handle == "web/fix-login" && item.action == OperatorAction::Drop
+            }));
     }
 
     #[derive(Default)]
