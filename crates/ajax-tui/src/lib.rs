@@ -2179,6 +2179,21 @@ mod tests {
         assert!(matches!(action, EventLoopAction::Continue));
     }
 
+    #[test]
+    fn control_q_returns_to_ajax_main_menu() {
+        let mut app = app_in_project_view();
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(app.view, AppView::Projects));
+        assert!(app.expanded_task.is_none());
+    }
+
     #[rstest]
     #[case(KeyCode::Down, 0, 1)]
     #[case(KeyCode::Char('j'), 0, 1)]

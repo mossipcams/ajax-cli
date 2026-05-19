@@ -67,6 +67,9 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
         KeyCode::Char(character) if app.is_collecting_input() => {
             app.push_input_char(character);
         }
+        KeyCode::Char('q') if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.go_home();
+        }
         KeyCode::Char('q') if modifiers.is_empty() => return Ok(EventLoopAction::Quit),
         code if is_back_key_event(code, modifiers) => {
             handle_back_key(app);
