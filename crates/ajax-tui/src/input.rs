@@ -145,6 +145,10 @@ pub(crate) fn handle_action_result(
             app.apply_refresh(snapshot);
             Ok(None)
         }
+        Ok(ActionOutcome::RefreshAndDefer(snapshot, pending)) => {
+            app.apply_refresh(snapshot);
+            Ok(Some(pending))
+        }
         Ok(ActionOutcome::Defer(pending)) => Ok(Some(pending)),
         Ok(ActionOutcome::Confirm(message)) => {
             app.notify_task(

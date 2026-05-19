@@ -487,6 +487,24 @@ impl App {
         self.reload(snapshot.repos, snapshot.cards, snapshot.inbox);
     }
 
+    pub fn optimistically_remove_task(&mut self, task_id: &TaskId) {
+        self.cards.retain(|card| card.id != *task_id);
+        self.inbox.items.retain(|item| item.task_id != *task_id);
+        self.notices.remove(task_id);
+        if self.expanded_task.as_ref() == Some(task_id) {
+            self.expanded_task = None;
+        }
+        if self
+            .pending_confirmation
+            .as_ref()
+            .is_some_and(|item| item.task_id == *task_id)
+        {
+            self.pending_confirmation = None;
+        }
+        self.rebuild_selectables();
+        self.selected = self.selected.min(self.selectables.len().saturating_sub(1));
+    }
+
     pub(crate) fn is_collecting_input(&self) -> bool {
         matches!(self.view, AppView::NewTaskInput { .. })
     }

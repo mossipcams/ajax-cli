@@ -1,8 +1,8 @@
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
-    models::OperatorAction,
-    registry::InMemoryRegistry,
+    models::{OperatorAction, TaskId},
+    registry::{InMemoryRegistry, Registry},
 };
 
 use crate::{
@@ -68,8 +68,8 @@ pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
 fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
+    _runner: &mut R,
+    _state_changed: &mut bool,
     confirmed: bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
@@ -86,16 +86,14 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
                     item.action
                 )));
             }
-            commands::execute_plan(&plan, true, runner).map_err(command_error_as_io)?;
-            if plan.title.starts_with("remove task:") {
-                commands::mark_task_force_removed(context, handle).map_err(command_error_as_io)?;
-            } else {
-                commands::mark_task_removed(context, handle).map_err(command_error_as_io)?;
-            }
-            *state_changed = true;
-            return Ok(ajax_tui::ActionOutcome::Refresh(build_cockpit_snapshot(
-                context,
-            )));
+            return Ok(ajax_tui::ActionOutcome::RefreshAndDefer(
+                optimistic_drop_snapshot(context, handle, &item.task_id),
+                ajax_tui::PendingAction {
+                    task_handle: handle.clone(),
+                    action: item.action.clone(),
+                    task_title: None,
+                },
+            ));
         }
 
         return Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
@@ -124,6 +122,29 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
             item.action
         ))),
     }
+}
+
+fn optimistic_drop_snapshot(
+    context: &CommandContext<InMemoryRegistry>,
+    handle: &str,
+    fallback_task_id: &TaskId,
+) -> ajax_tui::CockpitSnapshot {
+    let task_id = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == handle)
+        .map(|task| task.id.clone())
+        .unwrap_or_else(|| fallback_task_id.clone());
+    let mut snapshot = build_cockpit_snapshot(context);
+    snapshot
+        .cards
+        .retain(|card| card.id != task_id && card.qualified_handle != handle);
+    snapshot
+        .inbox
+        .items
+        .retain(|item| item.task_id != task_id && item.task_handle != handle);
+    snapshot
 }
 
 fn command_error_as_io(error: CommandError) -> std::io::Error {
@@ -199,8 +220,8 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     let plan = operation
         .plan_with_open_mode(context, &pending.task_handle, open_mode)
         .map_err(command_error)?;
-    let outputs = commands::execute_plan(&plan, !plan.requires_confirmation, runner)
-        .map_err(command_error)?;
+    let confirmed = operation == TaskCommandOperation::Drop || !plan.requires_confirmation;
+    let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
     let changed = operation
         .apply_after_execute(context, &pending.task_handle)
         .map_err(command_error)?;
@@ -268,8 +289,8 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode_and_task_session<
         .map_err(command_error)?;
 
     if operation != TaskCommandOperation::Open {
-        let outputs = commands::execute_plan(&plan, !plan.requires_confirmation, runner)
-            .map_err(command_error)?;
+        let confirmed = operation == TaskCommandOperation::Drop || !plan.requires_confirmation;
+        let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
         let changed = operation
             .apply_after_execute(context, &pending.task_handle)
             .map_err(command_error)?;

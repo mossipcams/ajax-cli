@@ -4257,6 +4257,9 @@ mod tests {
                 ajax_tui::ActionOutcome::Refresh { .. } => {
                     panic!("{action} should defer for execution instead of refreshing")
                 }
+                ajax_tui::ActionOutcome::RefreshAndDefer(_, _) => {
+                    panic!("{action} should defer without refreshing first")
+                }
                 ajax_tui::ActionOutcome::Confirm(message) => {
                     panic!("{action} should defer for execution instead of confirming: {message}")
                 }
@@ -4366,7 +4369,7 @@ mod tests {
         enum Expected<'a> {
             Defer,
             Message(&'a [&'a str]),
-            Refresh,
+            RefreshAndDefer,
         }
 
         let cases = [
@@ -4378,7 +4381,7 @@ mod tests {
             ("resume", "web/fix-login", Expected::Defer),
             ("review", "web/fix-login", Expected::Defer),
             ("ship", "web/fix-login", Expected::Defer),
-            ("drop", "web/fix-login", Expected::Refresh),
+            ("drop", "web/fix-login", Expected::RefreshAndDefer),
             ("repair", "web/fix-login", Expected::Defer),
             ("status", "web", Expected::Message(&["web: 1 task(s)"])),
         ];
@@ -4429,6 +4432,9 @@ mod tests {
                     ajax_tui::ActionOutcome::Refresh { .. } => {
                         panic!("{action} should defer, got refresh");
                     }
+                    ajax_tui::ActionOutcome::RefreshAndDefer(_, _) => {
+                        panic!("{action} should defer without refreshing first");
+                    }
                 },
                 Expected::Message(parts) => match outcome {
                     ajax_tui::ActionOutcome::Message(message) => {
@@ -4450,28 +4456,31 @@ mod tests {
                     ajax_tui::ActionOutcome::Refresh(_) => {
                         panic!("{action} should render in cockpit, got refresh");
                     }
+                    ajax_tui::ActionOutcome::RefreshAndDefer(_, _) => {
+                        panic!("{action} should render in cockpit, got refresh and defer");
+                    }
                 },
-                Expected::Refresh => match outcome {
-                    ajax_tui::ActionOutcome::Refresh(snapshot) => {
+                Expected::RefreshAndDefer => match outcome {
+                    ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) => {
                         assert_eq!(snapshot.repos.repos.len(), 1, "{action}");
-                        if action == "drop" {
-                            assert!(snapshot.cards.is_empty(), "{action}");
-                            assert!(snapshot.inbox.items.is_empty(), "{action}");
-                        } else {
-                            assert_eq!(snapshot.cards.len(), 1, "{action}");
-                            assert!(!snapshot.inbox.items.is_empty(), "{action}");
-                        }
-                        assert!(!runner.commands().is_empty(), "{action}");
-                        assert!(state_changed, "{action}");
+                        assert!(snapshot.cards.is_empty(), "{action}");
+                        assert!(snapshot.inbox.items.is_empty(), "{action}");
+                        assert_eq!(pending.task_handle, handle, "{action}");
+                        assert_eq!(pending.action, action, "{action}");
+                        assert!(runner.commands().is_empty(), "{action}");
+                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
-                        panic!("{action} should refresh, got defer");
+                        panic!("{action} should refresh before deferring, got defer");
                     }
                     ajax_tui::ActionOutcome::Message(message) => {
-                        panic!("{action} should refresh, got message: {message}");
+                        panic!("{action} should refresh before deferring, got message: {message}");
                     }
                     ajax_tui::ActionOutcome::Confirm(message) => {
-                        panic!("{action} should refresh, got confirm: {message}");
+                        panic!("{action} should refresh before deferring, got confirm: {message}");
+                    }
+                    ajax_tui::ActionOutcome::Refresh(_) => {
+                        panic!("{action} should defer backend cleanup after refresh");
                     }
                 },
             }
@@ -4858,7 +4867,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_cockpit_remove_action_force_removes_and_refreshes_inside_ajax() {
+    fn confirmed_cockpit_remove_action_optimistically_removes_and_defers_cleanup() {
         let mut context = sample_context();
         let task = context
             .registry
@@ -4896,43 +4905,23 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(outcome, ajax_tui::ActionOutcome::Refresh { .. }));
-        assert_eq!(
-            runner.commands(),
-            &[
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "worktree",
-                        "remove",
-                        "--force",
-                        "/tmp/worktrees/web-fix-login"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "branch",
-                        "-D",
-                        "ajax/fix-login"
-                    ]
-                ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
-            ]
-        );
+        let ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) = outcome else {
+            panic!("confirmed force drop should optimistically refresh and defer cleanup");
+        };
+        assert!(snapshot.cards.is_empty());
+        assert!(snapshot.inbox.items.is_empty());
+        assert_eq!(pending.task_handle, "web/fix-login");
+        assert_eq!(pending.action, "drop");
+        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Removed
+            LifecycleStatus::Reviewable
         );
-        assert!(state_changed);
+        assert!(!state_changed);
     }
 
     #[test]
@@ -5523,6 +5512,67 @@ mod tests {
     }
 
     #[test]
+    fn failed_deferred_drop_restores_task_in_next_cockpit_snapshot() {
+        let mut context = cleanable_context();
+        let item = ajax_core::models::CockpitActionItem {
+            task_id: TaskId::new("__task_action__web_fix_login__clean"),
+            task_handle: "web/fix-login".to_string(),
+            reason: "Clean task".to_string(),
+            priority: 0,
+            action: "drop".to_string(),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut state_changed = false;
+        let outcome = super::tui_cockpit_confirmed_action(
+            &item,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+        let ajax_tui::ActionOutcome::RefreshAndDefer(optimistic, pending) = outcome else {
+            panic!("confirmed drop should optimistically refresh and defer cleanup");
+        };
+        assert!(optimistic.cards.is_empty());
+
+        let mut failing_runner = QueuedRunner::new(vec![
+            output(0, ""),
+            CommandOutput {
+                status_code: 2,
+                stdout: String::new(),
+                stderr: "branch delete failed".to_string(),
+            },
+        ]);
+        let error = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut failing_runner,
+            &mut state_changed,
+        )
+        .unwrap_err();
+        let mut flash = None;
+        let handled = super::handle_pending_cockpit_result(Err(error), &mut flash);
+        let restored = crate::cockpit_backend::build_cockpit_snapshot(&context);
+
+        assert!(handled.is_none());
+        assert!(flash
+            .as_deref()
+            .is_some_and(|message| message.contains("branch delete failed")));
+        assert!(restored
+            .cards
+            .iter()
+            .any(|card| card.qualified_handle == "web/fix-login"));
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Cleanable
+        );
+    }
+
+    #[test]
     fn cockpit_reconcile_action_is_unknown() {
         let mut context = sample_context();
         let item = ajax_core::models::CockpitActionItem {
@@ -5582,7 +5632,7 @@ mod tests {
     }
 
     #[test]
-    fn confirmed_cockpit_clean_action_runs_and_refreshes_inside_ajax() {
+    fn confirmed_cockpit_clean_action_removes_from_snapshot_and_defers_cleanup() {
         let mut context = cleanable_context();
         let item = ajax_core::models::CockpitActionItem {
             task_id: TaskId::new("__task_action__web_fix_login__clean"),
@@ -5603,13 +5653,18 @@ mod tests {
         .unwrap();
 
         match outcome {
-            ajax_tui::ActionOutcome::Refresh(snapshot) => {
+            ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) => {
                 assert_eq!(snapshot.repos.repos.len(), 1);
                 assert!(snapshot.cards.is_empty());
                 assert!(snapshot.inbox.items.is_empty());
+                assert_eq!(pending.task_handle, "web/fix-login");
+                assert_eq!(pending.action, "drop");
             }
             ajax_tui::ActionOutcome::Defer(_) => {
-                panic!("drop task should refresh Ajax instead of deferring out")
+                panic!("drop task should optimistically refresh before deferring")
+            }
+            ajax_tui::ActionOutcome::Refresh(_) => {
+                panic!("drop task should defer backend cleanup after refresh")
             }
             ajax_tui::ActionOutcome::Message(message) => {
                 panic!("drop task should run instead of showing message: {message}")
@@ -5618,40 +5673,16 @@ mod tests {
                 panic!("confirmed drop task should run instead of confirming: {message}")
             }
         }
-        assert_eq!(
-            runner.commands(),
-            &[
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "worktree",
-                        "remove",
-                        "/tmp/worktrees/web-fix-login"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "branch",
-                        "-d",
-                        "ajax/fix-login"
-                    ]
-                )
-            ]
-        );
+        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Removed
+            LifecycleStatus::Cleanable
         );
-        assert!(state_changed);
+        assert!(!state_changed);
     }
 
     #[test]

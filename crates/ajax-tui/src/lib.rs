@@ -96,6 +96,8 @@ pub struct PendingAction {
 pub enum ActionOutcome {
     /// Reload the TUI with fresh data.
     Refresh(CockpitSnapshot),
+    /// Reload the TUI optimistically, then exit to run a deferred action.
+    RefreshAndDefer(CockpitSnapshot, PendingAction),
     /// Exit the TUI — the CLI will run the deferred action.
     Defer(PendingAction),
     /// Ask for a second explicit activation before running a risky action.
@@ -3170,6 +3172,46 @@ mod tests {
         assert!(!app.selectables.iter().any(|s| matches!(
             s,
             SelectableKind::Task(_) | SelectableKind::TaskAction { .. }
+        )));
+    }
+
+    #[test]
+    fn optimistic_drop_removes_task_until_refresh_restores_it() {
+        let mut app = app_in_project_view();
+        let task_id = TaskId::new("task-1");
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(task) if task.id == task_id))
+            .expect("project view has task");
+        app.selected = task_idx;
+        app.activate_selected();
+        assert!(app.expanded_task.is_some());
+
+        app.optimistically_remove_task(&task_id);
+
+        assert!(app.expanded_task.is_none());
+        assert!(!app.cards.iter().any(|card| card.id == task_id));
+        assert!(!app.inbox.items.iter().any(|item| item.task_id == task_id));
+        assert!(!app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::Task(task) if task.id == task_id
+        )));
+        assert!(!app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::TaskAction { task, .. } if task.id == task_id
+        )));
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: sample_tasks(),
+            inbox: sample_inbox(),
+        });
+
+        assert!(app.cards.iter().any(|card| card.id == task_id));
+        assert!(app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::Task(task) if task.id == task_id
         )));
     }
 
