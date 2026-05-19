@@ -3014,6 +3014,31 @@ mod tests {
     }
 
     #[test]
+    fn refresh_after_drop_clears_expanded_missing_task() {
+        let mut app = app_in_project_view();
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(_)))
+            .expect("project view has at least one task");
+        app.selected = task_idx;
+        app.activate_selected();
+        assert!(app.expanded_task.is_some());
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: Vec::new(),
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        assert!(app.expanded_task.is_none());
+        assert!(!app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::Task(_) | SelectableKind::TaskAction { .. }
+        )));
+    }
+
+    #[test]
     fn drawer_action_dispatches_on_enter() {
         let mut app = app_in_project_view();
         let task_idx = app

@@ -506,6 +506,7 @@ impl App {
         self.prune_stale_lifecycle_notices(&prior_lifecycles);
         self.clear_system_background_error();
         if missing_task_after_refresh {
+            self.expanded_task = None;
             self.view = AppView::Projects;
             self.selected = 0;
             self.viewport_scroll = 0;

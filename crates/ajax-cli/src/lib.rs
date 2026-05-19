@@ -3797,13 +3797,7 @@ mod tests {
 
         std::fs::remove_dir_all(Path::new(&directory)).unwrap();
         assert!(error.to_string().contains("git exited with status 2"));
-        assert_eq!(
-            restored
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(restored.get_task(&TaskId::new("task-1")).is_none());
         assert_eq!(
             restored
                 .get_task(&TaskId::new("task-2"))

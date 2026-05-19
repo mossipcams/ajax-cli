@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -172,11 +173,27 @@ impl RegistryStore for SqliteRegistryStore {
             .execute("DELETE FROM registry_tasks", [])
             .map_err(database_error)?;
 
-        for task in registry.tasks.values() {
+        let live_task_ids = registry
+            .tasks
+            .values()
+            .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+            .map(|task| task.id.clone())
+            .collect::<BTreeSet<_>>();
+
+        for task in registry
+            .tasks
+            .values()
+            .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+        {
             save_task(&transaction, task)?;
         }
 
-        for (sequence, event) in registry.events.iter().enumerate() {
+        for (sequence, event) in registry
+            .events
+            .iter()
+            .filter(|event| live_task_ids.contains(&event.task_id))
+            .enumerate()
+        {
             let (occurred_at_seconds, occurred_at_nanos) =
                 system_time_to_unix_parts(event.occurred_at)?;
             transaction
@@ -220,6 +237,9 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
 
     while let Some(row) = rows.next().map_err(database_error)? {
         let mut task = task_from_row(row)?;
+        if task.lifecycle_status == LifecycleStatus::Removed {
+            continue;
+        }
         load_task_side_flags(connection, &mut task)?;
         load_task_metadata(connection, &mut task)?;
         load_agent_attempts(connection, &mut task)?;
@@ -1032,6 +1052,42 @@ mod tests {
         assert_eq!(restored.list_tasks().len(), 1);
         assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
         assert_eq!(restored.events_for_task(&TaskId::new("task-1")).len(), 2);
+    }
+
+    #[test]
+    fn sqlite_registry_store_prunes_removed_task_ghosts() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-live", "web", "fix-login"))
+            .unwrap();
+        let mut removed = task("task-removed", "web", "old-task");
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        removed.add_side_flag(SideFlag::NeedsInput);
+        registry.create_task(removed).unwrap();
+        registry
+            .record_event(
+                TaskId::new("task-removed"),
+                RegistryEventKind::UserNote,
+                "ghost note",
+            )
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-prune-removed"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(restored.get_task(&TaskId::new("task-live")).is_some());
+        assert!(restored.get_task(&TaskId::new("task-removed")).is_none());
+        assert!(restored
+            .events_for_task(&TaskId::new("task-removed"))
+            .is_empty());
+        assert_eq!(restored.list_tasks().len(), 1);
     }
 
     #[test]
