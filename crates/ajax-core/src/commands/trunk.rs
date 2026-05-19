@@ -72,8 +72,6 @@ pub fn trunk_task_plan_with_open_mode<R: Registry>(
         ));
     }
     plan.commands
-        .push(tmux.cancel_copy_mode_if_needed(&task.tmux_session, &task.worktrunk_window));
-    plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
     match mode {
         OpenMode::Attach => plan

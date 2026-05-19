@@ -551,22 +551,6 @@ mod tests {
         }
     }
 
-    fn expected_copy_mode_cancel_command(session: &str, window: &str) -> CommandSpec {
-        let target = format!("{session}:{window}");
-        CommandSpec {
-            program: "tmux".to_string(),
-            args: vec![
-                "send-keys".to_string(),
-                "-t".to_string(),
-                target,
-                "-X".to_string(),
-                "cancel".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-        }
-    }
-
     fn ajax_binary_path() -> PathBuf {
         if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax") {
             return binary.into();
@@ -2209,7 +2193,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3490,7 +3473,6 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -3613,7 +3595,6 @@ mod tests {
                         "/tmp/worktrees/web-fix-login",
                     ],
                 ),
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
@@ -3637,7 +3618,6 @@ mod tests {
             .unwrap()
             .lifecycle_status = LifecycleStatus::Active;
         let mut runner = QueuedRunner::new(vec![
-            output(0, ""),
             output(0, ""),
             output(0, ""),
             output(0, ""),
@@ -4726,7 +4706,6 @@ mod tests {
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -4792,7 +4771,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -4967,7 +4945,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
@@ -5010,7 +4987,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                expected_copy_mode_cancel_command("ajax-web-fix-login", "worktrunk"),
                 CommandSpec::new(
                     "tmux",
                     ["select-window", "-t", "ajax-web-fix-login:worktrunk"]

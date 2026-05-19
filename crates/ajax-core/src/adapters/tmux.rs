@@ -52,11 +52,6 @@ impl TmuxAdapter {
         CommandSpec::new(&self.program, ["select-window", "-t", &target])
     }
 
-    pub fn cancel_copy_mode_if_needed(&self, session: &str, window: &str) -> CommandSpec {
-        let target = tmux_window_target(session, window);
-        CommandSpec::new(&self.program, ["send-keys", "-t", &target, "-X", "cancel"])
-    }
-
     pub fn attach_window(&self, session: &str, _window: &str) -> CommandSpec {
         self.attach_session(session)
     }
@@ -178,18 +173,5 @@ mod tests {
         assert_eq!(status.session_name, "ajax-web-fix");
         assert!(!missing.exists);
         assert_eq!(missing.session_name, "ajax-web");
-    }
-
-    #[test]
-    fn cancel_copy_mode_sends_tmux_copy_mode_cancel() {
-        let tmux = TmuxAdapter::new("tmux");
-
-        assert_eq!(
-            tmux.cancel_copy_mode_if_needed("ajax-web-fix", "worktrunk"),
-            crate::adapters::CommandSpec::new(
-                "tmux",
-                ["send-keys", "-t", "ajax-web-fix:worktrunk", "-X", "cancel"]
-            )
-        );
     }
 }

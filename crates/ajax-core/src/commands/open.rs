@@ -44,8 +44,6 @@ pub fn open_task_plan<R: Registry>(
 
     let tmux = TmuxAdapter::new("tmux");
     plan.commands
-        .push(tmux.cancel_copy_mode_if_needed(&task.tmux_session, &task.worktrunk_window));
-    plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
     match mode {
         OpenMode::Attach => plan
