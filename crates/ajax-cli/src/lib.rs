@@ -3386,7 +3386,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -3407,7 +3406,8 @@ mod tests {
                         "-D",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
         assert_eq!(
@@ -3547,13 +3547,13 @@ mod tests {
         ));
         let mut runner = QueuedRunner::new(vec![
             output(0, "## ajax/fix-login\n"),
+            output(0, ""),
+            output(0, ""),
             CommandOutput {
                 status_code: 1,
                 stdout: String::new(),
                 stderr: "can't find session: ajax-web-fix-login".to_string(),
             },
-            output(0, ""),
-            output(0, ""),
         ]);
 
         run_with_context_and_runner(
@@ -3576,7 +3576,6 @@ mod tests {
                         "--branch"
                     ]
                 ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -3596,7 +3595,8 @@ mod tests {
                         "-d",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
@@ -3744,7 +3744,7 @@ mod tests {
     }
 
     #[test]
-    fn clean_execute_partial_failure_after_tmux_kill_updates_tmux_evidence() {
+    fn clean_execute_partial_failure_before_tmux_kill_leaves_tmux_evidence() {
         let mut context = cleanable_context();
         let task = context
             .registry
@@ -3761,7 +3761,7 @@ mod tests {
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
-                stderr: "remove failed".to_string(),
+                stderr: "branch delete failed".to_string(),
             },
         ]);
 
@@ -3774,21 +3774,21 @@ mod tests {
 
         assert!(
             matches!(error, super::CliError::CommandFailedAfterStateChange(message)
-                if message == "command failed: git exited with status 2: remove failed")
+                if message == "command failed: git exited with status 2: branch delete failed")
         );
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert_eq!(task.lifecycle_status, LifecycleStatus::Cleanable);
         assert_eq!(
             task.tmux_status,
             Some(TmuxStatus {
-                exists: false,
+                exists: true,
                 session_name: "ajax-web-fix-login".to_string(),
             })
         );
         assert!(task
             .git_status
             .as_ref()
-            .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
+            .is_some_and(|status| { !status.worktree_exists && status.branch_exists }));
     }
 
     #[test]
@@ -4900,7 +4900,6 @@ mod tests {
         assert_eq!(
             runner.commands(),
             &[
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -4921,7 +4920,8 @@ mod tests {
                         "-D",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
         assert_eq!(

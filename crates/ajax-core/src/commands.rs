@@ -2505,7 +2505,6 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -2525,7 +2524,8 @@ mod tests {
                         "-d",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
     }
@@ -2611,7 +2611,6 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -2632,7 +2631,8 @@ mod tests {
                         "-D",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
     }
@@ -3174,7 +3174,6 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -3194,7 +3193,8 @@ mod tests {
                         "-D",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
     }
@@ -3210,7 +3210,6 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
                 CommandSpec::new(
                     "git",
                     [
@@ -3230,7 +3229,8 @@ mod tests {
                         "-d",
                         "ajax/fix-login"
                     ]
-                )
+                ),
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
             ]
         );
     }

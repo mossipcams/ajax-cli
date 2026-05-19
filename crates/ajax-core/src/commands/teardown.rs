@@ -259,13 +259,6 @@ fn native_teardown_commands<R: Registry>(
     let mut commands = Vec::new();
 
     if task
-        .tmux_status
-        .as_ref()
-        .is_some_and(|status| status.exists)
-    {
-        commands.push(tmux.kill_session(&task.tmux_session));
-    }
-    if task
         .git_status
         .as_ref()
         .is_none_or(|status| status.worktree_exists)
@@ -302,6 +295,13 @@ fn native_teardown_commands<R: Registry>(
             git.delete_branch(&repo_path, &task.branch)
         };
         commands.push(command);
+    }
+    if task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists)
+    {
+        commands.push(tmux.kill_session(&task.tmux_session));
     }
 
     Ok(commands)
