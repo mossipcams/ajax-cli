@@ -11,12 +11,10 @@ use std::time::Duration;
 
 use crate::{
     cockpit_actions::{
-        execute_pending_cockpit_action_with_open_mode_and_task_session,
-        handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
-        PendingCockpitOutcome,
+        execute_pending_cockpit_action, handle_pending_cockpit_result, tui_cockpit_action,
+        tui_cockpit_confirmed_action, PendingCockpitOutcome,
     },
     render::render_response,
-    task_session::PtyTaskSessionRunner,
     CliError, RenderedCommand,
 };
 
@@ -80,7 +78,6 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
     loop {
-        let mut task_session = PtyTaskSessionRunner;
         let snapshot = build_cockpit_snapshot(context);
         let pending = ajax_tui::run_interactive_with_flash_and_refresh(
             snapshot.repos,
@@ -103,14 +100,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
         };
 
         let Some(outcome) = handle_pending_cockpit_result(
-            execute_pending_cockpit_action_with_open_mode_and_task_session(
-                &pending,
-                context,
-                runner,
-                &mut state_changed,
-                crate::current_open_mode(),
-                &mut task_session,
-            ),
+            execute_pending_cockpit_action(&pending, context, runner, &mut state_changed),
             &mut cockpit_flash,
         ) else {
             continue;

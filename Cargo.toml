@@ -21,7 +21,6 @@ ajax-tui = { version = "0.1.0", path = "crates/ajax-tui" }
 clap = "4.5"
 crossterm = "0.29"
 notify = "8"
-nix = { version = "0.29", features = ["fs", "poll", "process", "signal", "term"] }
 proptest = "1.11.0"
 ratatui = { version = "0.30", default-features = false }
 rstest = "0.26.1"

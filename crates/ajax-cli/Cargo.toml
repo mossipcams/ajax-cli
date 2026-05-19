@@ -18,7 +18,6 @@ ajax-core = { workspace = true }
 ajax-supervisor = { workspace = true }
 ajax-tui = { workspace = true }
 clap = { workspace = true }
-nix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

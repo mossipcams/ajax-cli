@@ -17,7 +17,6 @@ use crate::{
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
     supervise::supervise_command_output_and_events,
-    task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -187,67 +186,6 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     outputs.extend(
         commands::execute_plan(&open_plan, true, runner)
             .map_err(|error| command_error(error).after_state_change())?,
-    );
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.id == task.id)
-        .cloned()
-        .unwrap_or(task);
-
-    Ok((outputs, task))
-}
-
-pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    task_session: &mut S,
-    request: &commands::NewTaskRequest,
-    plan: &commands::CommandPlan,
-    confirmed: bool,
-    open_mode: commands::OpenMode,
-) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let task = commands::record_new_task(context, request).map_err(command_error)?;
-    if plan.requires_confirmation && !confirmed {
-        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
-    }
-    if !plan.blocked_reasons.is_empty() {
-        return Err(
-            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
-                .after_state_change(),
-        );
-    }
-
-    let mut outputs = Vec::new();
-    for (index, command) in plan.commands.iter().enumerate() {
-        let output = runner.run(command).map_err(|error| {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            command_error(CommandError::CommandRun(error)).after_state_change()
-        })?;
-        if output.status_code != 0 {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            return Err(
-                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                    program: command.program.clone(),
-                    status_code: output.status_code,
-                    stderr: output.stderr,
-                    cwd: command.cwd.clone(),
-                }))
-                .after_state_change(),
-            );
-        }
-        outputs.push(output);
-        commands::mark_new_task_step_completed(context, &task.id, index)
-            .map_err(|error| command_error(error).after_state_change())?;
-    }
-    commands::mark_task_opened(context, &task.qualified_handle())
-        .map_err(|error| command_error(error).after_state_change())?;
-    let open_plan = newly_created_task_open_plan(&task, open_mode);
-    outputs.extend(
-        execute_task_entry_plan(&open_plan, runner, task_session)
-            .map_err(|error| error.after_state_change())?,
     );
 
     let task = context
