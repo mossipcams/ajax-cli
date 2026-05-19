@@ -6,7 +6,9 @@ use crate::{
     models::SideFlag,
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
+    runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
+use std::time::SystemTime;
 
 pub fn open_task_plan<R: Registry>(
     context: &CommandContext<R>,
@@ -14,6 +16,15 @@ pub fn open_task_plan<R: Registry>(
     mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
+    if task
+        .runtime_projection
+        .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
+    {
+        let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
+        plan.blocked_reasons
+            .push("runtime state is stale; refresh before resume".to_string());
+        return Ok(plan);
+    }
     let needs_trunk_repair = task.has_side_flag(SideFlag::TmuxMissing)
         || task.has_side_flag(SideFlag::WorktrunkMissing)
         || task

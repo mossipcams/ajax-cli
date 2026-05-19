@@ -33,7 +33,8 @@ Ajax coordinates external tools but does not replace them.
 - Git owns repository truth, branches, merges, and worktrees.
 - tmux owns durable interactive sessions.
 - Agent CLIs are opaque workers.
-- SQLite stores Ajax registry state.
+- SQLite stores Ajax registry state, including the current runtime projection
+  derived from observed substrate evidence.
 
 Ajax owns task lifecycle, naming, policy, live projection, command plans, and
 registry state.
@@ -47,6 +48,12 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
+
+SQLite is the fast read model for Ajax task state. It records expected runtime
+identity, last observed Git/tmux evidence, derived runtime health, and typed
+events. Git and tmux still own live substrate reality; Ajax reconciles their
+observations into SQLite so Cockpit, command planning, and JSON output can read
+one coherent task record.
 
 ### Lifecycle
 
@@ -64,6 +71,13 @@ Substrate evidence records observed external facts from Git, tmux, worktrees,
 and supervised processes.
 
 Git evidence interpretation lives in `analysis::git_evidence`.
+
+Runtime reconciliation lives in `runtime`. It compares expected task runtime
+state with observed Git, tmux, and task-window evidence, then produces a single
+runtime health verdict such as healthy, missing worktree, missing session,
+missing task window, wrong task-window path, or unobservable. UI and action
+selection consume that verdict instead of reinterpreting individual substrate
+fields.
 
 ### Live Status
 

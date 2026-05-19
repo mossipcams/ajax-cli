@@ -165,6 +165,7 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
 fn has_only_shell_substrate_gap(task: &Task) -> bool {
     !task.has_side_flag(SideFlag::WorktreeMissing)
         && !task.has_side_flag(SideFlag::BranchMissing)
+        && !task.runtime_projection.health.is_git_substrate_gap()
         && !task
             .live_status
             .as_ref()
@@ -261,7 +262,7 @@ mod tests {
         lifecycle::{mark_active, mark_reviewable},
         models::{
             AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            OperatorAction, RuntimeHealth, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
     };
 
@@ -381,6 +382,27 @@ mod tests {
                 plan.available_actions
             );
         }
+    }
+
+    #[test]
+    fn operator_action_prefers_runtime_health_for_shell_repair_without_hiding_ship() {
+        let mut t = clean_reviewable_task("reviewable");
+        t.runtime_projection.health = RuntimeHealth::MissingSession;
+
+        let plan = operator_action(&t);
+
+        assert_eq!(plan.action, OperatorAction::Repair);
+        assert_eq!(plan.reason, "tmux_missing");
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Repair),
+            "runtime health should offer repair: {:?}",
+            plan.available_actions
+        );
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Ship),
+            "shell runtime health should not hide ship: {:?}",
+            plan.available_actions
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     path::PathBuf,
-    time::SystemTime,
+    time::{Duration, SystemTime},
 };
 
 use serde::{Deserialize, Serialize};
@@ -112,6 +112,8 @@ pub struct Task {
     pub tmux_status: Option<TmuxStatus>,
     pub worktrunk_status: Option<WorktrunkStatus>,
     #[serde(default)]
+    pub runtime_projection: RuntimeProjection,
+    #[serde(default)]
     pub live_status: Option<LiveObservation>,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
@@ -154,6 +156,7 @@ impl Task {
             git_status: None,
             tmux_status: None,
             worktrunk_status: None,
+            runtime_projection: RuntimeProjection::default(),
             live_status: None,
             annotations: Vec::new(),
             created_at: now,
@@ -194,6 +197,7 @@ impl Task {
 
     pub fn has_missing_substrate(&self) -> bool {
         self.side_flags().any(SideFlag::is_missing_substrate)
+            || self.runtime_projection.health.is_missing_substrate()
             || self
                 .live_status
                 .as_ref()
@@ -232,6 +236,7 @@ impl Task {
         }
 
         self.git_status = Some(status);
+        self.refresh_runtime_projection();
     }
 
     pub fn apply_tmux_status(&mut self, status: Option<TmuxStatus>) {
@@ -241,6 +246,7 @@ impl Task {
         }
 
         self.tmux_status = status;
+        self.refresh_runtime_projection();
     }
 
     pub fn apply_worktrunk_status(&mut self, status: Option<WorktrunkStatus>) {
@@ -252,6 +258,23 @@ impl Task {
         }
 
         self.worktrunk_status = status;
+        self.refresh_runtime_projection();
+    }
+
+    pub(crate) fn refresh_runtime_projection(&mut self) {
+        self.refresh_runtime_projection_from_source(RuntimeObservationSource::Unknown);
+    }
+
+    pub fn refresh_runtime_projection_from_source(&mut self, source: RuntimeObservationSource) {
+        self.runtime_projection = crate::runtime::reconcile_runtime(
+            &crate::runtime::ObservedTaskRuntime {
+                git_status: self.git_status.clone(),
+                tmux_status: self.tmux_status.clone(),
+                worktrunk_status: self.worktrunk_status.clone(),
+            },
+            SystemTime::now(),
+            source,
+        );
     }
 }
 
@@ -383,6 +406,134 @@ impl WorktrunkStatus {
             window_name: window_name.into(),
             current_path: current_path.into(),
             points_at_expected_path: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum RuntimeHealth {
+    Healthy,
+    MissingWorktree,
+    MissingSession,
+    MissingTaskWindow,
+    WrongTaskWindowPath,
+    Unobservable,
+}
+
+impl RuntimeHealth {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Healthy => "healthy",
+            Self::MissingWorktree => "missing_worktree",
+            Self::MissingSession => "missing_session",
+            Self::MissingTaskWindow => "missing_task_window",
+            Self::WrongTaskWindowPath => "wrong_task_window_path",
+            Self::Unobservable => "unobservable",
+        }
+    }
+
+    pub fn from_label(value: &str) -> Option<Self> {
+        match value {
+            "healthy" => Some(Self::Healthy),
+            "missing_worktree" => Some(Self::MissingWorktree),
+            "missing_session" => Some(Self::MissingSession),
+            "missing_task_window" => Some(Self::MissingTaskWindow),
+            "wrong_task_window_path" => Some(Self::WrongTaskWindowPath),
+            "unobservable" => Some(Self::Unobservable),
+            _ => None,
+        }
+    }
+
+    pub const fn is_missing_substrate(self) -> bool {
+        matches!(
+            self,
+            Self::MissingWorktree
+                | Self::MissingSession
+                | Self::MissingTaskWindow
+                | Self::WrongTaskWindowPath
+        )
+    }
+
+    pub const fn is_git_substrate_gap(self) -> bool {
+        matches!(self, Self::MissingWorktree)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub enum RuntimeObservationSource {
+    StartupScan,
+    FilesystemEvent,
+    TmuxProbe,
+    CommandResult,
+    Unknown,
+}
+
+impl RuntimeObservationSource {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::StartupScan => "startup_scan",
+            Self::FilesystemEvent => "filesystem_event",
+            Self::TmuxProbe => "tmux_probe",
+            Self::CommandResult => "command_result",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    pub fn from_label(value: &str) -> Option<Self> {
+        match value {
+            "startup_scan" => Some(Self::StartupScan),
+            "filesystem_event" => Some(Self::FilesystemEvent),
+            "tmux_probe" => Some(Self::TmuxProbe),
+            "command_result" => Some(Self::CommandResult),
+            "unknown" => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct RuntimeProjection {
+    pub health: RuntimeHealth,
+    pub observed_at: SystemTime,
+    pub source: RuntimeObservationSource,
+}
+
+impl RuntimeProjection {
+    pub fn new(
+        health: RuntimeHealth,
+        observed_at: SystemTime,
+        source: RuntimeObservationSource,
+    ) -> Self {
+        Self {
+            health,
+            observed_at,
+            source,
+        }
+    }
+
+    pub fn requires_refresh(&self, now: SystemTime, max_age: Duration) -> bool {
+        if self.source == RuntimeObservationSource::Unknown {
+            return false;
+        }
+        if self.health == RuntimeHealth::Unobservable {
+            return true;
+        }
+
+        now.duration_since(self.observed_at)
+            .is_ok_and(|age| age > max_age)
+    }
+
+    pub fn is_fresh_at(&self, now: SystemTime, max_age: Duration) -> bool {
+        !self.requires_refresh(now, max_age)
+    }
+}
+
+impl Default for RuntimeProjection {
+    fn default() -> Self {
+        Self {
+            health: RuntimeHealth::Unobservable,
+            observed_at: SystemTime::UNIX_EPOCH,
+            source: RuntimeObservationSource::Unknown,
         }
     }
 }
@@ -601,7 +752,8 @@ mod tests {
     use super::{
         AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence,
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo,
-        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task, TaskId,
+        TmuxStatus, WorktrunkStatus,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
@@ -703,6 +855,28 @@ mod tests {
         assert_eq!(cleanable.lifecycle_status, LifecycleStatus::Cleanable);
         assert_eq!(removed.lifecycle_status, LifecycleStatus::Removed);
         assert_eq!(error.lifecycle_status, LifecycleStatus::Error);
+    }
+
+    #[test]
+    fn runtime_projection_records_health_freshness_and_source() {
+        let observed_at = std::time::SystemTime::UNIX_EPOCH;
+        let projection = RuntimeProjection::new(
+            RuntimeHealth::MissingTaskWindow,
+            observed_at,
+            RuntimeObservationSource::TmuxProbe,
+        );
+
+        assert_eq!(projection.health, RuntimeHealth::MissingTaskWindow);
+        assert_eq!(projection.observed_at, observed_at);
+        assert_eq!(projection.source, RuntimeObservationSource::TmuxProbe);
+        assert!(projection.is_fresh_at(
+            observed_at + std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(30),
+        ));
+        assert!(!projection.is_fresh_at(
+            observed_at + std::time::Duration::from_secs(31),
+            std::time::Duration::from_secs(30),
+        ));
     }
 
     #[test]
@@ -929,6 +1103,71 @@ mod tests {
     }
 
     #[test]
+    fn task_status_updates_refresh_runtime_projection_health() {
+        let mut task = sample_task();
+
+        assert_eq!(task.runtime_projection.health, RuntimeHealth::Unobservable);
+
+        task.apply_git_status(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("ajax/generated".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        assert_eq!(
+            task.runtime_projection.health,
+            RuntimeHealth::MissingWorktree
+        );
+
+        task.apply_git_status(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/generated".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.apply_tmux_status(Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-generated".to_string(),
+        }));
+        assert_eq!(
+            task.runtime_projection.health,
+            RuntimeHealth::MissingSession
+        );
+
+        task.apply_tmux_status(Some(TmuxStatus::present("ajax-web-generated")));
+        task.apply_worktrunk_status(Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/other".into(),
+            points_at_expected_path: false,
+        }));
+        assert_eq!(
+            task.runtime_projection.health,
+            RuntimeHealth::WrongTaskWindowPath
+        );
+
+        task.apply_worktrunk_status(Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/generated",
+        )));
+        assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
+    }
+
+    #[test]
     fn operator_action_labels_are_operator_facing() {
         let labels = OperatorAction::all()
             .iter()
@@ -944,6 +1183,37 @@ mod tests {
                 OperatorAction::from_label(label).map(|action| action.as_str()),
                 Some(label)
             );
+        }
+    }
+
+    #[test]
+    fn runtime_projection_labels_are_stable_for_storage_and_json() {
+        let health_labels = [
+            (RuntimeHealth::Healthy, "healthy"),
+            (RuntimeHealth::MissingWorktree, "missing_worktree"),
+            (RuntimeHealth::MissingSession, "missing_session"),
+            (RuntimeHealth::MissingTaskWindow, "missing_task_window"),
+            (RuntimeHealth::WrongTaskWindowPath, "wrong_task_window_path"),
+            (RuntimeHealth::Unobservable, "unobservable"),
+        ];
+        for (health, label) in health_labels {
+            assert_eq!(health.as_str(), label);
+            assert_eq!(RuntimeHealth::from_label(label), Some(health));
+        }
+
+        let source_labels = [
+            (RuntimeObservationSource::StartupScan, "startup_scan"),
+            (
+                RuntimeObservationSource::FilesystemEvent,
+                "filesystem_event",
+            ),
+            (RuntimeObservationSource::TmuxProbe, "tmux_probe"),
+            (RuntimeObservationSource::CommandResult, "command_result"),
+            (RuntimeObservationSource::Unknown, "unknown"),
+        ];
+        for (source, label) in source_labels {
+            assert_eq!(source.as_str(), label);
+            assert_eq!(RuntimeObservationSource::from_label(label), Some(source));
         }
     }
 

@@ -13,10 +13,11 @@ use super::{
 use crate::lifecycle::hydrate_lifecycle_status;
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-    LiveStatusKind, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+    LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task,
+    TaskId, TmuxStatus, WorktrunkStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 2;
+const SQLITE_SCHEMA_VERSION: i64 = 3;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -37,6 +38,10 @@ impl SqliteRegistryStore {
         if has_legacy_payload_schema(connection)? {
             return Err(RegistrySnapshotError::LegacySqlitePayloadSchema);
         }
+        if user_version == 2 {
+            migrate_v2_to_v3(connection)?;
+        }
+        let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
             return Err(RegistrySnapshotError::IncompatibleSchema {
                 found: user_version,
@@ -82,7 +87,11 @@ impl SqliteRegistryStore {
                     worktrunk_exists INTEGER,
                     worktrunk_window_name TEXT,
                     worktrunk_current_path TEXT,
-                    worktrunk_points_at_expected_path INTEGER
+                    worktrunk_points_at_expected_path INTEGER,
+                    runtime_health TEXT NOT NULL,
+                    runtime_observed_at_unix_seconds INTEGER NOT NULL,
+                    runtime_observed_at_subsec_nanos INTEGER NOT NULL,
+                    runtime_observation_source TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS registry_task_side_flags (
@@ -126,6 +135,42 @@ impl SqliteRegistryStore {
             .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
             .map_err(database_error)
     }
+}
+
+fn migrate_v2_to_v3(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    connection
+        .execute_batch(
+            r#"
+            ALTER TABLE registry_tasks
+                ADD COLUMN runtime_health TEXT NOT NULL DEFAULT 'unobservable';
+            ALTER TABLE registry_tasks
+                ADD COLUMN runtime_observed_at_unix_seconds INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE registry_tasks
+                ADD COLUMN runtime_observed_at_subsec_nanos INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE registry_tasks
+                ADD COLUMN runtime_observation_source TEXT NOT NULL DEFAULT 'unknown';
+
+            UPDATE registry_tasks
+            SET
+                runtime_health = CASE
+                    WHEN git_worktree_exists IS NULL THEN 'unobservable'
+                    WHEN git_worktree_exists = 0 THEN 'missing_worktree'
+                    WHEN tmux_exists IS NULL THEN 'unobservable'
+                    WHEN tmux_exists = 0 THEN 'missing_session'
+                    WHEN worktrunk_exists IS NULL THEN 'unobservable'
+                    WHEN worktrunk_exists = 0 THEN 'missing_task_window'
+                    WHEN worktrunk_points_at_expected_path IS NULL THEN 'unobservable'
+                    WHEN worktrunk_points_at_expected_path = 0 THEN 'wrong_task_window_path'
+                    ELSE 'healthy'
+                END,
+                runtime_observed_at_unix_seconds = last_activity_at_unix_seconds,
+                runtime_observed_at_subsec_nanos = last_activity_at_subsec_nanos,
+                runtime_observation_source = 'unknown';
+
+            PRAGMA user_version = 3;
+            "#,
+        )
+        .map_err(database_error)
 }
 
 impl RegistryStore for SqliteRegistryStore {
@@ -228,7 +273,9 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              git_worktree_exists, git_branch_exists, git_current_branch, git_dirty, git_ahead, \
              git_behind, git_merged, git_untracked_files, git_unpushed_commits, git_conflicted, \
              git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
-             worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path \
+             worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
+             runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
+             runtime_observation_source \
              FROM registry_tasks ORDER BY task_id",
         )
         .map_err(database_error)?;
@@ -299,6 +346,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     let git_status = git_status_from_row(row)?;
     let tmux_status = tmux_status_from_row(row)?;
     let worktrunk_status = worktrunk_status_from_row(row)?;
+    let runtime_projection = runtime_projection_from_row(row)?;
 
     let mut task = Task::new(
         task_id,
@@ -320,8 +368,28 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     task.git_status = git_status;
     task.tmux_status = tmux_status;
     task.worktrunk_status = worktrunk_status;
+    task.runtime_projection = runtime_projection;
 
     Ok(task)
+}
+
+fn runtime_projection_from_row(row: &Row<'_>) -> Result<RuntimeProjection, RegistrySnapshotError> {
+    let health = parse_runtime_health(
+        &row.get::<_, String>("runtime_health")
+            .map_err(database_error)?,
+    )?;
+    let observed_at = unix_parts_to_system_time(
+        row.get::<_, i64>("runtime_observed_at_unix_seconds")
+            .map_err(database_error)?,
+        row.get::<_, u32>("runtime_observed_at_subsec_nanos")
+            .map_err(database_error)?,
+    )?;
+    let source = parse_runtime_observation_source(
+        &row.get::<_, String>("runtime_observation_source")
+            .map_err(database_error)?,
+    )?;
+
+    Ok(RuntimeProjection::new(health, observed_at, source))
 }
 
 fn live_status_from_row(row: &Row<'_>) -> Result<Option<LiveObservation>, RegistrySnapshotError> {
@@ -544,6 +612,8 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
     let (created_at_seconds, created_at_nanos) = system_time_to_unix_parts(task.created_at)?;
     let (last_activity_seconds, last_activity_nanos) =
         system_time_to_unix_parts(task.last_activity_at)?;
+    let (runtime_observed_seconds, runtime_observed_nanos) =
+        system_time_to_unix_parts(task.runtime_projection.observed_at)?;
     transaction
         .execute(
             "INSERT INTO registry_tasks \
@@ -554,11 +624,13 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
               git_worktree_exists, git_branch_exists, git_current_branch, git_dirty, git_ahead, \
               git_behind, git_merged, git_untracked_files, git_unpushed_commits, git_conflicted, \
               git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
-              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path) \
+              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
+              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
+              runtime_observation_source) \
              VALUES \
              (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
               ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, \
-              ?34, ?35)",
+              ?34, ?35, ?36, ?37, ?38, ?39)",
             params![
                 task.id.as_str(),
                 task.repo,
@@ -617,6 +689,10 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 task.worktrunk_status
                     .as_ref()
                     .map(|status| status.points_at_expected_path),
+                task.runtime_projection.health.as_str(),
+                runtime_observed_seconds,
+                runtime_observed_nanos,
+                task.runtime_projection.source.as_str(),
             ],
         )
         .map_err(database_error)?;
@@ -895,6 +971,19 @@ fn parse_live_status_kind(value: &str) -> Result<LiveStatusKind, RegistrySnapsho
     }
 }
 
+fn parse_runtime_health(value: &str) -> Result<RuntimeHealth, RegistrySnapshotError> {
+    RuntimeHealth::from_label(value)
+        .ok_or_else(|| RegistrySnapshotError::Decode(format!("unknown runtime health: {value}")))
+}
+
+fn parse_runtime_observation_source(
+    value: &str,
+) -> Result<RuntimeObservationSource, RegistrySnapshotError> {
+    RuntimeObservationSource::from_label(value).ok_or_else(|| {
+        RegistrySnapshotError::Decode(format!("unknown runtime observation source: {value}"))
+    })
+}
+
 fn registry_event_kind_name(value: RegistryEventKind) -> &'static str {
     match value {
         RegistryEventKind::TaskCreated => "TaskCreated",
@@ -924,7 +1013,8 @@ mod tests {
     };
     use crate::models::{
         AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-        LiveStatusKind, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task,
+        TaskId, TmuxStatus, WorktrunkStatus,
     };
     use crate::registry::{
         InMemoryRegistry, Registry, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
@@ -1137,6 +1227,15 @@ mod tests {
             "waiting for input",
         ));
         registry.create_task(task).unwrap();
+        let expected_runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_110, 654),
+            RuntimeObservationSource::CommandResult,
+        );
+        registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .runtime_projection = expected_runtime_projection.clone();
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
@@ -1198,6 +1297,10 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .live_status
+        );
+        assert_eq!(
+            restored_task.runtime_projection,
+            expected_runtime_projection
         );
     }
 
@@ -1389,7 +1492,125 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn sqlite_registry_store_migrates_v2_tasks_to_runtime_projection_columns() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-v2-runtime-migration"
+        ));
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE registry_tasks (
+                    task_id TEXT PRIMARY KEY NOT NULL,
+                    repo TEXT NOT NULL,
+                    handle TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    branch TEXT NOT NULL,
+                    base_branch TEXT NOT NULL,
+                    worktree_path TEXT NOT NULL,
+                    tmux_session TEXT NOT NULL,
+                    worktrunk_window TEXT NOT NULL,
+                    selected_agent TEXT NOT NULL,
+                    lifecycle_status TEXT NOT NULL,
+                    agent_status TEXT NOT NULL,
+                    created_at_unix_seconds INTEGER NOT NULL,
+                    created_at_subsec_nanos INTEGER NOT NULL,
+                    last_activity_at_unix_seconds INTEGER NOT NULL,
+                    last_activity_at_subsec_nanos INTEGER NOT NULL,
+                    live_status_kind TEXT,
+                    live_status_summary TEXT,
+                    git_worktree_exists INTEGER,
+                    git_branch_exists INTEGER,
+                    git_current_branch TEXT,
+                    git_dirty INTEGER,
+                    git_ahead INTEGER,
+                    git_behind INTEGER,
+                    git_merged INTEGER,
+                    git_untracked_files INTEGER,
+                    git_unpushed_commits INTEGER,
+                    git_conflicted INTEGER,
+                    git_last_commit TEXT,
+                    tmux_exists INTEGER,
+                    tmux_session_name TEXT,
+                    worktrunk_exists INTEGER,
+                    worktrunk_window_name TEXT,
+                    worktrunk_current_path TEXT,
+                    worktrunk_points_at_expected_path INTEGER
+                );
+                CREATE TABLE registry_task_side_flags (
+                    task_id TEXT NOT NULL,
+                    flag TEXT NOT NULL,
+                    PRIMARY KEY (task_id, flag)
+                );
+                CREATE TABLE registry_task_metadata (
+                    task_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    PRIMARY KEY (task_id, key)
+                );
+                CREATE TABLE registry_agent_attempts (
+                    task_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    agent TEXT NOT NULL,
+                    launch_target TEXT NOT NULL,
+                    started_at_unix_seconds INTEGER NOT NULL,
+                    started_at_subsec_nanos INTEGER NOT NULL,
+                    finished_at_unix_seconds INTEGER,
+                    finished_at_subsec_nanos INTEGER,
+                    status TEXT NOT NULL,
+                    PRIMARY KEY (task_id, sequence)
+                );
+                CREATE TABLE registry_events (
+                    sequence INTEGER PRIMARY KEY NOT NULL,
+                    task_id TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    occurred_at_unix_seconds INTEGER NOT NULL,
+                    occurred_at_subsec_nanos INTEGER NOT NULL
+                );
+                INSERT INTO registry_tasks (
+                    task_id, repo, handle, title, branch, base_branch, worktree_path, tmux_session,
+                    worktrunk_window, selected_agent, lifecycle_status, agent_status,
+                    created_at_unix_seconds, created_at_subsec_nanos,
+                    last_activity_at_unix_seconds, last_activity_at_subsec_nanos,
+                    live_status_kind, live_status_summary, git_worktree_exists,
+                    git_branch_exists, git_current_branch, git_dirty, git_ahead, git_behind,
+                    git_merged, git_untracked_files, git_unpushed_commits, git_conflicted,
+                    git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists,
+                    worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path
+                ) VALUES (
+                    'task-1', 'web', 'fix-login', 'Fix login', 'ajax/fix-login', 'main',
+                    '/tmp/worktrees/web-fix-login', 'ajax-web-fix-login', 'worktrunk',
+                    'Codex', 'Active', 'Running', 1700000000, 0, 1700000001, 0,
+                    NULL, NULL, 1, 1, 'ajax/fix-login', 0, 0, 0, 0, 0, 0, 0,
+                    'abc123', 1, 'ajax-web-fix-login', 1, 'worktrunk',
+                    '/tmp/worktrees/web-fix-login', 1
+                );
+                PRAGMA user_version = 2;
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+        let store = SqliteRegistryStore::new(&path);
+
+        let restored = store.load().unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let columns = table_columns(&connection, "registry_tasks");
+        std::fs::remove_file(&path).unwrap();
+        let task = restored.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(version, 3);
+        assert!(columns.contains(&"runtime_health".to_string()));
+        assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
     }
 
     #[test]
@@ -1459,7 +1680,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 2
+                supported: 3
             }
         );
     }

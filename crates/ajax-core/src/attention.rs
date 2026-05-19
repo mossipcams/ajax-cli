@@ -1,6 +1,6 @@
 use crate::models::{
     AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusKind,
-    SideFlag, SubstrateGap, Task,
+    RuntimeHealth, SideFlag, SubstrateGap, Task,
 };
 
 pub fn annotate(task: &Task) -> Vec<Annotation> {
@@ -22,6 +22,13 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
                 .unwrap_or(Evidence::SideFlag(flag));
             push_collapsed_annotation(&mut annotations, Annotation::new(kind, evidence));
         }
+    }
+
+    if let Some(gap) = substrate_gap_for_runtime_health(task.runtime_projection.health) {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(AnnotationKind::Broken, Evidence::Substrate(gap)),
+        );
     }
 
     if let Some(kind) = annotation_kind_for_agent_status(task.agent_status) {
@@ -154,6 +161,17 @@ fn substrate_gap_for_side_flag(flag: SideFlag) -> Option<SubstrateGap> {
         SideFlag::WorktrunkMissing => Some(SubstrateGap::WorktrunkMissing),
         SideFlag::BranchMissing => Some(SubstrateGap::BranchMissing),
         _ => None,
+    }
+}
+
+fn substrate_gap_for_runtime_health(health: RuntimeHealth) -> Option<SubstrateGap> {
+    match health {
+        RuntimeHealth::MissingWorktree => Some(SubstrateGap::WorktreeMissing),
+        RuntimeHealth::MissingSession => Some(SubstrateGap::TmuxMissing),
+        RuntimeHealth::MissingTaskWindow | RuntimeHealth::WrongTaskWindowPath => {
+            Some(SubstrateGap::WorktrunkMissing)
+        }
+        RuntimeHealth::Healthy | RuntimeHealth::Unobservable => None,
     }
 }
 

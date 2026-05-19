@@ -65,6 +65,7 @@ impl Registry for InMemoryRegistry {
             return Err(RegistryError::DuplicateTask(task_id));
         }
 
+        task.refresh_runtime_projection();
         refresh_task_annotations(&mut task);
         self.tasks.insert(task_id.clone(), task);
         self.events.push(RegistryEvent::new(
@@ -324,8 +325,8 @@ mod tests {
         InMemoryRegistry, Registry, RegistryError, RegistryEventKind, RegistrySnapshotError,
     };
     use crate::models::{
-        AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, SideFlag, Task,
-        TaskId, TmuxStatus, WorktrunkStatus,
+        AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, RuntimeHealth,
+        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
     };
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
@@ -396,10 +397,10 @@ mod tests {
         assert_eq!(
             RegistrySnapshotError::IncompatibleSchema {
                 found: 4,
-                supported: 2,
+                supported: 3,
             }
             .to_string(),
-            "incompatible state schema: found 4, supported 2"
+            "incompatible state schema: found 4, supported 3"
         );
     }
 
@@ -656,6 +657,38 @@ mod tests {
         ] {
             assert!(!task.has_side_flag(flag), "unexpected side flag: {flag:?}");
         }
+    }
+
+    #[test]
+    fn registry_creation_refreshes_runtime_projection_from_hydrated_evidence() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-1", "web", "fix-login");
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present("worktrunk", "/tmp/web"));
+
+        registry.create_task(task).unwrap();
+
+        assert_eq!(
+            registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .runtime_projection
+                .health,
+            RuntimeHealth::Healthy
+        );
     }
 
     #[test]

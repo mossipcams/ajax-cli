@@ -400,7 +400,8 @@ mod tests {
         live::LiveStatusKind,
         models::{
             AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            LiveObservation, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            LiveObservation, OperatorAction, RuntimeHealth, RuntimeObservationSource,
+            RuntimeProjection, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
@@ -2137,6 +2138,46 @@ mod tests {
                 &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             )
+        );
+    }
+
+    #[test]
+    fn open_task_plan_blocks_stale_runtime_projection_until_refresh() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            std::time::SystemTime::UNIX_EPOCH,
+            RuntimeObservationSource::TmuxProbe,
+        );
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(
+            plan.blocked_reasons,
+            vec!["runtime state is stale; refresh before resume"]
         );
     }
 

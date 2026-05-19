@@ -2,7 +2,9 @@ use ajax_core::{
     adapters::{CommandRunner, GitAdapter, TmuxAdapter},
     commands::{self, CommandContext},
     live::{self, LiveObservation, LiveStatusKind},
-    models::{AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TmuxStatus},
+    models::{
+        AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId, TmuxStatus,
+    },
     registry::{InMemoryRegistry, Registry},
 };
 use ajax_tui::CockpitSnapshot;
@@ -222,6 +224,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                     }),
                 )
                 .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+            refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 live::apply_observation(
                     task,
@@ -262,6 +265,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                         }),
                     )
                     .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+                refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
                 if let Some(task) = context.registry.get_task_mut(&task_id) {
                     live::apply_observation(
                         task,
@@ -292,6 +296,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                 .update_worktrunk_status(&task_id, Some(worktrunk_status.clone()))
                 .map_err(|error| CliError::CommandFailed(error.to_string()))?;
         }
+        refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
 
         if !worktrunk_status.exists {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
@@ -333,6 +338,18 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     }
 
     Ok(changed)
+}
+
+fn refresh_runtime_projection_from_tmux_probe(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_id: &TaskId,
+    changed: &mut bool,
+) {
+    if let Some(task) = context.registry.get_task_mut(task_id) {
+        let previous = task.runtime_projection.clone();
+        task.refresh_runtime_projection_from_source(RuntimeObservationSource::TmuxProbe);
+        *changed |= task.runtime_projection != previous;
+    }
 }
 
 fn has_unregistered_ajax_session(
@@ -525,7 +542,8 @@ mod tests {
         config::{Config, ManagedRepo},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, SideFlag,
+            Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -571,6 +589,19 @@ mod tests {
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, registry)
@@ -651,6 +682,12 @@ mod tests {
             .annotations
             .iter()
             .any(|annotation| annotation.evidence.label() == "waiting for approval"));
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
+        assert_eq!(
+            task.runtime_projection.source,
+            RuntimeObservationSource::TmuxProbe
+        );
     }
 
     #[test]

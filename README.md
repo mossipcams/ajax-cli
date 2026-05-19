@@ -104,9 +104,16 @@ durable primitives:
 
 - `git` owns repository, branch, merge, and worktree reality.
 - `tmux` owns durable interactive runtime.
-- `worktrunk` is treated as the stable home window inside every task session.
+- Ajax treats a task's tmux window as the stable home window inside that task
+  session.
 - Claude, Codex, and other agent CLIs are opaque workers running inside task
   environments.
+
+SQLite is Ajax's fast current-state read model. It stores the expected task
+runtime, last observed Git/tmux evidence, derived runtime health, and task
+events. Git and tmux remain the live substrates; Ajax reconciles their observed
+state into SQLite so Cockpit and command planning do not repeat those checks on
+every render.
 
 The preferred flow is:
 
