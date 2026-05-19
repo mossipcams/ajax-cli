@@ -334,6 +334,24 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_snapshot_excludes_stale_and_missing_substrate_menu_ghosts() {
+        for flag in [SideFlag::Stale, SideFlag::WorktreeMissing] {
+            let mut context = sample_context();
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.add_side_flag(flag);
+
+            let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
+
+            assert!(snapshot.cards.is_empty(), "{flag:?}");
+            assert!(snapshot.inbox.items.is_empty(), "{flag:?}");
+        }
+    }
+
+    #[test]
     fn classifiers_module_detects_merge_conflict_errors() {
         let error = CommandRunError::NonZeroExit {
             program: "git".to_string(),
@@ -984,11 +1002,8 @@ mod tests {
         assert!(state_changed);
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
         assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-        assert_eq!(snapshot.cards.len(), 1);
-        assert_eq!(
-            snapshot.cards[0].live_summary.as_deref(),
-            Some("worktrunk missing")
-        );
+        assert!(snapshot.cards.is_empty());
+        assert!(snapshot.inbox.items.is_empty());
     }
 
     #[test]

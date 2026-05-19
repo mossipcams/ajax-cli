@@ -58,6 +58,10 @@ pub(super) fn is_visible_task(task: &Task) -> bool {
     task.lifecycle_status != LifecycleStatus::Removed
 }
 
+pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
+    is_visible_task(task) && !task.has_side_flag(SideFlag::Stale) && !task.has_missing_substrate()
+}
+
 pub(super) fn task_summary(task: &Task) -> TaskSummary {
     TaskSummary {
         id: task.id.as_str().to_string(),
@@ -119,7 +123,7 @@ pub(super) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> Co
     let visible: Vec<&Task> = tasks
         .iter()
         .copied()
-        .filter(|task| is_visible_task(task))
+        .filter(|task| is_cockpit_menu_task(task))
         .collect();
     let cards: Vec<TaskCard> = visible.iter().copied().map(task_card).collect();
     let next = cards
@@ -156,7 +160,9 @@ mod tests {
     use super::{cockpit_projection, task_card};
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
-        models::{AgentClient, AnnotationKind, LifecycleStatus, OperatorAction, Task, TaskId},
+        models::{
+            AgentClient, AnnotationKind, LifecycleStatus, OperatorAction, SideFlag, Task, TaskId,
+        },
         output::CockpitSummary,
     };
 
@@ -211,5 +217,20 @@ mod tests {
 
         assert_eq!(projection.cards[0].annotations.len(), 1);
         assert_eq!(projection.next.unwrap().action, OperatorAction::Review);
+    }
+
+    #[test]
+    fn cockpit_projection_filters_stale_and_missing_substrate_ghosts() {
+        let healthy = task("healthy");
+        let mut stale = task("stale");
+        stale.add_side_flag(SideFlag::Stale);
+        let mut broken = task("broken");
+        broken.add_side_flag(SideFlag::WorktreeMissing);
+        let tasks = vec![&healthy, &stale, &broken];
+
+        let projection = cockpit_projection(tasks.as_slice(), summary());
+
+        assert_eq!(projection.cards.len(), 1);
+        assert_eq!(projection.cards[0].qualified_handle, "web/healthy");
     }
 }

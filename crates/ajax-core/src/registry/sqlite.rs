@@ -176,14 +176,14 @@ impl RegistryStore for SqliteRegistryStore {
         let live_task_ids = registry
             .tasks
             .values()
-            .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+            .filter(|task| !is_registry_ghost_task(task))
             .map(|task| task.id.clone())
             .collect::<BTreeSet<_>>();
 
         for task in registry
             .tasks
             .values()
-            .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+            .filter(|task| !is_registry_ghost_task(task))
         {
             save_task(&transaction, task)?;
         }
@@ -237,16 +237,20 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
 
     while let Some(row) = rows.next().map_err(database_error)? {
         let mut task = task_from_row(row)?;
-        if task.lifecycle_status == LifecycleStatus::Removed {
+        load_task_side_flags(connection, &mut task)?;
+        if is_registry_ghost_task(&task) {
             continue;
         }
-        load_task_side_flags(connection, &mut task)?;
         load_task_metadata(connection, &mut task)?;
         load_agent_attempts(connection, &mut task)?;
         tasks.push(task);
     }
 
     Ok(tasks)
+}
+
+fn is_registry_ghost_task(task: &Task) -> bool {
+    task.lifecycle_status == LifecycleStatus::Removed || task.has_side_flag(SideFlag::Stale)
 }
 
 fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
@@ -1064,6 +1068,9 @@ mod tests {
         removed.lifecycle_status = LifecycleStatus::Removed;
         removed.add_side_flag(SideFlag::NeedsInput);
         registry.create_task(removed).unwrap();
+        let mut stale = task("task-stale", "web", "stale-task");
+        stale.add_side_flag(SideFlag::Stale);
+        registry.create_task(stale).unwrap();
         registry
             .record_event(
                 TaskId::new("task-removed"),
@@ -1084,6 +1091,7 @@ mod tests {
 
         assert!(restored.get_task(&TaskId::new("task-live")).is_some());
         assert!(restored.get_task(&TaskId::new("task-removed")).is_none());
+        assert!(restored.get_task(&TaskId::new("task-stale")).is_none());
         assert!(restored
             .events_for_task(&TaskId::new("task-removed"))
             .is_empty());

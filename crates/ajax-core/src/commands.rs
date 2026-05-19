@@ -43,7 +43,8 @@ use crate::{
 use lookup::find_task;
 use projection::{
     annotations_for_task, cockpit_projection as build_cockpit_projection, cockpit_summary,
-    count_active_tasks, count_attention_items, count_lifecycle, is_visible_task, task_summary,
+    count_active_tasks, count_attention_items, count_lifecycle, is_cockpit_menu_task,
+    is_visible_task, task_summary,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
@@ -200,6 +201,16 @@ pub fn inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
     inbox_from_tasks(tasks.as_slice())
 }
 
+pub fn cockpit_inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse {
+    let tasks = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| is_cockpit_menu_task(task))
+        .collect::<Vec<_>>();
+    inbox_from_tasks(tasks.as_slice())
+}
+
 fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
     InboxResponse {
         items: annotation_items(tasks),
@@ -270,9 +281,14 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
 pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitProjection {
     let all_tasks = context.registry.list_tasks();
     let repos = list_repos_from_tasks(&context.config, all_tasks.as_slice());
-    let tasks_list = list_tasks_from_tasks(all_tasks.as_slice(), None);
-    let review = review_queue_from_tasks(all_tasks.as_slice());
-    let inbox = inbox_from_tasks(all_tasks.as_slice());
+    let cockpit_tasks = all_tasks
+        .iter()
+        .copied()
+        .filter(|task| is_cockpit_menu_task(task))
+        .collect::<Vec<_>>();
+    let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
+    let review = review_queue_from_tasks(cockpit_tasks.as_slice());
+    let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
     let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     build_cockpit_projection(all_tasks.as_slice(), summary)
 }

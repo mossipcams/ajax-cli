@@ -66,7 +66,7 @@ pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -
     ajax_tui::render_cockpit(
         &commands::list_repos(context),
         &projection.cards,
-        &commands::inbox(context),
+        &commands::cockpit_inbox(context),
     )
 }
 
@@ -468,7 +468,7 @@ pub(crate) fn build_cockpit_snapshot(
     CockpitSnapshot {
         repos: commands::list_repos(context),
         cards: projection.cards,
-        inbox: commands::inbox(context),
+        inbox: commands::cockpit_inbox(context),
     }
 }
 
