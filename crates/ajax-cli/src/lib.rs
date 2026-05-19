@@ -8,6 +8,7 @@ mod execution_dispatch;
 mod render;
 mod snapshot_dispatch;
 mod supervise;
+mod task_session;
 
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
@@ -451,6 +452,18 @@ mod tests {
             self.outputs
                 .pop_front()
                 .ok_or_else(|| CommandRunError::SpawnFailed("missing queued output".to_string()))
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingTaskSessionRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl crate::task_session::TaskSessionRunner for RecordingTaskSessionRunner {
+        fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), CliError> {
+            self.commands.push(command.clone());
+            Ok(())
         }
     }
 
@@ -4608,6 +4621,7 @@ mod tests {
         let action = "resume";
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
+        let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
         let pending = ajax_tui::PendingAction {
             task_handle: "web/fix-login".to_string(),
@@ -4615,16 +4629,25 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
-            &pending,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let outcome =
+            super::cockpit_actions::execute_pending_cockpit_action_with_open_mode_and_task_session(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+                OpenMode::Attach,
+                &mut task_session,
+            )
+            .unwrap();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            task_session.commands,
+            vec![
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
 
         let mut context = CommandContext::new(
             Config {
@@ -4639,18 +4662,28 @@ mod tests {
             task_title: Some("Fix login".to_string()),
         };
         let mut runner = RecordingCommandRunner::default();
+        let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
-            &pending,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let outcome =
+            super::cockpit_actions::execute_pending_cockpit_action_with_open_mode_and_task_session(
+                &pending,
+                &mut context,
+                &mut runner,
+                &mut state_changed,
+                OpenMode::Attach,
+                &mut task_session,
+            )
+            .unwrap();
 
-        assert!(matches!(outcome, super::PendingCockpitOutcome::Exit(_)));
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(
+            task_session.commands,
+            vec![
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-api-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
         assert!(state_changed);
     }
 

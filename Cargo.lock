@@ -19,6 +19,7 @@ dependencies = [
  "ajax-supervisor",
  "ajax-tui",
  "clap",
+ "nix",
  "serde",
  "serde_json",
  "tokio",
