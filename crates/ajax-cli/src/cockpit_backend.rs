@@ -64,12 +64,8 @@ fn render_cockpit_frames(
 }
 
 pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
-    let projection = commands::cockpit_projection(context);
-    ajax_tui::render_cockpit(
-        &commands::list_repos(context),
-        &projection.cards,
-        &commands::cockpit_inbox(context),
-    )
+    let view = commands::cockpit_view(context);
+    ajax_tui::render_cockpit(&view.repos, &view.cards, &view.inbox)
 }
 
 pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
@@ -168,14 +164,14 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let task_ids = context
+    let initial_task_ids = context
         .registry
         .list_tasks()
         .into_iter()
         .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
-    if task_ids.is_empty() {
+    if initial_task_ids.is_empty() {
         return Ok(false);
     }
 
@@ -192,6 +188,13 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     } else {
         false
     };
+    let task_ids = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| should_probe_live_substrate(task))
+        .map(|task| task.id.clone())
+        .collect::<Vec<_>>();
 
     for task_id in task_ids {
         let Some(task_snapshot) = context.registry.get_task(&task_id).cloned() else {
@@ -340,6 +343,18 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     Ok(changed)
 }
 
+fn should_probe_live_substrate(task: &Task) -> bool {
+    matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Provisioning
+            | LifecycleStatus::Active
+            | LifecycleStatus::Waiting
+            | LifecycleStatus::Reviewable
+    ) || task.has_side_flag(ajax_core::models::SideFlag::AgentRunning)
+        || task.has_side_flag(ajax_core::models::SideFlag::TmuxMissing)
+        || task.has_side_flag(ajax_core::models::SideFlag::WorktrunkMissing)
+}
+
 fn refresh_runtime_projection_from_tmux_probe(
     context: &mut CommandContext<InMemoryRegistry>,
     task_id: &TaskId,
@@ -477,11 +492,11 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
 pub(crate) fn build_cockpit_snapshot(
     context: &CommandContext<InMemoryRegistry>,
 ) -> CockpitSnapshot {
-    let projection = commands::cockpit_projection(context);
+    let view = commands::cockpit_view(context);
     CockpitSnapshot {
-        repos: commands::list_repos(context),
-        cards: projection.cards,
-        inbox: commands::cockpit_inbox(context),
+        repos: view.repos,
+        cards: view.cards,
+        inbox: view.inbox,
     }
 }
 
@@ -804,5 +819,64 @@ mod tests {
         );
         assert_eq!(task.tmux_session, "ajax-web-code");
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    }
+
+    #[derive(Default)]
+    struct CountingLiveRefreshRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for CountingLiveRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [command, ..] if command == "list-windows" => {
+                    "worktrunk\t/tmp/worktrees/web-fix-login\n"
+                }
+                [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn live_refresh_skips_window_and_pane_probes_for_non_live_tasks() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Cleanable;
+        task.tmux_status = Some(ajax_core::models::TmuxStatus::present(
+            task.tmux_session.clone(),
+        ));
+        task.worktrunk_status = Some(ajax_core::models::WorktrunkStatus {
+            exists: true,
+            window_name: task.worktrunk_window.clone(),
+            current_path: task.worktree_path.clone(),
+            points_at_expected_path: true,
+        });
+
+        let mut runner = CountingLiveRefreshRunner::default();
+
+        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+
+        assert!(!changed);
+        assert!(runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
+        ));
+        assert!(!runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "list-windows")
+        ));
+        assert!(!runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+        ));
     }
 }

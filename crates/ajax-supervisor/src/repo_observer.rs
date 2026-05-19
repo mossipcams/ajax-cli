@@ -20,7 +20,7 @@ pub fn notify_event_to_monitor_events(event: Event) -> Vec<MonitorEvent> {
     event
         .paths
         .into_iter()
-        .filter(|path| !is_git_internal_path(path))
+        .filter(|path| !is_ignored_watch_path(path))
         .map(|path| MonitorEvent::Repo(RepoEvent::FileChanged { path }))
         .collect()
 }
@@ -70,9 +70,15 @@ pub async fn send_git_snapshot(
         .map_err(|_| SupervisorError::Process("monitor event receiver closed".to_string()))
 }
 
-fn is_git_internal_path(path: &Path) -> bool {
-    path.components()
-        .any(|component| component.as_os_str() == OsStr::new(".git"))
+fn is_ignored_watch_path(path: &Path) -> bool {
+    path.components().any(|component| {
+        matches!(
+            component.as_os_str(),
+            name if name == OsStr::new(".git")
+                || name == OsStr::new("target")
+                || name == OsStr::new("node_modules")
+        )
+    })
 }
 
 fn ensure_git_success(command: &str, output: &Output) -> Result<(), SupervisorError> {
@@ -103,6 +109,26 @@ mod tests {
             paths: vec![
                 PathBuf::from("/tmp/repo/src/lib.rs"),
                 PathBuf::from("/tmp/repo/.git/index"),
+            ],
+            attrs: notify::event::EventAttributes::default(),
+        };
+
+        assert_eq!(
+            notify_event_to_monitor_events(event),
+            vec![MonitorEvent::Repo(RepoEvent::FileChanged {
+                path: PathBuf::from("/tmp/repo/src/lib.rs")
+            })]
+        );
+    }
+
+    #[test]
+    fn notify_events_filter_high_volume_generated_and_vendor_paths() {
+        let event = Event {
+            kind: EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content)),
+            paths: vec![
+                PathBuf::from("/tmp/repo/target/debug/ajax"),
+                PathBuf::from("/tmp/repo/node_modules/pkg/index.js"),
+                PathBuf::from("/tmp/repo/src/lib.rs"),
             ],
             attrs: notify::event::EventAttributes::default(),
         };

@@ -23,6 +23,9 @@ use crate::{
     ActionOutcome, App, CockpitEventHandler, PendingAction,
 };
 
+const NOTICE_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_IDLE_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
 pub fn run_interactive(
     repos: ReposResponse,
     cards: Vec<TaskCard>,
@@ -177,7 +180,13 @@ fn run_event_loop<B: Backend>(
             .draw(|f| render_ui(f, app))
             .map_err(|_| io::Error::other("terminal backend draw error"))?;
 
-        if event::poll(Duration::from_millis(250))? {
+        let timeout = poll_timeout(
+            Instant::now(),
+            last_refresh,
+            refresh_interval,
+            app.has_transient_notices(),
+        );
+        if event::poll(timeout)? {
             match handle_cockpit_event(app, event::read()?, height, &mut handler)? {
                 EventLoopAction::Continue => {}
                 EventLoopAction::Quit => return Ok(None),
@@ -196,12 +205,34 @@ fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> boo
     true
 }
 
+fn poll_timeout(
+    now: Instant,
+    last_refresh: Instant,
+    refresh_interval: Duration,
+    has_transient_notices: bool,
+) -> Duration {
+    let timeout = if refresh_interval.is_zero() {
+        MAX_IDLE_POLL_INTERVAL
+    } else {
+        refresh_interval
+            .saturating_sub(now.duration_since(last_refresh))
+            .min(MAX_IDLE_POLL_INTERVAL)
+    };
+
+    if has_transient_notices {
+        timeout.min(NOTICE_POLL_INTERVAL)
+    } else {
+        timeout
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        should_refresh, terminal_entry_commands, terminal_exit_commands, TerminalModeCommand,
+        poll_timeout, should_refresh, terminal_entry_commands, terminal_exit_commands,
+        TerminalModeCommand,
     };
 
     #[test]
@@ -238,5 +269,27 @@ mod tests {
         let mut last_refresh = Instant::now() - Duration::from_secs(60);
 
         assert!(!should_refresh(&mut last_refresh, Duration::ZERO));
+    }
+
+    #[test]
+    fn poll_timeout_waits_until_refresh_deadline_when_idle() {
+        let now = Instant::now();
+        let last_refresh = now - Duration::from_millis(200);
+
+        assert_eq!(
+            poll_timeout(now, last_refresh, Duration::from_millis(800), false),
+            Duration::from_millis(600)
+        );
+    }
+
+    #[test]
+    fn poll_timeout_uses_short_notice_ticks_for_transient_notices() {
+        let now = Instant::now();
+        let last_refresh = now - Duration::from_millis(200);
+
+        assert_eq!(
+            poll_timeout(now, last_refresh, Duration::from_millis(800), true),
+            Duration::from_millis(250)
+        );
     }
 }

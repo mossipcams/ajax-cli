@@ -34,8 +34,8 @@ use crate::{
     config::Config,
     models::{Annotation, LifecycleStatus, SideFlag, Task},
     output::{
-        AnnotationItem, CockpitProjection, CockpitResponse, InboxResponse, InspectResponse,
-        NextResponse, RepoSummary, ReposResponse, TasksResponse,
+        AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
+        InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
     recommended::{evidence_label, operator_action},
     registry::{Registry, RegistryError},
@@ -212,8 +212,13 @@ pub fn cockpit_inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse 
 }
 
 fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
+    let visible = tasks
+        .iter()
+        .copied()
+        .filter(|task| is_visible_task(task))
+        .collect::<Vec<_>>();
     InboxResponse {
-        items: annotation_items(tasks),
+        items: annotation_items(visible.as_slice()),
     }
 }
 
@@ -291,6 +296,27 @@ pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitPr
     let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
     let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     build_cockpit_projection(all_tasks.as_slice(), summary)
+}
+
+pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
+    let all_tasks = context.registry.list_tasks();
+    let repos = list_repos_from_tasks(&context.config, all_tasks.as_slice());
+    let cockpit_tasks = all_tasks
+        .iter()
+        .copied()
+        .filter(|task| is_cockpit_menu_task(task))
+        .collect::<Vec<_>>();
+    let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
+    let review = review_queue_from_tasks(cockpit_tasks.as_slice());
+    let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
+    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
+    let projection = build_cockpit_projection(all_tasks.as_slice(), summary);
+
+    CockpitView {
+        repos,
+        cards: projection.cards,
+        inbox,
+    }
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
@@ -1290,6 +1316,18 @@ mod tests {
 
         assert_eq!(response.counts.tasks, 1);
         assert_eq!(response.cards.len(), 1);
+        assert_eq!(context.registry.list_tasks_calls(), 1);
+    }
+
+    #[test]
+    fn cockpit_view_scans_registry_once_for_repos_cards_and_inbox() {
+        let context = counting_context_with_tasks();
+
+        let view = super::cockpit_view(&context);
+
+        assert_eq!(view.repos.repos.len(), 2);
+        assert_eq!(view.cards.len(), 1);
+        assert_eq!(view.inbox.items.len(), 1);
         assert_eq!(context.registry.list_tasks_calls(), 1);
     }
 

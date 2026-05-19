@@ -36,6 +36,13 @@ pub struct CockpitProjection {
     pub next: Option<CockpitNextStep>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CockpitView {
+    pub repos: ReposResponse,
+    pub cards: Vec<TaskCard>,
+    pub inbox: InboxResponse,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ReposResponse {
     pub repos: Vec<RepoSummary>,

@@ -682,6 +682,16 @@ impl App {
         }
     }
 
+    pub(crate) fn has_transient_notices(&self) -> bool {
+        self.notices
+            .values()
+            .any(|notice| notice.severity != Severity::Confirm)
+            || self
+                .system_notice
+                .as_ref()
+                .is_some_and(|notice| notice.severity != Severity::Confirm)
+    }
+
     pub(crate) fn has_pending_confirmation(&self, item: &CockpitActionItem) -> bool {
         self.pending_confirmation.as_ref() == Some(item)
     }
