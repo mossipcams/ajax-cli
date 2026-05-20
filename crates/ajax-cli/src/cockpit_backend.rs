@@ -215,12 +215,16 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
         if !session_status.exists {
-            let has_fresh_command_result_runtime = task_snapshot.runtime_projection.source
+            let has_fresh_complete_command_result_runtime = task_snapshot.runtime_projection.source
                 == RuntimeObservationSource::CommandResult
                 && !task_snapshot
                     .runtime_projection
-                    .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR);
-            if has_fresh_command_result_runtime
+                    .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
+                && task_snapshot
+                    .worktrunk_status
+                    .as_ref()
+                    .is_some_and(|status| status.exists && status.points_at_expected_path);
+            if has_fresh_complete_command_result_runtime
                 && task_snapshot.tmux_status.is_some()
                 && task_snapshot.live_status.is_none()
                 && !task_snapshot.has_side_flag(ajax_core::models::SideFlag::TmuxMissing)
@@ -792,6 +796,39 @@ mod tests {
             .any(|item| {
                 item.task_handle == "web/fix-login" && item.action == OperatorAction::Drop
             }));
+    }
+
+    #[test]
+    fn live_refresh_marks_cached_present_tmux_missing_even_after_fresh_command_result() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.runtime_projection = ajax_core::models::RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            std::time::SystemTime::now(),
+            RuntimeObservationSource::CommandResult,
+        );
+        let mut runner = EmptyTmuxRunner;
+
+        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .expect("fixture task should remain registered");
+
+        assert!(changed);
+        assert!(task.has_side_flag(SideFlag::TmuxMissing));
+        assert_eq!(
+            task.tmux_status.as_ref().map(|status| status.exists),
+            Some(false)
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
     }
 
     #[derive(Default)]

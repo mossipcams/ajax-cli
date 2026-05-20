@@ -541,6 +541,16 @@ impl App {
             self.viewport_scroll = 0;
         }
         self.rebuild_selectables();
+        if let Some(task_id) = &self.expanded_task {
+            if !self.selectables.iter().any(|selectable| match selectable {
+                SelectableKind::Task(card) => card.id == *task_id,
+                SelectableKind::Inbox(item) => item.task_id == *task_id,
+                SelectableKind::TaskAction { task, .. } => task.id == *task_id,
+                _ => false,
+            }) {
+                self.expanded_task = None;
+            }
+        }
         let max = self.selectables.len().saturating_sub(1);
         self.selected = self.selected.min(max);
     }

@@ -758,7 +758,7 @@ fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, Vec<usize>) 
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
         let group = group_of(selectable);
-        if prev_group != Some(group) {
+        if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
             rows.push(section_header_row(group, app));
         }
         sel_to_row.push(rows.len());
@@ -3176,6 +3176,38 @@ mod tests {
     }
 
     #[test]
+    fn refresh_after_archive_clears_expanded_unselectable_task() {
+        let mut app = app_in_project_view();
+        let task_id = TaskId::new("task-1");
+        let task_idx = app
+            .selectables
+            .iter()
+            .position(|s| matches!(s, SelectableKind::Task(task) if task.id == task_id))
+            .expect("project view has task");
+        app.selected = task_idx;
+        app.activate_selected();
+        assert_eq!(app.expanded_task.as_ref(), Some(&task_id));
+
+        let mut archived = sample_tasks();
+        archived[0].ui_state = UiState::Archived;
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: archived,
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        assert!(app.expanded_task.is_none());
+        assert!(!app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::Task(task) if task.id == task_id
+        )));
+        assert!(!app.selectables.iter().any(|s| matches!(
+            s,
+            SelectableKind::TaskAction { task, .. } if task.id == task_id
+        )));
+    }
+
+    #[test]
     fn optimistic_drop_removes_task_until_refresh_restores_it() {
         let mut app = app_in_project_view();
         let task_id = TaskId::new("task-1");
@@ -4423,6 +4455,46 @@ mod tests {
             .get(task_idx + 1)
             .expect("drawer action follows the task row");
         assert!(matches!(next, SelectableKind::TaskAction { .. }));
+    }
+
+    #[test]
+    fn drawer_actions_render_on_rows_immediately_after_task_row() {
+        let mut tasks = sample_tasks();
+        tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Review];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        for _ in 0..app.selectables.len() {
+            if matches!(
+                app.selectables.get(app.selected),
+                Some(SelectableKind::Task(_))
+            ) {
+                break;
+            }
+            app.select_next();
+        }
+
+        app.activate_selected();
+
+        let content = render_to_string(100, 30, &app);
+        let rows = content
+            .as_bytes()
+            .chunks(100)
+            .map(|chunk| std::str::from_utf8(chunk).unwrap().to_string())
+            .collect::<Vec<_>>();
+        let task_row = rows
+            .iter()
+            .position(|row| row.contains("web/fix-login"))
+            .expect("task row should render");
+        let resume_row = rows
+            .iter()
+            .position(|row| row.contains("resume"))
+            .expect("resume action should render");
+        let review_row = rows
+            .iter()
+            .position(|row| row.contains(" R review"))
+            .expect("review action should render");
+
+        assert_eq!(resume_row, task_row + 1, "{rows:#?}");
+        assert_eq!(review_row, task_row + 2, "{rows:#?}");
     }
 
     #[test]
