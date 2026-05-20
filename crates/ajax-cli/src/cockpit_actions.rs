@@ -8,7 +8,7 @@ use ajax_core::{
 use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
-    dispatch::TaskCommandOperation,
+    dispatch::{execute_observed_drop, TaskCommandOperation},
     execution_dispatch::execute_new_task_plan_with_task_session,
     render::render_execution_outputs,
     task_session::{execute_task_entry_plan, TaskSessionRunner},
@@ -217,6 +217,13 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             pending.action
         )));
     };
+
+    if operation == TaskCommandOperation::Drop {
+        let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
+        *state_changed |= rendered.state_changed;
+        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+    }
+
     let plan = operation
         .plan_with_open_mode(context, &pending.task_handle, open_mode)
         .map_err(command_error)?;
@@ -283,6 +290,13 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             pending.action
         )));
     };
+
+    if operation == TaskCommandOperation::Drop {
+        let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
+        *state_changed |= rendered.state_changed;
+        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+    }
+
     let plan = operation
         .plan_with_open_mode(context, &pending.task_handle, task_entry_open_mode)
         .map_err(command_error)?;

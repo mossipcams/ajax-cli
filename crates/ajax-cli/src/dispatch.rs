@@ -292,7 +292,7 @@ fn merge_error_looks_conflicted(error: &CommandError) -> bool {
     )
 }
 
-fn execute_observed_drop<R: CommandRunner>(
+pub(crate) fn execute_observed_drop<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     task_handle: &str,
     confirmed: bool,

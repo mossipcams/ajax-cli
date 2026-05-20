@@ -53,7 +53,12 @@ pub(super) fn is_visible_task(task: &Task) -> bool {
 }
 
 pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
-    is_visible_task(task) && !task.has_side_flag(SideFlag::Stale) && !task.has_missing_substrate()
+    is_visible_task(task)
+        && !task.has_side_flag(SideFlag::Stale)
+        && (matches!(
+            task.lifecycle_status,
+            LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
+        ) || !task.has_missing_substrate())
 }
 
 pub(super) fn task_summary(task: &Task) -> TaskSummary {

@@ -20,8 +20,9 @@ pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
 #[cfg(test)]
 use cockpit_actions::{
-    execute_pending_cockpit_action, handle_pending_cockpit_result, tui_cockpit_action,
-    tui_cockpit_confirmed_action, PendingCockpitOutcome,
+    execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
+    handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
+    PendingCockpitOutcome,
 };
 #[cfg(test)]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
@@ -6188,6 +6189,261 @@ mod tests {
         assert!(!state_changed);
     }
 
+    fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
+        vec![
+            output(0, "ajax-other\n"),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+            output(0, "ajax-other\n"),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]
+    }
+
+    fn missing_drop_observation_commands() -> Vec<CommandSpec> {
+        vec![
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "--format=%(refname:short)",
+                ],
+            ),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "--format=%(refname:short)",
+                ],
+            ),
+        ]
+    }
+
+    fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
+        vec![
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]
+    }
+
+    fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
+        vec![
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "--format=%(refname:short)",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "remove",
+                    "/tmp/worktrees/web-fix-login",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "-d",
+                    "ajax/fix-login",
+                ],
+            ),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "branch",
+                    "--format=%(refname:short)",
+                ],
+            ),
+        ]
+    }
+
+    #[test]
+    fn pending_cockpit_drop_reconciles_missing_substrate_before_registry_removal() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            action: "drop".to_string(),
+            task_title: None,
+        };
+        let mut runner = QueuedRunner::new(missing_drop_observation_outputs());
+        let mut state_changed = false;
+
+        let outcome = super::execute_pending_cockpit_action(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(runner.commands, missing_drop_observation_commands());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+        assert!(state_changed);
+    }
+
+    #[test]
+    fn task_session_pending_drop_uses_observed_drop_semantics() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            action: "drop".to_string(),
+            task_title: None,
+        };
+        let mut runner = QueuedRunner::new(missing_drop_observation_outputs());
+        let mut task_session = RecordingTaskSessionRunner::default();
+        let mut state_changed = false;
+
+        let outcome = super::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut task_session,
+        )
+        .unwrap();
+
+        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(runner.commands, missing_drop_observation_commands());
+        assert!(task_session.commands.is_empty());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+        assert!(state_changed);
+    }
+
     #[test]
     fn pending_cockpit_reconcile_is_unknown() {
         let mut context = CommandContext::new(
@@ -6811,7 +7067,7 @@ mod tests {
             action: "drop".to_string(),
             task_title: None,
         };
-        let mut runner = RecordingCommandRunner::default();
+        let mut runner = QueuedRunner::new(present_cleanable_drop_outputs());
         let mut state_changed = false;
 
         let output = super::execute_pending_cockpit_action(
@@ -6823,31 +7079,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
-        assert_eq!(
-            runner.commands(),
-            &[
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "worktree",
-                        "remove",
-                        "/tmp/worktrees/web-fix-login"
-                    ]
-                ),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "branch",
-                        "-d",
-                        "ajax/fix-login"
-                    ]
-                )
-            ]
-        );
+        assert_eq!(runner.commands, present_cleanable_drop_commands());
         assert_eq!(
             context
                 .registry
@@ -6885,11 +7117,23 @@ mod tests {
 
         let mut failing_runner = QueuedRunner::new(vec![
             output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+            output(0, ""),
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
                 stderr: "branch delete failed".to_string(),
             },
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
         ]);
         let error = super::execute_pending_cockpit_action(
             &pending,
@@ -6916,7 +7160,7 @@ mod tests {
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
                 .lifecycle_status,
-            LifecycleStatus::Cleanable
+            LifecycleStatus::TeardownIncomplete
         );
     }
 
