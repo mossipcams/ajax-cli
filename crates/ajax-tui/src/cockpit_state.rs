@@ -115,7 +115,7 @@ impl SelectableKind {
 fn card_action_reason(card: &TaskCard) -> String {
     card.annotations
         .first()
-        .map(|annotation| crate::evidence_label(&annotation.evidence).to_string())
+        .map(|annotation| annotation.evidence.attention_label().to_string())
         .or_else(|| card.live_summary.clone())
         .unwrap_or_else(|| card.ui_state.as_str().to_string())
 }

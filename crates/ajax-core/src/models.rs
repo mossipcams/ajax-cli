@@ -722,6 +722,13 @@ impl Evidence {
             },
         }
     }
+
+    pub const fn attention_label(&self) -> &'static str {
+        match self {
+            Evidence::LiveStatus(LiveStatusKind::WaitingForInput) => "needs input",
+            evidence => evidence.label(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -1266,6 +1273,18 @@ mod tests {
         );
 
         assert_eq!(annotation.row_label(), "waiting for approval");
+    }
+
+    #[test]
+    fn evidence_attention_label_collapses_needs_input_variants() {
+        assert_eq!(
+            Evidence::SideFlag(SideFlag::NeedsInput).attention_label(),
+            "needs input"
+        );
+        assert_eq!(
+            Evidence::LiveStatus(LiveStatusKind::WaitingForInput).attention_label(),
+            "needs input"
+        );
     }
 
     #[test]
