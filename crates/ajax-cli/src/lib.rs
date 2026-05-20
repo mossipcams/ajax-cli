@@ -3270,6 +3270,67 @@ mod tests {
     }
 
     #[test]
+    fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            CommandOutput {
+                status_code: 128,
+                stdout: String::new(),
+                stderr: "fatal: cannot change to '/tmp/worktrees/web-fix-login': No such file or directory"
+                    .to_string(),
+            },
+            output(0, ""),
+            output(0, ""),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/tmp/worktrees/web-fix-login",
+                        "status",
+                        "--porcelain=v1",
+                        "--branch"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "remove",
+                        "--force",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "-D",
+                        "ajax/fix-login"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+    }
+
+    #[test]
     fn cleanup_execute_uses_safe_cleanup_path() {
         let mut context = cleanable_context();
         let mut runner = RecordingCommandRunner::default();

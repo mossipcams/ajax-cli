@@ -124,19 +124,25 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let task = task_arg(subcommand)?;
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
-    if operation == TaskCommandOperation::Drop
+    let mut plan = if operation == TaskCommandOperation::Drop
         && drop_should_refresh_cleanup_evidence(context, task)
         && execute
     {
         match commands::ensure_cleanup_git_status(context, task, runner) {
-            Ok(()) => {}
-            Err(error) if drop_git_status_error_is_missing_worktree(&error) => {}
-            Err(error) => return Err(command_error(error)),
+            Ok(()) => operation.plan_with_open_mode(context, task, open_mode),
+            Err(error) if drop_git_status_error_is_missing_worktree(&error) => {
+                if confirmed {
+                    commands::remove_task_plan(context, task)
+                } else {
+                    operation.plan_with_open_mode(context, task, open_mode)
+                }
+            }
+            Err(error) => Err(error),
         }
+    } else {
+        operation.plan_with_open_mode(context, task, open_mode)
     }
-    let mut plan = operation
-        .plan_with_open_mode(context, task, open_mode)
-        .map_err(command_error)?;
+    .map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
             output: render_plan(plan, subcommand.get_flag("json"))?,
