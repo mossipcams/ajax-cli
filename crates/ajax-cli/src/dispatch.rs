@@ -1,6 +1,10 @@
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+    adapters::{
+        CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter,
+    },
     commands::{self, CommandContext, CommandError},
+    models::{LifecycleStatus, Task},
+    registry::RegistryEventKind,
     registry::{InMemoryRegistry, Registry},
 };
 use clap::ArgMatches;
@@ -124,6 +128,9 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let task = task_arg(subcommand)?;
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
+    if operation == TaskCommandOperation::Drop && execute {
+        return execute_observed_drop(context, task, confirmed, runner);
+    }
     let mut pre_plan_state_changed = false;
     if !matches!(
         operation,
@@ -283,6 +290,241 @@ fn merge_error_looks_conflicted(error: &CommandError) -> bool {
         error,
         CommandError::CommandRun(error) if command_error_looks_conflicted(error)
     )
+}
+
+fn execute_observed_drop<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    confirmed: bool,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let confirmation_plan = drop_task_plan(context, task_handle).map_err(command_error)?;
+    if !confirmation_plan.blocked_reasons.is_empty() {
+        return Err(command_error(CommandError::PlanBlocked(
+            confirmation_plan.blocked_reasons,
+        )));
+    }
+    let task_before_drop = cli_task(context, task_handle)?;
+    let resuming_incomplete =
+        task_before_drop.lifecycle_status == LifecycleStatus::TeardownIncomplete;
+    let cleanup_lifecycle = matches!(
+        task_before_drop.lifecycle_status,
+        LifecycleStatus::Merged | LifecycleStatus::Cleanable
+    );
+    let can_observe_before_confirmation = matches!(
+        task_before_drop.lifecycle_status,
+        LifecycleStatus::Merged | LifecycleStatus::Cleanable
+    ) && !task_before_drop
+        .has_side_flag(ajax_core::models::SideFlag::Dirty)
+        && !task_before_drop.has_side_flag(ajax_core::models::SideFlag::Conflicted)
+        && !task_before_drop.has_side_flag(ajax_core::models::SideFlag::Unpushed)
+        && task_before_drop.git_status.as_ref().is_none_or(|status| {
+            !status.dirty && !status.conflicted && status.unpushed_commits == 0
+        });
+    if confirmation_plan.requires_confirmation
+        && !confirmed
+        && !resuming_incomplete
+        && !can_observe_before_confirmation
+    {
+        return Err(command_error(CommandError::ConfirmationRequired));
+    }
+
+    commands::mark_task_removing(context, task_handle).map_err(command_error)?;
+    let initial_task = cli_task(context, task_handle)?.clone();
+    let observation = commands::observe_drop_resources(context, &initial_task, runner)
+        .map_err(|error| command_error(error).after_state_change())?;
+    let ops = commands::plan_drop_from_observation(&observation);
+    let force = drop_needs_force(context, task_handle, &confirmation_plan, cleanup_lifecycle)?;
+    let mut outputs = Vec::new();
+
+    for op in ops {
+        match op {
+            commands::DropOp::EnsureAgentStopped => {
+                commands::mark_drop_agent_stopped(context, task_handle)
+                    .map_err(|error| command_error(error).after_state_change())?;
+                record_drop_step_event(context, task_handle, op)
+                    .map_err(|error| command_error(error).after_state_change())?;
+            }
+            commands::DropOp::EnsureTmuxSessionAbsent
+            | commands::DropOp::EnsureWorktreeAbsent
+            | commands::DropOp::EnsureBranchAbsent => {
+                let command = drop_op_command(context, task_handle, op, force)?;
+                let output = runner.run(&command).map_err(|error| {
+                    command_error(CommandError::CommandRun(error)).after_state_change()
+                })?;
+                if output.status_code != 0
+                    && !drop_cleanup_resource_is_already_missing(&command, &output)
+                {
+                    let drop_error = CommandError::CommandRun(CommandRunError::NonZeroExit {
+                        program: command.program.clone(),
+                        status_code: output.status_code,
+                        stderr: output.stderr.clone(),
+                        cwd: command.cwd.clone(),
+                    });
+                    mark_observed_drop_failure(context, task_handle, op, runner)
+                        .map_err(|error| command_error(error).after_state_change())?;
+                    return Err(command_error(drop_error).after_state_change());
+                }
+                outputs.push(output);
+                commands::mark_task_cleanup_step_completed(context, task_handle, &command)
+                    .map_err(|error| command_error(error).after_state_change())?;
+                record_drop_step_event(context, task_handle, op)
+                    .map_err(|error| command_error(error).after_state_change())?;
+            }
+            commands::DropOp::MarkRegistryRemoved => {}
+        }
+    }
+
+    let final_task = cli_task(context, task_handle)?.clone();
+    let final_observation = commands::observe_drop_resources(context, &final_task, runner)
+        .map_err(|error| command_error(error).after_state_change())?;
+    if drop_observation_all_absent(&final_observation) {
+        commands::mark_task_removed(context, task_handle).map_err(command_error)?;
+        let output = if outputs.is_empty() {
+            format!("removed task: {task_handle}")
+        } else {
+            render_execution_outputs(&outputs, None)
+        };
+        return Ok(RenderedCommand {
+            output,
+            state_changed: true,
+        });
+    }
+
+    commands::mark_task_teardown_incomplete(
+        context,
+        task_handle,
+        commands::DropOp::MarkRegistryRemoved,
+        &final_observation,
+    )
+    .map_err(|error| command_error(error).after_state_change())?;
+    Err(CliError::CommandFailedAfterStateChange(
+        "drop teardown incomplete".to_string(),
+    ))
+}
+
+fn cli_task<'a>(
+    context: &'a CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+) -> Result<&'a Task, CliError> {
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+        .ok_or_else(|| command_error(CommandError::TaskNotFound(task_handle.to_string())))
+}
+
+fn drop_op_command(
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    op: commands::DropOp,
+    force: bool,
+) -> Result<CommandSpec, CliError> {
+    let task = cli_task(context, task_handle)?;
+    let repo_path = context
+        .config
+        .repos
+        .iter()
+        .find(|repo| repo.name == task.repo)
+        .map(|repo| repo.path.display().to_string())
+        .ok_or_else(|| command_error(CommandError::RepoNotFound(task.repo.clone())))?;
+    let git = GitAdapter::new("git");
+    let tmux = TmuxAdapter::new("tmux");
+    let command = match op {
+        commands::DropOp::EnsureTmuxSessionAbsent => tmux.kill_session(&task.tmux_session),
+        commands::DropOp::EnsureWorktreeAbsent if force => {
+            git.force_remove_worktree(&repo_path, &task.worktree_path.display().to_string())
+        }
+        commands::DropOp::EnsureWorktreeAbsent => {
+            git.remove_worktree(&repo_path, &task.worktree_path.display().to_string())
+        }
+        commands::DropOp::EnsureBranchAbsent if force => {
+            git.force_delete_branch(&repo_path, &task.branch)
+        }
+        commands::DropOp::EnsureBranchAbsent => git.delete_branch(&repo_path, &task.branch),
+        commands::DropOp::EnsureAgentStopped | commands::DropOp::MarkRegistryRemoved => {
+            return Err(CliError::CommandFailed(format!(
+                "drop op {op:?} does not have an external command"
+            )));
+        }
+    };
+    Ok(command)
+}
+
+fn drop_needs_force(
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    confirmation_plan: &commands::CommandPlan,
+    cleanup_lifecycle: bool,
+) -> Result<bool, CliError> {
+    if confirmation_plan.title.starts_with("remove task:") {
+        return Ok(true);
+    }
+    let task = cli_task(context, task_handle)?;
+    if cleanup_lifecycle {
+        return Ok(task.has_side_flag(ajax_core::models::SideFlag::Dirty)
+            || task.has_side_flag(ajax_core::models::SideFlag::Conflicted)
+            || task.git_status.as_ref().is_some_and(|status| {
+                status.dirty || status.untracked_files > 0 || status.conflicted
+            }));
+    }
+    Ok(task.has_side_flag(ajax_core::models::SideFlag::Dirty)
+        || task.has_side_flag(ajax_core::models::SideFlag::Conflicted)
+        || task.has_side_flag(ajax_core::models::SideFlag::Unpushed)
+        || task.git_status.as_ref().is_some_and(|status| {
+            status.dirty
+                || status.untracked_files > 0
+                || status.conflicted
+                || status.unpushed_commits > 0
+                || !status.merged
+        }))
+}
+
+fn record_drop_step_event(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    op: commands::DropOp,
+) -> Result<(), CommandError> {
+    let task_id = cli_task(context, task_handle)
+        .map_err(|error| CommandError::CommandRun(CommandRunError::SpawnFailed(error.to_string())))?
+        .id
+        .clone();
+    context
+        .registry
+        .record_event(
+            task_id,
+            RegistryEventKind::SubstrateChanged,
+            format!("drop step completed: {op:?}"),
+        )
+        .map_err(CommandError::Registry)
+}
+
+fn mark_observed_drop_failure<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    failed_step: commands::DropOp,
+    runner: &mut R,
+) -> Result<(), CommandError> {
+    let task = cli_task(context, task_handle)
+        .map_err(|error| CommandError::CommandRun(CommandRunError::SpawnFailed(error.to_string())))?
+        .clone();
+    let observation = commands::observe_drop_resources(context, &task, runner).unwrap_or(
+        commands::DropObservation {
+            agent: commands::ResourceState::Unknown,
+            tmux_session: commands::ResourceState::Unknown,
+            worktree: commands::ResourceState::Unknown,
+            branch: commands::ResourceState::Unknown,
+        },
+    );
+    commands::mark_task_teardown_incomplete(context, task_handle, failed_step, &observation)
+}
+
+fn drop_observation_all_absent(observation: &commands::DropObservation) -> bool {
+    observation.agent == commands::ResourceState::Absent
+        && observation.tmux_session == commands::ResourceState::Absent
+        && observation.worktree == commands::ResourceState::Absent
+        && observation.branch == commands::ResourceState::Absent
 }
 
 fn execute_teardown_plan<R: CommandRunner>(

@@ -49,7 +49,9 @@ pub fn derive_ui_state(task: &Task) -> UiState {
     }
     match task.lifecycle_status {
         LifecycleStatus::Error => UiState::Failed,
+        LifecycleStatus::TeardownIncomplete => UiState::Failed,
         LifecycleStatus::Mergeable => UiState::SafeMerge,
+        LifecycleStatus::Removing => UiState::Cleanable,
         LifecycleStatus::Cleanable => UiState::Cleanable,
         LifecycleStatus::Merged => {
             if is_clean_for_cleanup(task) {

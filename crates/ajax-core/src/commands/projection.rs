@@ -222,6 +222,26 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_projection_keeps_incomplete_teardown_visible() {
+        let mut removing = task("removing");
+        removing.lifecycle_status = LifecycleStatus::Removing;
+        let mut incomplete = task("incomplete");
+        incomplete.lifecycle_status = LifecycleStatus::TeardownIncomplete;
+        let mut removed = task("removed");
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        let tasks = vec![&removing, &incomplete, &removed];
+
+        let projection = cockpit_projection(tasks.as_slice(), summary());
+
+        let handles = projection
+            .cards
+            .iter()
+            .map(|card| card.qualified_handle.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(handles, vec!["web/removing", "web/incomplete"]);
+    }
+
+    #[test]
     fn task_card_status_label_comes_from_live_or_ui_state_not_annotation_row() {
         let mut review_task = task("review");
         mark_active(&mut review_task).unwrap();

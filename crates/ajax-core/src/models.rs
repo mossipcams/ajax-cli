@@ -36,6 +36,8 @@ pub enum LifecycleStatus {
     Mergeable,
     Merged,
     Cleanable,
+    Removing,
+    TeardownIncomplete,
     Removed,
     Orphaned,
     Error,
@@ -710,6 +712,8 @@ impl Evidence {
                 LifecycleStatus::Mergeable => "mergeable",
                 LifecycleStatus::Merged => "merged",
                 LifecycleStatus::Cleanable => "cleanable",
+                LifecycleStatus::Removing => "removing",
+                LifecycleStatus::TeardownIncomplete => "teardown incomplete",
                 LifecycleStatus::Removed => "removed",
                 LifecycleStatus::Orphaned => "orphaned",
                 LifecycleStatus::Error => "error",
@@ -863,6 +867,8 @@ mod tests {
         let active = lifecycle_task_fixture(LifecycleStatus::Active);
         let reviewable = lifecycle_task_fixture(LifecycleStatus::Reviewable);
         let cleanable = lifecycle_task_fixture(LifecycleStatus::Cleanable);
+        let removing = lifecycle_task_fixture(LifecycleStatus::Removing);
+        let teardown_incomplete = lifecycle_task_fixture(LifecycleStatus::TeardownIncomplete);
         let removed = lifecycle_task_fixture(LifecycleStatus::Removed);
         let error = lifecycle_task_fixture(LifecycleStatus::Error);
 
@@ -870,6 +876,11 @@ mod tests {
         assert_eq!(active.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(reviewable.lifecycle_status, LifecycleStatus::Reviewable);
         assert_eq!(cleanable.lifecycle_status, LifecycleStatus::Cleanable);
+        assert_eq!(removing.lifecycle_status, LifecycleStatus::Removing);
+        assert_eq!(
+            teardown_incomplete.lifecycle_status,
+            LifecycleStatus::TeardownIncomplete
+        );
         assert_eq!(removed.lifecycle_status, LifecycleStatus::Removed);
         assert_eq!(error.lifecycle_status, LifecycleStatus::Error);
     }

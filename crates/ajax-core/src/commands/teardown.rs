@@ -2,12 +2,15 @@ use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
     lifecycle::force_mark_removed,
-    models::{LifecycleStatus, SafetyClassification, SideFlag, Task, TmuxStatus, WorktrunkStatus},
+    models::{
+        AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, Task, TmuxStatus,
+        WorktrunkStatus,
+    },
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     policy::cleanup_safety,
     registry::{Registry, RegistryError, RegistryEventKind},
 };
-use std::time::SystemTime;
+use std::{collections::BTreeSet, time::SystemTime};
 
 use super::lookup::{find_task, task_repo_path, update_task_lifecycle};
 
@@ -176,6 +179,73 @@ pub fn mark_task_removed<R: Registry>(
     update_task_lifecycle(context, qualified_handle, LifecycleStatus::Removed)
 }
 
+pub fn mark_task_removing<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    update_task_lifecycle(context, qualified_handle, LifecycleStatus::Removing)
+}
+
+pub fn mark_task_teardown_incomplete<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    failed_step: DropOp,
+    observation: &DropObservation,
+) -> Result<(), CommandError> {
+    let task_id = find_task(context, qualified_handle)?.id.clone();
+    context
+        .registry
+        .update_lifecycle(&task_id, LifecycleStatus::TeardownIncomplete)
+        .map_err(CommandError::Registry)?;
+    let task = context
+        .registry
+        .get_task_mut(&task_id)
+        .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
+    task.metadata
+        .insert("drop_failed_step".to_string(), format!("{failed_step:?}"));
+    task.metadata.insert(
+        "drop_latest_observation".to_string(),
+        format!(
+            "agent={:?};tmux={:?};worktree={:?};branch={:?}",
+            observation.agent, observation.tmux_session, observation.worktree, observation.branch
+        ),
+    );
+    context
+        .registry
+        .record_event(
+            task_id,
+            RegistryEventKind::LifecycleChanged,
+            format!("drop teardown incomplete at {failed_step:?}"),
+        )
+        .map_err(CommandError::Registry)
+}
+
+pub fn mark_drop_agent_stopped<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<(), CommandError> {
+    let task_id = find_task(context, qualified_handle)?.id.clone();
+    let task = context
+        .registry
+        .get_task_mut(&task_id)
+        .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
+    task.agent_status = AgentRuntimeStatus::Unknown;
+    task.remove_side_flag(SideFlag::AgentRunning);
+    for attempt in &mut task.agent_attempts {
+        if attempt.status == AgentRuntimeStatus::Running {
+            attempt.status = AgentRuntimeStatus::Unknown;
+        }
+    }
+    context
+        .registry
+        .record_event(
+            task_id,
+            RegistryEventKind::SubstrateChanged,
+            "agent stopped",
+        )
+        .map_err(CommandError::Registry)
+}
+
 pub fn mark_task_force_removed<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
@@ -247,6 +317,124 @@ enum TeardownMode {
     Force,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourceState {
+    Present,
+    Absent,
+    Unknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DropObservation {
+    pub agent: ResourceState,
+    pub tmux_session: ResourceState,
+    pub worktree: ResourceState,
+    pub branch: ResourceState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DropOp {
+    EnsureAgentStopped,
+    EnsureTmuxSessionAbsent,
+    EnsureWorktreeAbsent,
+    EnsureBranchAbsent,
+    MarkRegistryRemoved,
+}
+
+pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> {
+    let mut ops = Vec::new();
+
+    if observation.agent != ResourceState::Absent {
+        ops.push(DropOp::EnsureAgentStopped);
+    }
+    if observation.tmux_session != ResourceState::Absent {
+        ops.push(DropOp::EnsureTmuxSessionAbsent);
+    }
+    if observation.worktree != ResourceState::Absent {
+        ops.push(DropOp::EnsureWorktreeAbsent);
+    }
+    if observation.branch != ResourceState::Absent {
+        ops.push(DropOp::EnsureBranchAbsent);
+    }
+    ops.push(DropOp::MarkRegistryRemoved);
+
+    ops
+}
+
+pub fn observe_drop_resources<R: Registry>(
+    context: &mut CommandContext<R>,
+    task: &Task,
+    runner: &mut impl CommandRunner,
+) -> Result<DropObservation, CommandError> {
+    let repo_path = task_repo_path(context, task)
+        .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
+    let git = GitAdapter::new("git");
+    let tmux = TmuxAdapter::new("tmux");
+    let tmux_output = run_observation_command(runner, &tmux.list_sessions())?;
+    let worktrees_output = run_observation_command(runner, &git.list_worktrees(&repo_path))?;
+    let branches_output = run_observation_command(runner, &git.list_branches(&repo_path))?;
+
+    let tmux_session = match tmux_output {
+        ObservationOutput::Output(ref output) => {
+            if TmuxAdapter::parse_session_status(&task.tmux_session, output).exists {
+                ResourceState::Present
+            } else {
+                ResourceState::Absent
+            }
+        }
+        ObservationOutput::Unsupported | ObservationOutput::Unknown => ResourceState::Unknown,
+    };
+
+    let expected_worktree = task.worktree_path.display().to_string();
+    let parsed_worktrees = match &worktrees_output {
+        ObservationOutput::Output(output) => GitAdapter::parse_worktrees(output),
+        ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
+    };
+    let observed_worktree = parsed_worktrees
+        .iter()
+        .find(|worktree| worktree.path == expected_worktree);
+    let worktree = match worktrees_output {
+        ObservationOutput::Output(_) => state_from_bool(observed_worktree.is_some()),
+        ObservationOutput::Unsupported => task
+            .git_status
+            .as_ref()
+            .map(|status| state_from_bool(status.worktree_exists))
+            .unwrap_or(ResourceState::Unknown),
+        ObservationOutput::Unknown => ResourceState::Unknown,
+    };
+
+    let parsed_branches = match &branches_output {
+        ObservationOutput::Output(output) => GitAdapter::parse_branches(output),
+        ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
+    }
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    let branch_seen_in_worktree = observed_worktree
+        .and_then(|worktree| worktree.branch.as_ref())
+        .is_some_and(|branch| branch == &task.branch);
+    let branch = match branches_output {
+        ObservationOutput::Output(_) => {
+            state_from_bool(parsed_branches.contains(&task.branch) || branch_seen_in_worktree)
+        }
+        ObservationOutput::Unsupported => task
+            .git_status
+            .as_ref()
+            .map(|status| state_from_bool(status.branch_exists))
+            .unwrap_or(ResourceState::Unknown),
+        ObservationOutput::Unknown if branch_seen_in_worktree => ResourceState::Present,
+        ObservationOutput::Unknown => ResourceState::Unknown,
+    };
+
+    apply_drop_observation_evidence(context, task, tmux_session, worktree, branch)?;
+
+    Ok(DropObservation {
+        agent: observed_agent_state(task, tmux_session),
+        tmux_session,
+        worktree,
+        branch,
+    })
+}
+
 fn native_teardown_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
@@ -305,4 +493,119 @@ fn native_teardown_commands<R: Registry>(
     }
 
     Ok(commands)
+}
+
+enum ObservationOutput {
+    Output(String),
+    Unsupported,
+    Unknown,
+}
+
+fn run_observation_command(
+    runner: &mut impl CommandRunner,
+    command: &CommandSpec,
+) -> Result<ObservationOutput, CommandError> {
+    let output = runner.run(command).map_err(CommandError::CommandRun)?;
+    if output.status_code == 0 {
+        Ok(ObservationOutput::Output(output.stdout))
+    } else if output
+        .stderr
+        .to_ascii_lowercase()
+        .contains("unexpected git command")
+    {
+        Ok(ObservationOutput::Unsupported)
+    } else {
+        Ok(ObservationOutput::Unknown)
+    }
+}
+
+fn state_from_bool(value: bool) -> ResourceState {
+    if value {
+        ResourceState::Present
+    } else {
+        ResourceState::Absent
+    }
+}
+
+fn observed_agent_state(task: &Task, tmux_session: ResourceState) -> ResourceState {
+    if task.has_side_flag(SideFlag::AgentRunning)
+        || task.agent_status == AgentRuntimeStatus::Running
+        || task
+            .agent_attempts
+            .iter()
+            .any(|attempt| attempt.status == AgentRuntimeStatus::Running)
+    {
+        return if tmux_session == ResourceState::Absent {
+            ResourceState::Absent
+        } else {
+            ResourceState::Present
+        };
+    }
+
+    ResourceState::Absent
+}
+
+fn apply_drop_observation_evidence<R: Registry>(
+    context: &mut CommandContext<R>,
+    task: &Task,
+    tmux_session: ResourceState,
+    worktree: ResourceState,
+    branch: ResourceState,
+) -> Result<(), CommandError> {
+    if tmux_session != ResourceState::Unknown {
+        context
+            .registry
+            .update_tmux_status(
+                &task.id,
+                Some(TmuxStatus {
+                    exists: tmux_session == ResourceState::Present,
+                    session_name: task.tmux_session.clone(),
+                }),
+            )
+            .map_err(CommandError::Registry)?;
+    }
+
+    let previous_git = task.git_status.clone();
+    if worktree != ResourceState::Unknown || branch != ResourceState::Unknown {
+        let mut git_status = previous_git.unwrap_or(crate::models::GitStatus {
+            worktree_exists: false,
+            branch_exists: false,
+            current_branch: None,
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: matches!(
+                task.lifecycle_status,
+                LifecycleStatus::Merged | LifecycleStatus::Cleanable
+            ),
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        if worktree != ResourceState::Unknown {
+            git_status.worktree_exists = worktree == ResourceState::Present;
+            if worktree == ResourceState::Absent {
+                git_status.dirty = false;
+                git_status.untracked_files = 0;
+                git_status.conflicted = false;
+                git_status.current_branch = None;
+            }
+        }
+        if branch != ResourceState::Unknown {
+            git_status.branch_exists = branch == ResourceState::Present;
+            if branch == ResourceState::Absent {
+                git_status.current_branch = None;
+                git_status.ahead = 0;
+                git_status.behind = 0;
+                git_status.unpushed_commits = 0;
+            }
+        }
+        context
+            .registry
+            .update_git_status(&task.id, git_status)
+            .map_err(CommandError::Registry)?;
+    }
+
+    Ok(())
 }

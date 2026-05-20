@@ -833,6 +833,8 @@ fn lifecycle_status_name(value: LifecycleStatus) -> &'static str {
         LifecycleStatus::Mergeable => "Mergeable",
         LifecycleStatus::Merged => "Merged",
         LifecycleStatus::Cleanable => "Cleanable",
+        LifecycleStatus::Removing => "Removing",
+        LifecycleStatus::TeardownIncomplete => "TeardownIncomplete",
         LifecycleStatus::Removed => "Removed",
         LifecycleStatus::Orphaned => "Orphaned",
         LifecycleStatus::Error => "Error",
@@ -849,6 +851,8 @@ fn parse_lifecycle_status(value: &str) -> Result<LifecycleStatus, RegistrySnapsh
         "Mergeable" => Ok(LifecycleStatus::Mergeable),
         "Merged" => Ok(LifecycleStatus::Merged),
         "Cleanable" => Ok(LifecycleStatus::Cleanable),
+        "Removing" => Ok(LifecycleStatus::Removing),
+        "TeardownIncomplete" => Ok(LifecycleStatus::TeardownIncomplete),
         "Removed" => Ok(LifecycleStatus::Removed),
         "Orphaned" => Ok(LifecycleStatus::Orphaned),
         "Error" => Ok(LifecycleStatus::Error),
@@ -1055,6 +1059,8 @@ mod tests {
     #[case("Mergeable", LifecycleStatus::Mergeable)]
     #[case("Merged", LifecycleStatus::Merged)]
     #[case("Cleanable", LifecycleStatus::Cleanable)]
+    #[case("Removing", LifecycleStatus::Removing)]
+    #[case("TeardownIncomplete", LifecycleStatus::TeardownIncomplete)]
     #[case("Removed", LifecycleStatus::Removed)]
     #[case("Orphaned", LifecycleStatus::Orphaned)]
     #[case("Error", LifecycleStatus::Error)]

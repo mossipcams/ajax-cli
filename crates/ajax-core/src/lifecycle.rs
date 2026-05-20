@@ -185,7 +185,28 @@ fn generic_transition_allowed(from: LifecycleStatus, to: LifecycleStatus) -> boo
             | (LifecycleStatus::Reviewable, LifecycleStatus::Error)
             | (LifecycleStatus::Mergeable, LifecycleStatus::Merged)
             | (LifecycleStatus::Mergeable, LifecycleStatus::Error)
+            | (LifecycleStatus::Created, LifecycleStatus::Removing)
+            | (LifecycleStatus::Provisioning, LifecycleStatus::Removing)
+            | (LifecycleStatus::Active, LifecycleStatus::Removing)
+            | (LifecycleStatus::Waiting, LifecycleStatus::Removing)
+            | (LifecycleStatus::Reviewable, LifecycleStatus::Removing)
+            | (LifecycleStatus::Mergeable, LifecycleStatus::Removing)
+            | (LifecycleStatus::Merged, LifecycleStatus::Removing)
             | (LifecycleStatus::Merged, LifecycleStatus::Cleanable)
+            | (LifecycleStatus::Cleanable, LifecycleStatus::Removing)
+            | (
+                LifecycleStatus::Removing,
+                LifecycleStatus::TeardownIncomplete
+            )
+            | (
+                LifecycleStatus::TeardownIncomplete,
+                LifecycleStatus::Removing
+            )
+            | (LifecycleStatus::Removing, LifecycleStatus::Removed)
+            | (
+                LifecycleStatus::TeardownIncomplete,
+                LifecycleStatus::Removed
+            )
             | (LifecycleStatus::Merged, LifecycleStatus::Removed)
             | (LifecycleStatus::Merged, LifecycleStatus::Error)
             | (LifecycleStatus::Cleanable, LifecycleStatus::Removed)
@@ -215,7 +236,15 @@ mod tests {
     #[case(LifecycleStatus::Reviewable, LifecycleStatus::Mergeable)]
     #[case(LifecycleStatus::Reviewable, LifecycleStatus::Merged)]
     #[case(LifecycleStatus::Mergeable, LifecycleStatus::Merged)]
+    #[case(LifecycleStatus::Active, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Reviewable, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Merged, LifecycleStatus::Removing)]
     #[case(LifecycleStatus::Merged, LifecycleStatus::Cleanable)]
+    #[case(LifecycleStatus::Cleanable, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Removing, LifecycleStatus::TeardownIncomplete)]
+    #[case(LifecycleStatus::TeardownIncomplete, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Removing, LifecycleStatus::Removed)]
+    #[case(LifecycleStatus::TeardownIncomplete, LifecycleStatus::Removed)]
     #[case(LifecycleStatus::Merged, LifecycleStatus::Removed)]
     #[case(LifecycleStatus::Cleanable, LifecycleStatus::Removed)]
     fn generic_lifecycle_transition_matrix_allows_valid_edges(

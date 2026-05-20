@@ -148,6 +148,8 @@ fn annotation_kind_for_lifecycle(status: LifecycleStatus) -> Option<AnnotationKi
         | LifecycleStatus::Provisioning
         | LifecycleStatus::Active
         | LifecycleStatus::Waiting
+        | LifecycleStatus::Removing
+        | LifecycleStatus::TeardownIncomplete
         | LifecycleStatus::Removed
         | LifecycleStatus::Orphaned
         | LifecycleStatus::Error => None,

@@ -22,9 +22,11 @@ pub use new_task::{
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
-    clean_task_plan, ensure_cleanup_git_status, mark_task_cleanup_step_completed,
-    mark_task_force_removed, mark_task_removed, remove_task_plan, sweep_cleanup_candidates,
-    sweep_cleanup_plan,
+    clean_task_plan, ensure_cleanup_git_status, mark_drop_agent_stopped,
+    mark_task_cleanup_step_completed, mark_task_force_removed, mark_task_removed,
+    mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
+    plan_drop_from_observation, remove_task_plan, sweep_cleanup_candidates, sweep_cleanup_plan,
+    DropObservation, DropOp, ResourceState,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
@@ -558,9 +560,10 @@ mod tests {
     use super::{
         check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
         inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, open_task_plan, refresh_git_substrate_evidence, remove_task_plan, review_queue,
-        status, sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext,
-        CommandError, DoctorEnvironment, NewTaskRequest, OpenMode,
+        next, observe_drop_resources, open_task_plan, plan_drop_from_observation,
+        refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
+        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
+        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
     };
     use crate::{
         adapters::{
@@ -3072,6 +3075,93 @@ mod tests {
                 plan.commands
             );
         }
+    }
+
+    #[test]
+    fn drop_plan_from_observation_resumes_from_live_resource_state() {
+        let observation = DropObservation {
+            agent: ResourceState::Present,
+            tmux_session: ResourceState::Absent,
+            worktree: ResourceState::Unknown,
+            branch: ResourceState::Present,
+        };
+
+        let ops = plan_drop_from_observation(&observation);
+
+        assert_eq!(
+            ops,
+            vec![
+                DropOp::EnsureAgentStopped,
+                DropOp::EnsureWorktreeAbsent,
+                DropOp::EnsureBranchAbsent,
+                DropOp::MarkRegistryRemoved,
+            ]
+        );
+    }
+
+    #[test]
+    fn observe_drop_resources_prefers_live_tmux_and_git_state_over_registry_cache() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_tmux_status(
+                &task_id,
+                Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+            )
+            .unwrap();
+        let task = context.registry.get_task(&task_id).unwrap().clone();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\n"),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+        ]);
+
+        let observation = observe_drop_resources(&mut context, &task, &mut runner).unwrap();
+
+        assert_eq!(observation.tmux_session, ResourceState::Present);
+        assert_eq!(observation.worktree, ResourceState::Absent);
+        assert_eq!(observation.branch, ResourceState::Present);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                ),
+            ]
+        );
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| status.exists));
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && status.branch_exists));
     }
 
     #[test]

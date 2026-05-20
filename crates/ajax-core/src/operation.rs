@@ -60,7 +60,10 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
     if operation == TaskOperation::Clean
         && !matches!(
             task.lifecycle_status,
-            LifecycleStatus::Merged | LifecycleStatus::Cleanable
+            LifecycleStatus::Merged
+                | LifecycleStatus::Cleanable
+                | LifecycleStatus::Removing
+                | LifecycleStatus::TeardownIncomplete
         )
     {
         reasons.push("clean requires merged or cleanable lifecycle".to_string());

@@ -91,6 +91,8 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             LifecycleStatus::Mergeable => "mergeable",
             LifecycleStatus::Merged => "merged",
             LifecycleStatus::Cleanable => "cleanable",
+            LifecycleStatus::Removing => "removing",
+            LifecycleStatus::TeardownIncomplete => "teardown incomplete",
             LifecycleStatus::Removed => "removed",
             LifecycleStatus::Orphaned => "orphaned",
             LifecycleStatus::Error => "error",
