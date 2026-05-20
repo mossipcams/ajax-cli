@@ -13,18 +13,13 @@ pub(super) fn cockpit_summary(
     repos: &ReposResponse,
     tasks: &TasksResponse,
     review: &TasksResponse,
-    inbox: &InboxResponse,
+    _inbox: &InboxResponse,
 ) -> CockpitSummary {
     CockpitSummary {
         repos: repos.repos.len() as u32,
         tasks: tasks.tasks.len() as u32,
         active_tasks: repos.repos.iter().map(|repo| repo.active_tasks).sum(),
-        attention_items: inbox
-            .items
-            .iter()
-            .map(|item| item.task_id.clone())
-            .collect::<std::collections::BTreeSet<_>>()
-            .len() as u32,
+        attention_items: repos.repos.iter().map(|repo| repo.attention_items).sum(),
         reviewable_tasks: review.tasks.len() as u32,
         cleanable_tasks: repos.repos.iter().map(|repo| repo.cleanable_tasks).sum(),
     }
@@ -49,7 +44,7 @@ pub(super) fn count_active_tasks(tasks: &[&Task]) -> u32 {
 pub(super) fn count_attention_items(tasks: &[&Task]) -> u32 {
     tasks
         .iter()
-        .filter(|task| !annotate(task).is_empty())
+        .filter(|task| is_cockpit_menu_task(task) && !annotate(task).is_empty())
         .count() as u32
 }
 

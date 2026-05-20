@@ -1154,11 +1154,43 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .unwrap();
         task.remove_side_flag(SideFlag::NeedsInput);
-        task.add_side_flag(SideFlag::TmuxMissing);
+        task.add_side_flag(SideFlag::Conflicted);
 
         let response = list_repos(&context);
 
         assert_eq!(response.repos[0].attention_items, 1);
+    }
+
+    #[test]
+    fn repo_attention_count_excludes_hidden_missing_substrate_tasks() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let response = list_repos(&context);
+
+        assert_eq!(response.repos[0].attention_items, 0);
+    }
+
+    #[test]
+    fn cockpit_summary_attention_excludes_hidden_missing_substrate_tasks() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let response = cockpit(&context);
+
+        assert_eq!(response.summary.attention_items, 0);
     }
 
     #[test]
