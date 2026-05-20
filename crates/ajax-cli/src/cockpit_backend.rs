@@ -13,9 +13,8 @@ use std::time::Duration;
 
 use crate::{
     cockpit_actions::{
-        execute_pending_cockpit_action_with_open_mode_and_task_session,
-        handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
-        PendingCockpitOutcome,
+        execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
+        tui_cockpit_action, tui_cockpit_confirmed_action, PendingCockpitOutcome,
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
@@ -101,12 +100,11 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
         };
 
         let Some(outcome) = handle_pending_cockpit_result(
-            execute_pending_cockpit_action_with_open_mode_and_task_session(
+            execute_pending_cockpit_action_with_task_session(
                 &pending,
                 context,
                 runner,
                 &mut state_changed,
-                crate::current_open_mode(),
                 &mut task_session,
             ),
             &mut cockpit_flash,

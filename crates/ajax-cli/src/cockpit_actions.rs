@@ -234,7 +234,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     )))
 }
 
-pub(crate) fn execute_pending_cockpit_action_with_open_mode_and_task_session<
+pub(crate) fn execute_pending_cockpit_action_with_task_session<
     R: CommandRunner,
     S: TaskSessionRunner,
 >(
@@ -242,7 +242,6 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode_and_task_session<
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
-    _open_mode: commands::OpenMode,
     task_session: &mut S,
 ) -> Result<PendingCockpitOutcome, CliError> {
     let task_entry_open_mode = commands::OpenMode::Attach;

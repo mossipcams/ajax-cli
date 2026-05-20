@@ -14,9 +14,8 @@ use nix::{
     },
 };
 use std::{
-    env,
     ffi::CString,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, Read, Write},
     os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
     os::raw::c_char,
@@ -44,7 +43,6 @@ const TERM_ATTACH_AFTER: Duration = Duration::from_millis(100);
 const KILL_ATTACH_AFTER: Duration = Duration::from_millis(300);
 const GIVE_UP_ATTACH_AFTER: Duration = Duration::from_millis(600);
 const ATTACH_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
-const TASK_SESSION_LOG_ENV: &str = "AJAX_TASK_SESSION_LOG";
 const TASK_SCREEN_ENTRY_SEQUENCE: &[u8] =
     b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[2J\x1b[H";
 const TASK_SCREEN_EXIT_SEQUENCE: &[u8] = b"\x1b[?25h";
@@ -85,11 +83,6 @@ impl TerminalOwnedSequence {
             | TerminalOwnedSequence::X10Mouse { len } => len,
         }
     }
-}
-
-struct TaskSessionLogger {
-    started: Instant,
-    file: Option<File>,
 }
 
 struct TaskPtyForkConfig {
@@ -297,54 +290,12 @@ fn task_detach_sequence() -> &'static [TaskDetachStep] {
     ]
 }
 
-fn format_task_session_log_line(elapsed: Duration, event: &str, detail: &str) -> String {
-    format!(
-        "elapsed_ms={} event={} {}\n",
-        elapsed.as_millis(),
-        event,
-        detail
-    )
-}
-
 fn task_screen_entry_sequence() -> &'static [u8] {
     TASK_SCREEN_ENTRY_SEQUENCE
 }
 
 fn task_screen_exit_sequence() -> &'static [u8] {
     TASK_SCREEN_EXIT_SEQUENCE
-}
-
-impl TaskSessionLogger {
-    fn from_env() -> Result<Self, CliError> {
-        let file = match env::var_os(TASK_SESSION_LOG_ENV) {
-            Some(path) if !path.is_empty() => Some(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                    .map_err(|error| {
-                        CliError::CommandFailed(format!(
-                            "failed to open task session log {}: {error}",
-                            std::path::Path::new(&path).display()
-                        ))
-                    })?,
-            ),
-            _ => None,
-        };
-        Ok(Self {
-            started: Instant::now(),
-            file,
-        })
-    }
-
-    fn log(&mut self, event: &str, detail: impl AsRef<str>) {
-        let Some(file) = self.file.as_mut() else {
-            return;
-        };
-        let line = format_task_session_log_line(self.started.elapsed(), event, detail.as_ref());
-        let _ = file.write_all(line.as_bytes());
-        let _ = file.flush();
-    }
 }
 
 #[derive(Default)]
@@ -392,33 +343,12 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
         ForkptyResult::Parent { child, master } => {
             let mut terminal = TaskOperatorTerminal::open()?;
             let _guard = terminal.enter_raw_mode(original_termios, &fork_config.raw_termios)?;
-            let mut logger = TaskSessionLogger::from_env()?;
-            logger.log(
-                "attach_start",
-                format_task_attach_start_detail(child.as_raw(), &fork_config.winsize, command),
-            );
             let _screen_guard = TaskScreenGuard::enter(&mut terminal.output)?;
-            let result = pump_task_pty(
-                &mut terminal.input,
-                &mut terminal.output,
-                master,
-                child,
-                &mut logger,
-            );
+            let result = pump_task_pty(&mut terminal.input, &mut terminal.output, master, child);
             let _ = waitpid(child, Some(WaitPidFlag::WNOHANG));
             result
         }
     }
-}
-
-fn format_task_attach_start_detail(child: i32, winsize: &Winsize, command: &CommandSpec) -> String {
-    format!(
-        "child={} winsize={}x{} command={}",
-        child,
-        winsize.ws_col,
-        winsize.ws_row,
-        command_for_log(command)
-    )
 }
 
 fn task_operator_terminal_source() -> TaskOperatorTerminalSource {
@@ -527,19 +457,11 @@ fn duplicate_task_terminal_fd(fd: i32, context: &'static str) -> Result<File, Cl
     Ok(unsafe { File::from_raw_fd(duplicate) })
 }
 
-fn command_for_log(command: &CommandSpec) -> String {
-    std::iter::once(command.program.as_str())
-        .chain(command.args.iter().map(String::as_str))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 fn pump_task_pty(
     terminal_input: &mut File,
     terminal_output: &mut File,
     master: OwnedFd,
     child: nix::unistd::Pid,
-    logger: &mut TaskSessionLogger,
 ) -> Result<(), CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
@@ -558,12 +480,7 @@ fn pump_task_pty(
             poll(&mut poll_fds, PollTimeout::NONE).map_err(tty_error("failed to poll task PTY"))?;
             let tty_flags = poll_fds[0].revents().unwrap_or_else(PollFlags::empty);
             let master_flags = poll_fds[1].revents().unwrap_or_else(PollFlags::empty);
-            let action = classify_task_poll_events(tty_flags, master_flags);
-            logger.log(
-                "poll",
-                format!("tty={tty_flags:?} master={master_flags:?} action={action:?}"),
-            );
-            action
+            classify_task_poll_events(tty_flags, master_flags)
         };
 
         let (tty_ready, master_ready) = match poll_action {
@@ -572,11 +489,9 @@ fn pump_task_pty(
                 master_ready,
             } => (tty_ready, master_ready),
             TaskPollAction::Detach => {
-                logger.log("detach", "reason=tty_poll");
-                return detach_task_child(master, child, logger);
+                return detach_task_child(master, child);
             }
             TaskPollAction::Close => {
-                logger.log("close", "reason=master_poll");
                 return Ok(());
             }
         };
@@ -585,58 +500,40 @@ fn pump_task_pty(
             let count = terminal_input
                 .read(&mut tty_input)
                 .map_err(io_error("failed to read task terminal input"))?;
-            logger.log("tty_read", format!("bytes={count}"));
             if count == 0 {
-                logger.log("detach", "reason=tty_eof");
-                return detach_task_child(master, child, logger);
+                return detach_task_child(master, child);
             }
             let filtered = filter_task_input_after_startup_grace_period(
                 &tty_input[..count],
                 attached_at.elapsed(),
             );
-            logger.log(
-                "tty_filter",
-                format!(
-                    "action={:?} in_bytes={} out_bytes={}",
-                    filtered.action,
-                    count,
-                    filtered.bytes.len()
-                ),
-            );
             if !filtered.bytes.is_empty() {
                 master
                     .write_all(&filtered.bytes)
                     .map_err(io_error("failed to write task PTY"))?;
-                logger.log("pty_write", format!("bytes={}", filtered.bytes.len()));
             }
             if filtered.action == TaskInputAction::ReturnToCockpit {
-                logger.log("detach", "reason=ctrl_q");
-                return detach_task_child(master, child, logger);
+                return detach_task_child(master, child);
             }
         }
 
         if master_ready {
             match master.read(&mut pty_output) {
                 Ok(0) => {
-                    logger.log("pty_read", "bytes=0");
                     return Ok(());
                 }
                 Ok(count) => {
-                    logger.log("pty_read", format!("bytes={count}"));
                     terminal_output
                         .write_all(&pty_output[..count])
                         .map_err(io_error("failed to write task terminal output"))?;
                     terminal_output
                         .flush()
                         .map_err(io_error("failed to flush task terminal output"))?;
-                    logger.log("tty_write", format!("bytes={count}"));
                 }
                 Err(error) if pty_was_closed(&error) => {
-                    logger.log("pty_read_closed", format!("error={error}"));
                     return Ok(());
                 }
                 Err(error) => {
-                    logger.log("pty_read_error", format!("error={error}"));
                     return Err(CliError::CommandFailed(format!(
                         "failed to read task PTY: {error}"
                     )));
@@ -646,62 +543,30 @@ fn pump_task_pty(
     }
 }
 
-fn detach_task_child(
-    master: File,
-    child: nix::unistd::Pid,
-    logger: &mut TaskSessionLogger,
-) -> Result<(), CliError> {
-    logger.log("detach_close_pty", format!("child={}", child.as_raw()));
+fn detach_task_child(master: File, child: nix::unistd::Pid) -> Result<(), CliError> {
     drop(master);
-    request_task_child_exit(child, logger)
+    request_task_child_exit(child)
 }
 
-fn request_task_child_exit(
-    child: nix::unistd::Pid,
-    logger: &mut TaskSessionLogger,
-) -> Result<(), CliError> {
-    logger.log(
-        "detach_signal",
-        format!("child={} signal=SIGHUP", child.as_raw()),
-    );
+fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
     let _ = kill(child, Signal::SIGHUP);
-    wait_for_task_child_exit(child, logger)
+    wait_for_task_child_exit(child)
 }
 
-fn wait_for_task_child_exit(
-    child: nix::unistd::Pid,
-    logger: &mut TaskSessionLogger,
-) -> Result<(), CliError> {
+fn wait_for_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
     let started = Instant::now();
     let mut sent_terminate = false;
     let mut sent_kill = false;
 
     loop {
         match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
-            Ok(WaitStatus::Exited(_, status)) => {
-                logger.log(
-                    "detach_child_exit",
-                    format!("child={} status={status}", child.as_raw()),
-                );
-                return Ok(());
-            }
-            Ok(WaitStatus::Signaled(_, signal, _)) => {
-                logger.log(
-                    "detach_child_signal",
-                    format!("child={} signal={signal:?}", child.as_raw()),
-                );
-                return Ok(());
-            }
+            Ok(WaitStatus::Exited(_, _)) | Ok(WaitStatus::Signaled(_, _, _)) => return Ok(()),
             Ok(WaitStatus::StillAlive) => {}
-            Ok(status) => {
-                logger.log("detach_child_wait", format!("status={status:?}"));
-            }
+            Ok(_) => {}
             Err(nix::errno::Errno::ECHILD) => {
-                logger.log("detach_child_missing", format!("child={}", child.as_raw()));
                 return Ok(());
             }
             Err(error) => {
-                logger.log("detach_child_wait_error", format!("error={error}"));
                 return Err(CliError::CommandFailed(format!(
                     "failed to wait for task attach client: {error}"
                 )));
@@ -710,14 +575,6 @@ fn wait_for_task_child_exit(
 
         let elapsed = started.elapsed();
         if elapsed >= GIVE_UP_ATTACH_AFTER {
-            logger.log(
-                "detach_child_timeout",
-                format!(
-                    "child={} elapsed_ms={}",
-                    child.as_raw(),
-                    elapsed.as_millis()
-                ),
-            );
             return Err(CliError::CommandFailed(
                 "task attach client did not exit after detach".to_string(),
             ));
@@ -726,18 +583,10 @@ fn wait_for_task_child_exit(
         match task_child_shutdown_action(elapsed, sent_terminate, sent_kill) {
             TaskChildShutdownAction::Wait => {}
             TaskChildShutdownAction::Terminate => {
-                logger.log(
-                    "detach_signal",
-                    format!("child={} signal=SIGTERM", child.as_raw()),
-                );
                 let _ = kill(child, Signal::SIGTERM);
                 sent_terminate = true;
             }
             TaskChildShutdownAction::Kill => {
-                logger.log(
-                    "detach_signal",
-                    format!("child={} signal=SIGKILL", child.as_raw()),
-                );
                 let _ = kill(child, Signal::SIGKILL);
                 sent_kill = true;
             }
@@ -874,6 +723,16 @@ mod tests {
         }
     }
 
+    struct FailingTaskSessionRunner;
+
+    impl TaskSessionRunner for FailingTaskSessionRunner {
+        fn run_task_session(&mut self, _command: &CommandSpec) -> Result<(), crate::CliError> {
+            Err(crate::CliError::CommandFailed(
+                "task session unavailable".to_string(),
+            ))
+        }
+    }
+
     fn sample_termios() -> Termios {
         // SAFETY: The test fills the fields that the wrapper mirrors before
         // converting into nix's safe Termios wrapper.
@@ -892,6 +751,17 @@ mod tests {
             FilteredTaskInput {
                 action: TaskInputAction::ReturnToCockpit,
                 bytes: b"abc".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn task_input_filter_keeps_normal_tmux_keys_inside_task_session() {
+        assert_eq!(
+            filter_task_input(b"\x02?"),
+            FilteredTaskInput {
+                action: TaskInputAction::Forward,
+                bytes: b"\x02?".to_vec(),
             }
         );
     }
@@ -1034,25 +904,13 @@ mod tests {
     }
 
     #[test]
-    fn task_session_log_line_includes_elapsed_event_and_detail() {
-        assert_eq!(
-            super::format_task_session_log_line(
-                Duration::from_millis(42),
-                "poll",
-                "tty=POLLIN master=POLLIN action=pump",
-            ),
-            "elapsed_ms=42 event=poll tty=POLLIN master=POLLIN action=pump\n"
-        );
-    }
+    fn task_session_bridge_has_no_debug_log_environment_hook() {
+        let source = include_str!("task_session.rs");
+        let debug_env = ["AJAX", "_TASK_SESSION_LOG"].concat();
+        let logger_type = ["Task", "Session", "Logger"].concat();
 
-    #[test]
-    fn task_attach_start_detail_includes_child_size_and_command() {
-        let command = CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"]);
-
-        assert_eq!(
-            super::format_task_attach_start_detail(123, &super::task_pty_winsize(37, 79), &command),
-            "child=123 winsize=79x37 command=tmux attach-session -t ajax-web-fix-login"
-        );
+        assert!(!source.contains(&debug_env));
+        assert!(!source.contains(&logger_type));
     }
 
     #[test]
@@ -1137,6 +995,35 @@ mod tests {
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
+        );
+    }
+
+    #[test]
+    fn task_entry_plan_surfaces_task_session_failure_after_setup() {
+        let mut plan = CommandPlan::new("open task: web/fix-login");
+        plan.commands.push(CommandSpec::new(
+            "tmux",
+            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+        ));
+        plan.commands.push(
+            CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                .with_mode(CommandMode::InheritStdio),
+        );
+        let mut runner = RecordingCommandRunner::default();
+        let mut task_session = FailingTaskSessionRunner;
+
+        let error = execute_task_entry_plan(&plan, &mut runner, &mut task_session).unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::CliError::CommandFailed(message) if message == "task session unavailable"
+        ));
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            )]
         );
     }
 

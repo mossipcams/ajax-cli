@@ -154,7 +154,7 @@ labels should converge on this table.
 1. **CLI rename strategy.** Should the project do a clean break, or keep hidden
    aliases for one release? This plan assumes a clean break.
 2. **`ajax start` flags.** Should `ajax start` accept exactly the same repo,
-   title, and agent flags as today's `ajax new`? This plan assumes yes.
+   title, and agent flags as the former `ajax new`? This plan assumes yes.
 3. **Repair scope.** Should `ajax repair` fully absorb `check` and `trunk`, or
    should any read-only diagnostics remain separate? This plan assumes repair is
    the public operator verb and may include read-only diagnosis.

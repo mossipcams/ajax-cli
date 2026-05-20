@@ -138,7 +138,7 @@ cargo test -p ajax-core new_task_plan
 
 Test to write:
 
-- CLI source-local test proving `ajax new --execute` records the task after
+- CLI source-local test proving `ajax start --execute` records the task after
   native provisioning and does not run a second open plan.
 
 Code to implement:

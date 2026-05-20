@@ -225,14 +225,14 @@ run_happy_path_journey() {
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"tasks": []' "initial tasks"
 
-  echo "+ ajax new"
-  ajax new --repo web --title "fix login" --agent codex --execute >/dev/null
+  echo "+ ajax start"
+  ajax start --repo web --title "fix login" --agent codex --execute >/dev/null
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"qualified_handle": "web/fix-login"' "tasks after new"
   assert_json_contains "$tasks" '"lifecycle_status": "Active"' "tasks after new"
 
-  echo "+ ajax open"
-  ajax open web/fix-login --execute >/dev/null
+  echo "+ ajax resume"
+  ajax resume web/fix-login --execute >/dev/null
   assert_log_contains "tmux select-window -t ajax-web-fix-login:worktrunk"
 
   echo "+ ajax supervise --task"
@@ -240,15 +240,15 @@ run_happy_path_journey() {
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"lifecycle_status": "Reviewable"' "tasks after agent completion"
 
-  echo "+ ajax merge"
-  ajax merge web/fix-login --execute --yes >/dev/null
+  echo "+ ajax ship"
+  ajax ship web/fix-login --execute --yes >/dev/null
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"lifecycle_status": "Merged"' "tasks after merge"
   assert_log_contains "git -C $REPO switch main"
   assert_log_contains "git -C $REPO merge --ff-only ajax/fix-login"
 
-  echo "+ ajax clean"
-  ajax clean web/fix-login --execute --yes >/dev/null
+  echo "+ ajax drop"
+  ajax drop web/fix-login --execute --yes >/dev/null
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"tasks": []' "tasks after clean"
   assert_log_contains "tmux kill-session -t ajax-web-fix-login"
@@ -268,11 +268,11 @@ run_happy_path_journey() {
 run_recovery_journey() {
   configure_journey "recovery"
 
-  echo "+ ajax new with simulated partial failure"
+  echo "+ ajax start with simulated partial failure"
   export AJAX_SMOKE_FAIL_AFTER_WORKTREE=1
   local failure_log="$JOURNEY_DIR/new-failure.log"
-  if ajax new --repo web --title "fix login" --agent codex --execute >"$failure_log" 2>&1; then
-    fail "expected ajax new to fail after worktree creation"
+  if ajax start --repo web --title "fix login" --agent codex --execute >"$failure_log" 2>&1; then
+    fail "expected ajax start to fail after worktree creation"
   fi
   unset AJAX_SMOKE_FAIL_AFTER_WORKTREE
 

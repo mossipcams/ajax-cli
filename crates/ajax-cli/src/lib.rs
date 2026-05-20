@@ -485,6 +485,16 @@ mod tests {
         }
     }
 
+    struct FailingTaskSessionRunner {
+        message: &'static str,
+    }
+
+    impl crate::task_session::TaskSessionRunner for FailingTaskSessionRunner {
+        fn run_task_session(&mut self, _command: &CommandSpec) -> Result<(), CliError> {
+            Err(CliError::CommandFailed(self.message.to_string()))
+        }
+    }
+
     struct PanicRunner;
 
     impl CommandRunner for PanicRunner {
@@ -2095,10 +2105,15 @@ mod tests {
         let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
 
         assert!(smoke.contains("ajax doctor"));
-        assert!(smoke.contains("ajax new"));
+        assert!(smoke.contains("ajax start"));
         assert!(smoke.contains("ajax supervise --task"));
-        assert!(smoke.contains("ajax merge"));
+        assert!(smoke.contains("ajax ship"));
+        assert!(smoke.contains("ajax drop"));
         assert!(smoke.contains("ajax state export"));
+        assert!(!smoke.contains("ajax new"));
+        assert!(!smoke.contains("ajax open"));
+        assert!(!smoke.contains("ajax merge"));
+        assert!(!smoke.contains("ajax clean"));
         assert!(!smoke.contains("ajax check"));
         assert!(!smoke.contains("ajax diff"));
         assert!(smoke.contains("assert_json_contains"));
@@ -5028,16 +5043,14 @@ mod tests {
             task_title: None,
         };
 
-        let outcome =
-            super::cockpit_actions::execute_pending_cockpit_action_with_open_mode_and_task_session(
-                &pending,
-                &mut context,
-                &mut runner,
-                &mut state_changed,
-                OpenMode::SwitchClient,
-                &mut task_session,
-            )
-            .unwrap();
+        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut task_session,
+        )
+        .unwrap();
 
         assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
@@ -5071,16 +5084,14 @@ mod tests {
         let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome =
-            super::cockpit_actions::execute_pending_cockpit_action_with_open_mode_and_task_session(
-                &pending,
-                &mut context,
-                &mut runner,
-                &mut state_changed,
-                OpenMode::SwitchClient,
-                &mut task_session,
-            )
-            .unwrap();
+        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut task_session,
+        )
+        .unwrap();
 
         assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
@@ -5104,6 +5115,94 @@ mod tests {
                 ])
         }));
         assert!(state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_resume_task_session_failure_stays_in_cockpit_without_lifecycle_change() {
+        let mut context = sample_context();
+        let pending = ajax_tui::PendingAction {
+            task_handle: "web/fix-login".to_string(),
+            action: "resume".to_string(),
+            task_title: None,
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut task_session = FailingTaskSessionRunner {
+            message: "tmux attach failed: session gone",
+        };
+        let mut state_changed = false;
+
+        let error = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut task_session,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CliError::CommandFailed(message) if message == "tmux attach failed: session gone"
+        ));
+        assert_eq!(
+            runner.commands(),
+            &[CommandSpec::new(
+                "tmux",
+                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+            )]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Reviewable
+        );
+        assert!(!state_changed);
+    }
+
+    #[test]
+    fn pending_cockpit_create_task_session_failure_requests_cockpit_reload() {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("api", "/Users/matt/projects/api", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let pending = ajax_tui::PendingAction {
+            task_handle: "api".to_string(),
+            action: "start".to_string(),
+            task_title: Some("Fix login".to_string()),
+        };
+        let mut runner = RecordingCommandRunner::default();
+        let mut task_session = FailingTaskSessionRunner {
+            message: "tmux missing",
+        };
+        let mut state_changed = false;
+
+        let error = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut task_session,
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            CliError::CommandFailedAfterStateChange(message) if message == "tmux missing"
+        ));
+        assert!(state_changed);
+        let task = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == "api/fix-login")
+            .expect("failed start should still record the task");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
     }
 
     #[test]

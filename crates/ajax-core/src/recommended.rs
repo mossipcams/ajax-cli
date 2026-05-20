@@ -259,8 +259,8 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            OperatorAction, RuntimeHealth, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth, SideFlag, Task,
+            TaskId, TmuxStatus, WorktrunkStatus,
         },
     };
 
