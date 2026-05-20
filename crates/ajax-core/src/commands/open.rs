@@ -1,14 +1,11 @@
 use super::lookup::find_task;
-use super::trunk::trunk_task_plan_with_open_mode;
 use super::{CommandContext, CommandError, CommandPlan, OpenMode};
 use crate::{
     adapters::TmuxAdapter,
-    models::{LiveStatusKind, SideFlag, Task},
+    models::{LiveStatusKind, RuntimeHealth, RuntimeObservationSource, Task},
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
-    runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
-use std::time::SystemTime;
 
 pub fn open_task_plan<R: Registry>(
     context: &CommandContext<R>,
@@ -16,18 +13,18 @@ pub fn open_task_plan<R: Registry>(
     mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
-    if task
-        .runtime_projection
-        .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
-        && !live_attention_allows_resume(task)
+    let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
+    if let OperationEligibility::Blocked(reasons) =
+        task_operation_eligibility(task, TaskOperation::Open)
     {
-        let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
-        plan.blocked_reasons
-            .push("runtime state is stale; refresh before resume".to_string());
+        plan.blocked_reasons = reasons;
         return Ok(plan);
     }
-    let needs_trunk_repair = task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::WorktrunkMissing)
+
+    if task
+        .git_status
+        .as_ref()
+        .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
         || task
             .tmux_status
             .as_ref()
@@ -35,22 +32,19 @@ pub fn open_task_plan<R: Registry>(
         || task
             .worktrunk_status
             .as_ref()
-            .is_some_and(|status| !status.exists || !status.points_at_expected_path);
-    let has_non_tmux_missing_substrate = task.has_side_flag(SideFlag::WorktreeMissing)
-        || task.has_side_flag(SideFlag::BranchMissing)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists || !status.branch_exists);
-    if needs_trunk_repair && !has_non_tmux_missing_substrate {
-        return trunk_task_plan_with_open_mode(context, qualified_handle, mode);
+            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+    {
+        plan.blocked_reasons
+            .push("task has missing substrate".to_string());
+        return Ok(plan);
     }
 
-    let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Open)
+    if task.runtime_projection.health == RuntimeHealth::Unobservable
+        && task.runtime_projection.source != RuntimeObservationSource::Unknown
+        && !live_attention_allows_resume(task)
     {
-        plan.blocked_reasons = reasons;
+        plan.blocked_reasons
+            .push("runtime state is unobservable; refresh before resume".to_string());
         return Ok(plan);
     }
 

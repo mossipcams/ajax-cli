@@ -2321,7 +2321,7 @@ mod tests {
     }
 
     #[test]
-    fn open_task_plan_routes_missing_tmux_to_trunk_repair() {
+    fn open_task_plan_blocks_missing_tmux_instead_of_repairing_trunk() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -2336,36 +2336,32 @@ mod tests {
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
 
-        assert_eq!(plan.title, "open worktrunk: web/fix-login");
-        assert!(plan.blocked_reasons.is_empty());
-        assert_eq!(
-            plan.commands,
-            vec![
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "new-session",
-                        "-d",
-                        "-s",
-                        "ajax-web-fix-login",
-                        "-n",
-                        "worktrunk",
-                        "-c",
-                        "/tmp/worktrees/web-fix-login"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
-                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio)
-            ]
-        );
+        assert_eq!(plan.title, "open task: web/fix-login");
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task has missing substrate"]);
     }
 
     #[test]
-    fn open_task_plan_routes_missing_tmux_repair_to_switch_client_inside_tmux() {
+    fn open_task_plan_blocks_missing_tmux_as_not_openable() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task has missing substrate"]);
+    }
+
+    #[test]
+    fn open_task_plan_blocks_missing_tmux_inside_tmux() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -2380,18 +2376,53 @@ mod tests {
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::SwitchClient).unwrap();
 
-        assert_eq!(plan.title, "open worktrunk: web/fix-login");
+        assert_eq!(plan.title, "open task: web/fix-login");
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task has missing substrate"]);
+    }
+
+    #[test]
+    fn open_task_plan_blocks_unobservable_runtime_projection_until_refresh() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Unobservable,
+            std::time::SystemTime::UNIX_EPOCH,
+            RuntimeObservationSource::TmuxProbe,
+        );
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert!(plan.commands.is_empty());
         assert_eq!(
-            plan.commands.last(),
-            Some(
-                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio)
-            )
+            plan.blocked_reasons,
+            vec!["runtime state is unobservable; refresh before resume"]
         );
     }
 
     #[test]
-    fn open_task_plan_blocks_stale_runtime_projection_until_refresh() {
+    fn open_task_plan_allows_old_healthy_complete_runtime_projection() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -2423,10 +2454,17 @@ mod tests {
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
 
-        assert!(plan.commands.is_empty());
+        assert!(plan.blocked_reasons.is_empty());
         assert_eq!(
-            plan.blocked_reasons,
-            vec!["runtime state is stale; refresh before resume"]
+            plan.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
         );
     }
 
@@ -3511,7 +3549,7 @@ mod tests {
     }
 
     #[test]
-    fn open_task_plan_repairs_only_missing_trunk_substrate() {
+    fn open_task_plan_blocks_missing_trunk_substrate() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -3539,31 +3577,9 @@ mod tests {
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::SwitchClient).unwrap();
 
-        assert!(plan.blocked_reasons.is_empty());
-        assert_eq!(plan.title, "open worktrunk: web/fix-login");
-        assert_eq!(
-            plan.commands.first(),
-            Some(&CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ))
-        );
-        assert_eq!(
-            plan.commands.last(),
-            Some(
-                &CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
-                    .with_mode(CommandMode::InheritStdio)
-            )
-        );
+        assert_eq!(plan.title, "open task: web/fix-login");
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task has missing substrate"]);
     }
 
     #[rstest]
@@ -3598,7 +3614,7 @@ mod tests {
             points_at_expected_path: false,
         });
     })]
-    fn open_task_plan_repairs_each_trunk_substrate_signal(#[case] arrange_task: fn(&mut Task)) {
+    fn open_task_plan_blocks_each_trunk_substrate_signal(#[case] arrange_task: fn(&mut Task)) {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -3609,8 +3625,9 @@ mod tests {
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
 
-        assert!(plan.blocked_reasons.is_empty());
-        assert_eq!(plan.title, "open worktrunk: web/fix-login");
+        assert_eq!(plan.title, "open task: web/fix-login");
+        assert!(plan.commands.is_empty());
+        assert_eq!(plan.blocked_reasons, vec!["task has missing substrate"]);
     }
 
     #[test]
