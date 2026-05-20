@@ -2,11 +2,20 @@ use serde_json::Value;
 use std::{
     ffi::OsStr,
     fs,
+    io::{Read, Write},
+    os::fd::AsFd,
     os::unix::fs::PermissionsExt,
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Output},
     sync::atomic::{AtomicUsize, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+use nix::{
+    poll::{poll, PollFd, PollFlags, PollTimeout},
+    pty::{forkpty, ForkptyResult, Winsize},
+    sys::wait::{waitpid, WaitPidFlag, WaitStatus},
 };
 
 static NEXT_SANDBOX_ID: AtomicUsize = AtomicUsize::new(0);
@@ -114,6 +123,20 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
+        let mut command = self.ajax_command(args, extra_env);
+        command
+            .output()
+            .unwrap_or_else(|error| panic!("failed to run ajax: {error}"))
+    }
+
+    fn ajax_command<I, S, E, K, V>(&self, args: I, extra_env: E) -> Command
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+        E: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
         let path = format!(
             "{}:{}",
             self.fake_bin.display(),
@@ -132,8 +155,6 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
             command.env(key, value);
         }
         command
-            .output()
-            .unwrap_or_else(|error| panic!("failed to run ajax: {error}"))
     }
 
     fn install_fake_tools(&self) {
@@ -160,6 +181,10 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         fs::read_to_string(&self.command_log)
             .unwrap_or_else(|error| panic!("failed to read command log: {error}"))
     }
+
+    fn tmux_session_path(&self, session: &str) -> PathBuf {
+        self.substrate_dir.join("sessions").join(session)
+    }
 }
 
 impl Drop for SmokeSandbox {
@@ -168,6 +193,153 @@ impl Drop for SmokeSandbox {
             if error.kind() != std::io::ErrorKind::NotFound {
                 panic!("failed to remove {}: {error}", self.root.display());
             }
+        }
+    }
+}
+
+struct PtyAjaxOutput {
+    stdout: String,
+    status: WaitStatus,
+}
+
+fn run_ajax_cockpit_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput {
+    let winsize = Winsize {
+        ws_row: 24,
+        ws_col: 80,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let fork = unsafe { forkpty(Some(&winsize), None) }
+        .unwrap_or_else(|error| panic!("failed to fork cockpit PTY: {error}"));
+
+    match fork {
+        ForkptyResult::Child => {
+            let error = sandbox
+                .ajax_command(
+                    ["cockpit", "--interval-ms", "10000"],
+                    [("AJAX_SMOKE_TMUX_ATTACH_BLOCK", "1"), ("TERM", "xterm")],
+                )
+                .exec();
+            eprintln!("failed to exec ajax cockpit: {error}");
+            std::process::exit(127);
+        }
+        ForkptyResult::Parent { child, master } => {
+            let mut master = fs::File::from(master);
+            let mut stdout = Vec::new();
+
+            wait_for_pty_output(
+                &mut master,
+                &mut stdout,
+                "web/fix-login",
+                "cockpit task list",
+            );
+            master
+                .write_all(b"\x1b[B\r\r")
+                .expect("failed to open task from cockpit PTY");
+            wait_for_pty_output(
+                &mut master,
+                &mut stdout,
+                "attached ajax-web-fix-login",
+                "task attach output",
+            );
+            let attach_output_len = stdout.len();
+            master.write_all(b"\x11").expect("failed to send Ctrl-Q");
+            wait_for_pty_output_after(
+                &mut master,
+                &mut stdout,
+                attach_output_len,
+                "Ajax",
+                "cockpit redraw after Ctrl-Q",
+            );
+            master
+                .write_all(b"q")
+                .expect("failed to quit cockpit after Ctrl-Q");
+
+            let status = wait_for_child_exit(child, &mut master, &mut stdout);
+            PtyAjaxOutput {
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
+                status,
+            }
+        }
+    }
+}
+
+fn wait_for_pty_output(master: &mut fs::File, stdout: &mut Vec<u8>, expected: &str, context: &str) {
+    wait_until_pty(context, master, stdout, |stdout| {
+        String::from_utf8_lossy(stdout).contains(expected)
+    });
+}
+
+fn wait_for_pty_output_after(
+    master: &mut fs::File,
+    stdout: &mut Vec<u8>,
+    after: usize,
+    expected: &str,
+    context: &str,
+) {
+    wait_until_pty(context, master, stdout, |stdout| {
+        String::from_utf8_lossy(stdout.get(after..).unwrap_or_default()).contains(expected)
+    });
+}
+
+fn wait_until_pty(
+    context: &str,
+    master: &mut fs::File,
+    stdout: &mut Vec<u8>,
+    mut done: impl FnMut(&[u8]) -> bool,
+) {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        read_pty_available(master, stdout);
+        if done(stdout) {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "timed out waiting for {context}\nstdout:\n{}",
+        String::from_utf8_lossy(stdout)
+    );
+}
+
+fn wait_for_child_exit(
+    child: nix::unistd::Pid,
+    master: &mut fs::File,
+    stdout: &mut Vec<u8>,
+) -> WaitStatus {
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(5) {
+        read_pty_available(master, stdout);
+        match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::StillAlive) => {}
+            Ok(status) => return status,
+            Err(error) => panic!("failed to wait for ajax cockpit: {error}"),
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!(
+        "timed out waiting for ajax cockpit to exit\nstdout:\n{}",
+        String::from_utf8_lossy(stdout)
+    );
+}
+
+fn read_pty_available(master: &mut fs::File, stdout: &mut Vec<u8>) {
+    loop {
+        let mut poll_fds = [PollFd::new(master.as_fd(), PollFlags::POLLIN)];
+        poll(&mut poll_fds, PollTimeout::ZERO).expect("failed to poll cockpit PTY");
+        if !poll_fds[0]
+            .revents()
+            .unwrap_or_else(PollFlags::empty)
+            .contains(PollFlags::POLLIN)
+        {
+            return;
+        }
+        let mut buf = [0_u8; 8192];
+        match master.read(&mut buf) {
+            Ok(0) => return,
+            Ok(count) => stdout.extend_from_slice(&buf[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+            Err(error) => panic!("failed to read cockpit PTY: {error}"),
         }
     }
 }
@@ -256,7 +428,18 @@ case "${1:-}" in
     session="${3:-}"
     rm -f "$sessions/$session"
     ;;
-  attach-session|switch-client|select-window|send-keys)
+  attach-session)
+    session="${3:-}"
+    if [[ -n "${AJAX_SMOKE_TMUX_ATTACH_BLOCK:-}" ]]; then
+      printf 'attached %s\n' "$session"
+      trap 'exit 0' HUP TERM INT
+      while true; do
+        sleep 1
+      done
+    fi
+    exit 0
+    ;;
+  switch-client|select-window|send-keys)
     exit 0
     ;;
   list-sessions)
@@ -583,6 +766,45 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
             || log.contains("tmux switch-client -t ajax-web-fix-login"),
         "open should attach or switch to the expected session:\n{log}"
     );
+}
+
+#[test]
+fn smoke_cockpit_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
+    let sandbox = SmokeSandbox::new("cockpit-ctrl-q-task-session");
+    sandbox.create_repo("web");
+    sandbox.write_config(&["web"]);
+    create_active_web_task(&sandbox);
+
+    let output = run_ajax_cockpit_ctrl_q_flow(&sandbox);
+
+    assert!(
+        matches!(output.status, WaitStatus::Exited(_, 0)),
+        "ajax cockpit should exit cleanly after returning from task mode\nstatus: {:?}\nstdout:\n{}",
+        output.status,
+        output.stdout
+    );
+    assert!(
+        sandbox.tmux_session_path("ajax-web-fix-login").exists(),
+        "Ctrl-Q should detach from the attach client without deleting the tmux session"
+    );
+    assert!(
+        output.stdout.contains("attached ajax-web-fix-login"),
+        "task session should start the tmux attach client:\n{}",
+        output.stdout
+    );
+
+    let command_log = sandbox.command_log();
+    assert!(
+        !command_log.contains("tmux kill-session -t ajax-web-fix-login"),
+        "Ctrl-Q detach should not tear down the durable tmux session:\n{command_log}"
+    );
+
+    let inspect = assert_json(
+        &sandbox.ajax(["inspect", "web/fix-login", "--json"]),
+        "ajax inspect --json",
+    );
+    assert_eq!(inspect["task"]["lifecycle_status"], "Active");
+    assert_eq!(inspect["tmux_session"], "ajax-web-fix-login");
 }
 
 #[test]
