@@ -407,6 +407,9 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
 
         let repo_path = repo.path.display().to_string();
         let worktrees_output = run_successful_command(runner, &git.list_worktrees(&repo_path))?;
+        if worktrees_output.trim().is_empty() {
+            continue;
+        }
         let branches_output = run_successful_command(runner, &git.list_branches(&repo_path))?;
         let worktrees = GitAdapter::parse_worktrees(&worktrees_output);
         let branches = GitAdapter::parse_branches(&branches_output)
@@ -1735,6 +1738,38 @@ mod tests {
         assert_eq!(git_status.unpushed_commits, 0);
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn refresh_git_substrate_evidence_ignores_empty_worktree_listing() {
+        let mut context = context_with_tasks();
+        let task_id = TaskId::new("task-1");
+        let cached_status = GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 2,
+            behind: 0,
+            merged: false,
+            untracked_files: 1,
+            unpushed_commits: 2,
+            conflicted: true,
+            last_commit: Some("abc123".to_string()),
+        };
+        context
+            .registry
+            .update_git_status(&task_id, cached_status.clone())
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![output(0, ""), output(0, "main\n")]);
+
+        let changed = refresh_git_substrate_evidence(&mut context, &mut runner).unwrap();
+
+        assert!(!changed);
+        assert_eq!(
+            context.registry.get_task(&task_id).unwrap().git_status,
+            Some(cached_status)
+        );
     }
 
     #[test]

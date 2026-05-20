@@ -125,6 +125,14 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
     let mut pre_plan_state_changed = false;
+    if !matches!(
+        operation,
+        TaskCommandOperation::Drop | TaskCommandOperation::Merge
+    ) {
+        if let Ok(changed) = commands::refresh_git_substrate_evidence(context, runner) {
+            pre_plan_state_changed |= changed;
+        }
+    }
     let drop_cleanup_refresh = operation == TaskCommandOperation::Drop
         && drop_should_refresh_cleanup_evidence(context, task);
     let mut plan = if drop_cleanup_refresh && execute {

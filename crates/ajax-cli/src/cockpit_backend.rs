@@ -2,9 +2,7 @@ use ajax_core::{
     adapters::{CommandRunner, GitAdapter, TmuxAdapter},
     commands::{self, CommandContext},
     live::{self, LiveObservation, LiveStatusKind},
-    models::{
-        AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId, TmuxStatus,
-    },
+    models::{AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId},
     registry::{InMemoryRegistry, Registry},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
@@ -163,14 +161,19 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let should_refresh_sessions = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .any(|task| should_probe_live_substrate(task) || task.tmux_status.is_some());
+    let tasks = context.registry.list_tasks();
+    let should_probe_tasks = tasks.iter().any(|task| should_probe_live_substrate(task));
+    let should_refresh_sessions =
+        should_probe_tasks || tasks.iter().any(|task| task.tmux_status.is_some());
     if !should_refresh_sessions {
         return Ok(false);
     }
+
+    let mut changed = if should_probe_tasks {
+        commands::refresh_git_substrate_evidence(context, runner).unwrap_or_default()
+    } else {
+        false
+    };
 
     let tmux = TmuxAdapter::new("tmux");
     let sessions_command = tmux.list_sessions();
@@ -180,11 +183,6 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         Err(_error) => return Ok(false),
     };
 
-    let mut changed = if has_unregistered_ajax_session(context, &sessions_output) {
-        recover_missing_tasks_from_substrate(context, runner, &sessions_output)?
-    } else {
-        false
-    };
     let task_ids = context
         .registry
         .list_tasks()
@@ -196,6 +194,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         .iter()
         .filter_map(|task_id| context.registry.get_task(task_id).cloned())
         .collect::<Vec<_>>();
+    let should_discover_orphans = task_snapshots.iter().any(should_probe_live_substrate);
     let windows_output = if task_snapshots
         .iter()
         .any(|task| TmuxAdapter::parse_session_status(&task.tmux_session, &sessions_output).exists)
@@ -383,6 +382,13 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         }
     }
 
+    if should_discover_orphans
+        && !sessions_output.trim().is_empty()
+        && windows_output.as_ref().is_none_or(|output| output.is_ok())
+    {
+        changed |= recover_missing_tasks_from_substrate(context, runner, &sessions_output)?;
+    }
+
     Ok(changed)
 }
 
@@ -427,24 +433,6 @@ fn refresh_runtime_projection_from_tmux_probe(
         task.refresh_runtime_projection_from_source(RuntimeObservationSource::TmuxProbe);
         *changed |= task.runtime_projection != previous;
     }
-}
-
-fn has_unregistered_ajax_session(
-    context: &CommandContext<InMemoryRegistry>,
-    sessions_output: &str,
-) -> bool {
-    sessions_output.lines().map(str::trim).any(|session| {
-        context.config.repos.iter().any(|repo| {
-            let prefix = format!("ajax-{}-", repo.name);
-            let Some(handle) = session.strip_prefix(&prefix) else {
-                return false;
-            };
-            if handle.is_empty() {
-                return false;
-            }
-            !registered_task_exists(context, &repo.name, handle)
-        })
-    })
 }
 
 fn registered_task_exists(
@@ -496,9 +484,6 @@ fn recover_missing_tasks_from_substrate<R: CommandRunner>(
             let task_id = TaskId::new(format!("{}/{}", repo.name, handle));
             let tmux_session = format!("ajax-{}-{handle}", repo.name);
             let tmux_status = TmuxAdapter::parse_session_status(&tmux_session, sessions_output);
-            if !tmux_status.exists {
-                continue;
-            }
 
             let mut task = Task::new(
                 task_id.clone(),
@@ -526,7 +511,22 @@ fn recover_missing_tasks_from_substrate<R: CommandRunner>(
                 conflicted: false,
                 last_commit: None,
             });
-            task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
+            task.tmux_status = Some(tmux_status.clone());
+            if !tmux_status.exists {
+                task.worktrunk_status = Some(ajax_core::models::WorktrunkStatus {
+                    exists: false,
+                    window_name: task.worktrunk_window.clone(),
+                    current_path: task.worktree_path.clone(),
+                    points_at_expected_path: false,
+                });
+                task.add_side_flag(ajax_core::models::SideFlag::TmuxMissing);
+                task.add_side_flag(ajax_core::models::SideFlag::WorktrunkMissing);
+                live::apply_observation(
+                    &mut task,
+                    LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
+                );
+                refresh_cached_annotations(&mut task);
+            }
             context
                 .registry
                 .create_task(task)
@@ -997,6 +997,87 @@ mod tests {
         );
         assert_eq!(task.tmux_session, "ajax-web-code");
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    }
+
+    #[derive(Default)]
+    struct OrphanWorktreeRecoveryRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for OrphanWorktreeRecoveryRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, action, flag]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /Users/matt/projects/web__worktrees/ajax-orphan\nHEAD 2222222\nbranch refs/heads/ajax/orphan\n\n"
+                }
+                [command, ..] if command == "list-sessions" => "ajax-web-existing\n",
+                [command, ..] if command == "list-windows" => "",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn refresh_recovers_missing_registry_task_from_orphaned_ajax_worktree_without_tmux() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut existing = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "existing",
+            "existing",
+            "ajax/existing",
+            "main",
+            "/Users/matt/projects/web__worktrees/ajax-existing",
+            "ajax-web-existing",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        existing.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(existing).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = OrphanWorktreeRecoveryRunner::default();
+
+        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/orphan"))
+            .expect("orphaned Ajax worktree should be recovered into the registry");
+        assert_eq!(task.branch, "ajax/orphan");
+        assert_eq!(
+            task.worktree_path.to_string_lossy(),
+            "/Users/matt/projects/web__worktrees/ajax-orphan"
+        );
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists && status.branch_exists));
+        assert_eq!(
+            task.tmux_status.as_ref().map(|status| status.exists),
+            Some(false)
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
+        assert!(task.has_side_flag(SideFlag::TmuxMissing));
     }
 
     #[derive(Default)]

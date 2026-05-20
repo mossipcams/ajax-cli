@@ -624,6 +624,16 @@ mod tests {
                     "-80",
                 ],
             ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain",
+                ],
+            ),
         ]
     }
 
@@ -999,7 +1009,103 @@ mod tests {
             "tmux session missing"
         );
         assert!(task.has_side_flag(SideFlag::TmuxMissing));
-        assert_eq!(runner.commands, vec![tmux_live_commands()[0].clone()]);
+        assert_eq!(
+            runner.commands,
+            vec![
+                tmux_live_commands()[0].clone(),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn read_refresh_updates_stale_git_substrate_evidence() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 1,
+            behind: 0,
+            merged: false,
+            untracked_files: 1,
+            unpushed_commits: 1,
+            conflicted: true,
+            last_commit: Some("abc123".to_string()),
+        });
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+            output(0, "other-session\n"),
+        ]);
+
+        let output =
+            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+
+        assert_eq!(parsed["tasks"][0]["qualified_handle"], "web/fix-login");
+        assert!(!git_status.worktree_exists);
+        assert!(!git_status.branch_exists);
+        assert_eq!(git_status.current_branch, None);
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task.has_side_flag(SideFlag::BranchMissing));
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                ),
+                tmux_live_commands()[0].clone(),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1103,7 +1209,9 @@ mod tests {
         });
         task.last_activity_at = SystemTime::UNIX_EPOCH;
         let previous_activity = task.last_activity_at;
-        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+        let mut outputs = git_live_outputs();
+        outputs.extend(tmux_live_outputs("codex is working\n"));
+        let mut runner = QueuedRunner::new(outputs);
         let mut state_changed = false;
 
         let _snapshot =
@@ -1197,6 +1305,16 @@ mod tests {
                         "ajax-web-fix-sidebar:worktrunk",
                         "-S",
                         "-80",
+                    ],
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain",
                     ],
                 ),
             ]
@@ -1522,7 +1640,7 @@ mod tests {
 
         assert!(rendered.state_changed);
         assert_eq!(rendered.output.matches("Ajax Cockpit").count(), 2);
-        assert_eq!(runner.commands.len(), 4);
+        assert_eq!(runner.commands.len(), 5);
     }
 
     #[test]
@@ -5189,6 +5307,85 @@ mod tests {
         );
         assert!(!rendered.output.contains("worktree"));
         assert!(!rendered.output.contains("branch"));
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert!(!git_status.worktree_exists);
+        assert!(!git_status.branch_exists);
+    }
+
+    #[test]
+    fn resume_plan_refreshes_stale_git_evidence_before_rendering_commands() {
+        let mut context = sample_context();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "resume", "web/fix-login", "--json"])
+            .unwrap();
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("resume should parse as a subcommand");
+        };
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        let rendered = super::render_task_command(
+            super::TaskCommandOperation::Open,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert!(rendered.state_changed);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                )
+            ]
+        );
+        assert!(rendered.output.contains("\"blocked_reasons\""));
+        assert!(rendered.output.contains("task has missing substrate"));
         let task = context.registry.get_task(&task_id).unwrap();
         let git_status = task.git_status.as_ref().unwrap();
         assert!(!git_status.worktree_exists);
