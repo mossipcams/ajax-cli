@@ -276,7 +276,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
              runtime_observation_source \
-             FROM registry_tasks ORDER BY task_id",
+             FROM registry_tasks WHERE lifecycle_status != 'Removed' ORDER BY task_id",
         )
         .map_err(database_error)?;
     let mut rows = statement.query([]).map_err(database_error)?;
@@ -1493,6 +1493,87 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
 
         assert_eq!(version, 3);
+    }
+
+    #[test]
+    fn sqlite_registry_store_does_not_persist_removed_task_tombstones() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-purges-removed"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        registry
+            .create_task(task("task-2", "web", "old-task"))
+            .unwrap();
+        registry
+            .get_task_mut(&TaskId::new("task-2"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Removed;
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let removed_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM registry_tasks WHERE task_id = 'task-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let removed_event_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM registry_events WHERE task_id = 'task-2'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(removed_count, 0);
+        assert_eq!(removed_event_count, 0);
+        assert!(restored.get_task(&TaskId::new("task-1")).is_some());
+        assert!(restored.get_task(&TaskId::new("task-2")).is_none());
+    }
+
+    #[test]
+    fn sqlite_registry_store_ignores_existing_removed_task_tombstones_on_load() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-load-skips-removed"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        registry
+            .create_task(task("task-2", "web", "old-task"))
+            .unwrap();
+        registry
+            .get_task_mut(&TaskId::new("task-2"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Removed;
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE registry_tasks SET lifecycle_status = 'Removed' WHERE task_id = 'task-1'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(restored.get_task(&TaskId::new("task-1")).is_none());
+        assert!(restored.get_task(&TaskId::new("task-2")).is_none());
     }
 
     #[test]

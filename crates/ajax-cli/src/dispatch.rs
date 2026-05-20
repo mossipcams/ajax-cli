@@ -124,10 +124,10 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let task = task_arg(subcommand)?;
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
-    let mut plan = if operation == TaskCommandOperation::Drop
-        && drop_should_refresh_cleanup_evidence(context, task)
-        && execute
-    {
+    let mut pre_plan_state_changed = false;
+    let drop_cleanup_refresh = operation == TaskCommandOperation::Drop
+        && drop_should_refresh_cleanup_evidence(context, task);
+    let mut plan = if drop_cleanup_refresh && execute {
         match commands::ensure_cleanup_git_status(context, task, runner) {
             Ok(()) => operation.plan_with_open_mode(context, task, open_mode),
             Err(error) if drop_git_status_error_is_missing_worktree(&error) => {
@@ -140,13 +140,26 @@ pub(crate) fn render_task_command<R: CommandRunner>(
             Err(error) => Err(error),
         }
     } else {
+        if operation == TaskCommandOperation::Drop
+            && !drop_cleanup_refresh
+            && (!execute || confirmed)
+        {
+            match commands::refresh_git_substrate_evidence(context, runner) {
+                Ok(changed) => pre_plan_state_changed |= changed,
+                Err(_) => {
+                    pre_plan_state_changed |=
+                        commands::mark_task_git_substrate_missing(context, task)
+                            .map_err(command_error)?;
+                }
+            }
+        }
         operation.plan_with_open_mode(context, task, open_mode)
     }
     .map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
             output: render_plan(plan, subcommand.get_flag("json"))?,
-            state_changed: false,
+            state_changed: pre_plan_state_changed,
         });
     }
     if operation == TaskCommandOperation::Merge
@@ -337,8 +350,13 @@ fn execute_teardown_plan<R: CommandRunner>(
     } else {
         commands::mark_task_removed(context, task).map_err(command_error)?;
     }
+    let output = if outputs.is_empty() {
+        format!("removed task: {task}")
+    } else {
+        render_execution_outputs(&outputs, None)
+    };
     Ok(RenderedCommand {
-        output: render_execution_outputs(&outputs, None),
+        output,
         state_changed: true,
     })
 }

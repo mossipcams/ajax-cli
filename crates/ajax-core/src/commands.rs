@@ -32,7 +32,7 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
     config::Config,
-    models::{Annotation, LifecycleStatus, SideFlag, Task},
+    models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
         AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
@@ -47,7 +47,7 @@ use projection::{
     is_visible_task, task_summary,
 };
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, SystemTime};
+use std::{collections::BTreeSet, time::Duration, time::SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -377,6 +377,148 @@ pub fn refresh_git_evidence<R: Registry>(
     Ok(())
 }
 
+pub fn refresh_git_substrate_evidence<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+) -> Result<bool, CommandError> {
+    let tasks = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+        .filter(|task| task.git_status.is_some())
+        .cloned()
+        .collect::<Vec<_>>();
+    if tasks.is_empty() {
+        return Ok(false);
+    }
+
+    let git = GitAdapter::new("git");
+    let mut updates = Vec::new();
+
+    for repo in &context.config.repos {
+        let repo_tasks = tasks
+            .iter()
+            .filter(|task| task.repo == repo.name)
+            .collect::<Vec<_>>();
+        if repo_tasks.is_empty() {
+            continue;
+        }
+
+        let repo_path = repo.path.display().to_string();
+        let worktrees_output = run_successful_command(runner, &git.list_worktrees(&repo_path))?;
+        let branches_output = run_successful_command(runner, &git.list_branches(&repo_path))?;
+        let worktrees = GitAdapter::parse_worktrees(&worktrees_output);
+        let branches = GitAdapter::parse_branches(&branches_output)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+
+        for task in repo_tasks {
+            let expected_worktree = task.worktree_path.display().to_string();
+            let observed_worktree = worktrees
+                .iter()
+                .find(|worktree| worktree.path == expected_worktree);
+            let worktree_exists = observed_worktree.is_some();
+            let branch_exists = branches.contains(&task.branch)
+                || observed_worktree
+                    .and_then(|worktree| worktree.branch.as_ref())
+                    .is_some_and(|branch| branch == &task.branch);
+            let current_branch = observed_worktree.and_then(|worktree| worktree.branch.clone());
+            let git_status = substrate_git_status(
+                task.git_status.as_ref(),
+                worktree_exists,
+                branch_exists,
+                current_branch,
+            );
+
+            if task.git_status.as_ref() != Some(&git_status) {
+                updates.push((task.id.clone(), git_status));
+            }
+        }
+    }
+
+    let changed = !updates.is_empty();
+    for (task_id, git_status) in updates {
+        context
+            .registry
+            .update_git_status(&task_id, git_status)
+            .map_err(CommandError::Registry)?;
+    }
+
+    Ok(changed)
+}
+
+pub fn mark_task_git_substrate_missing<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+) -> Result<bool, CommandError> {
+    let task = find_task(context, qualified_handle)?.clone();
+    let git_status = substrate_git_status(task.git_status.as_ref(), false, false, None);
+    if task.git_status.as_ref() == Some(&git_status) {
+        return Ok(false);
+    }
+
+    context
+        .registry
+        .update_git_status(&task.id, git_status)
+        .map_err(CommandError::Registry)?;
+
+    Ok(true)
+}
+
+fn run_successful_command(
+    runner: &mut impl CommandRunner,
+    command: &CommandSpec,
+) -> Result<String, CommandError> {
+    let output = runner.run(command).map_err(CommandError::CommandRun)?;
+    if output.status_code != 0 {
+        return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
+            program: command.program.clone(),
+            status_code: output.status_code,
+            stderr: output.stderr,
+            cwd: command.cwd.clone(),
+        }));
+    }
+
+    Ok(output.stdout)
+}
+
+fn substrate_git_status(
+    previous: Option<&GitStatus>,
+    worktree_exists: bool,
+    branch_exists: bool,
+    current_branch: Option<String>,
+) -> GitStatus {
+    let mut status = previous.cloned().unwrap_or(GitStatus {
+        worktree_exists,
+        branch_exists,
+        current_branch: current_branch.clone(),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    status.worktree_exists = worktree_exists;
+    status.branch_exists = branch_exists;
+    status.current_branch = current_branch;
+
+    if !worktree_exists {
+        status.dirty = false;
+        status.ahead = 0;
+        status.behind = 0;
+        status.untracked_files = 0;
+        status.unpushed_commits = 0;
+        status.conflicted = false;
+        status.last_commit = None;
+    }
+
+    status
+}
+
 pub fn execute_plan(
     plan: &CommandPlan,
     confirmed: bool,
@@ -413,9 +555,9 @@ mod tests {
     use super::{
         check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
         inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, open_task_plan, remove_task_plan, review_queue, status, sweep_cleanup_plan,
-        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
-        NewTaskRequest, OpenMode,
+        next, open_task_plan, refresh_git_substrate_evidence, remove_task_plan, review_queue,
+        status, sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext,
+        CommandError, DoctorEnvironment, NewTaskRequest, OpenMode,
     };
     use crate::{
         adapters::{
@@ -1523,6 +1665,76 @@ mod tests {
             .get_task(&TaskId::new("task-1"))
             .unwrap()
             .has_side_flag(SideFlag::Stale));
+    }
+
+    #[test]
+    fn refresh_git_substrate_evidence_updates_stale_missing_worktree_and_branch() {
+        let mut context = context_with_tasks();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: true,
+                    ahead: 2,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 1,
+                    unpushed_commits: 2,
+                    conflicted: true,
+                    last_commit: Some("abc123".to_string()),
+                },
+            )
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\najax/other\n"),
+        ]);
+
+        let changed = refresh_git_substrate_evidence(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                )
+            ]
+        );
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert!(!git_status.worktree_exists);
+        assert!(!git_status.branch_exists);
+        assert_eq!(git_status.current_branch, None);
+        assert!(!git_status.dirty);
+        assert_eq!(git_status.untracked_files, 0);
+        assert_eq!(git_status.unpushed_commits, 0);
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(task.has_side_flag(SideFlag::BranchMissing));
     }
 
     #[test]

@@ -33,6 +33,13 @@ impl GitAdapter {
         )
     }
 
+    pub fn list_branches(&self, repo_path: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "branch", "--format=%(refname:short)"],
+        )
+    }
+
     pub fn add_worktree(
         &self,
         repo_path: &str,
@@ -195,6 +202,15 @@ impl GitAdapter {
         porcelain_output
             .split("\n\n")
             .filter_map(parse_worktree_entry)
+            .collect()
+    }
+
+    pub fn parse_branches(branch_output: &str) -> Vec<String> {
+        branch_output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
             .collect()
     }
 }

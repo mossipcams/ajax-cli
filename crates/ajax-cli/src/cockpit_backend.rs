@@ -6,10 +6,11 @@ use ajax_core::{
         AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId, TmuxStatus,
     },
     registry::{InMemoryRegistry, Registry},
+    runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use crate::{
     cockpit_actions::{
@@ -214,7 +215,13 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
         if !session_status.exists {
-            if task_snapshot.tmux_status.is_some()
+            let has_fresh_command_result_runtime = task_snapshot.runtime_projection.source
+                == RuntimeObservationSource::CommandResult
+                && !task_snapshot
+                    .runtime_projection
+                    .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR);
+            if has_fresh_command_result_runtime
+                && task_snapshot.tmux_status.is_some()
                 && task_snapshot.live_status.is_none()
                 && !task_snapshot.has_side_flag(ajax_core::models::SideFlag::TmuxMissing)
             {
@@ -237,8 +244,20 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                     }),
                 )
                 .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+            let missing_worktrunk = ajax_core::models::WorktrunkStatus {
+                exists: false,
+                window_name: task_snapshot.worktrunk_window.clone(),
+                current_path: task_snapshot.worktree_path.clone(),
+                points_at_expected_path: false,
+            };
+            changed |= task_snapshot.worktrunk_status.as_ref() != Some(&missing_worktrunk);
+            context
+                .registry
+                .update_worktrunk_status(&task_id, Some(missing_worktrunk))
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
             refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
             if let Some(task) = context.registry.get_task_mut(&task_id) {
+                task.remove_side_flag(ajax_core::models::SideFlag::AgentRunning);
                 live::apply_observation(
                     task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
@@ -590,6 +609,21 @@ mod tests {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [_, repo, subcommand, action, flag]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
                 [command, ..] if command == "list-windows" => {
                     "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
                 }

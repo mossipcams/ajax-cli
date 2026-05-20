@@ -261,7 +261,10 @@ mod tests {
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
-    use std::path::{Path, PathBuf};
+    use std::{
+        path::{Path, PathBuf},
+        time::SystemTime,
+    };
 
     fn sample_context() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -538,6 +541,16 @@ mod tests {
             stdout: stdout.to_string(),
             stderr: String::new(),
         }
+    }
+
+    fn git_live_outputs() -> Vec<CommandOutput> {
+        vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+        ]
     }
 
     fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
@@ -970,7 +983,9 @@ mod tests {
             .unwrap();
         task.lifecycle_status = LifecycleStatus::Active;
         task.remove_side_flag(SideFlag::NeedsInput);
-        let mut runner = QueuedRunner::new(vec![output(0, "other-session\n")]);
+        let mut outputs = git_live_outputs();
+        outputs.push(output(0, "other-session\n"));
+        let mut runner = QueuedRunner::new(outputs);
 
         let output =
             run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
@@ -1067,12 +1082,26 @@ mod tests {
             exists: true,
             session_name: "ajax-web-fix-login".to_string(),
         });
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
         task.worktrunk_status = Some(WorktrunkStatus {
             exists: true,
             window_name: "worktrunk".to_string(),
             current_path: "/tmp/worktrees/web-fix-login".into(),
             points_at_expected_path: true,
         });
+        task.last_activity_at = SystemTime::UNIX_EPOCH;
         let previous_activity = task.last_activity_at;
         let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
         let mut state_changed = false;
@@ -1264,6 +1293,68 @@ mod tests {
             Some("ajax-web-fix-login")
         );
         assert_eq!(runner.commands, tmux_live_commands()[..2]);
+    }
+
+    #[test]
+    fn live_refresh_marks_stale_present_tmux_status_missing_when_session_disappears() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: true,
+        });
+        task.runtime_projection = ajax_core::models::RuntimeProjection::new(
+            ajax_core::models::RuntimeHealth::Healthy,
+            SystemTime::now(),
+            ajax_core::models::RuntimeObservationSource::TmuxProbe,
+        );
+        let mut outputs = git_live_outputs();
+        outputs.push(output(0, "other-session\n"));
+        let mut runner = QueuedRunner::new(outputs);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert!(changed);
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists));
+        assert_eq!(
+            task.runtime_projection.health,
+            ajax_core::models::RuntimeHealth::MissingSession
+        );
+        assert_eq!(
+            task.live_status
+                .as_ref()
+                .map(|status| status.summary.as_str()),
+            Some("tmux session missing")
+        );
     }
 
     #[test]
@@ -3567,7 +3658,16 @@ mod tests {
             conflicted: false,
             last_commit: None,
         });
-        let mut runner = RecordingCommandRunner::default();
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+        ]);
 
         run_with_context_and_runner(
             ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
@@ -3577,8 +3677,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            runner.commands(),
-            &[
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                ),
                 CommandSpec::new(
                     "git",
                     [
@@ -4985,6 +5104,240 @@ mod tests {
                 "{operation:?} should return to the task picker"
             );
         }
+    }
+
+    #[test]
+    fn drop_plan_refreshes_stale_git_evidence_before_rendering_commands() {
+        let mut context = sample_context();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        context
+            .registry
+            .update_tmux_status(
+                &task_id,
+                Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+            )
+            .unwrap();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "drop", "web/fix-login", "--json"])
+            .unwrap();
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("drop should parse as a subcommand");
+        };
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        let rendered = super::render_task_command(
+            super::TaskCommandOperation::Drop,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert!(rendered.state_changed);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "list",
+                        "--porcelain"
+                    ]
+                ),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "branch",
+                        "--format=%(refname:short)"
+                    ]
+                )
+            ]
+        );
+        assert!(!rendered.output.contains("worktree"));
+        assert!(!rendered.output.contains("branch"));
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert!(!git_status.worktree_exists);
+        assert!(!git_status.branch_exists);
+    }
+
+    #[test]
+    fn drop_execute_removes_db_task_without_stale_git_commands_when_refresh_fails() {
+        let mut context = sample_context();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        context
+            .registry
+            .update_tmux_status(
+                &task_id,
+                Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+            )
+            .unwrap();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "drop", "web/fix-login", "--execute", "--yes"])
+            .unwrap();
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("drop should parse as a subcommand");
+        };
+        let mut runner = QueuedRunner::new(vec![CommandOutput {
+            status_code: 128,
+            stdout: String::new(),
+            stderr: "fatal: not a git repository".to_string(),
+        }]);
+
+        let rendered = super::render_task_command(
+            super::TaskCommandOperation::Drop,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert!(rendered.state_changed);
+        assert_eq!(
+            runner.commands,
+            vec![CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "list",
+                    "--porcelain"
+                ]
+            )]
+        );
+        assert_eq!(
+            context
+                .registry
+                .get_task(&task_id)
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
+    }
+
+    #[test]
+    fn drop_execute_reports_registry_removal_when_no_external_resources_remain() {
+        let mut context = sample_context();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        context
+            .registry
+            .update_tmux_status(
+                &task_id,
+                Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+            )
+            .unwrap();
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "drop", "web/fix-login", "--execute", "--yes"])
+            .unwrap();
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("drop should parse as a subcommand");
+        };
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        let rendered = super::render_task_command(
+            super::TaskCommandOperation::Drop,
+            subcommand,
+            &mut context,
+            &mut runner,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        assert_eq!(rendered.output, "removed task: web/fix-login");
+        assert_eq!(
+            context
+                .registry
+                .get_task(&task_id)
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
     }
 
     #[test]

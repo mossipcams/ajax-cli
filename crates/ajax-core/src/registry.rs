@@ -61,13 +61,16 @@ impl Registry for InMemoryRegistry {
     fn create_task(&mut self, mut task: Task) -> Result<(), RegistryError> {
         let task_id = task.id.clone();
 
-        if self.tasks.contains_key(&task_id) {
-            return Err(RegistryError::DuplicateTask(task_id));
+        if let Some(existing) = self.tasks.get(&task_id) {
+            if existing.lifecycle_status != LifecycleStatus::Removed {
+                return Err(RegistryError::DuplicateTask(task_id));
+            }
         }
 
         task.refresh_runtime_projection();
         refresh_task_annotations(&mut task);
         self.tasks.insert(task_id.clone(), task);
+        self.events.retain(|event| event.task_id != task_id);
         self.events.push(RegistryEvent::new(
             task_id,
             RegistryEventKind::TaskCreated,
@@ -374,6 +377,22 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, RegistryError::DuplicateTask(TaskId::new("task-1")));
+    }
+
+    #[test]
+    fn create_task_replaces_removed_task_tombstone() {
+        let mut registry = InMemoryRegistry::default();
+        let mut removed = task("task-1", "web", "fix-login");
+        removed.lifecycle_status = LifecycleStatus::Removed;
+        registry.create_task(removed).unwrap();
+
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+
+        let task = registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Created);
+        assert_eq!(registry.events_for_task(&TaskId::new("task-1")).len(), 1);
     }
 
     #[test]

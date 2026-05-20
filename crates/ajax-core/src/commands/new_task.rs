@@ -3,8 +3,8 @@ use crate::{
     adapters::{AgentAdapter, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
     lifecycle::mark_provisioning,
     models::{
-        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, SideFlag, Task, TaskId, TmuxStatus,
-        WorktrunkStatus,
+        AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, SideFlag,
+        Task, TaskId, TmuxStatus, WorktrunkStatus,
     },
     registry::{Registry, RegistryError},
 };
@@ -202,6 +202,11 @@ pub fn mark_new_task_step_completed<R: Registry>(
                     )),
                 )
                 .map_err(CommandError::Registry)?;
+            if let Some(task) = context.registry.get_task_mut(task_id) {
+                task.refresh_runtime_projection_from_source(
+                    RuntimeObservationSource::CommandResult,
+                );
+            }
         }
         2 => {
             let task = context
