@@ -141,6 +141,18 @@ mod tests {
             )
         );
         assert_eq!(
+            adapter.list_all_windows(),
+            CommandSpec::new(
+                "tmux",
+                [
+                    "list-windows",
+                    "-a",
+                    "-F",
+                    "#{session_name}\t#{window_name}\t#{pane_current_path}"
+                ]
+            )
+        );
+        assert_eq!(
             adapter.capture_pane("ajax-web-fix-login", "worktrunk"),
             CommandSpec::new(
                 "tmux",
@@ -150,7 +162,7 @@ mod tests {
                     "-t",
                     "ajax-web-fix-login:worktrunk",
                     "-S",
-                    "-200"
+                    "-80"
                 ]
             )
         );
@@ -208,7 +220,7 @@ mod tests {
             );
             prop_assert_eq!(
                 adapter.capture_pane(&session, &window).args,
-                vec!["capture-pane", "-p", "-t", target.as_str(), "-S", "-200"]
+                vec!["capture-pane", "-p", "-t", target.as_str(), "-S", "-80"]
             );
             prop_assert_eq!(
                 adapter.send_agent_command(&session, &window, &command).args,

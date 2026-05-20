@@ -97,6 +97,18 @@ impl TmuxAdapter {
         )
     }
 
+    pub fn list_all_windows(&self) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "list-windows",
+                "-a",
+                "-F",
+                "#{session_name}\t#{window_name}\t#{pane_current_path}",
+            ],
+        )
+    }
+
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
         let target = format!("{session}:{window}");
         CommandSpec {
@@ -107,7 +119,7 @@ impl TmuxAdapter {
                 "-t".to_string(),
                 target,
                 "-S".to_string(),
-                "-200".to_string(),
+                "-80".to_string(),
             ],
             cwd: None,
             mode: CommandMode::Capture,
@@ -147,6 +159,46 @@ impl TmuxAdapter {
                 status.points_at_expected_path = current_path == expected_path;
                 break;
             }
+        }
+
+        status
+    }
+
+    pub fn parse_worktrunk_status_for_session(
+        session: &str,
+        window: &str,
+        expected_path: &str,
+        list_all_windows_output: &str,
+    ) -> WorktrunkStatus {
+        let mut status = WorktrunkStatus {
+            exists: false,
+            window_name: window.to_string(),
+            current_path: String::new().into(),
+            points_at_expected_path: false,
+        };
+
+        for line in list_all_windows_output.lines() {
+            let mut fields = line.splitn(3, '\t');
+            let Some(session_name) = fields.next() else {
+                continue;
+            };
+            let Some(window_name) = fields.next() else {
+                continue;
+            };
+            let Some(current_path) = fields.next() else {
+                continue;
+            };
+
+            if session_name == session && window_name == window {
+                status.exists = true;
+                status.current_path = current_path.into();
+                status.points_at_expected_path = current_path == expected_path;
+                break;
+            }
+        }
+
+        if !status.exists {
+            status = Self::parse_worktrunk_status(window, expected_path, list_all_windows_output);
         }
 
         status

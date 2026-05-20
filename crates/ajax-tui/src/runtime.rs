@@ -164,6 +164,7 @@ fn run_event_loop<B: Backend>(
     refresh_interval: Duration,
 ) -> io::Result<Option<PendingAction>> {
     let mut last_refresh = Instant::now();
+    let mut needs_draw = true;
     loop {
         let height = terminal
             .size()
@@ -171,14 +172,19 @@ fn run_event_loop<B: Backend>(
             .height as usize;
         let feed_height = crate::visible_feed_height(app, height);
 
-        app.tick_notices();
+        let notices_changed = app.tick_notices();
+        let mut refreshed = false;
         if should_refresh(&mut last_refresh, refresh_interval) {
             handle_refresh_result(app, handler.on_refresh())?;
+            refreshed = true;
         }
         app.ensure_visible(feed_height);
-        terminal
-            .draw(|f| render_ui(f, app))
-            .map_err(|_| io::Error::other("terminal backend draw error"))?;
+        if should_draw(needs_draw, refreshed, notices_changed) {
+            terminal
+                .draw(|f| render_ui(f, app))
+                .map_err(|_| io::Error::other("terminal backend draw error"))?;
+            needs_draw = false;
+        }
 
         let timeout = poll_timeout(
             Instant::now(),
@@ -188,12 +194,16 @@ fn run_event_loop<B: Backend>(
         );
         if event::poll(timeout)? {
             match handle_cockpit_event(app, event::read()?, height, &mut handler)? {
-                EventLoopAction::Continue => {}
+                EventLoopAction::Continue => needs_draw = true,
                 EventLoopAction::Quit => return Ok(None),
                 EventLoopAction::Pending(pending) => return Ok(Some(pending)),
             }
         }
     }
+}
+
+fn should_draw(needs_draw: bool, refreshed: bool, notices_changed: bool) -> bool {
+    needs_draw || refreshed || notices_changed
 }
 
 fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> bool {
@@ -231,7 +241,7 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::{
-        poll_timeout, should_refresh, terminal_entry_commands, terminal_exit_commands,
+        poll_timeout, should_draw, should_refresh, terminal_entry_commands, terminal_exit_commands,
         TerminalModeCommand,
     };
 
@@ -291,5 +301,13 @@ mod tests {
             poll_timeout(now, last_refresh, Duration::from_millis(800), true),
             Duration::from_millis(250)
         );
+    }
+
+    #[test]
+    fn redraw_scheduler_skips_idle_frames() {
+        assert!(!should_draw(false, false, false));
+        assert!(should_draw(true, false, false));
+        assert!(should_draw(false, true, false));
+        assert!(should_draw(false, false, true));
     }
 }

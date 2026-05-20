@@ -445,6 +445,35 @@ mod tests {
         context
     }
 
+    fn two_active_tasks_context() -> CommandContext<InMemoryRegistry> {
+        let mut context = sample_context();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .remove_side_flag(SideFlag::NeedsInput);
+        let mut task = Task::new(
+            TaskId::new("task-2"),
+            "web",
+            "fix-sidebar",
+            "Fix sidebar",
+            "ajax/fix-sidebar",
+            "main",
+            "/tmp/worktrees/web-fix-sidebar",
+            "ajax-web-fix-sidebar",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        context.registry.create_task(task).unwrap();
+        context
+    }
+
     #[derive(Default)]
     struct QueuedRunner {
         outputs: std::collections::VecDeque<CommandOutput>,
@@ -514,7 +543,10 @@ mod tests {
     fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
         vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
             output(0, pane),
         ]
     }
@@ -563,10 +595,9 @@ mod tests {
                 "tmux",
                 [
                     "list-windows",
-                    "-t",
-                    "ajax-web-fix-login",
+                    "-a",
                     "-F",
-                    "#{window_name}\t#{pane_current_path}",
+                    "#{session_name}\t#{window_name}\t#{pane_current_path}",
                 ],
             ),
             CommandSpec::new(
@@ -577,7 +608,7 @@ mod tests {
                     "-t",
                     "ajax-web-fix-login:worktrunk",
                     "-S",
-                    "-200",
+                    "-80",
                 ],
             ),
         ]
@@ -1001,7 +1032,10 @@ mod tests {
         task.add_side_flag(SideFlag::TmuxMissing);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "agent\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tagent\t/tmp/worktrees/web-fix-login\n",
+            ),
         ]);
         let mut state_changed = false;
 
@@ -1073,6 +1107,74 @@ mod tests {
     }
 
     #[test]
+    fn live_refresh_skips_cleanable_tasks_without_tmux_probe() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(Vec::new());
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+        assert!(!changed);
+        assert!(runner.commands.is_empty());
+    }
+
+    #[test]
+    fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
+        let mut context = two_active_tasks_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, "ajax-web-fix-login\najax-web-fix-sidebar\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\najax-web-fix-sidebar\tworktrunk\t/tmp/worktrees/web-fix-sidebar\n",
+            ),
+            output(0, "codex is working\n"),
+            output(0, "Do you want to proceed? y/n\n"),
+        ]);
+
+        let changed =
+            crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        assert_eq!(
+            runner.commands,
+            vec![
+                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "list-windows",
+                        "-a",
+                        "-F",
+                        "#{session_name}\t#{window_name}\t#{pane_current_path}",
+                    ],
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "capture-pane",
+                        "-p",
+                        "-t",
+                        "ajax-web-fix-login:worktrunk",
+                        "-S",
+                        "-80",
+                    ],
+                ),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "capture-pane",
+                        "-p",
+                        "-t",
+                        "ajax-web-fix-sidebar:worktrunk",
+                        "-S",
+                        "-80",
+                    ],
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn live_refresh_nonzero_window_listing_stops_before_pane_capture() {
         let mut context = sample_context();
         let task = context
@@ -1083,7 +1185,10 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(1, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                1,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
         ]);
 
         let changed =
@@ -1113,7 +1218,10 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
             output(1, "codex is working\n"),
         ]);
 
@@ -1185,7 +1293,10 @@ mod tests {
         ));
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
             output(0, ""),
         ]);
 
@@ -1220,7 +1331,10 @@ mod tests {
         });
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
             output(1, ""),
         ]);
 
@@ -1267,7 +1381,10 @@ mod tests {
         ));
         let mut runner = QueuedRunner::new(vec![
             output(0, "ajax-web-fix-login\n"),
-            output(0, "worktrunk\t/tmp/worktrees/web-fix-login\n"),
+            output(
+                0,
+                "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            ),
             output(0, ""),
         ]);
 

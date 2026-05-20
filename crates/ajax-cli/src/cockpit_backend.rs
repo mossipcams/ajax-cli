@@ -162,14 +162,12 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    let initial_task_ids = context
+    let should_refresh_sessions = context
         .registry
         .list_tasks()
         .into_iter()
-        .filter(|task| task.lifecycle_status != ajax_core::models::LifecycleStatus::Removed)
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    if initial_task_ids.is_empty() {
+        .any(|task| should_probe_live_substrate(task) || task.tmux_status.is_some());
+    if !should_refresh_sessions {
         return Ok(false);
     }
 
@@ -193,11 +191,25 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
         .filter(|task| should_probe_live_substrate(task))
         .map(|task| task.id.clone())
         .collect::<Vec<_>>();
+    let task_snapshots = task_ids
+        .iter()
+        .filter_map(|task_id| context.registry.get_task(task_id).cloned())
+        .collect::<Vec<_>>();
+    let windows_output = if task_snapshots
+        .iter()
+        .any(|task| TmuxAdapter::parse_session_status(&task.tmux_session, &sessions_output).exists)
+    {
+        let windows_command = tmux.list_all_windows();
+        match runner.run(&windows_command) {
+            Ok(output) if output.status_code == 0 => Some(Ok(output.stdout)),
+            Ok(_) | Err(_) => Some(Err(())),
+        }
+    } else {
+        None
+    };
 
-    for task_id in task_ids {
-        let Some(task_snapshot) = context.registry.get_task(&task_id).cloned() else {
-            continue;
-        };
+    for task_snapshot in task_snapshots {
+        let task_id = task_snapshot.id.clone();
         let session_status =
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
@@ -250,39 +262,49 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
                 .map_err(|error| CliError::CommandFailed(error.to_string()))?;
         }
 
-        let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
-        let windows_output = match runner.run(&windows_command) {
-            Ok(output) if output.status_code == 0 => output.stdout,
-            Ok(_) | Err(_) => {
-                context
-                    .registry
-                    .update_worktrunk_status(
-                        &task_id,
-                        Some(ajax_core::models::WorktrunkStatus {
-                            exists: false,
-                            window_name: task_snapshot.worktrunk_window.clone(),
-                            current_path: task_snapshot.worktree_path.clone(),
-                            points_at_expected_path: false,
-                        }),
-                    )
-                    .map_err(|error| CliError::CommandFailed(error.to_string()))?;
-                refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    live::apply_observation(
-                        task,
-                        LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
-                    );
-                    refresh_cached_annotations(task);
-                    changed = true;
-                }
-                continue;
+        let Some(Ok(windows_output)) = windows_output.as_ref() else {
+            context
+                .registry
+                .update_worktrunk_status(
+                    &task_id,
+                    Some(ajax_core::models::WorktrunkStatus {
+                        exists: false,
+                        window_name: task_snapshot.worktrunk_window.clone(),
+                        current_path: task_snapshot.worktree_path.clone(),
+                        points_at_expected_path: false,
+                    }),
+                )
+                .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+            refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
+            if let Some(task) = context.registry.get_task_mut(&task_id) {
+                live::apply_observation(
+                    task,
+                    LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
+                );
+                refresh_cached_annotations(task);
+                changed = true;
             }
+            continue;
         };
-        let worktrunk_status = TmuxAdapter::parse_worktrunk_status(
+        let all_windows_output_empty = windows_output.trim().is_empty();
+        let mut worktrunk_status = TmuxAdapter::parse_worktrunk_status_for_session(
+            &task_snapshot.tmux_session,
             &task_snapshot.worktrunk_window,
             &task_snapshot.worktree_path.display().to_string(),
-            &windows_output,
+            windows_output,
         );
+        if !worktrunk_status.exists && all_windows_output_empty {
+            let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
+            if let Ok(output) = runner.run(&windows_command) {
+                if output.status_code == 0 {
+                    worktrunk_status = TmuxAdapter::parse_worktrunk_status(
+                        &task_snapshot.worktrunk_window,
+                        &task_snapshot.worktree_path.display().to_string(),
+                        &output.stdout,
+                    );
+                }
+            }
+        }
         changed |= task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
 
         let worktrunk_status_changed =
@@ -569,7 +591,7 @@ mod tests {
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
                 [command, ..] if command == "list-windows" => {
-                    "worktrunk\t/tmp/worktrees/web-fix-login\n"
+                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => "Do you want to proceed? y/n\n",
                 _ => "",
@@ -759,7 +781,7 @@ mod tests {
                     "ajax-web-existing\najax-web-code\n"
                 }
                 [command, ..] if command == "list-windows" => {
-                    "worktrunk\t/Users/matt/projects/web__worktrees/ajax-code\n"
+                    "ajax-web-code\tworktrunk\t/Users/matt/projects/web__worktrees/ajax-code\n"
                 }
                 [command, ..] if command == "capture-pane" => "codex is working\n",
                 _ => "",

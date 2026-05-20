@@ -714,14 +714,17 @@ impl App {
         self.pending_confirmation.as_ref() == Some(item)
     }
 
-    pub(crate) fn tick_notices(&mut self) {
+    pub(crate) fn tick_notices(&mut self) -> bool {
+        let mut changed = false;
         self.notices.retain(|_, notice| {
             if notice.severity == Severity::Confirm {
                 true
             } else if notice.ticks_remaining == 0 {
+                changed = true;
                 false
             } else {
                 notice.ticks_remaining -= 1;
+                changed = true;
                 true
             }
         });
@@ -729,11 +732,14 @@ impl App {
             if notice.severity != Severity::Confirm {
                 if notice.ticks_remaining == 0 {
                     self.system_notice = None;
+                    changed = true;
                 } else {
                     notice.ticks_remaining -= 1;
+                    changed = true;
                 }
             }
         }
+        changed
     }
 }
 

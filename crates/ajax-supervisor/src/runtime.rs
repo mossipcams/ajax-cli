@@ -1,4 +1,7 @@
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use ajax_core::events::MonitorEvent;
 use tokio::{
@@ -10,6 +13,8 @@ use crate::{
     agent::codex::CodexAdapter, event_log::EventLog,
     process_observer::supervise_process_with_cancellation, repo_observer, SupervisorError,
 };
+
+const GIT_SNAPSHOT_MIN_INTERVAL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MonitorConfig {
@@ -183,6 +188,7 @@ fn start_watcher(
     let git_snapshot_worktree = config.worktree_path.clone();
     let runtime = tokio::runtime::Handle::current();
     let forwarder = tokio::task::spawn_blocking(move || {
+        let mut last_git_snapshot = None;
         while let Ok(event) = notify_receiver.recv() {
             let Ok(event) = event else {
                 continue;
@@ -196,7 +202,13 @@ fn start_watcher(
                     return;
                 }
             }
-            if git_snapshot_policy == GitSnapshotPolicy::OnFileChange {
+            if git_snapshot_policy == GitSnapshotPolicy::OnFileChange
+                && should_snapshot_file_change(
+                    &mut last_git_snapshot,
+                    Instant::now(),
+                    GIT_SNAPSHOT_MIN_INTERVAL,
+                )
+            {
                 if let Some(worktree_path) = git_snapshot_worktree.clone() {
                     let events = repo_events.clone();
                     runtime.spawn(async move {
@@ -210,6 +222,19 @@ fn start_watcher(
     Ok((Some(watcher), Some(forwarder)))
 }
 
+fn should_snapshot_file_change(
+    last_snapshot: &mut Option<Instant>,
+    now: Instant,
+    min_interval: Duration,
+) -> bool {
+    if last_snapshot.is_some_and(|last| now.duration_since(last) < min_interval) {
+        return false;
+    }
+
+    *last_snapshot = Some(now);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use std::{fs, os::unix::fs::PermissionsExt, time::Duration};
@@ -217,7 +242,10 @@ mod tests {
     use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent};
     use tokio::sync::{mpsc, watch};
 
-    use super::{spawn_monitor, GitSnapshotPolicy, MonitorConfig};
+    use super::{
+        should_snapshot_file_change, spawn_monitor, GitSnapshotPolicy, MonitorConfig,
+        GIT_SNAPSHOT_MIN_INTERVAL,
+    };
 
     #[test]
     fn monitor_config_builds_codex_exec_defaults() {
@@ -231,6 +259,28 @@ mod tests {
         assert_eq!(config.git_snapshots, GitSnapshotPolicy::Disabled);
         assert_eq!(config.hang_after, None);
         assert_eq!(config.event_log_path, None);
+    }
+
+    #[test]
+    fn git_snapshot_gate_coalesces_rapid_file_changes() {
+        let start = std::time::Instant::now();
+        let mut last_snapshot = None;
+
+        assert!(should_snapshot_file_change(
+            &mut last_snapshot,
+            start,
+            GIT_SNAPSHOT_MIN_INTERVAL
+        ));
+        assert!(!should_snapshot_file_change(
+            &mut last_snapshot,
+            start + GIT_SNAPSHOT_MIN_INTERVAL / 2,
+            GIT_SNAPSHOT_MIN_INTERVAL
+        ));
+        assert!(should_snapshot_file_change(
+            &mut last_snapshot,
+            start + GIT_SNAPSHOT_MIN_INTERVAL,
+            GIT_SNAPSHOT_MIN_INTERVAL
+        ));
     }
 
     #[tokio::test]
