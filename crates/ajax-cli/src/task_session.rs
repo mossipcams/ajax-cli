@@ -265,9 +265,6 @@ fn classify_task_poll_events(tty_flags: PollFlags, master_flags: PollFlags) -> T
     if tty_flags.contains(PollFlags::POLLNVAL) {
         return TaskPollAction::Detach;
     }
-    if tty_flags.intersects(PollFlags::POLLERR | PollFlags::POLLHUP) {
-        return TaskPollAction::Detach;
-    }
     if master_flags.contains(PollFlags::POLLNVAL) {
         return TaskPollAction::Close;
     }
@@ -275,8 +272,9 @@ fn classify_task_poll_events(tty_flags: PollFlags, master_flags: PollFlags) -> T
         return TaskPollAction::Close;
     }
 
+    let transient_tty_event = tty_flags.intersects(PollFlags::POLLERR | PollFlags::POLLHUP);
     TaskPollAction::Pump {
-        tty_ready: tty_flags.contains(PollFlags::POLLIN),
+        tty_ready: tty_flags.contains(PollFlags::POLLIN) && !transient_tty_event,
         master_ready: master_flags.contains(PollFlags::POLLIN),
     }
 }
@@ -900,6 +898,24 @@ mod tests {
         assert_eq!(
             super::classify_task_poll_events(PollFlags::empty(), PollFlags::POLLERR),
             super::TaskPollAction::Close
+        );
+    }
+
+    #[test]
+    fn task_poll_classification_keeps_task_open_on_terminal_side_app_switch_hangup() {
+        assert_eq!(
+            super::classify_task_poll_events(PollFlags::POLLHUP, PollFlags::empty()),
+            super::TaskPollAction::Pump {
+                tty_ready: false,
+                master_ready: false,
+            }
+        );
+        assert_eq!(
+            super::classify_task_poll_events(PollFlags::POLLERR, PollFlags::POLLIN),
+            super::TaskPollAction::Pump {
+                tty_ready: false,
+                master_ready: true,
+            }
         );
     }
 
