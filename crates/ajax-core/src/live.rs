@@ -8,6 +8,10 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
     }
 
     let lines = meaningful_lines(trimmed);
+    if looks_like_idle_codex_prompt(&lines) {
+        return LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+    }
+
     if lines
         .last()
         .is_some_and(|line| looks_like_shell_prompt(line))
@@ -36,6 +40,13 @@ fn meaningful_lines(text: &str) -> Vec<&str> {
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .collect()
+}
+
+fn looks_like_idle_codex_prompt(lines: &[&str]) -> bool {
+    lines.iter().rev().take(3).any(|line| line.starts_with('›'))
+        && lines
+            .last()
+            .is_some_and(|line| line.starts_with("gpt-") && line.contains("~/"))
 }
 
 fn classify_pane_line(line: &str) -> Option<LiveObservation> {
@@ -500,6 +511,18 @@ Plan ready. Approve to proceed.";
     }
 
     #[test]
+    fn pane_classifier_treats_idle_codex_prompt_as_waiting_for_input() {
+        let pane = "\
+› Improve documentation in @filename
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
     fn pane_classifier_does_not_treat_negative_done_phrasing_as_complete() {
         let pane = "The task is not done yet; running cargo test now";
 
@@ -676,6 +699,31 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CommandFailed)
+        );
+    }
+
+    #[test]
+    fn merge_conflict_flag_is_cleared_by_later_input_prompt() {
+        let mut task = base_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(
+                LiveStatusKind::MergeConflict,
+                "merge conflict needs attention",
+            ),
+        );
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
         );
     }
 

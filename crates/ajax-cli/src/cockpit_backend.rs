@@ -393,9 +393,28 @@ fn should_probe_live_substrate(task: &Task) -> bool {
             | LifecycleStatus::Active
             | LifecycleStatus::Waiting
             | LifecycleStatus::Reviewable
-    ) || task.has_side_flag(ajax_core::models::SideFlag::AgentRunning)
+    ) || has_recoverable_error_live_status(task)
+        || task.has_side_flag(ajax_core::models::SideFlag::AgentRunning)
         || task.has_side_flag(ajax_core::models::SideFlag::TmuxMissing)
         || task.has_side_flag(ajax_core::models::SideFlag::WorktrunkMissing)
+}
+
+fn has_recoverable_error_live_status(task: &Task) -> bool {
+    task.lifecycle_status == LifecycleStatus::Error
+        && task.live_status.as_ref().is_some_and(|status| {
+            matches!(
+                status.kind,
+                LiveStatusKind::WaitingForApproval
+                    | LiveStatusKind::WaitingForInput
+                    | LiveStatusKind::Blocked
+                    | LiveStatusKind::RateLimited
+                    | LiveStatusKind::AuthRequired
+                    | LiveStatusKind::MergeConflict
+                    | LiveStatusKind::CiFailed
+                    | LiveStatusKind::ContextLimit
+                    | LiveStatusKind::CommandFailed
+            )
+        })
 }
 
 fn refresh_runtime_projection_from_tmux_probe(
@@ -831,6 +850,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn live_refresh_reprobes_error_task_with_recoverable_conflict_prompt() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Error;
+        task.agent_status = AgentRuntimeStatus::Blocked;
+        task.add_side_flag(SideFlag::Conflicted);
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::MergeConflict,
+            "merge conflict needs attention",
+        ));
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        let mut runner = SpaghettiRecoveryRunner::default();
+
+        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+        let task = context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .expect("fixture task should remain registered");
+
+        assert!(changed);
+        assert!(runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+        ));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[derive(Default)]
+    struct SpaghettiRecoveryRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for SpaghettiRecoveryRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [command, ..] if command == "list-windows" => {
+                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                }
+                [command, ..] if command == "capture-pane" => {
+                    "› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti\n"
+                }
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
     #[derive(Default)]
     struct SubstrateRecoveryRunner {
         commands: Vec<CommandSpec>,
@@ -945,6 +1032,41 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .expect("fixture task should exist");
         task.lifecycle_status = LifecycleStatus::Cleanable;
+        task.tmux_status = Some(ajax_core::models::TmuxStatus::present(
+            task.tmux_session.clone(),
+        ));
+        task.worktrunk_status = Some(ajax_core::models::WorktrunkStatus {
+            exists: true,
+            window_name: task.worktrunk_window.clone(),
+            current_path: task.worktree_path.clone(),
+            points_at_expected_path: true,
+        });
+
+        let mut runner = CountingLiveRefreshRunner::default();
+
+        let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
+
+        assert!(!changed);
+        assert!(runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
+        ));
+        assert!(!runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "list-windows")
+        ));
+        assert!(!runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+        ));
+    }
+
+    #[test]
+    fn live_refresh_does_not_probe_generic_error_task_without_live_attention() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Error;
+        task.agent_status = AgentRuntimeStatus::Blocked;
         task.tmux_status = Some(ajax_core::models::TmuxStatus::present(
             task.tmux_session.clone(),
         ));

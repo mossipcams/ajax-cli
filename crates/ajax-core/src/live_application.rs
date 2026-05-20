@@ -10,6 +10,7 @@ pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
     let observation = reduce_task_live_observation(task, observation);
     let refresh_activity = refreshes_activity(observation.kind);
     let has_missing_substrate_flag = has_missing_substrate_flag(task);
+    clear_recovered_live_flags(task, observation.kind);
 
     match observation.kind {
         LiveStatusKind::WorktreeMissing => {
@@ -103,6 +104,17 @@ fn recovered_from_missing_substrate(task: &Task, next: LiveStatusKind) -> bool {
 
 fn has_missing_substrate_flag(task: &Task) -> bool {
     task.side_flags().any(SideFlag::is_missing_substrate)
+}
+
+fn clear_recovered_live_flags(task: &mut Task, kind: LiveStatusKind) {
+    if kind != LiveStatusKind::MergeConflict
+        && !task
+            .git_status
+            .as_ref()
+            .is_some_and(|git_status| git_status.conflicted)
+    {
+        task.remove_side_flag(SideFlag::Conflicted);
+    }
 }
 
 fn refreshes_activity(kind: LiveStatusKind) -> bool {
