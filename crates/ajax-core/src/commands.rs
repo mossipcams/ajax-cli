@@ -2431,6 +2431,54 @@ mod tests {
     }
 
     #[test]
+    fn open_task_plan_allows_stale_runtime_when_live_status_requests_resume() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::Blocked, "blocked"));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            std::time::SystemTime::UNIX_EPOCH,
+            RuntimeObservationSource::TmuxProbe,
+        );
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
+
+        assert!(plan.blocked_reasons.is_empty());
+        assert_eq!(
+            plan.commands,
+            vec![
+                CommandSpec::new(
+                    "tmux",
+                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+    }
+
+    #[test]
     fn lifecycle_transitions_update_registry_status() {
         let mut context = context_with_tasks();
         context

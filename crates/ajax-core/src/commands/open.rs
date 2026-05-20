@@ -3,7 +3,7 @@ use super::trunk::trunk_task_plan_with_open_mode;
 use super::{CommandContext, CommandError, CommandPlan, OpenMode};
 use crate::{
     adapters::TmuxAdapter,
-    models::SideFlag,
+    models::{LiveStatusKind, SideFlag, Task},
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
@@ -19,6 +19,7 @@ pub fn open_task_plan<R: Registry>(
     if task
         .runtime_projection
         .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
+        && !live_attention_allows_resume(task)
     {
         let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
         plan.blocked_reasons
@@ -66,6 +67,21 @@ pub fn open_task_plan<R: Registry>(
     };
 
     Ok(plan)
+}
+
+fn live_attention_allows_resume(task: &Task) -> bool {
+    task.live_status.as_ref().is_some_and(|live_status| {
+        matches!(
+            live_status.kind,
+            LiveStatusKind::Blocked
+                | LiveStatusKind::WaitingForApproval
+                | LiveStatusKind::WaitingForInput
+                | LiveStatusKind::RateLimited
+                | LiveStatusKind::AuthRequired
+                | LiveStatusKind::ContextLimit
+                | LiveStatusKind::CommandFailed
+        )
+    })
 }
 
 pub fn mark_task_opened<R: Registry>(
