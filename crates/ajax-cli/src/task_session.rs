@@ -14,12 +14,14 @@ use nix::{
     },
 };
 use std::{
+    env,
     ffi::CString,
-    fs::File,
+    fs::{File, OpenOptions},
     io::{self, Read, Write},
     os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd},
     os::raw::c_char,
     os::unix::ffi::OsStrExt,
+    path::PathBuf,
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -46,6 +48,7 @@ const ATTACH_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_INTERRUPTED_ATTACH_RETRIES: usize = 3;
 const ATTACH_RETRY_STABLE_AFTER: Duration = Duration::from_secs(2);
 const ATTACH_OUTPUT_BUFFER_LIMIT: usize = 8192;
+const TASK_SESSION_TRACE_ENV: &str = "AJAX_TASK_SESSION_TRACE";
 const TASK_SCREEN_ENTRY_SEQUENCE: &[u8] =
     b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[2J\x1b[H";
 const TASK_SCREEN_EXIT_SEQUENCE: &[u8] = b"\x1b[?25h";
@@ -67,6 +70,54 @@ enum TaskPollAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TaskOperatorTerminalSource {
     InheritedStdio,
+}
+
+struct TaskSessionTrace {
+    started: Instant,
+    file: Option<File>,
+}
+
+impl TaskSessionTrace {
+    fn from_env() -> Result<Self, CliError> {
+        let path = trace_path_from_env(env::var_os(TASK_SESSION_TRACE_ENV));
+        Self::from_path(path)
+    }
+
+    fn from_path(path: Option<PathBuf>) -> Result<Self, CliError> {
+        let file = match path {
+            Some(path) => Some(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&path)
+                    .map_err(|error| {
+                        CliError::CommandFailed(format!(
+                            "failed to open task session trace {}: {error}",
+                            path.display()
+                        ))
+                    })?,
+            ),
+            None => None,
+        };
+        Ok(Self {
+            started: Instant::now(),
+            file,
+        })
+    }
+
+    fn log(&mut self, event: &str, detail: impl AsRef<str>) {
+        let Some(file) = self.file.as_mut() else {
+            return;
+        };
+        let line = format_task_session_trace_line(self.started.elapsed(), event, detail.as_ref());
+        let _ = file.write_all(line.as_bytes());
+        let _ = file.flush();
+    }
+
+    #[cfg(test)]
+    fn is_enabled(&self) -> bool {
+        self.file.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -309,6 +360,45 @@ fn attach_output_mentions_interrupted(output: &[u8]) -> bool {
     output.contains("eintr") || output.contains("interrupted system call")
 }
 
+fn trace_path_from_env(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|path| !path.is_empty()).map(PathBuf::from)
+}
+
+fn format_task_session_trace_line(elapsed: Duration, event: &str, detail: &str) -> String {
+    let event = trace_field(event);
+    let detail = trace_detail(detail);
+    format!(
+        "elapsed_ms={} event={} {}\n",
+        elapsed.as_millis(),
+        event,
+        detail
+    )
+}
+
+fn trace_field(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.' | ':') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn trace_detail(value: &str) -> String {
+    value.replace(['\r', '\n'], "\\n")
+}
+
+fn command_for_trace(command: &CommandSpec) -> String {
+    std::iter::once(command.program.as_str())
+        .chain(command.args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[cfg(test)]
 fn task_detach_sequence() -> &'static [TaskDetachStep] {
     &[
@@ -350,6 +440,11 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
     let mut terminal = TaskOperatorTerminal::open()?;
     let _guard = terminal.enter_raw_mode(original_termios, &fork_config.raw_termios)?;
     let _screen_guard = TaskScreenGuard::enter(&mut terminal.output)?;
+    let mut trace = TaskSessionTrace::from_env()?;
+    trace.log(
+        "session_start",
+        format!("command={}", command_for_trace(command)),
+    );
     let mut consecutive_interrupted_retries = 0;
 
     loop {
@@ -358,21 +453,44 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             &fork_config,
             &mut terminal.input,
             &mut terminal.output,
+            &mut trace,
         )? {
-            TaskSessionOutcome::Detached => return Ok(()),
+            TaskSessionOutcome::Detached => {
+                trace.log("session_end", "outcome=detached");
+                return Ok(());
+            }
             TaskSessionOutcome::AttachClientExited(exit) => {
                 if !attach_exit_allows_retry(&exit) {
+                    trace.log(
+                        "session_end",
+                        format!(
+                            "outcome=attach_client_exited retry=false attached_ms={}",
+                            exit.attached_for.as_millis()
+                        ),
+                    );
                     return Ok(());
                 }
                 if exit.attached_for >= ATTACH_RETRY_STABLE_AFTER {
                     consecutive_interrupted_retries = 0;
                 }
                 if consecutive_interrupted_retries >= MAX_INTERRUPTED_ATTACH_RETRIES {
+                    trace.log(
+                        "session_end",
+                        format!("outcome=retry_limit retries={consecutive_interrupted_retries}"),
+                    );
                     return Err(CliError::CommandFailed(
                         "task attach client repeatedly exited after interrupted system call"
                             .to_string(),
                     ));
                 }
+                trace.log(
+                    "reattach",
+                    format!(
+                        "reason=interrupted_attach retries={} attached_ms={}",
+                        consecutive_interrupted_retries + 1,
+                        exit.attached_for.as_millis()
+                    ),
+                );
                 consecutive_interrupted_retries += 1;
             }
         }
@@ -384,6 +502,7 @@ fn run_pty_task_attach(
     fork_config: &TaskPtyForkConfig,
     terminal_input: &mut File,
     terminal_output: &mut File,
+    trace: &mut TaskSessionTrace,
 ) -> Result<TaskSessionOutcome, CliError> {
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
@@ -406,7 +525,8 @@ fn run_pty_task_attach(
             exit_child_after_exec_failure();
         }
         ForkptyResult::Parent { child, master } => {
-            pump_task_pty(terminal_input, terminal_output, master, child)
+            trace.log("attach_start", format!("child={}", child.as_raw()));
+            pump_task_pty(terminal_input, terminal_output, master, child, trace)
         }
     }
 }
@@ -522,6 +642,7 @@ fn pump_task_pty(
     terminal_output: &mut File,
     master: OwnedFd,
     child: nix::unistd::Pid,
+    trace: &mut TaskSessionTrace,
 ) -> Result<TaskSessionOutcome, CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
@@ -538,10 +659,18 @@ fn pump_task_pty(
                     PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
                 ),
             ];
-            poll(&mut poll_fds, PollTimeout::NONE).map_err(tty_error("failed to poll task PTY"))?;
+            if let Err(error) = poll(&mut poll_fds, PollTimeout::NONE) {
+                trace.log("poll_err", format!("error={error}"));
+                return Err(tty_error("failed to poll task PTY")(error));
+            }
             let tty_flags = poll_fds[0].revents().unwrap_or_else(PollFlags::empty);
             let master_flags = poll_fds[1].revents().unwrap_or_else(PollFlags::empty);
-            classify_task_poll_events(tty_flags, master_flags)
+            let action = classify_task_poll_events(tty_flags, master_flags);
+            trace.log(
+                "poll_flags",
+                format!("tty={tty_flags:?} master={master_flags:?} action={action:?}"),
+            );
+            action
         };
 
         let (tty_ready, master_ready) = match poll_action {
@@ -550,18 +679,28 @@ fn pump_task_pty(
                 master_ready,
             } => (tty_ready, master_ready),
             TaskPollAction::Detach => {
+                trace.log("outcome", "kind=detach reason=tty_poll");
                 return detach_task_child(master, child);
             }
             TaskPollAction::Close => {
-                return attach_client_exit(child, recent_output, attached_at.elapsed());
+                trace.log("outcome", "kind=attach_exit reason=master_poll");
+                return attach_client_exit(child, recent_output, attached_at.elapsed(), trace);
             }
         };
 
         if tty_ready {
-            let count = terminal_input
-                .read(&mut tty_input)
-                .map_err(io_error("failed to read task terminal input"))?;
+            let count = match terminal_input.read(&mut tty_input) {
+                Ok(count) => {
+                    trace.log("tty_read", format!("bytes={count}"));
+                    count
+                }
+                Err(error) => {
+                    trace.log("tty_read_err", format!("error={error}"));
+                    return Err(io_error("failed to read task terminal input")(error));
+                }
+            };
             if count == 0 {
+                trace.log("outcome", "kind=detach reason=tty_eof");
                 return detach_task_child(master, child);
             }
             let filtered = filter_task_input_after_startup_grace_period(
@@ -569,11 +708,14 @@ fn pump_task_pty(
                 attached_at.elapsed(),
             );
             if !filtered.bytes.is_empty() {
-                master
-                    .write_all(&filtered.bytes)
-                    .map_err(io_error("failed to write task PTY"))?;
+                if let Err(error) = master.write_all(&filtered.bytes) {
+                    trace.log("master_write_err", format!("error={error}"));
+                    return Err(io_error("failed to write task PTY")(error));
+                }
+                trace.log("master_write", format!("bytes={}", filtered.bytes.len()));
             }
             if filtered.action == TaskInputAction::ReturnToCockpit {
+                trace.log("outcome", "kind=detach reason=ctrl_q");
                 return detach_task_child(master, child);
             }
         }
@@ -581,21 +723,30 @@ fn pump_task_pty(
         if master_ready {
             match master.read(&mut pty_output) {
                 Ok(0) => {
-                    return attach_client_exit(child, recent_output, attached_at.elapsed());
+                    trace.log("master_read", "bytes=0");
+                    trace.log("outcome", "kind=attach_exit reason=master_eof");
+                    return attach_client_exit(child, recent_output, attached_at.elapsed(), trace);
                 }
                 Ok(count) => {
+                    trace.log("master_read", format!("bytes={count}"));
                     append_recent_output(&mut recent_output, &pty_output[..count]);
-                    terminal_output
-                        .write_all(&pty_output[..count])
-                        .map_err(io_error("failed to write task terminal output"))?;
-                    terminal_output
-                        .flush()
-                        .map_err(io_error("failed to flush task terminal output"))?;
+                    if let Err(error) = terminal_output.write_all(&pty_output[..count]) {
+                        trace.log("tty_write_err", format!("error={error}"));
+                        return Err(io_error("failed to write task terminal output")(error));
+                    }
+                    trace.log("tty_write", format!("bytes={count}"));
+                    if let Err(error) = terminal_output.flush() {
+                        trace.log("tty_flush_err", format!("error={error}"));
+                        return Err(io_error("failed to flush task terminal output")(error));
+                    }
                 }
                 Err(error) if pty_was_closed(&error) => {
-                    return attach_client_exit(child, recent_output, attached_at.elapsed());
+                    trace.log("master_read_closed", format!("error={error}"));
+                    trace.log("outcome", "kind=attach_exit reason=master_closed");
+                    return attach_client_exit(child, recent_output, attached_at.elapsed(), trace);
                 }
                 Err(error) => {
+                    trace.log("master_read_err", format!("error={error}"));
                     return Err(CliError::CommandFailed(format!(
                         "failed to read task PTY: {error}"
                     )));
@@ -617,8 +768,17 @@ fn attach_client_exit(
     child: nix::unistd::Pid,
     output: Vec<u8>,
     attached_for: Duration,
+    trace: &mut TaskSessionTrace,
 ) -> Result<TaskSessionOutcome, CliError> {
     let status = wait_for_attach_child_status(child)?;
+    trace.log(
+        "child_status",
+        format!(
+            "status={status:?} attached_ms={} output_bytes={}",
+            attached_for.as_millis(),
+            output.len()
+        ),
+    );
     Ok(TaskSessionOutcome::AttachClientExited(TaskAttachExit {
         output,
         status,
@@ -1026,6 +1186,27 @@ mod tests {
                 master_ready: true,
             }
         );
+    }
+
+    #[test]
+    fn task_session_trace_line_is_compact_and_single_line() {
+        assert_eq!(
+            super::format_task_session_trace_line(
+                Duration::from_millis(42),
+                "poll err",
+                "error=EINTR\nnext=line",
+            ),
+            "elapsed_ms=42 event=poll_err error=EINTR\\nnext=line\n"
+        );
+    }
+
+    #[test]
+    fn task_session_trace_is_disabled_without_path() {
+        let trace = super::TaskSessionTrace::from_path(None).unwrap();
+
+        assert!(!trace.is_enabled());
+        assert!(super::trace_path_from_env(None).is_none());
+        assert!(super::trace_path_from_env(Some(std::ffi::OsString::new())).is_none());
     }
 
     #[test]
