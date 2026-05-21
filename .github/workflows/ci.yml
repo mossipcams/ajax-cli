@@ -99,7 +99,7 @@ jobs:
         uses: taiki-e/install-action@nextest
 
       - name: Test
-        run: cargo nextest run --all-features
+        run: cargo nextest run --all-features --test-threads=1
 
       - name: Cargo test compatibility
         run: cargo test --all-features -- --test-threads=1
