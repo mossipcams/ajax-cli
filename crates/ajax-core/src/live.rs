@@ -43,10 +43,27 @@ fn meaningful_lines(text: &str) -> Vec<&str> {
 }
 
 fn looks_like_idle_codex_prompt(lines: &[&str]) -> bool {
-    lines.iter().rev().take(3).any(|line| line.starts_with('›'))
+    let recent_lines: Vec<_> = lines.iter().rev().take(4).copied().collect();
+
+    recent_lines.iter().any(|line| line.starts_with('›'))
         && lines
             .last()
             .is_some_and(|line| line.starts_with("gpt-") && line.contains("~/"))
+        && !recent_lines
+            .iter()
+            .any(|line| looks_like_active_agent_status(line))
+}
+
+fn looks_like_active_agent_status(line: &str) -> bool {
+    contains_any(
+        &line.to_ascii_lowercase(),
+        &[
+            "codex is working",
+            "claude is working",
+            "thinking",
+            "working on your task",
+        ],
+    )
 }
 
 fn classify_pane_line(line: &str) -> Option<LiveObservation> {
@@ -520,6 +537,20 @@ Plan ready. Approve to proceed.";
         let observation = classify_pane(pane);
 
         assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn pane_classifier_treats_codex_working_prompt_as_agent_running() {
+        let pane = "\
+› Improve documentation in @filename
+
+• codex is working
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
     }
 
     #[test]
