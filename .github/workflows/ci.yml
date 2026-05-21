@@ -102,10 +102,10 @@ jobs:
         run: cargo nextest run --all-features
 
       - name: Cargo test compatibility
-        run: cargo test --all-features
+        run: cargo test --all-features -- --test-threads=1
 
       - name: Test locked dependencies
-        run: cargo test --locked
+        run: cargo test --locked -- --test-threads=1
 
       - name: Doc tests
         run: cargo test --doc
