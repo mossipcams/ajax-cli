@@ -43,6 +43,9 @@ const TERM_ATTACH_AFTER: Duration = Duration::from_millis(100);
 const KILL_ATTACH_AFTER: Duration = Duration::from_millis(300);
 const GIVE_UP_ATTACH_AFTER: Duration = Duration::from_millis(600);
 const ATTACH_SHUTDOWN_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const MAX_INTERRUPTED_ATTACH_RETRIES: usize = 3;
+const ATTACH_RETRY_STABLE_AFTER: Duration = Duration::from_secs(2);
+const ATTACH_OUTPUT_BUFFER_LIMIT: usize = 8192;
 const TASK_SCREEN_ENTRY_SEQUENCE: &[u8] =
     b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[2J\x1b[H";
 const TASK_SCREEN_EXIT_SEQUENCE: &[u8] = b"\x1b[?25h";
@@ -64,6 +67,19 @@ enum TaskPollAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TaskOperatorTerminalSource {
     InheritedStdio,
+}
+
+#[derive(Debug)]
+struct TaskAttachExit {
+    output: Vec<u8>,
+    status: Option<WaitStatus>,
+    attached_for: Duration,
+}
+
+#[derive(Debug)]
+enum TaskSessionOutcome {
+    Detached,
+    AttachClientExited(TaskAttachExit),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -279,6 +295,20 @@ fn classify_task_poll_events(tty_flags: PollFlags, master_flags: PollFlags) -> T
     }
 }
 
+fn attach_exit_allows_retry(exit: &TaskAttachExit) -> bool {
+    !attach_status_succeeded(exit.status.as_ref())
+        && attach_output_mentions_interrupted(&exit.output)
+}
+
+fn attach_status_succeeded(status: Option<&WaitStatus>) -> bool {
+    matches!(status, Some(WaitStatus::Exited(_, 0)))
+}
+
+fn attach_output_mentions_interrupted(output: &[u8]) -> bool {
+    let output = String::from_utf8_lossy(output).to_ascii_lowercase();
+    output.contains("eintr") || output.contains("interrupted system call")
+}
+
 #[cfg(test)]
 fn task_detach_sequence() -> &'static [TaskDetachStep] {
     &[
@@ -317,7 +347,44 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
         child_winsize.ws_row,
         child_winsize.ws_col,
     );
+    let mut terminal = TaskOperatorTerminal::open()?;
+    let _guard = terminal.enter_raw_mode(original_termios, &fork_config.raw_termios)?;
+    let _screen_guard = TaskScreenGuard::enter(&mut terminal.output)?;
+    let mut consecutive_interrupted_retries = 0;
 
+    loop {
+        match run_pty_task_attach(
+            &prepared,
+            &fork_config,
+            &mut terminal.input,
+            &mut terminal.output,
+        )? {
+            TaskSessionOutcome::Detached => return Ok(()),
+            TaskSessionOutcome::AttachClientExited(exit) => {
+                if !attach_exit_allows_retry(&exit) {
+                    return Ok(());
+                }
+                if exit.attached_for >= ATTACH_RETRY_STABLE_AFTER {
+                    consecutive_interrupted_retries = 0;
+                }
+                if consecutive_interrupted_retries >= MAX_INTERRUPTED_ATTACH_RETRIES {
+                    return Err(CliError::CommandFailed(
+                        "task attach client repeatedly exited after interrupted system call"
+                            .to_string(),
+                    ));
+                }
+                consecutive_interrupted_retries += 1;
+            }
+        }
+    }
+}
+
+fn run_pty_task_attach(
+    prepared: &PreparedTaskCommand,
+    fork_config: &TaskPtyForkConfig,
+    terminal_input: &mut File,
+    terminal_output: &mut File,
+) -> Result<TaskSessionOutcome, CliError> {
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
     // either execs the requested command or exits immediately.
@@ -339,12 +406,7 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             exit_child_after_exec_failure();
         }
         ForkptyResult::Parent { child, master } => {
-            let mut terminal = TaskOperatorTerminal::open()?;
-            let _guard = terminal.enter_raw_mode(original_termios, &fork_config.raw_termios)?;
-            let _screen_guard = TaskScreenGuard::enter(&mut terminal.output)?;
-            let result = pump_task_pty(&mut terminal.input, &mut terminal.output, master, child);
-            let _ = waitpid(child, Some(WaitPidFlag::WNOHANG));
-            result
+            pump_task_pty(terminal_input, terminal_output, master, child)
         }
     }
 }
@@ -460,10 +522,11 @@ fn pump_task_pty(
     terminal_output: &mut File,
     master: OwnedFd,
     child: nix::unistd::Pid,
-) -> Result<(), CliError> {
+) -> Result<TaskSessionOutcome, CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
     let mut pty_output = [0_u8; 8192];
+    let mut recent_output = Vec::new();
     let attached_at = Instant::now();
 
     loop {
@@ -490,7 +553,7 @@ fn pump_task_pty(
                 return detach_task_child(master, child);
             }
             TaskPollAction::Close => {
-                return Ok(());
+                return attach_client_exit(child, recent_output, attached_at.elapsed());
             }
         };
 
@@ -518,9 +581,10 @@ fn pump_task_pty(
         if master_ready {
             match master.read(&mut pty_output) {
                 Ok(0) => {
-                    return Ok(());
+                    return attach_client_exit(child, recent_output, attached_at.elapsed());
                 }
                 Ok(count) => {
+                    append_recent_output(&mut recent_output, &pty_output[..count]);
                     terminal_output
                         .write_all(&pty_output[..count])
                         .map_err(io_error("failed to write task terminal output"))?;
@@ -529,7 +593,7 @@ fn pump_task_pty(
                         .map_err(io_error("failed to flush task terminal output"))?;
                 }
                 Err(error) if pty_was_closed(&error) => {
-                    return Ok(());
+                    return attach_client_exit(child, recent_output, attached_at.elapsed());
                 }
                 Err(error) => {
                     return Err(CliError::CommandFailed(format!(
@@ -541,9 +605,54 @@ fn pump_task_pty(
     }
 }
 
-fn detach_task_child(master: File, child: nix::unistd::Pid) -> Result<(), CliError> {
+fn append_recent_output(output: &mut Vec<u8>, bytes: &[u8]) {
+    output.extend_from_slice(bytes);
+    if output.len() > ATTACH_OUTPUT_BUFFER_LIMIT {
+        let excess = output.len() - ATTACH_OUTPUT_BUFFER_LIMIT;
+        output.drain(..excess);
+    }
+}
+
+fn attach_client_exit(
+    child: nix::unistd::Pid,
+    output: Vec<u8>,
+    attached_for: Duration,
+) -> Result<TaskSessionOutcome, CliError> {
+    let status = wait_for_attach_child_status(child)?;
+    Ok(TaskSessionOutcome::AttachClientExited(TaskAttachExit {
+        output,
+        status,
+        attached_for,
+    }))
+}
+
+fn wait_for_attach_child_status(child: nix::unistd::Pid) -> Result<Option<WaitStatus>, CliError> {
+    let started = Instant::now();
+    loop {
+        match waitpid(child, Some(WaitPidFlag::WNOHANG)) {
+            Ok(WaitStatus::StillAlive) => {}
+            Ok(status) => return Ok(Some(status)),
+            Err(nix::errno::Errno::ECHILD) => return Ok(None),
+            Err(error) => {
+                return Err(CliError::CommandFailed(format!(
+                    "failed to wait for task attach client: {error}"
+                )));
+            }
+        }
+        if started.elapsed() >= GIVE_UP_ATTACH_AFTER {
+            return Ok(None);
+        }
+        sleep(ATTACH_SHUTDOWN_POLL_INTERVAL);
+    }
+}
+
+fn detach_task_child(
+    master: File,
+    child: nix::unistd::Pid,
+) -> Result<TaskSessionOutcome, CliError> {
     drop(master);
-    request_task_child_exit(child)
+    request_task_child_exit(child)?;
+    Ok(TaskSessionOutcome::Detached)
 }
 
 fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
@@ -917,6 +1026,34 @@ mod tests {
                 master_ready: true,
             }
         );
+    }
+
+    #[test]
+    fn interrupted_attach_client_exit_is_retryable() {
+        let exit = super::TaskAttachExit {
+            output: b"tmux: EINTR service interrupted call\n".to_vec(),
+            status: Some(nix::sys::wait::WaitStatus::Exited(
+                nix::unistd::Pid::from_raw(42),
+                1,
+            )),
+            attached_for: Duration::from_millis(50),
+        };
+
+        assert!(super::attach_exit_allows_retry(&exit));
+    }
+
+    #[test]
+    fn clean_attach_client_exit_is_not_retryable() {
+        let exit = super::TaskAttachExit {
+            output: Vec::new(),
+            status: Some(nix::sys::wait::WaitStatus::Exited(
+                nix::unistd::Pid::from_raw(42),
+                0,
+            )),
+            attached_for: Duration::from_millis(50),
+        };
+
+        assert!(!super::attach_exit_allows_retry(&exit));
     }
 
     #[test]
