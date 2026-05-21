@@ -7,9 +7,12 @@ const REQUIRED_LOCAL_GATES: &[&str] = &[
     "cargo clippy --all-targets --all-features -- -D warnings",
     "cargo nextest run --all-features",
     "cargo test --doc",
+    "npm run lint:duplication",
 ];
 
 const REQUIRED_REMOTE_GATES: &[&str] = &[
+    "npm ci",
+    "npm run lint:duplication",
     "cargo fmt --check",
     "cargo check --all-targets --all-features",
     "RUSTFLAGS: -D warnings",
@@ -42,6 +45,13 @@ fn husky_pre_commit_runs_full_local_validation_before_commit() {
         serde_json::from_str(&package_json).expect("package.json should be valid JSON");
 
     assert_eq!(manifest["scripts"]["test"], "npm run verify");
+    let duplication_script = manifest["scripts"]["lint:duplication"]
+        .as_str()
+        .expect("package.json should define a scripts.lint:duplication string");
+    assert!(
+        duplication_script.contains("jscpd"),
+        "scripts.lint:duplication should invoke jscpd:\n{duplication_script}"
+    );
     let verify_script = manifest["scripts"]["verify"]
         .as_str()
         .expect("package.json should define a scripts.verify string");
@@ -82,6 +92,46 @@ fn github_actions_runs_full_remote_validation_on_push_and_pull_request() {
         assert!(
             workflow.contains(gate),
             "CI workflow should include `{gate}` in:\n{workflow}"
+        );
+    }
+}
+
+#[test]
+fn jscpd_configuration_scans_project_sources_without_generated_outputs() {
+    let root = workspace_root();
+    let config_path = root.join(".jscpd.json");
+    let config = std::fs::read_to_string(&config_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", config_path.display()));
+    let config: Value = serde_json::from_str(&config).expect(".jscpd.json should be valid JSON");
+
+    assert_eq!(config["threshold"], 0);
+    assert_eq!(config["minLines"], 50);
+    assert_eq!(config["reporters"], serde_json::json!(["console"]));
+    assert_eq!(config["mode"], "strict");
+
+    let paths = config["path"]
+        .as_array()
+        .expect(".jscpd.json should define a path array");
+    for path in ["crates", "scripts", "docs", "README.md", "RELEASE.md"] {
+        assert!(
+            paths.iter().any(|entry| entry == path),
+            ".jscpd.json should scan {path}: {paths:?}"
+        );
+    }
+
+    let ignores = config["ignore"]
+        .as_array()
+        .expect(".jscpd.json should define an ignore array");
+    for ignored in [
+        "target/**",
+        "node_modules/**",
+        "Cargo.lock",
+        "package-lock.json",
+        "crates/ajax-core/proptest-regressions/**",
+    ] {
+        assert!(
+            ignores.iter().any(|entry| entry == ignored),
+            ".jscpd.json should ignore {ignored}: {ignores:?}"
         );
     }
 }

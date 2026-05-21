@@ -18,6 +18,7 @@ cargo test --all-features
 cargo test --locked
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 cargo audit -D warnings
+npm run lint:duplication
 ```
 
 4. Export a local state backup before testing migrations against real data:
