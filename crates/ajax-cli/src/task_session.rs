@@ -279,6 +279,10 @@ fn classify_task_poll_events(tty_flags: PollFlags, master_flags: PollFlags) -> T
     }
 }
 
+fn task_poll_error_allows_retry(error: nix::errno::Errno) -> bool {
+    error == nix::errno::Errno::EINTR
+}
+
 #[cfg(test)]
 fn task_detach_sequence() -> &'static [TaskDetachStep] {
     &[
@@ -475,7 +479,12 @@ fn pump_task_pty(
                     PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
                 ),
             ];
-            poll(&mut poll_fds, PollTimeout::NONE).map_err(tty_error("failed to poll task PTY"))?;
+            if let Err(error) = poll(&mut poll_fds, PollTimeout::NONE) {
+                if task_poll_error_allows_retry(error) {
+                    continue;
+                }
+                return Err(tty_error("failed to poll task PTY")(error));
+            }
             let tty_flags = poll_fds[0].revents().unwrap_or_else(PollFlags::empty);
             let master_flags = poll_fds[1].revents().unwrap_or_else(PollFlags::empty);
             classify_task_poll_events(tty_flags, master_flags)
@@ -917,6 +926,20 @@ mod tests {
                 master_ready: true,
             }
         );
+    }
+
+    #[test]
+    fn interrupted_task_pty_poll_is_retried() {
+        assert!(super::task_poll_error_allows_retry(
+            nix::errno::Errno::EINTR
+        ));
+    }
+
+    #[test]
+    fn non_interrupted_task_pty_poll_error_is_not_retried() {
+        assert!(!super::task_poll_error_allows_retry(
+            nix::errno::Errno::EBADF
+        ));
     }
 
     #[test]
