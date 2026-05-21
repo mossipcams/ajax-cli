@@ -39,17 +39,11 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
 ) -> Result<bool, CommandError> {
     let tasks = context.registry.list_tasks();
     let should_probe_tasks = tasks.iter().any(|task| should_probe_live_substrate(task));
-    let should_refresh_sessions =
-        should_probe_tasks || tasks.iter().any(|task| task.tmux_status.is_some());
-    if !should_refresh_sessions {
+    if !should_probe_tasks {
         return Ok(false);
     }
 
-    let mut changed = if should_probe_tasks {
-        commands::refresh_git_substrate_evidence(context, runner).unwrap_or_default()
-    } else {
-        false
-    };
+    let mut changed = commands::refresh_git_substrate_evidence(context, runner).unwrap_or_default();
 
     let tmux = TmuxAdapter::new("tmux");
     let sessions_command = tmux.list_sessions();
