@@ -62,6 +62,7 @@ fn looks_like_active_agent_status(line: &str) -> bool {
             "claude is working",
             "background terminal running",
             "thinking",
+            "waiting for background terminal",
             "working (",
             "working on your task",
         ],
@@ -563,16 +564,24 @@ Plan ready. Approve to proceed.";
 
     #[test]
     fn pane_classifier_treats_codex_background_terminal_status_as_agent_running() {
-        let pane = "\
+        for pane in [
+            "\
 1 background terminal running · /ps to view · /stop to close
 
 › Write tests for @filename
 
-  gpt-5.5 high fast · ~/Desktop/Projects/autodoctor__worktrees/ajax-false-positive";
+  gpt-5.5 high fast · ~/Desktop/Projects/autodoctor__worktrees/ajax-false-positive",
+            "\
+• Waiting for background terminal (20m 21s • esc to interrupt) · 1 background …
 
-        let observation = classify_pane(pane);
+› Improve documentation in @filename
 
-        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci",
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, LiveStatusKind::AgentRunning, "{pane}");
+        }
     }
 
     #[test]
