@@ -5677,7 +5677,7 @@ mod tests {
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("review"),
-            Some(super::TaskCommandOperation::Diff)
+            Some(super::TaskCommandOperation::Review)
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("ship"),
@@ -5696,11 +5696,21 @@ mod tests {
     }
 
     #[test]
+    fn task_command_operation_uses_operator_review_language() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+
+        assert!(dispatch.contains("Review"));
+        assert!(!dispatch.contains("Diff"));
+        assert!(dispatch.contains("slices::review::review_task_plan"));
+    }
+
+    #[test]
     fn task_command_operation_defines_cockpit_return_policy() {
         assert!(!super::TaskCommandOperation::Open.returns_to_cockpit_after_execute());
 
         for operation in [
-            super::TaskCommandOperation::Diff,
+            super::TaskCommandOperation::Review,
             super::TaskCommandOperation::Merge,
             super::TaskCommandOperation::Repair,
             super::TaskCommandOperation::Drop,

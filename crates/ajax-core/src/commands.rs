@@ -10,6 +10,7 @@ mod teardown;
 mod trunk;
 
 pub use crate::adapters::DoctorEnvironment;
+pub use crate::use_cases::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
@@ -41,7 +42,7 @@ use crate::{
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
     recommended::{evidence_label, operator_action},
-    registry::{Registry, RegistryError},
+    registry::Registry,
 };
 use lookup::find_task;
 use projection::{
@@ -49,56 +50,9 @@ use projection::{
     count_active_tasks, count_attention_items, count_lifecycle, is_cockpit_menu_task,
     is_visible_task, task_summary,
 };
-use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, time::Duration, time::SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
-pub struct CommandContext<R> {
-    pub config: Config,
-    pub registry: R,
-}
-
-impl<R> CommandContext<R> {
-    pub fn new(config: Config, registry: R) -> Self {
-        Self { config, registry }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandError {
-    TaskNotFound(String),
-    RepoNotFound(String),
-    ConfirmationRequired,
-    PlanBlocked(Vec<String>),
-    CommandRun(CommandRunError),
-    Registry(RegistryError),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct CommandPlan {
-    pub title: String,
-    pub commands: Vec<CommandSpec>,
-    pub requires_confirmation: bool,
-    pub blocked_reasons: Vec<String>,
-}
-
-impl CommandPlan {
-    pub fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            commands: Vec::new(),
-            requires_confirmation: false,
-            blocked_reasons: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OpenMode {
-    Attach,
-    SwitchClient,
-}
 
 pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
     let all_tasks = context.registry.list_tasks();
@@ -148,8 +102,7 @@ fn list_tasks_from_tasks(tasks: &[&Task], repo: Option<&str>) -> TasksResponse {
 }
 
 pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
-    let all_tasks = context.registry.list_tasks();
-    review_queue_from_tasks(all_tasks.as_slice())
+    crate::slices::review::review_queue(context)
 }
 
 fn review_queue_from_tasks(tasks: &[&Task]) -> TasksResponse {
@@ -1458,6 +1411,30 @@ mod tests {
     }
 
     #[test]
+    fn review_slice_facade_lists_reviewable_and_mergeable_tasks() {
+        let mut context = context_with_tasks();
+        let mut mergeable = Task::new(
+            TaskId::new("task-2"),
+            "api",
+            "add-cache",
+            "Add cache",
+            "ajax/add-cache",
+            "main",
+            "/tmp/worktrees/api-add-cache",
+            "ajax-api-add-cache",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        mergeable.lifecycle_status = LifecycleStatus::Mergeable;
+        context.registry.create_task(mergeable).unwrap();
+
+        assert_eq!(
+            crate::slices::review::review_queue(&context),
+            review_queue(&context)
+        );
+    }
+
+    #[test]
     fn cockpit_includes_review_queue() {
         let mut context = context_with_tasks();
         let mut mergeable = Task::new(
@@ -2365,6 +2342,15 @@ mod tests {
                     .with_cwd("/tmp/worktrees/web-fix-login")
             ]
         );
+    }
+
+    #[test]
+    fn review_slice_facade_summarizes_branch_diff_in_task_worktree() {
+        let context = context_with_tasks();
+
+        let plan = crate::slices::review::review_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(plan, diff_task_plan(&context, "web/fix-login").unwrap());
     }
 
     #[test]

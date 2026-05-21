@@ -370,7 +370,7 @@ fn operation_from_operator_action(action: OperatorAction) -> Option<TaskCommandO
     match action {
         OperatorAction::Start => None,
         OperatorAction::Resume => Some(TaskCommandOperation::Open),
-        OperatorAction::Review => Some(TaskCommandOperation::Diff),
+        OperatorAction::Review => Some(TaskCommandOperation::Review),
         OperatorAction::Ship => Some(TaskCommandOperation::Merge),
         OperatorAction::Drop => Some(TaskCommandOperation::Drop),
         OperatorAction::Repair => Some(TaskCommandOperation::Repair),

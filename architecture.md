@@ -94,6 +94,32 @@ operations compose those helpers into vertical operator transactions.
 
 ## Core Architecture
 
+### Vertical Slices
+
+Ajax follows an Aroeira-style modular monolith: dependency boundaries still
+point inward, while feature work is organized around operator capabilities.
+A slice is a vertical use-case module inside its owning crate, not a new crate
+and not a cosmetic facade over unrelated layered code.
+
+`ajax-core::slices` owns pure operator capability orchestration. Each slice
+starts with private implementation modules plus a small public facade. Code
+outside the slice depends on the facade only; private slice modules are free to
+change as the capability evolves. Slice names use operator language such as
+`review`, `resume`, `ship`, or `drop`, rather than substrate language such as
+Git diff, tmux attach, or process cleanup.
+
+Slices may depend on core domain models, lifecycle rules, policy, output
+contracts, registry traits, and command-spec ports. Mechanisms remain outside
+slices: filesystem, terminal, JSON, subprocess, Git, tmux, networking, SQLite,
+and process supervision stay in `adapters`, `registry/sqlite`, or
+`ajax-supervisor`. CLI and Cockpit code are composition and presentation layers;
+they call public slice facades and do not reach into private slice modules.
+
+Architecture tests use `rust_arkitect` to enforce slice direction as the
+codebase migrates. Migrations happen one operator capability at a time, keeping
+existing public APIs as compatibility wrappers until callers can move to the
+slice facade.
+
 ### Registry
 
 The registry stores Ajax task state and typed task events. It exposes typed

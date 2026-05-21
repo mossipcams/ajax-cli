@@ -3,6 +3,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
+    slices,
     task_operations::drop_task::{
         execute_drop_task_operation, plan_drop_task_operation, DropTaskCompletion,
     },
@@ -21,7 +22,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TaskCommandOperation {
     Open,
-    Diff,
+    Review,
     Merge,
     Repair,
     Drop,
@@ -32,7 +33,7 @@ impl TaskCommandOperation {
         match name {
             "resume" => Some(Self::Open),
             "repair" => Some(Self::Repair),
-            "review" => Some(Self::Diff),
+            "review" => Some(Self::Review),
             "ship" => Some(Self::Merge),
             "drop" => Some(Self::Drop),
             _ => None,
@@ -55,7 +56,7 @@ impl TaskCommandOperation {
     ) -> Result<commands::CommandPlan, CommandError> {
         match self {
             Self::Open => commands::open_task_plan(context, task, open_mode),
-            Self::Diff => commands::diff_task_plan(context, task),
+            Self::Review => slices::review::review_task_plan(context, task),
             Self::Merge => commands::merge_task_plan(context, task),
             Self::Repair => repair_task_plan(context, task, open_mode),
             Self::Drop => drop_task_plan(context, task),
@@ -64,13 +65,13 @@ impl TaskCommandOperation {
 
     #[cfg(test)]
     pub(crate) fn returns_to_cockpit_after_execute(self) -> bool {
-        matches!(self, Self::Diff | Self::Merge | Self::Repair | Self::Drop)
+        matches!(self, Self::Review | Self::Merge | Self::Repair | Self::Drop)
     }
 
     fn core_task_command_kind(self) -> Option<TaskCommandKind> {
         match self {
             Self::Open => Some(TaskCommandKind::Resume),
-            Self::Diff => Some(TaskCommandKind::Review),
+            Self::Review => Some(TaskCommandKind::Review),
             Self::Merge => Some(TaskCommandKind::Ship),
             Self::Repair => Some(TaskCommandKind::Repair),
             Self::Drop => None,

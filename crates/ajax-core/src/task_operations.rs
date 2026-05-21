@@ -256,7 +256,9 @@ pub mod task_command {
             TaskCommandKind::Resume => {
                 commands::open_task_plan(context, qualified_handle, open_mode)?
             }
-            TaskCommandKind::Review => commands::diff_task_plan(context, qualified_handle)?,
+            TaskCommandKind::Review => {
+                crate::slices::review::review_task_plan(context, qualified_handle)?
+            }
             TaskCommandKind::Repair => repair_task_plan(context, qualified_handle, open_mode)?,
             TaskCommandKind::Ship => commands::merge_task_plan(context, qualified_handle)?,
         };
