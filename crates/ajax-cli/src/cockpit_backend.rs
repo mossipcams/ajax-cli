@@ -1,3 +1,5 @@
+#[cfg(test)]
+use ajax_core::runtime_refresh::AgentStatusCache;
 use ajax_core::{
     adapters::{CommandRunner, GitAdapter, TmuxAdapter},
     commands::{self, CommandContext},
@@ -742,6 +744,44 @@ mod tests {
             "/tmp/worktrees/web-fix-login",
         ));
         context
+    }
+
+    struct StaticAgentStatusCache {
+        values: Vec<String>,
+    }
+
+    impl AgentStatusCache for StaticAgentStatusCache {
+        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+            self.values.clone()
+        }
+    }
+
+    #[test]
+    fn cockpit_refresh_uses_hook_backed_agent_status_cache() {
+        let mut context = context_with_active_task();
+        let mut runner = LiveRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+        let mut state_changed = false;
+
+        let snapshot = super::refresh_cockpit_snapshot_with_agent_status_cache(
+            &mut context,
+            &mut runner,
+            &cache,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(state_changed);
+        let card = snapshot
+            .cards
+            .iter()
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("task should stay visible in cockpit");
+        assert_eq!(card.status_label, "agent running");
+        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
+        assert_eq!(card.live_summary.as_deref(), Some("agent running"));
     }
 
     #[test]
