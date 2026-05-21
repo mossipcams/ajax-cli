@@ -303,6 +303,13 @@ Do not claim `cargo audit` passed unless it was actually run.
 
 Every pull request must pass the strongest applicable checks from `Required Validation` before merge.
 
+### PR Title Expectations
+
+When creating a PR, always align the PR title with Release Please PR title
+expectations. Use a conventional commit style title such as `feat: ...`,
+`fix: ...`, or `chore: ...` so Release Please can infer the release impact and
+changelog entry correctly.
+
 Recommended warning check:
 
 ```sh
