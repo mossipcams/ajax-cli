@@ -12,9 +12,30 @@ use crate::{
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 
+pub trait AgentStatusCache {
+    fn status_values_for_session(&self, session: &str) -> Vec<String>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NoAgentStatusCache;
+
+impl AgentStatusCache for NoAgentStatusCache {
+    fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 pub fn refresh_runtime_context<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
+) -> Result<bool, CommandError> {
+    refresh_runtime_context_with_agent_status_cache(context, runner, &NoAgentStatusCache)
+}
+
+pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    agent_status_cache: &impl AgentStatusCache,
 ) -> Result<bool, CommandError> {
     let tasks = context.registry.list_tasks();
     let should_probe_tasks = tasks.iter().any(|task| should_probe_live_substrate(task));
@@ -210,6 +231,22 @@ pub fn refresh_runtime_context<R: Registry>(
             continue;
         }
 
+        let agent_status_values =
+            agent_status_cache.status_values_for_session(&task_snapshot.tmux_session);
+        if let Some(observation) =
+            live::reduce_agent_status_values(agent_status_values.iter().map(String::as_str))
+        {
+            if let Some(task) = context.registry.get_task_mut(&task_id) {
+                let previous = task.clone();
+                task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
+                task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
+                live::apply_authoritative_observation(task, observation);
+                refresh_cached_annotations(task);
+                changed |= *task != previous;
+            }
+            continue;
+        }
+
         let pane_command =
             tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window);
         let pane_output = match runner.run(&pane_command) {
@@ -397,4 +434,171 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
 
 fn refresh_cached_annotations(task: &mut Task) {
     task.annotations = crate::attention::annotate(task);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        commands::CommandContext,
+        config::{Config, ManagedRepo},
+        models::{
+            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, Task, TaskId,
+        },
+        registry::{InMemoryRegistry, Registry},
+    };
+
+    use super::{refresh_runtime_context_with_agent_status_cache, AgentStatusCache};
+
+    struct StaticAgentStatusCache {
+        values: Vec<String>,
+    }
+
+    const BASE_BRANCH: &str = "main";
+    const REPO_NAME: &str = "web";
+    const REPO_PATH: &str = "/Users/matt/projects/web";
+    const TASK_BRANCH: &str = "ajax/fix-login";
+    const TASK_ID: &str = "task-1";
+    const TASK_SESSION: &str = "ajax-web-fix-login";
+    const TASK_WORKTREE: &str = "/tmp/worktrees/web-fix-login";
+    const TASK_WINDOW: &str = "worktrunk";
+
+    impl AgentStatusCache for StaticAgentStatusCache {
+        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+            self.values.clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct RuntimeRefreshRunner;
+
+    impl CommandRunner for RuntimeRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = runtime_stdout(&command.args);
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn runtime_stdout(args: &[String]) -> &'static str {
+        match arg(args, 0) {
+            "list-sessions" => "ajax-web-fix-login\n",
+            "-C" if git_worktree_list(args) => {
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+            }
+            "-C" if git_branch_list(args) => "main\najax/fix-login\n",
+            "list-windows" => "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            "capture-pane" => "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n",
+            _ => "",
+        }
+    }
+
+    fn arg(args: &[String], index: usize) -> &str {
+        args.get(index).map(String::as_str).unwrap_or_default()
+    }
+
+    fn git_worktree_list(args: &[String]) -> bool {
+        arg(args, 1) == REPO_PATH
+            && arg(args, 2) == "worktree"
+            && arg(args, 3) == "list"
+            && arg(args, 4) == "--porcelain"
+    }
+
+    fn git_branch_list(args: &[String]) -> bool {
+        arg(args, 1) == REPO_PATH
+            && arg(args, 2) == "branch"
+            && arg(args, 3) == "--format=%(refname:short)"
+    }
+
+    fn context_with_active_task() -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task_fixture();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(clean_git_status());
+        registry.create_task(task).unwrap();
+
+        CommandContext::new(config, registry)
+    }
+
+    fn task_fixture() -> Task {
+        Task::new(
+            TaskId::new(TASK_ID),
+            REPO_NAME,
+            "fix-login",
+            "Fix login",
+            TASK_BRANCH,
+            BASE_BRANCH,
+            TASK_WORKTREE,
+            TASK_SESSION,
+            TASK_WINDOW,
+            AgentClient::Codex,
+        )
+    }
+
+    fn clean_git_status() -> GitStatus {
+        GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some(TASK_BRANCH.to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        }
+    }
+
+    #[test]
+    fn hook_status_cache_can_drive_live_refresh_before_pane_classification() {
+        let mut context = context_with_active_task();
+        let mut runner = RuntimeRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn hook_working_status_reactivates_previously_done_task() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.agent_status = AgentRuntimeStatus::Done;
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+        let mut runner = RuntimeRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
 }
