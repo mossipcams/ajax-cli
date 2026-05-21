@@ -1,4 +1,4 @@
-pub use crate::live_application::apply_observation;
+pub use crate::live_application::{apply_authoritative_observation, apply_observation};
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
@@ -43,10 +43,30 @@ fn meaningful_lines(text: &str) -> Vec<&str> {
 }
 
 fn looks_like_idle_codex_prompt(lines: &[&str]) -> bool {
-    lines.iter().rev().take(3).any(|line| line.starts_with('›'))
+    let recent_lines: Vec<_> = lines.iter().rev().take(4).copied().collect();
+
+    recent_lines.iter().any(|line| line.starts_with('›'))
         && lines
             .last()
             .is_some_and(|line| line.starts_with("gpt-") && line.contains("~/"))
+        && !recent_lines
+            .iter()
+            .any(|line| looks_like_active_agent_status(line))
+}
+
+fn looks_like_active_agent_status(line: &str) -> bool {
+    contains_any(
+        &line.to_ascii_lowercase(),
+        &[
+            "codex is working",
+            "claude is working",
+            "background terminal running",
+            "thinking",
+            "waiting for background terminal",
+            "working (",
+            "working on your task",
+        ],
+    )
 }
 
 fn classify_pane_line(line: &str) -> Option<LiveObservation> {
@@ -190,6 +210,13 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         ));
     }
 
+    if looks_like_active_agent_status(line) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+    }
+
     if contains_any(
         &lower,
         &["cargo test", "running test", "running 0 tests", "running "],
@@ -197,21 +224,6 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         return Some(LiveObservation::new(
             LiveStatusKind::TestsRunning,
             "tests running",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "codex is working",
-            "claude is working",
-            "thinking",
-            "working on your task",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
         ));
     }
 
@@ -230,6 +242,50 @@ fn is_completion_line(lower: &str) -> bool {
             "all done",
         ],
     ) || lower.trim_matches(|character: char| !character.is_ascii_alphanumeric()) == "done"
+}
+
+pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
+    match value.trim() {
+        "working" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "wait" => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        )),
+        "ask" => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        )),
+        "done" | "parked" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
+        _ => None,
+    }
+}
+
+pub fn reduce_agent_status_values<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+) -> Option<LiveObservation> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            classify_agent_status_value(value).map(|observation| {
+                let priority = agent_status_priority(observation.kind);
+                (priority, observation)
+            })
+        })
+        .max_by_key(|(priority, _observation)| *priority)
+        .map(|(_priority, observation)| observation)
+}
+
+fn agent_status_priority(kind: LiveStatusKind) -> u8 {
+    match kind {
+        LiveStatusKind::AgentRunning => 5,
+        LiveStatusKind::WaitingForInput => 4,
+        LiveStatusKind::WaitingForApproval => 3,
+        LiveStatusKind::Done => 2,
+        _ => 0,
+    }
 }
 
 pub fn reduce_live_observation(
@@ -326,7 +382,9 @@ mod tests {
         AgentClient, AgentRuntimeStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
     };
 
-    use super::{apply_observation, classify_pane};
+    use super::{
+        apply_observation, classify_agent_status_value, classify_pane, reduce_agent_status_values,
+    };
 
     fn base_task() -> Task {
         Task::new(
@@ -456,6 +514,44 @@ mod tests {
     }
 
     #[test]
+    fn agent_status_values_map_to_live_observations() {
+        for (value, expected) in [
+            ("working", Some(LiveStatusKind::AgentRunning)),
+            ("done", Some(LiveStatusKind::Done)),
+            ("wait", Some(LiveStatusKind::WaitingForInput)),
+            ("ask", Some(LiveStatusKind::WaitingForApproval)),
+            ("parked", Some(LiveStatusKind::Done)),
+            ("", None),
+            ("nonsense", None),
+        ] {
+            let observation = classify_agent_status_value(value);
+
+            assert_eq!(
+                observation.map(|observation| observation.kind),
+                expected,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_status_values_reduce_by_tmux_agent_status_priority() {
+        let observation = reduce_agent_status_values(["done", "wait", "working", "ask", "parked"]);
+
+        assert_eq!(
+            observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+
+        let observation = reduce_agent_status_values(["parked", "done", "ask"]);
+
+        assert_eq!(
+            observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
+    }
+
+    #[test]
     fn pane_classifier_uses_final_prompt_over_stale_running_history() {
         let pane = "\
 The targeted checks pass. I’m continuing the cherry-pick now.
@@ -520,6 +616,56 @@ Plan ready. Approve to proceed.";
         let observation = classify_pane(pane);
 
         assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn pane_classifier_treats_codex_working_prompt_as_agent_running() {
+        let pane = "\
+› Improve documentation in @filename
+
+• codex is working
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn pane_classifier_treats_codex_working_status_prompt_as_agent_running() {
+        let pane = "\
+• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…
+
+› Improve documentation in @filename
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn pane_classifier_treats_codex_background_terminal_status_as_agent_running() {
+        for pane in [
+            "\
+1 background terminal running · /ps to view · /stop to close
+
+› Write tests for @filename
+
+  gpt-5.5 high fast · ~/Desktop/Projects/autodoctor__worktrees/ajax-false-positive",
+            "\
+• Waiting for background terminal (20m 21s • esc to interrupt) · 1 background …
+
+› Improve documentation in @filename
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci",
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, LiveStatusKind::AgentRunning, "{pane}");
+        }
     }
 
     #[test]

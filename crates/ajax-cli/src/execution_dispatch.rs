@@ -1,9 +1,15 @@
+#[cfg(test)]
+use ajax_core::task_operations::start::StartTaskOperationPlan;
 use ajax_core::{
     adapters::{CommandOutput, CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError},
     events::apply_monitor_event_to_registry,
     models::LifecycleStatus,
     registry::{InMemoryRegistry, Registry},
+    task_operations::start::{execute_start_task_operation, plan_start_task_operation},
+    task_operations::sweep_cleanup::{
+        execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
+    },
 };
 use clap::ArgMatches;
 
@@ -32,23 +38,25 @@ pub(crate) fn render_matches_mut(
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
-            let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
+            let operation =
+                plan_start_task_operation(context, request.clone()).map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
+                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
 
-            let (outputs, task) = execute_new_task_plan(
+            let (outputs, task) = execute_start_task_operation(
                 context,
                 runner,
                 &request,
-                &plan,
+                &operation,
                 subcommand.get_flag("yes"),
                 current_open_mode(),
-            )?;
+            )
+            .map_err(|error| command_error(error).after_state_change())?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, Some(&task.qualified_handle())),
                 state_changed: true,
@@ -61,19 +69,30 @@ pub(crate) fn render_matches_mut(
             render_task_command(operation, subcommand, context, runner, current_open_mode())
         }
         Some(("tidy", subcommand)) => {
-            let plan = commands::sweep_cleanup_plan(context);
-            let candidates = commands::sweep_cleanup_candidates(context);
+            let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(plan, subcommand.get_flag("json"))?,
+                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
-            let outputs =
-                execute_sweep_cleanup(context, runner, &candidates, subcommand.get_flag("yes"))?;
+            let execution = execute_sweep_cleanup_operation(
+                context,
+                &operation,
+                subcommand.get_flag("yes"),
+                runner,
+            )
+            .map_err(|error| {
+                let cli_error = command_error(error.error);
+                if error.state_changed {
+                    cli_error.after_state_change()
+                } else {
+                    cli_error
+                }
+            })?;
             Ok(RenderedCommand {
-                output: render_execution_outputs(&outputs, None),
-                state_changed: !candidates.is_empty(),
+                output: render_execution_outputs(&execution.outputs, None),
+                state_changed: execution.state_changed,
             })
         }
         Some(("supervise", subcommand)) => {
@@ -140,6 +159,7 @@ pub(crate) fn render_matches_mut_with_paths(
     render_matches_mut(matches, context, runner)
 }
 
+#[cfg(test)]
 pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -148,57 +168,15 @@ pub(crate) fn execute_new_task_plan<R: CommandRunner>(
     confirmed: bool,
     open_mode: commands::OpenMode,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let task = commands::record_new_task(context, request).map_err(command_error)?;
-    if plan.requires_confirmation && !confirmed {
-        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
-    }
-    if !plan.blocked_reasons.is_empty() {
-        return Err(
-            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
-                .after_state_change(),
-        );
-    }
-
-    let mut outputs = Vec::new();
-    for (index, command) in plan.commands.iter().enumerate() {
-        let output = runner.run(command).map_err(|error| {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            command_error(CommandError::CommandRun(error)).after_state_change()
-        })?;
-        if output.status_code != 0 {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            return Err(
-                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                    program: command.program.clone(),
-                    status_code: output.status_code,
-                    stderr: output.stderr,
-                    cwd: command.cwd.clone(),
-                }))
-                .after_state_change(),
-            );
-        }
-        outputs.push(output);
-        commands::mark_new_task_step_completed(context, &task.id, index)
-            .map_err(|error| command_error(error).after_state_change())?;
-    }
-    commands::mark_task_opened(context, &task.qualified_handle())
-        .map_err(|error| command_error(error).after_state_change())?;
-    let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
-        .map_err(|error| command_error(error).after_state_change())?;
-    outputs.extend(
-        commands::execute_plan(&open_plan, true, runner)
-            .map_err(|error| command_error(error).after_state_change())?,
-    );
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.id == task.id)
-        .cloned()
-        .unwrap_or(task);
-
-    Ok((outputs, task))
+    let intent = commands::task_from_new_request(context, request)
+        .map_err(command_error)?
+        .intent();
+    let operation = StartTaskOperationPlan {
+        intent,
+        plan: plan.clone(),
+    };
+    execute_start_task_operation(context, runner, request, &operation, confirmed, open_mode)
+        .map_err(|error| command_error(error).after_state_change())
 }
 
 pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
@@ -239,9 +217,13 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
                 .after_state_change(),
             );
         }
-        outputs.push(output);
-        commands::mark_new_task_step_completed(context, &task.id, index)
-            .map_err(|error| command_error(error).after_state_change())?;
+        if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
+            commands::mark_new_task_provisioning_step_completed(context, &task.id, step)
+                .map_err(|error| command_error(error).after_state_change())?;
+        }
+        if !commands::is_new_task_husky_hook_command(command) {
+            outputs.push(output);
+        }
     }
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
@@ -263,75 +245,19 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     Ok((outputs, task))
 }
 
-fn execute_sweep_cleanup<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    candidates: &[String],
-    confirmed: bool,
-) -> Result<Vec<CommandOutput>, CliError> {
-    let mut outputs = Vec::new();
-    let mut state_changed = false;
-
-    for candidate in candidates {
-        let plan = commands::clean_task_plan(context, candidate).map_err(command_error)?;
-        if !plan.blocked_reasons.is_empty() {
-            let cli_error = command_error(CommandError::PlanBlocked(plan.blocked_reasons));
-            return Err(if state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            });
-        }
-        if plan.requires_confirmation && !confirmed {
-            let cli_error = command_error(CommandError::ConfirmationRequired);
-            return Err(if state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            });
-        }
-
-        for command in &plan.commands {
-            let output = runner.run(command).map_err(|error| {
-                let cli_error = command_error(CommandError::CommandRun(error));
-                if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
-            if output.status_code != 0 {
-                let cli_error =
-                    command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                        program: command.program.clone(),
-                        status_code: output.status_code,
-                        stderr: output.stderr.clone(),
-                        cwd: command.cwd.clone(),
-                    }));
-                return Err(if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                });
-            }
-            outputs.push(output);
-            state_changed |= commands::mark_task_cleanup_step_completed(
-                context, candidate, command,
-            )
-            .map_err(|error| {
-                let cli_error = command_error(error);
-                if state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
-        }
-        commands::mark_task_removed(context, candidate).map_err(command_error)?;
-        state_changed = true;
+fn start_provisioning_step_for_command_index(
+    plan: &commands::CommandPlan,
+    index: usize,
+) -> Option<commands::StartProvisioningStep> {
+    if index == 0 {
+        Some(commands::StartProvisioningStep::WorktreeCreated)
+    } else if index + 2 == plan.commands.len() {
+        Some(commands::StartProvisioningStep::TaskSessionCreated)
+    } else if index + 1 == plan.commands.len() {
+        Some(commands::StartProvisioningStep::AgentCommandSent)
+    } else {
+        None
     }
-
-    Ok(outputs)
 }
 
 fn validate_supervised_task(
@@ -355,4 +281,35 @@ fn validate_supervised_task(
     }
 
     Ok(Some(task.id.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cli_start_dispatch_delegates_task_transaction_to_core_operation() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+
+        let numeric_step_helper = ["mark_new_task", "_step_completed"].concat();
+
+        assert!(source.contains("execute_start_task_operation"));
+        assert!(!source.contains(&numeric_step_helper));
+    }
+
+    #[test]
+    fn cli_tidy_dispatch_delegates_cleanup_execution_to_core_operation() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+        let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
+        let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
+        let local_helper = ["fn execute_sweep", "_cleanup"].concat();
+
+        assert!(source.contains(&plan_operation));
+        assert!(source.contains(&execute_operation));
+        assert!(!source.contains(&local_helper));
+    }
 }

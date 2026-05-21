@@ -173,6 +173,21 @@ impl Task {
         format!("{}/{}", self.repo, self.handle)
     }
 
+    pub fn intent(&self) -> TaskIntent {
+        TaskIntent {
+            id: self.id.clone(),
+            repo: self.repo.clone(),
+            handle: self.handle.clone(),
+            title: self.title.clone(),
+            branch: self.branch.clone(),
+            base_branch: self.base_branch.clone(),
+            worktree_path: self.worktree_path.clone(),
+            tmux_session: self.tmux_session.clone(),
+            worktrunk_window: self.worktrunk_window.clone(),
+            selected_agent: self.selected_agent,
+        }
+    }
+
     pub fn add_side_flag(&mut self, flag: SideFlag) {
         self.side_flags.insert(flag);
     }
@@ -278,6 +293,20 @@ impl Task {
             source,
         );
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TaskIntent {
+    pub id: TaskId,
+    pub repo: String,
+    pub handle: String,
+    pub title: String,
+    pub branch: String,
+    pub base_branch: String,
+    pub worktree_path: PathBuf,
+    pub tmux_session: String,
+    pub worktrunk_window: String,
+    pub selected_agent: AgentClient,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -774,7 +803,7 @@ mod tests {
         AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence,
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo,
         RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task, TaskId,
-        TmuxStatus, WorktrunkStatus,
+        TaskIntent, TmuxStatus, WorktrunkStatus,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
@@ -926,6 +955,61 @@ mod tests {
         assert_eq!(task.lifecycle_status, LifecycleStatus::Created);
         assert_eq!(task.agent_attempts.len(), 0);
         assert_eq!(task.selected_agent, AgentClient::Codex);
+    }
+
+    #[test]
+    fn task_intent_contains_only_ajax_owned_expected_identity_and_resources() {
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: false,
+            current_branch: None,
+            dirty: true,
+            ahead: 1,
+            behind: 0,
+            merged: false,
+            untracked_files: 2,
+            unpushed_commits: 1,
+            conflicted: true,
+            last_commit: Some("abc123 Fix login".to_string()),
+        });
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux missing",
+        ));
+        task.add_side_flag(SideFlag::Dirty);
+
+        assert_eq!(
+            task.intent(),
+            TaskIntent {
+                id: TaskId::new("task-1"),
+                repo: "web".to_string(),
+                handle: "fix-login".to_string(),
+                title: "Fix login".to_string(),
+                branch: "ajax/fix-login".to_string(),
+                base_branch: "main".to_string(),
+                worktree_path: std::path::PathBuf::from("/tmp/worktrees/web-fix-login"),
+                tmux_session: "ajax-web-fix-login".to_string(),
+                worktrunk_window: "worktrunk".to_string(),
+                selected_agent: AgentClient::Codex,
+            }
+        );
     }
 
     proptest! {

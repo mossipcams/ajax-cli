@@ -262,6 +262,11 @@ cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-features
+npm run lint:duplication
 ```
 
 Use `scripts/smoke.sh` for the deterministic end-to-end smoke workflow.
+
+Releases are managed by Release Please. The repository needs a
+`RELEASE_PLEASE_TOKEN` secret so Release Please PRs trigger the real GitHub CI
+workflow before they are merged.

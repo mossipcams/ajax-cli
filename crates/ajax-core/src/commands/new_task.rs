@@ -10,11 +10,21 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 
+const INSTALL_HUSKY_HOOKS: &str =
+    "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StartProvisioningStep {
+    WorktreeCreated,
+    TaskSessionCreated,
+    AgentCommandSent,
 }
 
 pub fn new_task_plan<R: Registry>(
@@ -59,6 +69,8 @@ pub fn new_task_plan<R: Registry>(
         &branch,
         &repo.default_branch,
     ));
+    plan.commands
+        .push(install_husky_hooks_command(&worktree_path));
     if let Some(bootstrap) = &repo.bootstrap {
         plan.commands
             .push(CommandSpec::new("sh", ["-lc", bootstrap.as_str()]).with_cwd(&worktree_path));
@@ -152,7 +164,21 @@ pub fn mark_new_task_step_completed<R: Registry>(
     task_id: &TaskId,
     step_index: usize,
 ) -> Result<(), CommandError> {
-    if step_index == 2 {
+    let step = match step_index {
+        0 => StartProvisioningStep::WorktreeCreated,
+        1 => StartProvisioningStep::TaskSessionCreated,
+        2 => StartProvisioningStep::AgentCommandSent,
+        _ => return Ok(()),
+    };
+    mark_new_task_provisioning_step_completed(context, task_id, step)
+}
+
+pub fn mark_new_task_provisioning_step_completed<R: Registry>(
+    context: &mut CommandContext<R>,
+    task_id: &TaskId,
+    step: StartProvisioningStep,
+) -> Result<(), CommandError> {
+    if step == StartProvisioningStep::AgentCommandSent {
         context
             .registry
             .update_lifecycle(task_id, LifecycleStatus::Active)
@@ -165,8 +191,8 @@ pub fn mark_new_task_step_completed<R: Registry>(
         .cloned()
         .ok_or_else(|| CommandError::TaskNotFound(task_id.as_str().to_string()))?;
 
-    match step_index {
-        0 => {
+    match step {
+        StartProvisioningStep::WorktreeCreated => {
             context
                 .registry
                 .update_git_status(
@@ -187,7 +213,7 @@ pub fn mark_new_task_step_completed<R: Registry>(
                 )
                 .map_err(CommandError::Registry)?;
         }
-        1 => {
+        StartProvisioningStep::TaskSessionCreated => {
             context
                 .registry
                 .update_tmux_status(task_id, Some(TmuxStatus::present(task.tmux_session)))
@@ -208,7 +234,7 @@ pub fn mark_new_task_step_completed<R: Registry>(
                 );
             }
         }
-        2 => {
+        StartProvisioningStep::AgentCommandSent => {
             let task = context
                 .registry
                 .get_task_mut(task_id)
@@ -219,10 +245,17 @@ pub fn mark_new_task_step_completed<R: Registry>(
             ));
             task.add_side_flag(SideFlag::AgentRunning);
         }
-        _ => {}
     }
 
     Ok(())
+}
+
+pub fn is_new_task_husky_hook_command(command: &CommandSpec) -> bool {
+    command.program == "/bin/sh"
+        && command.args.len() == 4
+        && command.args[0] == "-lc"
+        && command.args[1] == INSTALL_HUSKY_HOOKS
+        && command.args[2] == "sh"
 }
 
 fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
@@ -238,6 +271,20 @@ fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
         .unwrap_or(repo_path)
         .join(worktrees_dir)
         .join(worktree_name)
+}
+
+fn install_husky_hooks_command(worktree_path: &Path) -> CommandSpec {
+    CommandSpec {
+        program: "/bin/sh".to_string(),
+        args: vec![
+            "-lc".to_string(),
+            INSTALL_HUSKY_HOOKS.to_string(),
+            "sh".to_string(),
+            worktree_path.display().to_string(),
+        ],
+        cwd: None,
+        mode: crate::adapters::CommandMode::Capture,
+    }
 }
 
 fn command_line(command: &CommandSpec) -> String {
@@ -293,5 +340,82 @@ fn agent_from_name(name: &str) -> AgentClient {
         "claude" => AgentClient::Claude,
         "codex" => AgentClient::Codex,
         _ => AgentClient::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        mark_new_task_provisioning_step_completed, record_new_task, NewTaskRequest,
+        StartProvisioningStep,
+    };
+    use crate::{
+        commands::CommandContext,
+        config::{Config, ManagedRepo},
+        models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
+        registry::{InMemoryRegistry, Registry},
+    };
+
+    fn context() -> CommandContext<InMemoryRegistry> {
+        CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        )
+    }
+
+    #[test]
+    fn start_provisioning_named_steps_update_state_without_numeric_command_indexes() {
+        let mut context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let task = record_new_task(&mut context, &request).unwrap();
+        let task_id = task.id.clone();
+
+        mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::WorktreeCreated,
+        )
+        .unwrap();
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git = task.git_status.as_ref().unwrap();
+        assert!(git.worktree_exists);
+        assert!(git.branch_exists);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Provisioning);
+
+        mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::TaskSessionCreated,
+        )
+        .unwrap();
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| status.exists));
+        assert!(task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| status.exists && status.points_at_expected_path));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Provisioning);
+
+        mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::AgentCommandSent,
+        )
+        .unwrap();
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert!(task.has_side_flag(SideFlag::AgentRunning));
+        assert_eq!(task.agent_attempts.len(), 1);
+        assert_eq!(task.agent_attempts[0].status, AgentRuntimeStatus::Running);
     }
 }

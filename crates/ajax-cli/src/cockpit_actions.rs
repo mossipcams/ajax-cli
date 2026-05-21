@@ -3,6 +3,9 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    task_operations::task_command::{
+        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
+    },
 };
 
 use crate::{
@@ -224,20 +227,23 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }
 
-    let plan = operation
-        .plan_with_open_mode(context, &pending.task_handle, open_mode)
+    let kind = action
+        .and_then(task_command_kind_from_operator_action)
+        .ok_or_else(|| {
+            CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
+        })?;
+    let operation = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
         .map_err(command_error)?;
-    let confirmed = operation == TaskCommandOperation::Drop || !plan.requires_confirmation;
-    let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
-    let changed = operation
-        .apply_after_execute(context, &pending.task_handle)
-        .map_err(command_error)?;
-    *state_changed |= changed;
-    if operation.returns_to_cockpit_after_execute() {
+    let confirmed = !operation.plan.requires_confirmation;
+    let execution = execute_task_command_operation(context, &operation, confirmed, runner)
+        .map_err(|error| task_command_cli_error(error, state_changed))?;
+    *state_changed |= execution.state_changed;
+    if task_command_returns_to_cockpit(kind) {
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }
     Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-        &outputs, None,
+        &execution.outputs,
+        None,
     )))
 }
 
@@ -297,40 +303,94 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }
 
-    let plan = operation
-        .plan_with_open_mode(context, &pending.task_handle, task_entry_open_mode)
-        .map_err(command_error)?;
-
-    if operation != TaskCommandOperation::Open {
-        let confirmed = operation == TaskCommandOperation::Drop || !plan.requires_confirmation;
-        let outputs = commands::execute_plan(&plan, confirmed, runner).map_err(command_error)?;
-        let changed = operation
-            .apply_after_execute(context, &pending.task_handle)
+    let kind = action
+        .and_then(task_command_kind_from_operator_action)
+        .ok_or_else(|| {
+            CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
+        })?;
+    let operation =
+        plan_task_command_operation(context, kind, &pending.task_handle, task_entry_open_mode)
             .map_err(command_error)?;
-        *state_changed |= changed;
-        if operation.returns_to_cockpit_after_execute() {
+
+    if kind != TaskCommandKind::Resume {
+        let confirmed = !operation.plan.requires_confirmation;
+        let execution = execute_task_command_operation(context, &operation, confirmed, runner)
+            .map_err(|error| task_command_cli_error(error, state_changed))?;
+        *state_changed |= execution.state_changed;
+        if task_command_returns_to_cockpit(kind) {
             return Ok(PendingCockpitOutcome::ReturnToCockpit);
         }
         return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-            &outputs, None,
+            &execution.outputs,
+            None,
         )));
     }
 
-    execute_task_entry_plan(&plan, runner, task_session)?;
-    let changed = operation
-        .apply_after_execute(context, &pending.task_handle)
-        .map_err(command_error)?;
-    *state_changed |= changed;
+    execute_task_entry_plan(&operation.plan, runner, task_session)?;
+    commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
+    *state_changed = true;
     Ok(PendingCockpitOutcome::ReturnToCockpit)
+}
+
+fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {
+    match action {
+        OperatorAction::Start | OperatorAction::Drop => None,
+        OperatorAction::Resume => Some(TaskCommandKind::Resume),
+        OperatorAction::Review => Some(TaskCommandKind::Review),
+        OperatorAction::Ship => Some(TaskCommandKind::Ship),
+        OperatorAction::Repair => Some(TaskCommandKind::Repair),
+    }
+}
+
+fn task_command_returns_to_cockpit(kind: TaskCommandKind) -> bool {
+    matches!(
+        kind,
+        TaskCommandKind::Review | TaskCommandKind::Ship | TaskCommandKind::Repair
+    )
+}
+
+fn task_command_cli_error(
+    error: ajax_core::task_operations::task_command::TaskCommandOperationError,
+    state_changed: &mut bool,
+) -> CliError {
+    let changed = error.state_changed || *state_changed;
+    let error = command_error(error.error);
+    let error = if changed {
+        error.after_state_change()
+    } else {
+        error
+    };
+    if changed {
+        *state_changed = true;
+    }
+    error
 }
 
 fn operation_from_operator_action(action: OperatorAction) -> Option<TaskCommandOperation> {
     match action {
         OperatorAction::Start => None,
         OperatorAction::Resume => Some(TaskCommandOperation::Open),
-        OperatorAction::Review => Some(TaskCommandOperation::Diff),
+        OperatorAction::Review => Some(TaskCommandOperation::Review),
         OperatorAction::Ship => Some(TaskCommandOperation::Merge),
         OperatorAction::Drop => Some(TaskCommandOperation::Drop),
         OperatorAction::Repair => Some(TaskCommandOperation::Repair),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn pending_cockpit_task_actions_use_core_task_command_operations() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_actions.rs"),
+        )
+        .unwrap();
+        let plan_operation = ["plan_task_command", "_operation"].concat();
+        let execute_operation = ["execute_task_command", "_operation"].concat();
+        let legacy_plan = ["plan_with", "_open_mode"].concat();
+
+        assert!(source.contains(&plan_operation));
+        assert!(source.contains(&execute_operation));
+        assert!(!source.contains(&legacy_plan));
     }
 }
