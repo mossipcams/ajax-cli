@@ -2323,8 +2323,10 @@ mod tests {
         assert!(readme.contains("## First Run"));
         assert!(changelog.contains("# Changelog"));
         assert!(release.contains("# Release Process"));
+        assert!(release.contains("Release Please"));
+        assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
-        assert!(release.contains("cargo test --all-features"));
+        assert!(release.contains("cargo nextest run --all-features"));
     }
 
     #[test]
