@@ -61,6 +61,7 @@ fn looks_like_active_agent_status(line: &str) -> bool {
             "codex is working",
             "claude is working",
             "thinking",
+            "working (",
             "working on your task",
         ],
     )
@@ -207,6 +208,13 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         ));
     }
 
+    if looks_like_active_agent_status(line) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+    }
+
     if contains_any(
         &lower,
         &["cargo test", "running test", "running 0 tests", "running "],
@@ -214,21 +222,6 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
         return Some(LiveObservation::new(
             LiveStatusKind::TestsRunning,
             "tests running",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "codex is working",
-            "claude is working",
-            "thinking",
-            "working on your task",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
         ));
     }
 
@@ -547,6 +540,20 @@ Plan ready. Approve to proceed.";
 • codex is working
 
   gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
+
+        let observation = classify_pane(pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn pane_classifier_treats_codex_working_status_prompt_as_agent_running() {
+        let pane = "\
+• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…
+
+› Improve documentation in @filename
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci";
 
         let observation = classify_pane(pane);
 

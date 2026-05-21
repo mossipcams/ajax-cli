@@ -442,6 +442,89 @@ mod tests {
     }
 
     #[test]
+    fn live_refresh_clears_stale_input_when_codex_prompt_is_working() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Waiting;
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        task.annotations = ajax_core::attention::annotate(task);
+        let mut runner = WorkingPromptRunner;
+        let mut state_changed = false;
+
+        let snapshot =
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+
+        assert!(state_changed);
+        let card = snapshot
+            .cards
+            .iter()
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("task should stay visible in cockpit");
+        assert_eq!(card.status_label, "agent running");
+        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
+        assert!(card.annotations.is_empty(), "{:?}", card.annotations);
+        assert!(!snapshot
+            .inbox
+            .items
+            .iter()
+            .any(|item| item.task_handle == "web/fix-login"));
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    struct WorkingPromptRunner;
+
+    impl CommandRunner for WorkingPromptRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [_, repo, subcommand, action, flag]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/Users/matt/projects/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
+                [command, ..] if command == "list-windows" => {
+                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                }
+                [command, ..] if command == "capture-pane" => {
+                    "• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…\n\n› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci\n"
+                }
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
     fn live_refresh_marks_cached_running_task_invalid_when_tmux_sessions_are_empty() {
         let mut context = context_with_cached_running_task();
         let mut runner = EmptyTmuxRunner;
