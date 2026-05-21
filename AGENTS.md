@@ -57,7 +57,8 @@ Do not skip this approval step.
 
 ### Markdown-Only Changes
 
-Markdown-only documentation changes are exempt from TDD.
+Do not use TDD to plan or edit Markdown files. Markdown-only documentation
+changes are exempt from TDD.
 
 For `.md`-only changes:
 
