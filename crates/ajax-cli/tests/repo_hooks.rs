@@ -5,7 +5,7 @@ const REQUIRED_LOCAL_GATES: &[&str] = &[
     "cargo fmt --check",
     "cargo check --all-targets --all-features",
     "cargo clippy --all-targets --all-features -- -D warnings",
-    "cargo nextest run --all-features",
+    "cargo nextest run --all-features --test-threads=1",
     "cargo test --doc",
     "npm run lint:duplication",
 ];
