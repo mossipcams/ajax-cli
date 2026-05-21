@@ -192,8 +192,13 @@ fn run_event_loop<B: Backend>(
             refresh_interval,
             app.has_transient_notices(),
         );
-        if event::poll(timeout)? {
-            match handle_cockpit_event(app, event::read()?, height, &mut handler)? {
+        if retry_terminal_event_io(|| event::poll(timeout))? {
+            match handle_cockpit_event(
+                app,
+                retry_terminal_event_io(event::read)?,
+                height,
+                &mut handler,
+            )? {
                 EventLoopAction::Continue => needs_draw = true,
                 EventLoopAction::Quit => return Ok(None),
                 EventLoopAction::Pending(pending) => return Ok(Some(pending)),
@@ -204,6 +209,20 @@ fn run_event_loop<B: Backend>(
 
 fn should_draw(needs_draw: bool, refreshed: bool, notices_changed: bool) -> bool {
     needs_draw || refreshed || notices_changed
+}
+
+fn terminal_event_error_allows_retry(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::Interrupted
+}
+
+fn retry_terminal_event_io<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) if terminal_event_error_allows_retry(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 fn should_refresh(last_refresh: &mut Instant, refresh_interval: Duration) -> bool {
@@ -279,6 +298,20 @@ mod tests {
         let mut last_refresh = Instant::now() - Duration::from_secs(60);
 
         assert!(!should_refresh(&mut last_refresh, Duration::ZERO));
+    }
+
+    #[test]
+    fn interrupted_terminal_event_io_is_retried() {
+        let error = std::io::Error::from(std::io::ErrorKind::Interrupted);
+
+        assert!(super::terminal_event_error_allows_retry(&error));
+    }
+
+    #[test]
+    fn non_interrupted_terminal_event_io_is_not_retried() {
+        let error = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
+
+        assert!(!super::terminal_event_error_allows_retry(&error));
     }
 
     #[test]

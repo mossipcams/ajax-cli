@@ -283,6 +283,20 @@ fn task_poll_error_allows_retry(error: nix::errno::Errno) -> bool {
     error == nix::errno::Errno::EINTR
 }
 
+fn task_io_error_allows_retry(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::Interrupted
+}
+
+fn retry_task_io<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Ok(value) => return Ok(value),
+            Err(error) if task_io_error_allows_retry(&error) => {}
+            Err(error) => return Err(error),
+        }
+    }
+}
+
 #[cfg(test)]
 fn task_detach_sequence() -> &'static [TaskDetachStep] {
     &[
@@ -504,8 +518,7 @@ fn pump_task_pty(
         };
 
         if tty_ready {
-            let count = terminal_input
-                .read(&mut tty_input)
+            let count = retry_task_io(|| terminal_input.read(&mut tty_input))
                 .map_err(io_error("failed to read task terminal input"))?;
             if count == 0 {
                 return detach_task_child(master, child);
@@ -515,8 +528,7 @@ fn pump_task_pty(
                 attached_at.elapsed(),
             );
             if !filtered.bytes.is_empty() {
-                master
-                    .write_all(&filtered.bytes)
+                retry_task_io(|| master.write_all(&filtered.bytes))
                     .map_err(io_error("failed to write task PTY"))?;
             }
             if filtered.action == TaskInputAction::ReturnToCockpit {
@@ -525,16 +537,14 @@ fn pump_task_pty(
         }
 
         if master_ready {
-            match master.read(&mut pty_output) {
+            match retry_task_io(|| master.read(&mut pty_output)) {
                 Ok(0) => {
                     return Ok(());
                 }
                 Ok(count) => {
-                    terminal_output
-                        .write_all(&pty_output[..count])
+                    retry_task_io(|| terminal_output.write_all(&pty_output[..count]))
                         .map_err(io_error("failed to write task terminal output"))?;
-                    terminal_output
-                        .flush()
+                    retry_task_io(|| terminal_output.flush())
                         .map_err(io_error("failed to flush task terminal output"))?;
                 }
                 Err(error) if pty_was_closed(&error) => {
@@ -940,6 +950,20 @@ mod tests {
         assert!(!super::task_poll_error_allows_retry(
             nix::errno::Errno::EBADF
         ));
+    }
+
+    #[test]
+    fn interrupted_task_session_io_is_retried() {
+        let error = std::io::Error::from(std::io::ErrorKind::Interrupted);
+
+        assert!(super::task_io_error_allows_retry(&error));
+    }
+
+    #[test]
+    fn non_interrupted_task_session_io_is_not_retried() {
+        let error = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+
+        assert!(!super::task_io_error_allows_retry(&error));
     }
 
     #[test]
