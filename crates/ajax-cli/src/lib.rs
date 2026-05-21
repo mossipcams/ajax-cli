@@ -2346,11 +2346,11 @@ mod tests {
         assert!(agents.contains("feat:"));
         assert!(agents.contains("fix:"));
         assert!(agents.contains("chore:"));
-        assert!(ci.contains("status:"));
-        assert!(ci.contains("name: CI Status"));
+        assert!(ci.contains("\n  ci:\n"));
+        assert!(ci.contains("name: CI"));
         assert!(ci.contains("needs:"));
         assert!(ci.contains("format-and-duplication"));
-        assert!(ci.contains("if: always()"));
+        assert!(ci.contains("if: ${{ always() }}"));
         assert!(ci.contains("needs.*.result"));
     }
 
