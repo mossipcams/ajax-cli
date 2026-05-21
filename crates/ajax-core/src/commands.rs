@@ -17,9 +17,9 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
-    mark_new_task_step_completed, new_task_plan, record_new_task, task_from_new_request,
-    NewTaskRequest, StartProvisioningStep,
+    is_new_task_husky_hook_command, mark_new_task_provisioning_failed,
+    mark_new_task_provisioning_step_completed, mark_new_task_step_completed, new_task_plan,
+    record_new_task, task_from_new_request, NewTaskRequest, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
@@ -849,7 +849,7 @@ mod tests {
             )
             .unwrap();
 
-            let send_keys = &plan.commands[2];
+            let send_keys = &plan.commands[3];
             let worktree_path = plan.commands[0].args[6].clone();
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
@@ -1844,6 +1844,15 @@ mod tests {
                     ]
                 ),
                 CommandSpec::new(
+                    "/bin/sh",
+                    [
+                        "-lc",
+                        "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
+                        "sh",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-logout"
+                    ]
+                ),
+                CommandSpec::new(
                     "tmux",
                     [
                         "new-session",
@@ -1900,11 +1909,15 @@ mod tests {
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[1].args[7],
+            plan.commands[1].args[3],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            shell_words(&plan.commands[2].args[3]),
+            plan.commands[2].args[7],
+            "/Users/matt/projects/web app__worktrees/ajax-fix-login"
+        );
+        assert_eq!(
+            shell_words(&plan.commands[3].args[3]),
             vec![
                 "codex",
                 "--cd",
@@ -1963,10 +1976,14 @@ mod tests {
             plan.commands[0].args[6],
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
-        assert_eq!(plan.commands[1].args[3], "ajax-api-ship-oauth-v2");
-        assert_eq!(plan.commands[2].args[2], "ajax-api-ship-oauth-v2:worktrunk");
         assert_eq!(
-            plan.commands[2].args[3],
+            plan.commands[1].args[3],
+            "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
+        );
+        assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
+        assert_eq!(plan.commands[3].args[2], "ajax-api-ship-oauth-v2:worktrunk");
+        assert_eq!(
+            plan.commands[3].args[3],
             "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
 
@@ -2000,7 +2017,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(removed_duplicate.commands[0].args[5], "ajax/fix-login");
-        assert_eq!(removed_duplicate.commands[1].args[3], "ajax-web-fix-login");
+        assert_eq!(removed_duplicate.commands[2].args[3], "ajax-web-fix-login");
     }
 
     #[test]

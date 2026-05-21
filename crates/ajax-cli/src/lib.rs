@@ -647,6 +647,18 @@ mod tests {
         }
     }
 
+    fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
+        CommandSpec::new(
+            "/bin/sh",
+            [
+                "-lc",
+                "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
+                "sh",
+                worktree_path,
+            ],
+        )
+    }
+
     fn ajax_binary_path() -> PathBuf {
         if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax") {
             return binary.into();
@@ -2785,6 +2797,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -2880,6 +2893,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new("sh", ["-lc", "npm ci"])
                     .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
@@ -2950,6 +2964,7 @@ mod tests {
         );
         let mut runner = QueuedRunner::new(vec![
             output(0, ""),
+            output(0, ""),
             CommandOutput {
                 status_code: 42,
                 stdout: String::new(),
@@ -2987,6 +3002,7 @@ mod tests {
             .git_status
             .as_ref()
             .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
+        assert_eq!(task.tmux_status, None);
         assert_eq!(
             runner.commands,
             vec![
@@ -3003,6 +3019,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -3032,6 +3049,7 @@ mod tests {
             InMemoryRegistry::default(),
         );
         let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
             output(0, ""),
             CommandOutput {
                 status_code: 42,
@@ -3084,6 +3102,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new("sh", ["-lc", "npm ci"])
                     .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login")
             ]
@@ -3191,6 +3210,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -5603,6 +5623,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [

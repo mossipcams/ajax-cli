@@ -10,6 +10,9 @@ use crate::{
 };
 use std::path::{Path, PathBuf};
 
+const INSTALL_HUSKY_HOOKS: &str =
+    "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewTaskRequest {
     pub repo: String,
@@ -66,6 +69,8 @@ pub fn new_task_plan<R: Registry>(
         &branch,
         &repo.default_branch,
     ));
+    plan.commands
+        .push(install_husky_hooks_command(&worktree_path));
     if let Some(bootstrap) = &repo.bootstrap {
         plan.commands
             .push(CommandSpec::new("sh", ["-lc", bootstrap.as_str()]).with_cwd(&worktree_path));
@@ -245,6 +250,14 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
     Ok(())
 }
 
+pub fn is_new_task_husky_hook_command(command: &CommandSpec) -> bool {
+    command.program == "/bin/sh"
+        && command.args.len() == 4
+        && command.args[0] == "-lc"
+        && command.args[1] == INSTALL_HUSKY_HOOKS
+        && command.args[2] == "sh"
+}
+
 fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
     let worktree_name = branch.replace('/', "-");
     let repo_dir = repo_path
@@ -258,6 +271,20 @@ fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
         .unwrap_or(repo_path)
         .join(worktrees_dir)
         .join(worktree_name)
+}
+
+fn install_husky_hooks_command(worktree_path: &Path) -> CommandSpec {
+    CommandSpec {
+        program: "/bin/sh".to_string(),
+        args: vec![
+            "-lc".to_string(),
+            INSTALL_HUSKY_HOOKS.to_string(),
+            "sh".to_string(),
+            worktree_path.display().to_string(),
+        ],
+        cwd: None,
+        mode: crate::adapters::CommandMode::Capture,
+    }
 }
 
 fn command_line(command: &CommandSpec) -> String {

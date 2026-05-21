@@ -217,10 +217,12 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
                 .after_state_change(),
             );
         }
-        outputs.push(output);
         if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
             commands::mark_new_task_provisioning_step_completed(context, &task.id, step)
                 .map_err(|error| command_error(error).after_state_change())?;
+        }
+        if !commands::is_new_task_husky_hook_command(command) {
+            outputs.push(output);
         }
     }
     commands::mark_task_opened(context, &task.qualified_handle())

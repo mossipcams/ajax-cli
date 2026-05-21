@@ -153,7 +153,15 @@ pub mod start {
             }
             Err(error) => return Err(error),
         };
-        let mut outputs = execution.outputs;
+        let mut outputs = operation
+            .plan
+            .commands
+            .iter()
+            .zip(execution.outputs)
+            .filter_map(|(command, output)| {
+                (!commands::is_new_task_husky_hook_command(command)).then_some(output)
+            })
+            .collect::<Vec<_>>();
 
         commands::mark_task_opened(context, &task.qualified_handle())?;
         let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
@@ -1287,7 +1295,10 @@ mod tests {
         assert_eq!(intent.worktrunk_window, "worktrunk");
         assert_eq!(intent.selected_agent, AgentClient::Codex);
         assert_eq!(plan.title, "create task: Fix login");
-        assert_eq!(plan.commands.len(), 3);
+        assert_eq!(plan.commands.len(), 4);
+        assert!(crate::commands::is_new_task_husky_hook_command(
+            &plan.commands[1]
+        ));
     }
 
     #[test]
