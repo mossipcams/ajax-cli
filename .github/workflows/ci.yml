@@ -156,3 +156,26 @@ jobs:
 
       - name: Smoke test
         run: scripts/smoke.sh
+
+  status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs:
+      - format-and-duplication
+      - check
+      - clippy
+      - test
+      - docs
+      - audit
+      - smoke
+    if: always()
+
+    steps:
+      - name: Check required jobs
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        run: |
+          echo "::error title=CI failed::One or more required CI jobs failed, were cancelled, or were skipped."
+          exit 1
+
+      - name: Report success
+        run: echo "All required CI jobs passed."

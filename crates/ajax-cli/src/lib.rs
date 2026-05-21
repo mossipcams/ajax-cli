@@ -2320,6 +2320,8 @@ mod tests {
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
         let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
         let license = std::fs::read_to_string(root.join("LICENSE")).unwrap();
 
         assert!(!workspace_manifest.contains("https://github.com/example/ajax-cli"));
@@ -2339,6 +2341,16 @@ mod tests {
         assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
         assert!(release.contains("cargo nextest run --all-features"));
+        assert!(agents.contains("Release Please PR title"));
+        assert!(agents.contains("feat:"));
+        assert!(agents.contains("fix:"));
+        assert!(agents.contains("chore:"));
+        assert!(ci.contains("status:"));
+        assert!(ci.contains("name: CI Status"));
+        assert!(ci.contains("needs:"));
+        assert!(ci.contains("format-and-duplication"));
+        assert!(ci.contains("if: always()"));
+        assert!(ci.contains("needs.*.result"));
     }
 
     #[test]
