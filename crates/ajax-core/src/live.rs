@@ -1,4 +1,4 @@
-pub use crate::live_application::apply_observation;
+pub use crate::live_application::{apply_authoritative_observation, apply_observation};
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
@@ -244,6 +244,50 @@ fn is_completion_line(lower: &str) -> bool {
     ) || lower.trim_matches(|character: char| !character.is_ascii_alphanumeric()) == "done"
 }
 
+pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
+    match value.trim() {
+        "working" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "wait" => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        )),
+        "ask" => Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        )),
+        "done" | "parked" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
+        _ => None,
+    }
+}
+
+pub fn reduce_agent_status_values<'a>(
+    values: impl IntoIterator<Item = &'a str>,
+) -> Option<LiveObservation> {
+    values
+        .into_iter()
+        .filter_map(|value| {
+            classify_agent_status_value(value).map(|observation| {
+                let priority = agent_status_priority(observation.kind);
+                (priority, observation)
+            })
+        })
+        .max_by_key(|(priority, _observation)| *priority)
+        .map(|(_priority, observation)| observation)
+}
+
+fn agent_status_priority(kind: LiveStatusKind) -> u8 {
+    match kind {
+        LiveStatusKind::AgentRunning => 5,
+        LiveStatusKind::WaitingForInput => 4,
+        LiveStatusKind::WaitingForApproval => 3,
+        LiveStatusKind::Done => 2,
+        _ => 0,
+    }
+}
+
 pub fn reduce_live_observation(
     current: Option<&LiveObservation>,
     next: LiveObservation,
@@ -338,7 +382,9 @@ mod tests {
         AgentClient, AgentRuntimeStatus, LiveObservation, LiveStatusKind, SideFlag, Task, TaskId,
     };
 
-    use super::{apply_observation, classify_pane};
+    use super::{
+        apply_observation, classify_agent_status_value, classify_pane, reduce_agent_status_values,
+    };
 
     fn base_task() -> Task {
         Task::new(
@@ -465,6 +511,44 @@ mod tests {
 
             assert_eq!(observation.kind, expected, "{pane}");
         }
+    }
+
+    #[test]
+    fn agent_status_values_map_to_live_observations() {
+        for (value, expected) in [
+            ("working", Some(LiveStatusKind::AgentRunning)),
+            ("done", Some(LiveStatusKind::Done)),
+            ("wait", Some(LiveStatusKind::WaitingForInput)),
+            ("ask", Some(LiveStatusKind::WaitingForApproval)),
+            ("parked", Some(LiveStatusKind::Done)),
+            ("", None),
+            ("nonsense", None),
+        ] {
+            let observation = classify_agent_status_value(value);
+
+            assert_eq!(
+                observation.map(|observation| observation.kind),
+                expected,
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn agent_status_values_reduce_by_tmux_agent_status_priority() {
+        let observation = reduce_agent_status_values(["done", "wait", "working", "ask", "parked"]);
+
+        assert_eq!(
+            observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+
+        let observation = reduce_agent_status_values(["parked", "done", "ask"]);
+
+        assert_eq!(
+            observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForApproval)
+        );
     }
 
     #[test]
