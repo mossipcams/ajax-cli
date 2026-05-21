@@ -939,7 +939,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(!runner.commands.iter().any(
+        assert!(runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(
@@ -974,7 +974,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(!runner.commands.iter().any(
+        assert!(runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(
