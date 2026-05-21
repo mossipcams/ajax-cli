@@ -146,13 +146,12 @@ pub(crate) fn filter_task_input(input: &[u8]) -> FilteredTaskInput {
         }
 
         match input[index] {
-            0x11 if input.get(index + 1) == Some(&0x11) => {
+            0x11 => {
                 return FilteredTaskInput {
                     action: TaskInputAction::ReturnToCockpit,
                     bytes,
                 };
             }
-            0x11 => {}
             0x13 => {}
             byte => bytes.push(byte),
         }
@@ -744,23 +743,12 @@ mod tests {
     }
 
     #[test]
-    fn task_input_filter_returns_to_cockpit_on_double_control_q_without_forwarding_it() {
+    fn task_input_filter_returns_to_cockpit_on_control_q_without_forwarding_it() {
         assert_eq!(
-            filter_task_input(b"abc\x11\x11def"),
+            filter_task_input(b"abc\x11def"),
             FilteredTaskInput {
                 action: TaskInputAction::ReturnToCockpit,
                 bytes: b"abc".to_vec(),
-            }
-        );
-    }
-
-    #[test]
-    fn task_input_filter_keeps_lone_xon_inside_task_session() {
-        assert_eq!(
-            filter_task_input(b"\x11"),
-            FilteredTaskInput {
-                action: TaskInputAction::Forward,
-                bytes: Vec::new(),
             }
         );
     }

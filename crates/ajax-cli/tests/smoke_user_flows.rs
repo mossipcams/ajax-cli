@@ -202,7 +202,7 @@ struct PtyAjaxOutput {
     status: WaitStatus,
 }
 
-fn run_ajax_cockpit_double_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput {
+fn run_ajax_cockpit_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput {
     let winsize = Winsize {
         ws_row: 24,
         ws_col: 80,
@@ -243,19 +243,17 @@ fn run_ajax_cockpit_double_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput 
                 "task attach output",
             );
             let attach_output_len = stdout.len();
-            master
-                .write_all(b"\x11\x11")
-                .expect("failed to send double Ctrl-Q");
+            master.write_all(b"\x11").expect("failed to send Ctrl-Q");
             wait_for_pty_output_after(
                 &mut master,
                 &mut stdout,
                 attach_output_len,
                 "Ajax",
-                "cockpit redraw after double Ctrl-Q",
+                "cockpit redraw after Ctrl-Q",
             );
             master
                 .write_all(b"q")
-                .expect("failed to quit cockpit after double Ctrl-Q");
+                .expect("failed to quit cockpit after Ctrl-Q");
 
             let status = wait_for_child_exit(child, &mut master, &mut stdout);
             PtyAjaxOutput {
@@ -771,13 +769,13 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
 }
 
 #[test]
-fn smoke_cockpit_double_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
+fn smoke_cockpit_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
     let sandbox = SmokeSandbox::new("cockpit-ctrl-q-task-session");
     sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
     create_active_web_task(&sandbox);
 
-    let output = run_ajax_cockpit_double_ctrl_q_flow(&sandbox);
+    let output = run_ajax_cockpit_ctrl_q_flow(&sandbox);
 
     assert!(
         matches!(output.status, WaitStatus::Exited(_, 0)),
@@ -787,7 +785,7 @@ fn smoke_cockpit_double_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
     );
     assert!(
         sandbox.tmux_session_path("ajax-web-fix-login").exists(),
-        "double Ctrl-Q should detach from the attach client without deleting the tmux session"
+        "Ctrl-Q should detach from the attach client without deleting the tmux session"
     );
     assert!(
         output.stdout.contains("attached ajax-web-fix-login"),
@@ -798,7 +796,7 @@ fn smoke_cockpit_double_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
     let command_log = sandbox.command_log();
     assert!(
         !command_log.contains("tmux kill-session -t ajax-web-fix-login"),
-        "double Ctrl-Q detach should not tear down the durable tmux session:\n{command_log}"
+        "Ctrl-Q detach should not tear down the durable tmux session:\n{command_log}"
     );
 
     let inspect = assert_json(
