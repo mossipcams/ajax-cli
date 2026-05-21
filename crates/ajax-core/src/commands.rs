@@ -17,8 +17,9 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    mark_new_task_provisioning_failed, mark_new_task_step_completed, new_task_plan,
-    record_new_task, task_from_new_request, NewTaskRequest,
+    mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
+    mark_new_task_step_completed, new_task_plan, record_new_task, task_from_new_request,
+    NewTaskRequest, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
@@ -319,6 +320,10 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         cards: projection.cards,
         inbox,
     }
+}
+
+pub fn rebuild_cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
+    cockpit_view(context)
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
