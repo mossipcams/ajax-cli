@@ -1,3 +1,4 @@
+mod agent_status_cache;
 mod classifiers;
 mod cli;
 mod cockpit_actions;
