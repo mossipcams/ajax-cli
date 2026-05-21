@@ -151,7 +151,7 @@ or test-command operation.
   backend glue.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
-  filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux
+  filters Cockpit-owned shortcuts such as double Ctrl-Q without installing tmux
   bindings, and resumes Cockpit when the task attach client detaches.
 - `classifiers` owns small operator-facing command-output heuristics.
 
