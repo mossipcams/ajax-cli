@@ -60,7 +60,7 @@ enum TaskChildShutdownAction {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TaskPollAction {
     Pump { tty_ready: bool, master_ready: bool },
-    Detach,
+    Interrupt,
     Close,
 }
 
@@ -79,6 +79,7 @@ struct TaskAttachExit {
 #[derive(Debug)]
 enum TaskSessionOutcome {
     Detached,
+    Interrupted,
     AttachClientExited(TaskAttachExit),
 }
 
@@ -279,7 +280,7 @@ fn task_child_shutdown_action(
 
 fn classify_task_poll_events(tty_flags: PollFlags, master_flags: PollFlags) -> TaskPollAction {
     if tty_flags.contains(PollFlags::POLLNVAL) {
-        return TaskPollAction::Detach;
+        return TaskPollAction::Interrupt;
     }
     if master_flags.contains(PollFlags::POLLNVAL) {
         return TaskPollAction::Close;
@@ -360,6 +361,14 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             &mut terminal.output,
         )? {
             TaskSessionOutcome::Detached => return Ok(()),
+            TaskSessionOutcome::Interrupted => {
+                if consecutive_interrupted_retries >= MAX_INTERRUPTED_ATTACH_RETRIES {
+                    return Err(CliError::CommandFailed(
+                        "task attach client repeatedly lost the operator terminal".to_string(),
+                    ));
+                }
+                consecutive_interrupted_retries += 1;
+            }
             TaskSessionOutcome::AttachClientExited(exit) => {
                 if !attach_exit_allows_retry(&exit) {
                     return Ok(());
@@ -549,8 +558,8 @@ fn pump_task_pty(
                 tty_ready,
                 master_ready,
             } => (tty_ready, master_ready),
-            TaskPollAction::Detach => {
-                return detach_task_child(master, child);
+            TaskPollAction::Interrupt => {
+                return interrupt_task_child(master, child);
             }
             TaskPollAction::Close => {
                 return attach_client_exit(child, recent_output, attached_at.elapsed());
@@ -562,7 +571,7 @@ fn pump_task_pty(
                 .read(&mut tty_input)
                 .map_err(io_error("failed to read task terminal input"))?;
             if count == 0 {
-                return detach_task_child(master, child);
+                return interrupt_task_child(master, child);
             }
             let filtered = filter_task_input_after_startup_grace_period(
                 &tty_input[..count],
@@ -653,6 +662,15 @@ fn detach_task_child(
     drop(master);
     request_task_child_exit(child)?;
     Ok(TaskSessionOutcome::Detached)
+}
+
+fn interrupt_task_child(
+    master: File,
+    child: nix::unistd::Pid,
+) -> Result<TaskSessionOutcome, CliError> {
+    drop(master);
+    let _ = wait_for_attach_child_status(child)?;
+    Ok(TaskSessionOutcome::Interrupted)
 }
 
 fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
@@ -995,11 +1013,15 @@ mod tests {
     }
 
     #[test]
-    fn task_poll_classification_does_not_continue_on_invalid_or_error_only_events() {
+    fn task_poll_classification_treats_operator_terminal_invalidation_as_interruption() {
         assert_eq!(
             super::classify_task_poll_events(PollFlags::POLLNVAL, PollFlags::empty()),
-            super::TaskPollAction::Detach
+            super::TaskPollAction::Interrupt
         );
+    }
+
+    #[test]
+    fn task_poll_classification_does_not_continue_on_master_invalid_or_error_only_events() {
         assert_eq!(
             super::classify_task_poll_events(PollFlags::empty(), PollFlags::POLLNVAL),
             super::TaskPollAction::Close
