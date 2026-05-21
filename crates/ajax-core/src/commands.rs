@@ -10,6 +10,7 @@ mod teardown;
 mod trunk;
 
 pub use crate::adapters::DoctorEnvironment;
+pub use crate::use_cases::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
@@ -17,8 +18,9 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    mark_new_task_provisioning_failed, mark_new_task_step_completed, new_task_plan,
-    record_new_task, task_from_new_request, NewTaskRequest,
+    is_new_task_husky_hook_command, mark_new_task_provisioning_failed,
+    mark_new_task_provisioning_step_completed, mark_new_task_step_completed, new_task_plan,
+    record_new_task, task_from_new_request, NewTaskRequest, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
@@ -34,13 +36,13 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
     config::Config,
-    models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
+    models::{Annotation, AnnotationKind, GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
         AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
     recommended::{evidence_label, operator_action},
-    registry::{Registry, RegistryError},
+    registry::Registry,
 };
 use lookup::find_task;
 use projection::{
@@ -48,56 +50,9 @@ use projection::{
     count_active_tasks, count_attention_items, count_lifecycle, is_cockpit_menu_task,
     is_visible_task, task_summary,
 };
-use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, time::Duration, time::SystemTime};
 
 const STALE_AFTER: Duration = Duration::from_secs(7 * 24 * 60 * 60);
-
-pub struct CommandContext<R> {
-    pub config: Config,
-    pub registry: R,
-}
-
-impl<R> CommandContext<R> {
-    pub fn new(config: Config, registry: R) -> Self {
-        Self { config, registry }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CommandError {
-    TaskNotFound(String),
-    RepoNotFound(String),
-    ConfirmationRequired,
-    PlanBlocked(Vec<String>),
-    CommandRun(CommandRunError),
-    Registry(RegistryError),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct CommandPlan {
-    pub title: String,
-    pub commands: Vec<CommandSpec>,
-    pub requires_confirmation: bool,
-    pub blocked_reasons: Vec<String>,
-}
-
-impl CommandPlan {
-    pub fn new(title: impl Into<String>) -> Self {
-        Self {
-            title: title.into(),
-            commands: Vec::new(),
-            requires_confirmation: false,
-            blocked_reasons: Vec::new(),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OpenMode {
-    Attach,
-    SwitchClient,
-}
 
 pub fn list_repos<R: Registry>(context: &CommandContext<R>) -> ReposResponse {
     let all_tasks = context.registry.list_tasks();
@@ -147,8 +102,7 @@ fn list_tasks_from_tasks(tasks: &[&Task], repo: Option<&str>) -> TasksResponse {
 }
 
 pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
-    let all_tasks = context.registry.list_tasks();
-    review_queue_from_tasks(all_tasks.as_slice())
+    crate::slices::review::review_queue(context)
 }
 
 fn review_queue_from_tasks(tasks: &[&Task]) -> TasksResponse {
@@ -210,7 +164,7 @@ pub fn cockpit_inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse 
         .into_iter()
         .filter(|task| is_cockpit_menu_task(task))
         .collect::<Vec<_>>();
-    inbox_from_tasks(tasks.as_slice())
+    cockpit_inbox_from_tasks(tasks.as_slice())
 }
 
 fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
@@ -224,6 +178,17 @@ fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
     }
 }
 
+fn cockpit_inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
+    let visible = tasks
+        .iter()
+        .copied()
+        .filter(|task| is_visible_task(task))
+        .collect::<Vec<_>>();
+    InboxResponse {
+        items: cockpit_annotation_items(visible.as_slice()),
+    }
+}
+
 pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     NextResponse {
         item: inbox(context).items.into_iter().next(),
@@ -231,12 +196,24 @@ pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
 }
 
 fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
+    annotation_items_matching(tasks, |_| true)
+}
+
+fn cockpit_annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
+    annotation_items_matching(tasks, is_cockpit_inbox_annotation)
+}
+
+fn annotation_items_matching(
+    tasks: &[&Task],
+    include: impl Fn(&Annotation) -> bool,
+) -> Vec<AnnotationItem> {
     let mut items = tasks
         .iter()
         .copied()
         .filter_map(|task| {
             annotations_for_task(task)
                 .into_iter()
+                .filter(|annotation| include(annotation))
                 .min_by_key(|annotation| annotation.severity)
                 .map(|annotation| annotation_item(task, annotation))
         })
@@ -248,6 +225,13 @@ fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
             .then_with(|| left.reason.cmp(&right.reason))
     });
     items
+}
+
+fn is_cockpit_inbox_annotation(annotation: &Annotation) -> bool {
+    matches!(
+        annotation.kind,
+        AnnotationKind::NeedsMe | AnnotationKind::Broken
+    )
 }
 
 fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
@@ -310,7 +294,7 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         .collect::<Vec<_>>();
     let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
     let review = review_queue_from_tasks(cockpit_tasks.as_slice());
-    let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
+    let inbox = cockpit_inbox_from_tasks(cockpit_tasks.as_slice());
     let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     let projection = build_cockpit_projection(all_tasks.as_slice(), summary);
 
@@ -319,6 +303,10 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         cards: projection.cards,
         inbox,
     }
+}
+
+pub fn rebuild_cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
+    cockpit_view(context)
 }
 
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
@@ -558,12 +546,13 @@ pub fn execute_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
-        inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, observe_drop_resources, open_task_plan, plan_drop_from_observation,
-        refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
-        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
-        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
+        check_task_plan, clean_task_plan, cockpit, cockpit_inbox, diff_task_plan,
+        doctor_with_environment, inbox, inspect_task, list_repos, list_tasks, mark_stale_tasks,
+        merge_task_plan, new_task_plan, next, observe_drop_resources, open_task_plan,
+        plan_drop_from_observation, refresh_git_substrate_evidence, remove_task_plan, review_queue,
+        status, sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext,
+        CommandError, DoctorEnvironment, DropObservation, DropOp, NewTaskRequest, OpenMode,
+        ResourceState,
     };
     use crate::{
         adapters::{
@@ -844,7 +833,7 @@ mod tests {
             )
             .unwrap();
 
-            let send_keys = &plan.commands[2];
+            let send_keys = &plan.commands[3];
             let worktree_path = plan.commands[0].args[6].clone();
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
@@ -1305,6 +1294,46 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_inbox_does_not_list_reviewable_tasks_without_input_or_blocker() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.remove_side_flag(SideFlag::NeedsInput);
+
+        assert_eq!(review_queue(&context).tasks.len(), 1);
+        assert!(cockpit_inbox(&context).items.is_empty());
+    }
+
+    #[rstest]
+    #[case(LiveStatusKind::WaitingForInput, "waiting_for_input")]
+    #[case(LiveStatusKind::WaitingForApproval, "waiting_for_approval")]
+    #[case(LiveStatusKind::CommandFailed, "command_failed")]
+    #[case(LiveStatusKind::Blocked, "blocked")]
+    #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
+    fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
+        #[case] live_status: LiveStatusKind,
+        #[case] expected_reason: &str,
+    ) {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(live_status, expected_reason));
+
+        let response = cockpit_inbox(&context);
+
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].task_handle, "web/fix-login");
+        assert_eq!(response.items[0].reason, expected_reason);
+    }
+
+    #[test]
     fn task_summaries_expose_lifecycle_aware_actions() {
         let mut context = context_with_tasks();
         let task = context
@@ -1453,6 +1482,30 @@ mod tests {
     }
 
     #[test]
+    fn review_slice_facade_lists_reviewable_and_mergeable_tasks() {
+        let mut context = context_with_tasks();
+        let mut mergeable = Task::new(
+            TaskId::new("task-2"),
+            "api",
+            "add-cache",
+            "Add cache",
+            "ajax/add-cache",
+            "main",
+            "/tmp/worktrees/api-add-cache",
+            "ajax-api-add-cache",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        mergeable.lifecycle_status = LifecycleStatus::Mergeable;
+        context.registry.create_task(mergeable).unwrap();
+
+        assert_eq!(
+            crate::slices::review::review_queue(&context),
+            review_queue(&context)
+        );
+    }
+
+    #[test]
     fn cockpit_includes_review_queue() {
         let mut context = context_with_tasks();
         let mut mergeable = Task::new(
@@ -1475,6 +1528,23 @@ mod tests {
         assert_eq!(response.review.tasks.len(), 2);
         assert_eq!(response.review.tasks[0].qualified_handle, "web/fix-login");
         assert_eq!(response.review.tasks[1].qualified_handle, "api/add-cache");
+    }
+
+    #[test]
+    fn cockpit_inbox_excludes_reviewable_tasks_without_input_or_blocker() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.remove_side_flag(SideFlag::NeedsInput);
+
+        let view = super::cockpit_view(&context);
+
+        assert!(view.inbox.items.is_empty());
+        assert_eq!(view.cards.len(), 1);
+        assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
     }
 
     #[test]
@@ -1839,6 +1909,15 @@ mod tests {
                     ]
                 ),
                 CommandSpec::new(
+                    "/bin/sh",
+                    [
+                        "-lc",
+                        "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
+                        "sh",
+                        "/Users/matt/projects/web__worktrees/ajax-fix-logout"
+                    ]
+                ),
+                CommandSpec::new(
                     "tmux",
                     [
                         "new-session",
@@ -1895,11 +1974,15 @@ mod tests {
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[1].args[7],
+            plan.commands[1].args[3],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            shell_words(&plan.commands[2].args[3]),
+            plan.commands[2].args[7],
+            "/Users/matt/projects/web app__worktrees/ajax-fix-login"
+        );
+        assert_eq!(
+            shell_words(&plan.commands[3].args[3]),
             vec![
                 "codex",
                 "--cd",
@@ -1958,10 +2041,14 @@ mod tests {
             plan.commands[0].args[6],
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
-        assert_eq!(plan.commands[1].args[3], "ajax-api-ship-oauth-v2");
-        assert_eq!(plan.commands[2].args[2], "ajax-api-ship-oauth-v2:worktrunk");
         assert_eq!(
-            plan.commands[2].args[3],
+            plan.commands[1].args[3],
+            "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
+        );
+        assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
+        assert_eq!(plan.commands[3].args[2], "ajax-api-ship-oauth-v2:worktrunk");
+        assert_eq!(
+            plan.commands[3].args[3],
             "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
 
@@ -1995,7 +2082,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(removed_duplicate.commands[0].args[5], "ajax/fix-login");
-        assert_eq!(removed_duplicate.commands[1].args[3], "ajax-web-fix-login");
+        assert_eq!(removed_duplicate.commands[2].args[3], "ajax-web-fix-login");
     }
 
     #[test]
@@ -2343,6 +2430,15 @@ mod tests {
                     .with_cwd("/tmp/worktrees/web-fix-login")
             ]
         );
+    }
+
+    #[test]
+    fn review_slice_facade_summarizes_branch_diff_in_task_worktree() {
+        let context = context_with_tasks();
+
+        let plan = crate::slices::review::review_task_plan(&context, "web/fix-login").unwrap();
+
+        assert_eq!(plan, diff_task_plan(&context, "web/fix-login").unwrap());
     }
 
     #[test]

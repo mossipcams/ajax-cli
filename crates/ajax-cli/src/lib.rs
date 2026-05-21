@@ -1,3 +1,4 @@
+mod agent_status_cache;
 mod classifiers;
 mod cli;
 mod cockpit_actions;
@@ -645,6 +646,18 @@ mod tests {
             OpenMode::SwitchClient => CommandSpec::new("tmux", ["switch-client", "-t", session])
                 .with_mode(CommandMode::InheritStdio),
         }
+    }
+
+    fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
+        CommandSpec::new(
+            "/bin/sh",
+            [
+                "-lc",
+                "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
+                "sh",
+                worktree_path,
+            ],
+        )
     }
 
     fn ajax_binary_path() -> PathBuf {
@@ -2323,8 +2336,10 @@ mod tests {
         assert!(readme.contains("## First Run"));
         assert!(changelog.contains("# Changelog"));
         assert!(release.contains("# Release Process"));
+        assert!(release.contains("Release Please"));
+        assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
-        assert!(release.contains("cargo test --all-features"));
+        assert!(release.contains("cargo nextest run --all-features"));
     }
 
     #[test]
@@ -2783,6 +2798,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -2878,6 +2894,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new("sh", ["-lc", "npm ci"])
                     .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
@@ -2948,6 +2965,7 @@ mod tests {
         );
         let mut runner = QueuedRunner::new(vec![
             output(0, ""),
+            output(0, ""),
             CommandOutput {
                 status_code: 42,
                 stdout: String::new(),
@@ -2985,6 +3003,7 @@ mod tests {
             .git_status
             .as_ref()
             .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
+        assert_eq!(task.tmux_status, None);
         assert_eq!(
             runner.commands,
             vec![
@@ -3001,6 +3020,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -3030,6 +3050,7 @@ mod tests {
             InMemoryRegistry::default(),
         );
         let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
             output(0, ""),
             CommandOutput {
                 status_code: 42,
@@ -3082,6 +3103,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new("sh", ["-lc", "npm ci"])
                     .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login")
             ]
@@ -3189,6 +3211,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -5601,6 +5624,7 @@ mod tests {
                         "main"
                     ]
                 ),
+                expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -5654,7 +5678,7 @@ mod tests {
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("review"),
-            Some(super::TaskCommandOperation::Diff)
+            Some(super::TaskCommandOperation::Review)
         );
         assert_eq!(
             super::TaskCommandOperation::from_cli_subcommand("ship"),
@@ -5673,11 +5697,21 @@ mod tests {
     }
 
     #[test]
+    fn task_command_operation_uses_operator_review_language() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+
+        assert!(dispatch.contains("Review"));
+        assert!(!dispatch.contains("Diff"));
+        assert!(dispatch.contains("slices::review::review_task_plan"));
+    }
+
+    #[test]
     fn task_command_operation_defines_cockpit_return_policy() {
         assert!(!super::TaskCommandOperation::Open.returns_to_cockpit_after_execute());
 
         for operation in [
-            super::TaskCommandOperation::Diff,
+            super::TaskCommandOperation::Review,
             super::TaskCommandOperation::Merge,
             super::TaskCommandOperation::Repair,
             super::TaskCommandOperation::Drop,

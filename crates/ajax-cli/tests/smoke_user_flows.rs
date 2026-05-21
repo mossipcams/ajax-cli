@@ -203,6 +203,13 @@ struct PtyAjaxOutput {
 }
 
 fn run_ajax_cockpit_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput {
+    run_ajax_cockpit_ctrl_q_flow_with_env(sandbox, &[])
+}
+
+fn run_ajax_cockpit_ctrl_q_flow_with_env(
+    sandbox: &SmokeSandbox,
+    extra_env: &[(&str, &str)],
+) -> PtyAjaxOutput {
     let winsize = Winsize {
         ws_row: 24,
         ws_col: 80,
@@ -214,11 +221,10 @@ fn run_ajax_cockpit_ctrl_q_flow(sandbox: &SmokeSandbox) -> PtyAjaxOutput {
 
     match fork {
         ForkptyResult::Child => {
+            let mut env = vec![("AJAX_SMOKE_TMUX_ATTACH_BLOCK", "1"), ("TERM", "xterm")];
+            env.extend_from_slice(extra_env);
             let error = sandbox
-                .ajax_command(
-                    ["cockpit", "--interval-ms", "10000"],
-                    [("AJAX_SMOKE_TMUX_ATTACH_BLOCK", "1"), ("TERM", "xterm")],
-                )
+                .ajax_command(["cockpit", "--interval-ms", "10000"], env)
                 .exec();
             eprintln!("failed to exec ajax cockpit: {error}");
             std::process::exit(127);
@@ -430,6 +436,14 @@ case "${1:-}" in
     ;;
   attach-session)
     session="${3:-}"
+    if [[ -n "${AJAX_SMOKE_TMUX_ATTACH_EINTR_ONCE:-}" ]]; then
+      interrupted_marker="$AJAX_SMOKE_SUBSTRATE_DIR/attach-eintr-once"
+      if [[ ! -f "$interrupted_marker" ]]; then
+        touch "$interrupted_marker"
+        printf 'tmux: EINTR service interrupted call\n'
+        exit 1
+      fi
+    fi
     if [[ -n "${AJAX_SMOKE_TMUX_ATTACH_BLOCK:-}" ]]; then
       printf 'attached %s\n' "$session"
       trap 'exit 0' HUP TERM INT
@@ -805,6 +819,47 @@ fn smoke_cockpit_ctrl_q_detaches_task_session_and_returns_to_cockpit() {
     );
     assert_eq!(inspect["task"]["lifecycle_status"], "Active");
     assert_eq!(inspect["tmux_session"], "ajax-web-fix-login");
+}
+
+#[test]
+fn smoke_cockpit_reattaches_after_interrupted_attach_client() {
+    let sandbox = SmokeSandbox::new("cockpit-reattach-interrupted-task-session");
+    sandbox.create_repo("web");
+    sandbox.write_config(&["web"]);
+    create_active_web_task(&sandbox);
+
+    let output = run_ajax_cockpit_ctrl_q_flow_with_env(
+        &sandbox,
+        &[("AJAX_SMOKE_TMUX_ATTACH_EINTR_ONCE", "1")],
+    );
+
+    assert!(
+        matches!(output.status, WaitStatus::Exited(_, 0)),
+        "ajax cockpit should exit cleanly after reattaching and returning from task mode\nstatus: {:?}\nstdout:\n{}",
+        output.status,
+        output.stdout
+    );
+    assert!(
+        output
+            .stdout
+            .contains("tmux: EINTR service interrupted call"),
+        "first attach should expose the interrupted call output:\n{}",
+        output.stdout
+    );
+    assert!(
+        output.stdout.contains("attached ajax-web-fix-login"),
+        "second attach should keep the operator inside the task session:\n{}",
+        output.stdout
+    );
+
+    let command_log = sandbox.command_log();
+    assert!(
+        command_log
+            .matches("tmux attach-session -t ajax-web-fix-login")
+            .count()
+            >= 2,
+        "interrupted attach should be followed by a second attach:\n{command_log}"
+    );
 }
 
 #[test]

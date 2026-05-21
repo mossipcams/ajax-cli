@@ -8,6 +8,14 @@ use crate::{
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
     let observation = reduce_task_live_observation(task, observation);
+    apply_reduced_observation(task, observation);
+}
+
+pub fn apply_authoritative_observation(task: &mut Task, observation: LiveObservation) {
+    apply_reduced_observation(task, observation);
+}
+
+fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
     let refresh_activity = refreshes_activity(observation.kind);
     let has_missing_substrate_flag = has_missing_substrate_flag(task);
     clear_recovered_live_flags(task, observation.kind);

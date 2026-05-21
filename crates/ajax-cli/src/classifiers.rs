@@ -1,5 +1,7 @@
+#[cfg(test)]
 use ajax_core::adapters::CommandRunError;
 
+#[cfg(test)]
 pub(crate) fn command_error_looks_conflicted(error: &CommandRunError) -> bool {
     match error {
         CommandRunError::NonZeroExit { stderr, .. } => {

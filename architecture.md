@@ -4,6 +4,8 @@ Ajax is a native operator cockpit for isolated AI coding tasks. Cockpit is the
 primary operator surface. The CLI, JSON contract, and Rust core provide the
 deterministic backend used by Cockpit, scripts, and tests.
 
+The codebase is a modular monolith organized around vertical slices.
+
 ## Crates
 
 ### `ajax-core`
@@ -33,13 +35,90 @@ Ajax coordinates external tools but does not replace them.
 - Git owns repository truth, branches, merges, and worktrees.
 - tmux owns durable interactive sessions.
 - Agent CLIs are opaque workers.
-- SQLite stores Ajax registry state, including the current runtime projection
-  derived from observed substrate evidence.
+- SQLite stores Ajax registry state as Ajax-owned task intent, task events, and
+  cached projections. It is durable storage for Ajax facts and a fast read
+  model, not the source of truth for Git, tmux, or process reality.
 
-Ajax owns task lifecycle, naming, policy, live projection, command plans, and
-registry state.
+Ajax owns task intent, task lifecycle decisions, naming, policy, task operation
+history, live projection, command plans, and registry state.
+
+## Task Authority Model
+
+Ajax tasks are coordinated external work environments. A task is not simply a
+database row and not simply a command plan. The backend treats a task as the
+composition of:
+
+- `TaskIntent` — Ajax-owned durable intent: repo, handle, title, selected agent,
+  expected branch, expected worktree path, expected tmux session, and expected
+  task window.
+- Task events — Ajax-owned history: task creation, lifecycle decisions,
+  operation progress, substrate-change records, and incomplete teardown notes.
+- Substrate observations — observed Git, tmux, worktree, task-window, and agent
+  facts. These are source-tagged and rebuildable from external substrates.
+- Task projection — the disposable read model used by CLI, JSON output, and
+  Cockpit. It includes lifecycle, runtime health, live status, annotations, and
+  recommended operator actions.
+
+SQLite may cache substrate observations and projections so commands and Cockpit
+can render quickly. Cached substrate evidence must be treated as staleable
+evidence, not authority. Git, tmux, and supervised processes remain the
+authoritative sources for their own reality.
+
+## Task Operations
+
+Task operations are the backend transaction boundary for operator actions. They
+plan external effects, apply operation evidence, and return typed outcomes that
+CLI and Cockpit render.
+
+The task operation boundary now owns the main mutable task actions:
+
+- Start operation planning returns `TaskIntent` plus the external command plan
+  without mutating the registry.
+- Start operation execution records the task, applies named provisioning steps,
+  marks provisioning failure in core, and opens the task after successful setup.
+- Single-task command operations plan and execute `resume`, `review`, `repair`,
+  and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
+  core owns post-execution reducers such as opened, merged, repair/check
+  succeeded, and merge/check failure state.
+- Drop operation planning starts from fresh substrate observation and produces
+  `DropOp`s from observed resources rather than cached registry fields alone.
+- Drop execution runs teardown ops, records step evidence, re-observes external
+  resources, and decides `Removed` versus `TeardownIncomplete` from the final
+  observation inside core.
+- Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
+  candidates, executes each candidate, marks completed cleanup state, and
+  reports whether an error happened after partial state changes.
+
+Command modules still expose substrate-oriented planning helpers. Task
+operations compose those helpers into vertical operator transactions.
 
 ## Core Architecture
+
+### Vertical Slices
+
+Ajax follows an Aroeira-style modular monolith: dependency boundaries still
+point inward, while feature work is organized around operator capabilities.
+A slice is a vertical use-case module inside its owning crate, not a new crate
+and not a cosmetic facade over unrelated layered code.
+
+`ajax-core::slices` owns pure operator capability orchestration. Each slice
+starts with private implementation modules plus a small public facade. Code
+outside the slice depends on the facade only; private slice modules are free to
+change as the capability evolves. Slice names use operator language such as
+`review`, `resume`, `ship`, or `drop`, rather than substrate language such as
+Git diff, tmux attach, or process cleanup.
+
+Slices may depend on core domain models, lifecycle rules, policy, output
+contracts, registry traits, and command-spec ports. Mechanisms remain outside
+slices: filesystem, terminal, JSON, subprocess, Git, tmux, networking, SQLite,
+and process supervision stay in `adapters`, `registry/sqlite`, or
+`ajax-supervisor`. CLI and Cockpit code are composition and presentation layers;
+they call public slice facades and do not reach into private slice modules.
+
+Architecture tests use `rust_arkitect` to enforce slice direction as the
+codebase migrates. Migrations happen one operator capability at a time, keeping
+existing public APIs as compatibility wrappers until callers can move to the
+slice facade.
 
 ### Registry
 
@@ -78,6 +157,14 @@ runtime health verdict such as healthy, missing worktree, missing session,
 missing task window, wrong task-window path, or unobservable. UI and action
 selection consume that verdict instead of reinterpreting individual substrate
 fields.
+
+Runtime refresh lives in `runtime_refresh`. It probes Git and tmux, reconciles
+runtime evidence, refreshes cached annotations, and recovers missing task
+records from observed Ajax worktrees. Core also accepts a small external
+agent-status cache port for hook-backed status values; adapters read filesystem
+or terminal cache formats and core reduces those values into live observations.
+Cockpit invokes runtime refresh through the CLI adapter but does not own the
+refresh algorithm.
 
 ### Live Status
 
@@ -147,8 +234,11 @@ or test-command operation.
 - `render` owns human, JSON, execution-output, and command-plan rendering.
 - `snapshot_dispatch` owns read-only command routing.
 - `execution_dispatch` owns mutable command routing.
-- `cockpit_backend` owns Cockpit snapshots, live refresh, watch mode, and TUI
-  backend glue.
+- `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
+  It calls core runtime refresh and explicit cockpit projection rebuilds rather
+  than owning substrate refresh logic.
+- `agent_status_cache` owns filesystem reads for hook-backed agent status caches
+  such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux

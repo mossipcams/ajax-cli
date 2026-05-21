@@ -16,8 +16,15 @@ pub mod policy;
 pub mod recommended;
 pub mod registry;
 pub mod runtime;
+pub mod runtime_refresh;
+pub mod slices;
+pub mod task_operations;
 pub mod ui_state;
+pub mod use_cases;
 pub mod validity;
+
+#[cfg(test)]
+mod architecture;
 
 #[cfg(test)]
 mod tests {
@@ -101,5 +108,52 @@ mod tests {
         assert!(!commands.contains("fn task_repo_path<"));
         assert!(lookup_module.contains("pub(super) fn find_task<"));
         assert!(lookup_module.contains("pub(super) fn task_repo_path<"));
+    }
+
+    #[test]
+    fn use_case_contracts_are_not_owned_by_command_facade() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
+        let use_cases = std::fs::read_to_string(manifest_dir.join("src/use_cases.rs")).unwrap();
+
+        assert!(lib.contains("pub mod use_cases;"));
+        assert!(!commands.contains("pub struct CommandContext"));
+        assert!(!commands.contains("pub enum CommandError"));
+        assert!(!commands.contains("pub struct CommandPlan"));
+        assert!(!commands.contains("pub enum OpenMode"));
+        assert!(use_cases.contains("pub struct CommandContext"));
+        assert!(use_cases.contains("pub enum CommandError"));
+        assert!(use_cases.contains("pub struct CommandPlan"));
+        assert!(use_cases.contains("pub enum OpenMode"));
+    }
+
+    #[test]
+    fn architecture_rules_can_use_rust_arkitect() {
+        let _project = rust_arkitect::dsl::project::Project::from_current_crate();
+    }
+
+    #[test]
+    fn architecture_rules_are_executable() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let architecture =
+            std::fs::read_to_string(manifest_dir.join("src/architecture.rs")).unwrap();
+
+        assert!(lib.contains("mod architecture;"));
+        assert!(architecture.contains("rust_arkitect::dsl"));
+        assert!(architecture.contains("complies_with"));
+        assert!(architecture.contains("crate::slices"));
+    }
+
+    #[test]
+    fn command_review_compatibility_paths_delegate_to_review_slice() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let commands = std::fs::read_to_string(manifest_dir.join("src/commands.rs")).unwrap();
+        let diff_module =
+            std::fs::read_to_string(manifest_dir.join("src/commands/diff.rs")).unwrap();
+
+        assert!(commands.contains("crate::slices::review::review_queue(context)"));
+        assert!(diff_module.contains("crate::slices::review::review_task_plan"));
     }
 }
