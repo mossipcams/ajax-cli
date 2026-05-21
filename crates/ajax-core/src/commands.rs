@@ -36,7 +36,7 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
     config::Config,
-    models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
+    models::{Annotation, AnnotationKind, GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
         AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
@@ -164,7 +164,7 @@ pub fn cockpit_inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse 
         .into_iter()
         .filter(|task| is_cockpit_menu_task(task))
         .collect::<Vec<_>>();
-    inbox_from_tasks(tasks.as_slice())
+    cockpit_inbox_from_tasks(tasks.as_slice())
 }
 
 fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
@@ -178,6 +178,17 @@ fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
     }
 }
 
+fn cockpit_inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
+    let visible = tasks
+        .iter()
+        .copied()
+        .filter(|task| is_visible_task(task))
+        .collect::<Vec<_>>();
+    InboxResponse {
+        items: cockpit_annotation_items(visible.as_slice()),
+    }
+}
+
 pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     NextResponse {
         item: inbox(context).items.into_iter().next(),
@@ -185,12 +196,24 @@ pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
 }
 
 fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
+    annotation_items_matching(tasks, |_| true)
+}
+
+fn cockpit_annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
+    annotation_items_matching(tasks, is_cockpit_inbox_annotation)
+}
+
+fn annotation_items_matching(
+    tasks: &[&Task],
+    include: impl Fn(&Annotation) -> bool,
+) -> Vec<AnnotationItem> {
     let mut items = tasks
         .iter()
         .copied()
         .filter_map(|task| {
             annotations_for_task(task)
                 .into_iter()
+                .filter(|annotation| include(annotation))
                 .min_by_key(|annotation| annotation.severity)
                 .map(|annotation| annotation_item(task, annotation))
         })
@@ -202,6 +225,13 @@ fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
             .then_with(|| left.reason.cmp(&right.reason))
     });
     items
+}
+
+fn is_cockpit_inbox_annotation(annotation: &Annotation) -> bool {
+    matches!(
+        annotation.kind,
+        AnnotationKind::NeedsMe | AnnotationKind::Broken
+    )
 }
 
 fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
@@ -264,7 +294,7 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         .collect::<Vec<_>>();
     let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
     let review = review_queue_from_tasks(cockpit_tasks.as_slice());
-    let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
+    let inbox = cockpit_inbox_from_tasks(cockpit_tasks.as_slice());
     let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
     let projection = build_cockpit_projection(all_tasks.as_slice(), summary);
 
@@ -516,12 +546,13 @@ pub fn execute_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        check_task_plan, clean_task_plan, cockpit, diff_task_plan, doctor_with_environment, inbox,
-        inspect_task, list_repos, list_tasks, mark_stale_tasks, merge_task_plan, new_task_plan,
-        next, observe_drop_resources, open_task_plan, plan_drop_from_observation,
-        refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
-        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
-        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
+        check_task_plan, clean_task_plan, cockpit, cockpit_inbox, diff_task_plan,
+        doctor_with_environment, inbox, inspect_task, list_repos, list_tasks, mark_stale_tasks,
+        merge_task_plan, new_task_plan, next, observe_drop_resources, open_task_plan,
+        plan_drop_from_observation, refresh_git_substrate_evidence, remove_task_plan, review_queue,
+        status, sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext,
+        CommandError, DoctorEnvironment, DropObservation, DropOp, NewTaskRequest, OpenMode,
+        ResourceState,
     };
     use crate::{
         adapters::{
@@ -1263,6 +1294,46 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_inbox_does_not_list_reviewable_tasks_without_input_or_blocker() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.remove_side_flag(SideFlag::NeedsInput);
+
+        assert_eq!(review_queue(&context).tasks.len(), 1);
+        assert!(cockpit_inbox(&context).items.is_empty());
+    }
+
+    #[rstest]
+    #[case(LiveStatusKind::WaitingForInput, "waiting_for_input")]
+    #[case(LiveStatusKind::WaitingForApproval, "waiting_for_approval")]
+    #[case(LiveStatusKind::CommandFailed, "command_failed")]
+    #[case(LiveStatusKind::Blocked, "blocked")]
+    #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
+    fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
+        #[case] live_status: LiveStatusKind,
+        #[case] expected_reason: &str,
+    ) {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(live_status, expected_reason));
+
+        let response = cockpit_inbox(&context);
+
+        assert_eq!(response.items.len(), 1);
+        assert_eq!(response.items[0].task_handle, "web/fix-login");
+        assert_eq!(response.items[0].reason, expected_reason);
+    }
+
+    #[test]
     fn task_summaries_expose_lifecycle_aware_actions() {
         let mut context = context_with_tasks();
         let task = context
@@ -1457,6 +1528,23 @@ mod tests {
         assert_eq!(response.review.tasks.len(), 2);
         assert_eq!(response.review.tasks[0].qualified_handle, "web/fix-login");
         assert_eq!(response.review.tasks[1].qualified_handle, "api/add-cache");
+    }
+
+    #[test]
+    fn cockpit_inbox_excludes_reviewable_tasks_without_input_or_blocker() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.remove_side_flag(SideFlag::NeedsInput);
+
+        let view = super::cockpit_view(&context);
+
+        assert!(view.inbox.items.is_empty());
+        assert_eq!(view.cards.len(), 1);
+        assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
     }
 
     #[test]
