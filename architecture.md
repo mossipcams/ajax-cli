@@ -70,12 +70,23 @@ Task operations are the backend transaction boundary for operator actions. They
 plan external effects, apply operation evidence, and return typed outcomes that
 CLI and Cockpit render.
 
+Mutable task operations use local-first reconciliation and step receipts. Before
+planning or retrying a destructive or provisioning command, Ajax should observe
+the relevant substrates and build the next command from fresh evidence. After a
+successful external side effect, Ajax records a named step receipt in SQLite.
+Receipts are Ajax-owned evidence that an operation step succeeded or was skipped
+because the substrate was already in the desired state. They are not authority
+over Git, tmux, or process reality; retries still re-observe those substrates
+before deciding what to skip or repair.
+
 The task operation boundary now owns the main mutable task actions:
 
 - Start operation planning returns `TaskIntent` plus the external command plan
   without mutating the registry.
 - Start operation execution records the task, applies named provisioning steps,
-  marks provisioning failure in core, and opens the task after successful setup.
+  records step receipts for successful provisioning side effects, marks
+  provisioning failure in core with failed-step metadata, and opens the task
+  after successful setup.
 - Single-task command operations plan and execute `resume`, `review`, `repair`,
   and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
   core owns post-execution reducers such as opened, merged, repair/check
@@ -83,8 +94,9 @@ The task operation boundary now owns the main mutable task actions:
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
 - Drop execution runs teardown ops, records step evidence, re-observes external
-  resources, and decides `Removed` versus `TeardownIncomplete` from the final
-  observation inside core.
+  resources, records receipts for successful or already-satisfied cleanup steps,
+  and decides `Removed` versus `TeardownIncomplete` from the final observation
+  inside core.
 - Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
   candidates, executes each candidate, marks completed cleanup state, and
   reports whether an error happened after partial state changes.
@@ -130,9 +142,10 @@ Transient and test state use `InMemoryRegistry`.
 
 SQLite is the fast read model for Ajax task state. It records expected runtime
 identity, last observed Git/tmux evidence, derived runtime health, and typed
-events. Git and tmux still own live substrate reality; Ajax reconciles their
-observations into SQLite so Cockpit, command planning, and JSON output can read
-one coherent task record.
+events. It also stores step receipts for Ajax-owned operation evidence. Git and
+tmux still own live substrate reality; Ajax reconciles their observations into
+SQLite so Cockpit, command planning, and JSON output can read one coherent task
+record.
 
 ### Lifecycle
 
@@ -160,8 +173,11 @@ fields.
 
 Runtime refresh lives in `runtime_refresh`. It probes Git and tmux, reconciles
 runtime evidence, refreshes cached annotations, and recovers missing task
-records from observed Ajax worktrees. Cockpit invokes it through the CLI adapter
-but does not own the refresh algorithm.
+records from observed Ajax worktrees. Core also accepts a small external
+agent-status cache port for hook-backed status values; adapters read filesystem
+or terminal cache formats and core reduces those values into live observations.
+Cockpit invokes runtime refresh through the CLI adapter but does not own the
+refresh algorithm.
 
 ### Live Status
 
@@ -237,17 +253,38 @@ or test-command operation.
 - `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
   It calls core runtime refresh and explicit cockpit projection rebuilds rather
   than owning substrate refresh logic.
+- `web_backend` owns the mobile web presentation shell, HTTP request routing,
+  mobile Cockpit JSON serialization, and mobile-safe action dispatch. It serves
+  the same core Cockpit projection used by native Cockpit and delegates
+  non-interactive task actions to core task operations. It does not own task
+  truth, substrate refresh algorithms, or Git/tmux interpretation.
+- `agent_status_cache` owns filesystem reads for hook-backed agent status caches
+  such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux
   bindings, and resumes Cockpit when the task attach client detaches.
-- `classifiers` owns small operator-facing command-output heuristics.
 
 ## Cockpit Architecture
 
 Cockpit is the primary operator surface over the JSON-backed command boundary.
 
 `ajax-tui` owns native terminal interaction and rendering.
+
+`ajax-cli::web_backend` owns the mobile browser presentation for Cockpit. The
+web layer is intentionally an adapter: it renders a mobile-first HTML shell,
+serves a serialized Cockpit view at `/api/cockpit`, and accepts mobile-safe
+operator actions at `/api/actions`. Actions that require an attached terminal
+session, such as `resume`, remain native-Cockpit only. Git, tmux, SQLite, task
+lifecycle, action policy, and projection rebuilding remain owned by the same
+core and CLI boundaries used by the terminal Cockpit. Native Cockpit starts the
+mobile web layer as a companion `ajax web` process by default and keeps it alive
+for the Cockpit session. `ajax stable` starts the companion on port `8787` with
+the stable state database, while `ajax dev` starts it on port `8788` with the
+development state database. `--no-web` disables the companion. The companion is
+started with explicit `AJAX_CONFIG` and `AJAX_STATE` values from the selected
+Ajax context so stable and dev browser sessions stay on their own SQLite
+databases.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

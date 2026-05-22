@@ -1,7 +1,7 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
-    registry::{InMemoryRegistry, RegistryStore, SqliteRegistryStore},
+    registry::{InMemoryRegistry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore},
 };
 use clap::ArgMatches;
 use std::path::PathBuf;
@@ -51,6 +51,15 @@ pub(crate) fn context_paths_from_matches_and_env(
 ) -> Result<CliContextPaths, CliError> {
     let mut request = env.into_runtime_path_request();
 
+    if matches.subcommand().is_some_and(|(name, _)| name == "dev") {
+        request = request.with_cli_profile("dev");
+    }
+    if matches
+        .subcommand()
+        .is_some_and(|(name, _)| name == "stable")
+    {
+        request = request.with_cli_profile("stable");
+    }
     if let Some(profile) = matches.get_one::<String>("profile") {
         request = request.with_cli_profile(profile);
     }
@@ -67,12 +76,6 @@ pub(crate) fn context_paths_from_matches_and_env(
         request = request.with_cli_worktree_root(root);
     }
 
-    context_paths_from_runtime_request(request)
-}
-
-fn context_paths_from_runtime_request(
-    request: RuntimePathRequest,
-) -> Result<CliContextPaths, CliError> {
     Ok(CliContextPaths::from_runtime_paths(request.resolve()))
 }
 
@@ -172,6 +175,19 @@ impl RuntimeEnv {
 pub(crate) fn load_context(
     paths: &CliContextPaths,
 ) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    load_context_with_loader(paths, SqliteRegistryStore::load_tasks_only)
+}
+
+pub(crate) fn load_context_with_events(
+    paths: &CliContextPaths,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    load_context_with_loader(paths, SqliteRegistryStore::load)
+}
+
+fn load_context_with_loader(
+    paths: &CliContextPaths,
+    load_registry: fn(&SqliteRegistryStore) -> Result<InMemoryRegistry, RegistrySnapshotError>,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
     let config = if paths.config_file.exists() {
         let contents = std::fs::read_to_string(&paths.config_file)
             .map_err(|error| CliError::ContextLoad(error.to_string()))?;
@@ -183,8 +199,7 @@ pub(crate) fn load_context(
     let store = SqliteRegistryStore::new(&paths.state_file);
     let registry = if paths.state_file.exists() {
         reject_legacy_json_state(&paths.state_file)?;
-        store
-            .load()
+        load_registry(&store)
             .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
     } else {
         InMemoryRegistry::default()
@@ -234,8 +249,59 @@ pub(crate) fn save_context(
 mod tests {
     use super::{context_paths_from_matches_and_env, load_context, CliContextPaths, RuntimeEnv};
     use crate::build_cli;
-    use ajax_core::config::{RuntimePathRequest, WorktreePlacement};
+    use ajax_core::{
+        config::{RuntimePathRequest, WorktreePlacement},
+        models::{AgentClient, Task, TaskId},
+        registry::{
+            InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
+        },
+    };
     use std::path::Path;
+
+    #[test]
+    fn context_load_uses_store_loader_without_event_mode() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context.rs"),
+        )
+        .unwrap();
+        let event_load_mode = ["Event", "LoadMode"].concat();
+
+        assert!(!source.contains(&event_load_mode));
+    }
+
+    #[test]
+    fn ordinary_context_load_skips_registry_event_history() {
+        let root = std::env::temp_dir().join(format!("ajax-context-events-{}", std::process::id()));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(Task::new(
+                TaskId::new("task-1"),
+                "web",
+                "fix-login",
+                "Fix login",
+                "ajax/fix-login",
+                "main",
+                "/tmp/worktrees/web-fix-login",
+                "ajax-web-fix-login",
+                "worktrunk",
+                AgentClient::Codex,
+            ))
+            .unwrap();
+        registry
+            .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&registry)
+            .unwrap();
+
+        let context = load_context(&paths).unwrap();
+
+        assert_eq!(context.registry.list_tasks().len(), 1);
+        assert!(context.registry.list_events().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn load_context_preserves_resolved_runtime_paths() {
@@ -254,7 +320,7 @@ mod tests {
     #[test]
     fn ajax_profile_env_selects_dev_runtime_paths() {
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "status"])
+            .try_get_matches_from(["ajax-cli", "status"])
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,
@@ -270,9 +336,25 @@ mod tests {
     }
 
     #[test]
+    fn dev_alias_selects_dev_runtime_paths() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax-cli", "dev"])
+            .unwrap();
+        let paths =
+            context_paths_from_matches_and_env(&matches, RuntimeEnv::for_home("/Users/matt"))
+                .unwrap();
+
+        assert_eq!(paths.runtime_paths.profile, "dev");
+        assert_eq!(
+            paths.runtime_paths.state_db,
+            Path::new("/Users/matt/.ajax-dev/ajax.db")
+        );
+    }
+
+    #[test]
     fn ajax_home_env_derives_self_contained_runtime() {
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "runtime"])
+            .try_get_matches_from(["ajax-cli", "runtime"])
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,
@@ -293,7 +375,7 @@ mod tests {
     #[test]
     fn ajax_config_state_and_worktree_root_env_override_profile_paths() {
         let matches = build_cli()
-            .try_get_matches_from(["ajax", "--profile", "dev", "runtime"])
+            .try_get_matches_from(["ajax-cli", "--profile", "dev", "runtime"])
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,

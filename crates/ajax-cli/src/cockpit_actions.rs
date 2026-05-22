@@ -1,112 +1,91 @@
+#[cfg(test)]
+use ajax_core::task_operations::start::execute_start_task_operation;
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    task_operations::drop_task::plan_drop_confirmation,
+    task_operations::start::plan_start_task_operation,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
 };
 
+#[cfg(test)]
+use crate::render::render_execution_outputs;
 use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
-    dispatch::{execute_observed_drop, TaskCommandOperation},
+    dispatch::execute_observed_drop,
     execution_dispatch::execute_new_task_plan_with_task_session,
-    render::render_execution_outputs,
     task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliError,
 };
 
-#[cfg(test)]
-use crate::execution_dispatch::execute_new_task_plan;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PendingCockpitOutcome {
-    Exit(String),
-    ReturnToCockpit,
-}
-
-impl PendingCockpitOutcome {
-    #[cfg(test)]
-    pub(crate) fn contains(&self, needle: &str) -> bool {
-        match self {
-            PendingCockpitOutcome::Exit(output) => output.contains(needle),
-            PendingCockpitOutcome::ReturnToCockpit => false,
-        }
-    }
-}
-
 pub(crate) fn handle_pending_cockpit_result(
-    result: Result<PendingCockpitOutcome, CliError>,
+    result: Result<(), CliError>,
     cockpit_flash: &mut Option<String>,
-) -> Option<PendingCockpitOutcome> {
+) -> bool {
     match result {
-        Ok(outcome) => Some(outcome),
+        Ok(()) => true,
         Err(error) => {
             *cockpit_flash = Some(error.to_string());
-            None
+            false
         }
     }
 }
 
-pub(crate) fn tui_cockpit_action<R: CommandRunner>(
+pub(crate) fn tui_cockpit_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, false)
+    tui_cockpit_action_with_confirmation(item, context, false)
 }
 
-pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
+pub(crate) fn tui_cockpit_confirmed_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, true)
+    tui_cockpit_action_with_confirmation(item, context, true)
 }
 
-fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
+fn tui_cockpit_action_with_confirmation(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut R,
-    _state_changed: &mut bool,
     confirmed: bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
     let action = OperatorAction::from_label(item.action.as_str());
 
-    if let Some(operation) = action.and_then(operation_from_operator_action) {
-        if operation == TaskCommandOperation::Drop {
-            let plan = operation
-                .plan(context, handle)
-                .map_err(command_error_as_io)?;
+    match action {
+        Some(OperatorAction::Drop) => {
+            let plan = plan_drop_confirmation(context, handle).map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
                 return Ok(ajax_tui::ActionOutcome::Confirm(format!(
                     "press enter again to confirm {}",
                     item.action
                 )));
             }
-            return Ok(ajax_tui::ActionOutcome::RefreshAndDefer(
+            Ok(ajax_tui::ActionOutcome::RefreshAndDefer(
                 optimistic_drop_snapshot(context, handle, &item.task_id),
                 ajax_tui::PendingAction {
                     task_handle: handle.clone(),
                     action: item.action.clone(),
                     task_title: None,
                 },
-            ));
+            ))
         }
-
-        return Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+        Some(
+            OperatorAction::Resume
+            | OperatorAction::Review
+            | OperatorAction::Ship
+            | OperatorAction::Repair,
+        ) => Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
             task_handle: handle.clone(),
             action: item.action.clone(),
             task_title: None,
-        }));
-    }
-
-    match action {
+        })),
         Some(OperatorAction::Start) => Ok(ajax_tui::ActionOutcome::Message(
             "select a project, then choose start task to enter a task name".to_string(),
         )),
@@ -116,10 +95,6 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
                 "{handle}: {task_count} task(s)"
             )))
         }
-        Some(action) => Ok(ajax_tui::ActionOutcome::Message(format!(
-            "cockpit action is not configured: {}",
-            action.as_str()
-        ))),
         None => Ok(ajax_tui::ActionOutcome::Message(format!(
             "cockpit action is not configured: {}",
             item.action
@@ -167,7 +142,7 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<Option<String>, CliError> {
     execute_pending_cockpit_action_with_open_mode(
         pending,
         context,
@@ -184,7 +159,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     runner: &mut R,
     state_changed: &mut bool,
     open_mode: commands::OpenMode,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<Option<String>, CliError> {
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
             CliError::CommandFailed(
@@ -196,55 +171,56 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             title,
             agent: "codex".to_string(),
         };
-        let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
-        let (outputs, task) = execute_new_task_plan(
-            context, runner, &request, &plan, true, open_mode,
-        )
-        .inspect_err(|error| {
-            if error.state_changed() {
-                *state_changed = true;
-            }
-        })?;
+        let (_intent, plan) =
+            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
+        let (outputs, task) =
+            execute_start_task_operation(context, runner, &request, &plan, true, open_mode)
+                .map_err(|error| command_error(error).after_state_change())
+                .inspect_err(|error| {
+                    if error.state_changed() {
+                        *state_changed = true;
+                    }
+                })?;
         *state_changed = true;
-        return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
+        return Ok(Some(render_execution_outputs(
             &outputs,
             Some(&task.qualified_handle()),
         )));
     }
 
-    let action = OperatorAction::from_label(pending.action.as_str());
-    let operation = action.and_then(operation_from_operator_action);
-    let Some(operation) = operation else {
+    let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
         return Err(CliError::CommandFailed(format!(
             "unknown cockpit action: {}",
             pending.action
         )));
     };
 
-    if operation == TaskCommandOperation::Drop {
+    if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(None);
     }
 
-    let kind = action
-        .and_then(task_command_kind_from_operator_action)
-        .ok_or_else(|| {
-            CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
-        })?;
-    let operation = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
+    let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
+        CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
+    })?;
+    let plan = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
         .map_err(command_error)?;
-    let confirmed = !operation.plan.requires_confirmation;
-    let execution = execute_task_command_operation(context, &operation, confirmed, runner)
-        .map_err(|error| task_command_cli_error(error, state_changed))?;
-    *state_changed |= execution.state_changed;
-    if task_command_returns_to_cockpit(kind) {
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+    let confirmed = !plan.requires_confirmation;
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context,
+        kind,
+        &pending.task_handle,
+        &plan,
+        confirmed,
+        runner,
+    )
+    .map_err(|error| task_command_cli_error(error, state_changed))?;
+    *state_changed |= operation_state_changed;
+    if kind != TaskCommandKind::Resume {
+        return Ok(None);
     }
-    Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-        &execution.outputs,
-        None,
-    )))
+    Ok(Some(render_execution_outputs(&outputs, None)))
 }
 
 pub(crate) fn execute_pending_cockpit_action_with_task_session<
@@ -256,7 +232,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<(), CliError> {
     let task_entry_open_mode = commands::OpenMode::Attach;
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
@@ -269,7 +245,8 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             title,
             agent: "codex".to_string(),
         };
-        let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
+        let (_intent, plan) =
+            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
         execute_new_task_plan_with_task_session(
             context,
             runner,
@@ -285,51 +262,48 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             }
         })?;
         *state_changed = true;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(());
     }
 
-    let action = OperatorAction::from_label(pending.action.as_str());
-    let operation = action.and_then(operation_from_operator_action);
-    let Some(operation) = operation else {
+    let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
         return Err(CliError::CommandFailed(format!(
             "unknown cockpit action: {}",
             pending.action
         )));
     };
 
-    if operation == TaskCommandOperation::Drop {
+    if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(());
     }
 
-    let kind = action
-        .and_then(task_command_kind_from_operator_action)
-        .ok_or_else(|| {
-            CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
-        })?;
-    let operation =
+    let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
+        CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
+    })?;
+    let plan =
         plan_task_command_operation(context, kind, &pending.task_handle, task_entry_open_mode)
             .map_err(command_error)?;
 
     if kind != TaskCommandKind::Resume {
-        let confirmed = !operation.plan.requires_confirmation;
-        let execution = execute_task_command_operation(context, &operation, confirmed, runner)
-            .map_err(|error| task_command_cli_error(error, state_changed))?;
-        *state_changed |= execution.state_changed;
-        if task_command_returns_to_cockpit(kind) {
-            return Ok(PendingCockpitOutcome::ReturnToCockpit);
-        }
-        return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-            &execution.outputs,
-            None,
-        )));
+        let confirmed = !plan.requires_confirmation;
+        let (_outputs, operation_state_changed) = execute_task_command_operation(
+            context,
+            kind,
+            &pending.task_handle,
+            &plan,
+            confirmed,
+            runner,
+        )
+        .map_err(|error| task_command_cli_error(error, state_changed))?;
+        *state_changed |= operation_state_changed;
+        return Ok(());
     }
 
-    execute_task_entry_plan(&operation.plan, runner, task_session)?;
+    execute_task_entry_plan(&plan, runner, task_session)?;
     commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
     *state_changed = true;
-    Ok(PendingCockpitOutcome::ReturnToCockpit)
+    Ok(())
 }
 
 fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {
@@ -342,19 +316,12 @@ fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<Task
     }
 }
 
-fn task_command_returns_to_cockpit(kind: TaskCommandKind) -> bool {
-    matches!(
-        kind,
-        TaskCommandKind::Review | TaskCommandKind::Ship | TaskCommandKind::Repair
-    )
-}
-
 fn task_command_cli_error(
-    error: ajax_core::task_operations::task_command::TaskCommandOperationError,
+    (error, error_state_changed): (CommandError, bool),
     state_changed: &mut bool,
 ) -> CliError {
-    let changed = error.state_changed || *state_changed;
-    let error = command_error(error.error);
+    let changed = error_state_changed || *state_changed;
+    let error = command_error(error);
     let error = if changed {
         error.after_state_change()
     } else {
@@ -366,17 +333,6 @@ fn task_command_cli_error(
     error
 }
 
-fn operation_from_operator_action(action: OperatorAction) -> Option<TaskCommandOperation> {
-    match action {
-        OperatorAction::Start => None,
-        OperatorAction::Resume => Some(TaskCommandOperation::Open),
-        OperatorAction::Review => Some(TaskCommandOperation::Review),
-        OperatorAction::Ship => Some(TaskCommandOperation::Merge),
-        OperatorAction::Drop => Some(TaskCommandOperation::Drop),
-        OperatorAction::Repair => Some(TaskCommandOperation::Repair),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
@@ -385,12 +341,30 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_actions.rs"),
         )
         .unwrap();
+        let action_selection = source.split("fn optimistic_drop_snapshot").next().unwrap();
         let plan_operation = ["plan_task_command", "_operation"].concat();
         let execute_operation = ["execute_task_command", "_operation"].concat();
         let legacy_plan = ["plan_with", "_open_mode"].concat();
+        let local_operation_mapping = ["operation_from", "_operator_action"].concat();
+        let outcome_impl = ["impl Pending", "CockpitOutcome"].concat();
+        let pending_outcome = ["enum Pending", "CockpitOutcome"].concat();
+        let action_runner_generic = ["tui_cockpit_action", "<R"].concat();
+        let confirmed_runner_generic = ["tui_cockpit_confirmed_action", "<R"].concat();
+        let unused_runner = ["_", "runner"].concat();
+        let unused_state = ["_", "state_changed"].concat();
+        let return_helper = ["task_command", "_returns_to_cockpit"].concat();
 
         assert!(source.contains(&plan_operation));
         assert!(source.contains(&execute_operation));
+        assert!(source.contains("task_command_kind_from_operator_action"));
         assert!(!source.contains(&legacy_plan));
+        assert!(!source.contains(&local_operation_mapping));
+        assert!(!source.contains(&outcome_impl));
+        assert!(!source.contains(&pending_outcome));
+        assert!(!action_selection.contains(&action_runner_generic));
+        assert!(!action_selection.contains(&confirmed_runner_generic));
+        assert!(!action_selection.contains(&unused_runner));
+        assert!(!action_selection.contains(&unused_state));
+        assert!(!source.contains(&return_helper));
     }
 }

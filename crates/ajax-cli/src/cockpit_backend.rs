@@ -2,20 +2,26 @@ use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     registry::InMemoryRegistry,
-    runtime_refresh::refresh_runtime_context,
+    runtime_refresh::{refresh_runtime_context, refresh_runtime_context_with_agent_status_cache},
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
-use std::time::Duration;
+use std::{
+    io::ErrorKind,
+    net::TcpListener,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
 use crate::{
+    agent_status_cache::TmuxAgentStatusCache,
     cockpit_actions::{
         execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
-        tui_cockpit_action, tui_cockpit_confirmed_action, PendingCockpitOutcome,
+        tui_cockpit_action, tui_cockpit_confirmed_action,
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
-    CliError, RenderedCommand,
+    CliContextPaths, CliError, RenderedCommand,
 };
 
 pub(crate) fn render_cockpit_command(
@@ -30,33 +36,21 @@ pub(crate) fn render_cockpit_command(
     let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
 
     if matches.get_flag("watch") {
-        return Ok(render_cockpit_frames(
-            context,
-            iterations.max(1),
-            Duration::from_millis(interval),
-        ));
+        let interval = Duration::from_millis(interval);
+        let frames = (0..iterations.max(1))
+            .map(|index| {
+                if index > 0 && !interval.is_zero() {
+                    std::thread::sleep(interval);
+                }
+                render_cockpit_frame(context)
+            })
+            .collect::<Vec<_>>();
+        return Ok(frames.join("\n\n"));
     }
 
     Err(CliError::CommandFailed(
         "interactive cockpit requires command execution support".to_string(),
     ))
-}
-
-fn render_cockpit_frames(
-    context: &CommandContext<InMemoryRegistry>,
-    iterations: u32,
-    interval: Duration,
-) -> String {
-    let frames = (0..iterations)
-        .map(|index| {
-            if index > 0 && !interval.is_zero() {
-                std::thread::sleep(interval);
-            }
-            render_cockpit_frame(context)
-        })
-        .collect::<Vec<_>>();
-
-    frames.join("\n\n")
 }
 
 pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
@@ -68,7 +62,14 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     subcommand: &ArgMatches,
     runner: &mut R,
+    mobile_web_port: u16,
+    paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    let _mobile_web_companion = if subcommand.get_flag("no-web") {
+        None
+    } else {
+        start_mobile_web_companion(mobile_web_port, paths)
+    };
     let mut state_changed = false;
     let mut cockpit_flash = None;
     state_changed |= refresh_live_context(context, runner)?;
@@ -96,7 +97,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             });
         };
 
-        let Some(outcome) = handle_pending_cockpit_result(
+        if !handle_pending_cockpit_result(
             execute_pending_cockpit_action_with_task_session(
                 &pending,
                 context,
@@ -105,19 +106,82 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 &mut task_session,
             ),
             &mut cockpit_flash,
-        ) else {
+        ) {
             continue;
-        };
-
-        match outcome {
-            PendingCockpitOutcome::Exit(output) => {
-                return Ok(RenderedCommand {
-                    output,
-                    state_changed,
-                });
-            }
-            PendingCockpitOutcome::ReturnToCockpit => {}
         }
+    }
+}
+
+const MOBILE_WEB_HOST: &str = "0.0.0.0";
+const STABLE_MOBILE_WEB_PORT: u16 = 8787;
+const DEV_MOBILE_WEB_PORT: u16 = 8788;
+
+pub(crate) fn mobile_web_port_for_command(command: &str) -> u16 {
+    match command {
+        "dev" => DEV_MOBILE_WEB_PORT,
+        "stable" | "cockpit" => STABLE_MOBILE_WEB_PORT,
+        _ => STABLE_MOBILE_WEB_PORT,
+    }
+}
+
+struct MobileWebCompanion {
+    child: Child,
+}
+
+impl Drop for MobileWebCompanion {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn start_mobile_web_companion(
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Option<MobileWebCompanion> {
+    match TcpListener::bind((MOBILE_WEB_HOST, port)) {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => return None,
+        Err(error) => {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+            return None;
+        }
+    }
+
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+            return None;
+        }
+    };
+    let mut command = Command::new(executable);
+    let port = port.to_string();
+    command
+        .args(["web", "--host", MOBILE_WEB_HOST, "--port", port.as_str()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(paths) = paths {
+        command.env("AJAX_CONFIG", &paths.config_file);
+        command.env("AJAX_STATE", &paths.state_file);
+    } else {
+        preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
+        preserve_ajax_context_env(&mut command, "AJAX_STATE");
+    }
+
+    command
+        .spawn()
+        .map(|child| MobileWebCompanion { child })
+        .map_err(|error| {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+        })
+        .ok()
+}
+
+fn preserve_ajax_context_env(command: &mut Command, name: &str) {
+    if let Some(value) = std::env::var_os(name) {
+        command.env(name, value);
     }
 }
 
@@ -159,7 +223,12 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    refresh_runtime_context(context, runner).map_err(crate::command_error)
+    if let Some(cache) = TmuxAgentStatusCache::from_default_location() {
+        refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
+            .map_err(crate::command_error)
+    } else {
+        refresh_runtime_context(context, runner).map_err(crate::command_error)
+    }
 }
 
 pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
@@ -193,14 +262,14 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_action(item, self.context, self.runner, self.state_changed)
+        tui_cockpit_action(item, self.context)
     }
 
     fn on_confirmed_action(
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_confirmed_action(item, self.context, self.runner, self.state_changed)
+        tui_cockpit_confirmed_action(item, self.context)
     }
 
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
@@ -232,7 +301,7 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
 
 #[cfg(test)]
 mod tests {
-    use super::refresh_cockpit_snapshot;
+    use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -243,6 +312,7 @@ mod tests {
             Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
+        runtime_refresh::{refresh_runtime_context_with_agent_status_cache, AgentStatusCache},
     };
 
     #[derive(Default)]
@@ -358,6 +428,86 @@ mod tests {
         assert!(!build_cockpit_snapshot.contains(&implicit_view_read));
     }
 
+    #[test]
+    fn cockpit_backend_does_not_keep_test_only_agent_status_refresh_wrappers() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+
+        for wrapper in [
+            "refresh_live_context_with_agent_status_cache",
+            "refresh_cockpit_snapshot_with_agent_status_cache",
+        ] {
+            let function_name = ["fn ", wrapper].concat();
+            assert!(!source.contains(&function_name), "{wrapper}");
+        }
+    }
+
+    #[test]
+    fn cockpit_backend_does_not_keep_cockpit_watch_frame_wrapper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let wrapper = ["fn ", "render_cockpit_frames"].concat();
+
+        assert!(!source.contains(&wrapper));
+    }
+
+    #[test]
+    fn interactive_cockpit_auto_starts_mobile_web_companion() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let interactive = source
+            .split("pub(crate) fn render_interactive_cockpit_command")
+            .nth(1)
+            .and_then(|source| {
+                source
+                    .split("pub(crate) fn render_live_cockpit_command")
+                    .next()
+            })
+            .unwrap();
+
+        assert!(interactive.contains("start_mobile_web_companion"));
+        assert!(interactive.contains("no-web"));
+    }
+
+    #[test]
+    fn mobile_web_ports_are_separate_for_stable_and_dev() {
+        assert_eq!(mobile_web_port_for_command("stable"), 8787);
+        assert_eq!(mobile_web_port_for_command("cockpit"), 8787);
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
+    fn mobile_web_companion_uses_child_process_and_guard() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("struct MobileWebCompanion"));
+        assert!(source.contains("impl Drop for MobileWebCompanion"));
+        assert!(source.contains("std::env::current_exe"));
+        assert!(source.contains("\"web\", \"--host\", MOBILE_WEB_HOST, \"--port\""));
+        assert!(source.contains("port.to_string"));
+    }
+
+    #[test]
+    fn mobile_web_companion_preserves_parent_ajax_context_environment() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("AJAX_CONFIG"));
+        assert!(production_source.contains("AJAX_STATE"));
+    }
+
     #[derive(Default)]
     struct EmptyTmuxRunner;
 
@@ -409,6 +559,16 @@ mod tests {
         context
     }
 
+    struct StaticAgentStatusCache {
+        values: Vec<String>,
+    }
+
+    impl AgentStatusCache for StaticAgentStatusCache {
+        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+            self.values.clone()
+        }
+    }
+
     #[test]
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
@@ -439,6 +599,31 @@ mod tests {
             task.runtime_projection.source,
             RuntimeObservationSource::TmuxProbe
         );
+    }
+
+    #[test]
+    fn cockpit_refresh_uses_hook_backed_agent_status_cache() {
+        let mut context = context_with_active_task();
+        let mut runner = LiveRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+        let mut state_changed = false;
+
+        state_changed |=
+            refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache)
+                .unwrap();
+        let snapshot = build_cockpit_snapshot(&context);
+
+        assert!(state_changed);
+        let card = snapshot
+            .cards
+            .iter()
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("task should stay visible in cockpit");
+        assert_eq!(card.status_label, "agent running");
+        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
+        assert_eq!(card.live_summary.as_deref(), Some("agent running"));
     }
 
     #[test]
@@ -870,7 +1055,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(runner.commands.iter().any(
+        assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(
@@ -905,7 +1090,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(runner.commands.iter().any(
+        assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(

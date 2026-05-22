@@ -5,7 +5,7 @@ use crate::{
     lifecycle::mark_provisioning,
     models::{
         AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, SideFlag,
-        Task, TaskId, TmuxStatus, WorktrunkStatus,
+        Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
     },
     registry::{Registry, RegistryError},
 };
@@ -167,13 +167,43 @@ pub fn mark_new_task_provisioning_failed<R: Registry>(
         .registry
         .update_lifecycle(task_id, LifecycleStatus::Error)
         .map_err(CommandError::Registry)?;
+    let failed_step = next_incomplete_start_step(context, task_id);
     let task = context
         .registry
         .get_task_mut(task_id)
         .ok_or_else(|| CommandError::TaskNotFound(task_id.as_str().to_string()))?;
     task.add_side_flag(SideFlag::NeedsInput);
+    task.metadata
+        .insert("start_failed_step".to_string(), failed_step.to_string());
+    task.metadata.insert(
+        "operator_recommendation".to_string(),
+        "retry ajax start after checking the failed provisioning step".to_string(),
+    );
 
     Ok(())
+}
+
+fn next_incomplete_start_step<R: Registry>(
+    context: &CommandContext<R>,
+    task_id: &TaskId,
+) -> &'static str {
+    let completed = context
+        .registry
+        .step_receipts_for_task(task_id)
+        .into_iter()
+        .filter(|receipt| receipt.operation == TaskOperationKind::Start)
+        .map(|receipt| receipt.step_key.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+
+    if !completed.contains("worktree_created") {
+        "worktree_created"
+    } else if !completed.contains("task_session_created") {
+        "task_session_created"
+    } else if !completed.contains("agent_command_sent") {
+        "agent_command_sent"
+    } else {
+        "open_task"
+    }
 }
 
 pub fn mark_new_task_step_completed<R: Registry>(

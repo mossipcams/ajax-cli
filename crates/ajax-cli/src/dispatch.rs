@@ -3,9 +3,9 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
-    slices,
     task_operations::drop_task::{
-        execute_drop_task_operation, plan_drop_task_operation, DropTaskCompletion,
+        execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
+        DropTaskCompletion,
     },
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
@@ -19,134 +19,14 @@ use crate::{
     task_arg, CliError, RenderedCommand,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TaskCommandOperation {
-    Open,
-    Review,
-    Merge,
-    Repair,
-    Drop,
-}
-
-impl TaskCommandOperation {
-    pub(crate) fn from_cli_subcommand(name: &str) -> Option<Self> {
-        match name {
-            "resume" => Some(Self::Open),
-            "repair" => Some(Self::Repair),
-            "review" => Some(Self::Review),
-            "ship" => Some(Self::Merge),
-            "drop" => Some(Self::Drop),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn plan<R: Registry>(
-        self,
-        context: &CommandContext<R>,
-        task: &str,
-    ) -> Result<commands::CommandPlan, CommandError> {
-        self.plan_with_open_mode(context, task, commands::OpenMode::Attach)
-    }
-
-    pub(crate) fn plan_with_open_mode<R: Registry>(
-        self,
-        context: &CommandContext<R>,
-        task: &str,
-        open_mode: commands::OpenMode,
-    ) -> Result<commands::CommandPlan, CommandError> {
-        match self {
-            Self::Open => commands::open_task_plan(context, task, open_mode),
-            Self::Review => slices::review::review_task_plan(context, task),
-            Self::Merge => commands::merge_task_plan(context, task),
-            Self::Repair => repair_task_plan(context, task, open_mode),
-            Self::Drop => drop_task_plan(context, task),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn returns_to_cockpit_after_execute(self) -> bool {
-        matches!(self, Self::Review | Self::Merge | Self::Repair | Self::Drop)
-    }
-
-    fn core_task_command_kind(self) -> Option<TaskCommandKind> {
-        match self {
-            Self::Open => Some(TaskCommandKind::Resume),
-            Self::Review => Some(TaskCommandKind::Review),
-            Self::Merge => Some(TaskCommandKind::Ship),
-            Self::Repair => Some(TaskCommandKind::Repair),
-            Self::Drop => None,
-        }
-    }
-}
-
-fn repair_task_plan<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-    open_mode: commands::OpenMode,
-) -> Result<commands::CommandPlan, CommandError> {
-    let mut plan = commands::trunk_task_plan_with_open_mode(context, task, open_mode)?;
-    plan.title = format!("repair task: {task}");
-    if let Ok(check_plan) = commands::check_task_plan(context, task) {
-        plan.commands.extend(check_plan.commands);
-        plan.requires_confirmation |= check_plan.requires_confirmation;
-        plan.blocked_reasons.extend(check_plan.blocked_reasons);
-    }
-    Ok(plan)
-}
-
-fn drop_task_plan<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-) -> Result<commands::CommandPlan, CommandError> {
-    let clean_plan = commands::clean_task_plan(context, task)?;
-    if clean_plan.blocked_reasons.is_empty() {
-        Ok(clean_plan)
-    } else {
-        commands::remove_task_plan(context, task)
-    }
-}
-
 pub(crate) fn render_task_command<R: CommandRunner>(
-    operation: TaskCommandOperation,
+    kind: TaskCommandKind,
     subcommand: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
-    let execute = subcommand.get_flag("execute");
-    let confirmed = subcommand.get_flag("yes");
-    if operation == TaskCommandOperation::Drop && execute {
-        return execute_observed_drop(context, task, confirmed, runner);
-    }
-    if let Some(kind) = operation.core_task_command_kind() {
-        return render_core_task_command(kind, subcommand, context, runner, open_mode, task);
-    }
-    let mut state_changed = false;
-    if (!execute || confirmed) && !drop_should_refresh_cleanup_evidence(context, task) {
-        match commands::refresh_git_substrate_evidence(context, runner) {
-            Ok(changed) => state_changed |= changed,
-            Err(_) => {
-                state_changed |= commands::mark_task_git_substrate_missing(context, task)
-                    .map_err(command_error)?;
-            }
-        }
-    }
-    let plan = drop_task_plan(context, task).map_err(command_error)?;
-    Ok(RenderedCommand {
-        output: render_plan(plan, subcommand.get_flag("json"))?,
-        state_changed,
-    })
-}
-
-fn render_core_task_command<R: CommandRunner>(
-    kind: TaskCommandKind,
-    subcommand: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    open_mode: commands::OpenMode,
-    task: &str,
-) -> Result<RenderedCommand, CliError> {
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
     let mut state_changed = false;
@@ -158,49 +38,72 @@ fn render_core_task_command<R: CommandRunner>(
             state_changed |= changed;
         }
     }
-    let mut operation =
+    let mut plan =
         plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
-            output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+            output: render_plan(plan, subcommand.get_flag("json"))?,
             state_changed,
         });
     }
     if kind == TaskCommandKind::Ship
-        && operation.plan.blocked_reasons.is_empty()
-        && (!operation.plan.requires_confirmation || confirmed)
-        && merge_task_has_cached_git_evidence(context, task)
+        && plan.blocked_reasons.is_empty()
+        && (!plan.requires_confirmation || confirmed)
+        && context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|candidate| candidate.qualified_handle() == task)
+            .is_some_and(|candidate| candidate.git_status.is_some())
     {
-        refresh_merge_evidence_if_available(context, task, runner);
-        operation =
+        let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false);
+        plan =
             plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     }
 
-    let execution = execute_task_command_operation(context, &operation, confirmed, runner)
-        .map_err(|error| {
-            let cli_error = command_error(error.error);
-            if error.state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            }
-        })?;
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context, kind, task, &plan, confirmed, runner,
+    )
+    .map_err(|(error, error_state_changed)| {
+        let cli_error = command_error(error);
+        if error_state_changed {
+            cli_error.after_state_change()
+        } else {
+            cli_error
+        }
+    })?;
     Ok(RenderedCommand {
-        output: render_execution_outputs(&execution.outputs, None),
-        state_changed: state_changed || execution.state_changed,
+        output: render_execution_outputs(&outputs, None),
+        state_changed: state_changed || operation_state_changed,
     })
 }
 
-fn merge_task_has_cached_git_evidence<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-) -> bool {
-    context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.qualified_handle() == task)
-        .is_some_and(|candidate| candidate.git_status.is_some())
+pub(crate) fn render_drop_command<R: CommandRunner>(
+    subcommand: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let task = task_arg(subcommand)?;
+    let execute = subcommand.get_flag("execute");
+    let confirmed = subcommand.get_flag("yes");
+    if execute {
+        return execute_observed_drop(context, task, confirmed, runner);
+    }
+    let mut state_changed = false;
+    if (!execute || confirmed) && !drop_should_refresh_cleanup_evidence(context, task) {
+        match commands::refresh_git_substrate_evidence(context, runner) {
+            Ok(changed) => state_changed |= changed,
+            Err(_) => {
+                state_changed |= commands::mark_task_git_substrate_missing(context, task)
+                    .map_err(command_error)?;
+            }
+        }
+    }
+    let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
+    Ok(RenderedCommand {
+        output: render_plan(plan, subcommand.get_flag("json"))?,
+        state_changed,
+    })
 }
 
 fn drop_should_refresh_cleanup_evidence<R: Registry>(
@@ -215,21 +118,9 @@ fn drop_should_refresh_cleanup_evidence<R: Registry>(
         .is_some_and(|candidate| {
             matches!(
                 candidate.lifecycle_status,
-                ajax_core::models::LifecycleStatus::Merged
-                    | ajax_core::models::LifecycleStatus::Cleanable
+                LifecycleStatus::Merged | LifecycleStatus::Cleanable
             )
         })
-}
-
-fn refresh_merge_evidence_if_available<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task: &str,
-    runner: &mut R,
-) {
-    // Merge still runs the fresh-evidence probe first when available; if the
-    // probe itself cannot run, the existing plan remains the operator-facing
-    // source of confirmation and execution errors.
-    let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false).is_ok();
 }
 
 pub(crate) fn execute_observed_drop<R: CommandRunner>(
@@ -238,7 +129,7 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     confirmed: bool,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let confirmation_plan = drop_task_plan(context, task_handle).map_err(command_error)?;
+    let confirmation_plan = plan_drop_confirmation(context, task_handle).map_err(command_error)?;
     if !confirmation_plan.blocked_reasons.is_empty() {
         return Err(command_error(CommandError::PlanBlocked(
             confirmation_plan.blocked_reasons,
@@ -268,7 +159,7 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     let operation =
         plan_drop_task_operation(context, task_handle, runner).map_err(command_error)?;
     let operation_confirmed = confirmed || resuming_incomplete || can_observe_before_confirmation;
-    let execution =
+    let (outputs, completion) =
         execute_drop_task_operation(context, task_handle, operation, operation_confirmed, runner)
             .map_err(|error| match error {
             CommandError::ConfirmationRequired | CommandError::PlanBlocked(_) => {
@@ -276,12 +167,12 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
             }
             error => command_error(error).after_state_change(),
         })?;
-    match execution.completion {
+    match completion {
         DropTaskCompletion::Removed => {
-            let output = if execution.outputs.is_empty() {
+            let output = if outputs.is_empty() {
                 format!("removed task: {task_handle}")
             } else {
-                render_execution_outputs(&execution.outputs, None)
+                render_execution_outputs(&outputs, None)
             };
             Ok(RenderedCommand {
                 output,
@@ -309,18 +200,35 @@ fn cli_task<'a>(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn cli_task_dispatch_uses_core_task_command_kind_without_local_enum() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+        )
+        .unwrap();
+        let local_enum = ["enum Task", "CommandOperation"].concat();
+        let mapper = ["task_command_kind", "_for_cli_subcommand"].concat();
+
+        assert!(!source.contains(&local_enum));
+        assert!(!source.contains(&mapper));
+    }
+
+    #[test]
     fn cli_drop_dispatch_delegates_observed_drop_decision_to_core_operation() {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
         )
         .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
         let local_completion_helper = ["drop_observation", "_all_absent"].concat();
         let local_execution_loop = ["for op in operation.", "ops"].concat();
+        let local_drop_plan = ["fn drop_", "task_plan"].concat();
 
         assert!(source.contains("plan_drop_task_operation"));
         assert!(source.contains("execute_drop_task_operation"));
+        assert!(!production_source.contains("pub(crate) fn drop_task_plan"));
         assert!(!source.contains(&local_completion_helper));
         assert!(!source.contains(&local_execution_loop));
+        assert!(!production_source.contains(&local_drop_plan));
     }
 
     #[test]
@@ -329,12 +237,18 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
         )
         .unwrap();
+        let render_core_task_command = ["fn render_", "core_task_command"].concat();
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
+            .and_then(|source| {
+                source
+                    .split("fn drop_should_refresh_cleanup_evidence")
+                    .next()
+            })
             .unwrap();
 
+        assert!(!source.contains(&render_core_task_command));
         assert!(render_task_command.contains("plan_task_command_operation"));
         assert!(render_task_command.contains("execute_task_command_operation"));
     }
@@ -342,10 +256,10 @@ mod tests {
     #[test]
     fn cli_ship_dispatch_delegates_execution_to_core_task_command_operation() {
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
-        let ship_mapping = ["Self::Merge => Some(TaskCommandKind::", "Ship)"].concat();
+        let ship_mapping = ["\"ship\" => TaskCommandKind::", "Ship"].concat();
 
         assert!(source.contains(&ship_mapping));
     }
@@ -353,10 +267,10 @@ mod tests {
     #[test]
     fn cli_repair_dispatch_delegates_execution_to_core_task_command_operation() {
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
-        let repair_mapping = ["Self::Repair => Some(TaskCommandKind::", "Repair)"].concat();
+        let repair_mapping = ["\"repair\" => TaskCommandKind::", "Repair"].concat();
 
         assert!(source.contains(&repair_mapping));
     }
@@ -370,14 +284,22 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn render_core_task_command").next())
+            .and_then(|source| {
+                source
+                    .split("fn drop_should_refresh_cleanup_evidence")
+                    .next()
+            })
             .unwrap();
         let execute_plan = ["commands::execute", "_plan(&plan"].concat();
         let apply_after_execute = ["apply_after", "_execute"].concat();
+        let cached_evidence_helper = ["fn merge_task_has", "_cached_git_evidence"].concat();
+        let refresh_helper = ["fn refresh_merge", "_evidence_if_available"].concat();
 
         assert!(!render_task_command.contains(&execute_plan));
         assert!(!render_task_command.contains(&apply_after_execute));
         assert!(!render_task_command.contains("mark_task_check_started"));
         assert!(!render_task_command.contains("mark_task_merged"));
+        assert!(!source.contains(&cached_evidence_helper));
+        assert!(!source.contains(&refresh_helper));
     }
 }

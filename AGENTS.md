@@ -57,7 +57,8 @@ Do not skip this approval step.
 
 ### Markdown-Only Changes
 
-Markdown-only documentation changes are exempt from TDD.
+Do not use TDD to plan or edit Markdown files. Markdown-only documentation
+changes are exempt from TDD.
 
 For `.md`-only changes:
 
@@ -109,6 +110,7 @@ When finished, report the final validation results.
 - Replace internal legacy implementation when required, but preserve public APIs and user-visible behavior unless the approved task explicitly changes them.
 - Never hide failures. Surface them with explicit errors, tests, or documented limitations.
 - Do not claim a command passed unless it was actually run and passed.
+- Compare both sides of this conflict. Identify what behavior each branch added or changed. Then propose a merged version that preserves both behaviors unless they are incompatible.
 
 ---
 
@@ -302,6 +304,17 @@ Do not claim `cargo audit` passed unless it was actually run.
 ## CI Expectations
 
 Every pull request must pass the strongest applicable checks from `Required Validation` before merge.
+
+### PR Title Expectations
+
+Every PR title must align with Release Please PR title expectations. Use a
+conventional commit style title such as `feat: ...`, `fix: ...`, or
+`chore: ...` so Release Please can infer the release impact and changelog entry
+correctly.
+
+This applies when creating, updating, renaming, or reviewing any PR. If an
+existing PR title does not follow this convention, update it before reporting the
+PR as ready.
 
 Recommended warning check:
 

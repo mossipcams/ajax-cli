@@ -5,11 +5,14 @@ use ajax_core::{
     },
     output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
+    task_operations::drop_task::plan_drop_confirmation,
+    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
 };
 use clap::ArgMatches;
 
+#[cfg(feature = "interactive")]
+use crate::cockpit_backend::render_cockpit_command;
 use crate::{
-    cockpit_backend::render_cockpit_command,
     command_error, current_open_mode, new_task_request,
     render::{
         render_doctor_human, render_inbox_human, render_inspect_human, render_next_human,
@@ -65,10 +68,13 @@ pub(crate) fn render_matches_with_paths(
         }
         Some(("repair", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let operation = crate::dispatch::TaskCommandOperation::Repair;
-            let plan = operation
-                .plan_with_open_mode(context, task, current_open_mode())
-                .map_err(command_error)?;
+            let plan = plan_task_command_operation(
+                context,
+                TaskCommandKind::Repair,
+                task,
+                current_open_mode(),
+            )
+            .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("review", subcommand)) => {
@@ -83,8 +89,7 @@ pub(crate) fn render_matches_with_paths(
         }
         Some(("drop", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let operation = crate::dispatch::TaskCommandOperation::Drop;
-            let plan = operation.plan(context, task).map_err(command_error)?;
+            let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("tidy", subcommand)) => {
@@ -121,7 +126,12 @@ pub(crate) fn render_matches_with_paths(
             render_runtime_paths(&context.runtime_paths, subcommand.get_flag("json"))
         }
         Some(("state", subcommand)) => render_state_command(context, subcommand),
+        #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
+        #[cfg(not(feature = "interactive"))]
+        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+            "cockpit support is not enabled in this build".to_string(),
+        )),
         Some(("supervise", _)) => Err(CliError::CommandFailed(
             "supervise requires mutable context and runner support".to_string(),
         )),

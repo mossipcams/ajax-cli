@@ -1,15 +1,23 @@
-mod classifiers;
+#[cfg(feature = "interactive")]
+mod agent_status_cache;
 mod cli;
+#[cfg(feature = "interactive")]
 mod cockpit_actions;
+#[cfg(feature = "interactive")]
 mod cockpit_backend;
 mod context;
 mod dispatch;
 mod execution_dispatch;
 mod render;
 mod snapshot_dispatch;
+#[cfg(feature = "supervisor")]
 mod supervise;
+#[cfg(feature = "interactive")]
 mod task_session;
+mod web_backend;
 
+#[cfg(test)]
+use ajax_core::task_operations::task_command::TaskCommandKind;
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
@@ -19,24 +27,23 @@ use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
 #[cfg(test)]
+#[cfg(feature = "interactive")]
 use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
     handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
-    PendingCockpitOutcome,
 };
 #[cfg(test)]
+#[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{context_paths_from_matches, load_context, save_context};
+use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
 #[cfg(test)]
-use dispatch::{render_task_command, TaskCommandOperation};
+use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 #[cfg(test)]
 use snapshot_dispatch::parent_directory_available;
 use snapshot_dispatch::render_matches_with_paths;
 use std::ffi::OsStr;
-#[cfg(test)]
-use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -105,7 +112,7 @@ pub fn run_with_args(
         );
     }
 
-    let mut context = load_context(&paths)?;
+    let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
         match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
@@ -133,7 +140,7 @@ pub fn run_with_context(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    render_snapshot_matches(&matches, context)
+    snapshot_dispatch::render_snapshot_matches(&matches, context)
 }
 
 pub fn run_with_context_and_runner(
@@ -157,7 +164,7 @@ pub fn run_with_context_paths(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
-    let context = load_context(paths)?;
+    let context = load_context_for_matches(paths, &matches)?;
 
     render_matches_with_paths(&matches, &context, Some(paths))
 }
@@ -171,7 +178,7 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
-    let mut context = load_context(paths)?;
+    let mut context = load_context_for_matches(paths, &matches)?;
     let rendered = match render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))
     {
         Ok(rendered) => rendered,
@@ -195,14 +202,20 @@ pub(crate) struct RenderedCommand {
     pub(crate) state_changed: bool,
 }
 
-fn render_snapshot_matches(
-    matches: &ArgMatches,
-    context: &CommandContext<InMemoryRegistry>,
-) -> Result<String, CliError> {
-    snapshot_dispatch::render_snapshot_matches(matches, context)
-}
-
 // The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
+
+fn load_context_for_matches(
+    paths: &CliContextPaths,
+    matches: &ArgMatches,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    if matches.subcommand().is_some_and(|(name, subcommand)| {
+        name == "state" && matches!(subcommand.subcommand(), Some(("export", _)))
+    }) {
+        load_context_with_events(paths)
+    } else {
+        load_context(paths)
+    }
+}
 
 pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
     let repo = matches
@@ -265,7 +278,8 @@ mod tests {
         config::{Config, ManagedRepo},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource,
+            RuntimeProjection, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
@@ -273,6 +287,36 @@ mod tests {
         path::{Path, PathBuf},
         time::SystemTime,
     };
+
+    #[test]
+    fn cli_does_not_keep_duplicate_conflict_classifier_module() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let supervise_source =
+            std::fs::read_to_string(manifest_dir.join("src/supervise.rs")).unwrap();
+        let duplicate_module_decl = ["mod ", "classifiers;"].concat();
+        let supervise_wrapper = ["fn ", "render_supervise_command"].concat();
+
+        assert!(!lib_source.contains(&duplicate_module_decl));
+        assert!(!manifest_dir.join("src/classifiers.rs").exists());
+        assert!(!supervise_source.contains(&supervise_wrapper));
+    }
+
+    #[test]
+    fn cli_builder_does_not_keep_trivial_command_forwarders() {
+        let cli_source =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs"))
+                .unwrap();
+
+        for wrapper in [
+            "repos_command",
+            "executable_task_command",
+            "executable_new_command",
+        ] {
+            let function_name = ["fn ", wrapper].concat();
+            assert!(!cli_source.contains(&function_name), "{wrapper}");
+        }
+    }
 
     fn sample_context() -> CommandContext<InMemoryRegistry> {
         let config = Config {
@@ -313,6 +357,28 @@ mod tests {
     }
 
     #[test]
+    fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        )
+        .unwrap();
+
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
+            let line = manifest
+                .lines()
+                .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
+                .unwrap_or_else(|| panic!("{dependency} dependency should be declared"));
+            assert!(
+                line.contains("optional = true"),
+                "{dependency} must be optional so lightweight builds can exclude it: {line}"
+            );
+        }
+
+        assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+    }
+
+    #[test]
     fn execution_dispatch_module_routes_mutating_commands() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
@@ -334,69 +400,6 @@ mod tests {
 
         assert!(rendered.state_changed);
         assert!(rendered.output.contains("recorded task: web/fix-logout"));
-    }
-
-    #[test]
-    fn runtime_command_json_reports_profile_paths_and_overrides() {
-        let directory =
-            std::env::temp_dir().join(format!("ajax-runtime-json-{}", std::process::id()));
-        let state_file = directory.join("test.db");
-        let output = super::run_with_args([
-            "ajax",
-            "--profile",
-            "dev",
-            "--state",
-            state_file.to_str().unwrap(),
-            "runtime",
-            "--json",
-        ])
-        .unwrap();
-        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-        assert_eq!(value["profile"], "dev");
-        assert_eq!(value["state_db"], state_file.display().to_string());
-        assert_eq!(value["worktree_placement"]["kind"], "root");
-        assert_eq!(
-            value["worktree_placement"]["root"],
-            "/Users/matt/.ajax-dev/worktrees"
-        );
-        assert_eq!(value["overrides"][0]["field"], "state_db");
-        assert_eq!(value["overrides"][0]["source"], "cli");
-    }
-
-    #[test]
-    fn runtime_command_human_reports_stable_defaults() {
-        let output =
-            super::run_with_args(["ajax", "--home", "/tmp/ajax-stable", "runtime"]).unwrap();
-
-        assert!(output.contains("profile: stable"));
-        assert!(output.contains("config_file: /tmp/ajax-stable/config.toml"));
-        assert!(output.contains("state_db: /tmp/ajax-stable/ajax.db"));
-        assert!(output.contains("worktree_placement: root"));
-        assert!(output.contains("worktree_root: /tmp/ajax-stable/worktrees"));
-    }
-
-    #[test]
-    fn runtime_command_does_not_load_state_file() {
-        let directory =
-            std::env::temp_dir().join(format!("ajax-runtime-invalid-state-{}", std::process::id()));
-        std::fs::create_dir_all(&directory).unwrap();
-        let state_file = directory.join("ajax.db");
-        std::fs::write(&state_file, "not a sqlite database").unwrap();
-
-        let output = super::run_with_args([
-            "ajax",
-            "--home",
-            directory.to_str().unwrap(),
-            "--state",
-            state_file.to_str().unwrap(),
-            "runtime",
-            "--json",
-        ])
-        .expect("runtime inspection should not load state");
-
-        assert!(output.contains("\"profile\": \"stable\""));
-        assert!(output.contains(&format!("\"state_db\": \"{}\"", state_file.display())));
     }
 
     #[test]
@@ -423,18 +426,6 @@ mod tests {
             assert!(snapshot.cards.is_empty(), "{flag:?}");
             assert!(snapshot.inbox.items.is_empty(), "{flag:?}");
         }
-    }
-
-    #[test]
-    fn classifiers_module_detects_merge_conflict_errors() {
-        let error = CommandRunError::NonZeroExit {
-            program: "git".to_string(),
-            status_code: 1,
-            stderr: "Automatic merge failed; fix conflicts and then commit.".to_string(),
-            cwd: None,
-        };
-
-        assert!(crate::classifiers::command_error_looks_conflicted(&error));
     }
 
     #[test]
@@ -803,6 +794,8 @@ mod tests {
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
+            vec!["ajax", "stable"],
+            vec!["ajax", "dev"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
@@ -1073,6 +1066,48 @@ mod tests {
     }
 
     #[test]
+    fn read_command_skips_live_pane_probe_when_cached_runtime_is_fresh() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::now(),
+            RuntimeObservationSource::TmuxProbe,
+        );
+        let mut runner = QueuedRunner::default();
+
+        let output =
+            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
+                .unwrap();
+
+        assert!(output.contains("web/fix-login"));
+        assert!(runner.commands.is_empty());
+    }
+
+    #[test]
     fn read_refresh_failure_keeps_task_visible_with_missing_tmux_attention() {
         let mut context = sample_context();
         let task = context
@@ -1200,10 +1235,11 @@ mod tests {
     fn snapshot_only_read_dispatch_is_explicitly_named() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-        let snapshot_dispatch = ["fn render_", "snapshot_matches("].concat();
+        let wrapper = ["fn ", "render_snapshot_matches"].concat();
 
-        assert!(lib_source.contains(&snapshot_dispatch));
+        assert!(lib_source.contains("snapshot_dispatch::render_snapshot_matches"));
         assert!(lib_source.contains("render_refreshed_read_command"));
+        assert!(!lib_source.contains(&wrapper));
     }
 
     #[test]
@@ -1755,7 +1791,8 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let output = super::render_supervise_command(subcommand).unwrap();
+        let (output, _) =
+            crate::supervise::supervise_command_output_and_events(subcommand).unwrap();
 
         assert!(output.contains("process started"));
         assert!(output.contains("agent started: codex"));
@@ -1791,7 +1828,7 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = super::render_supervise_command(subcommand).unwrap_err();
+        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(matches!(error, CliError::CommandFailed(message)
@@ -1822,7 +1859,7 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = super::render_supervise_command(subcommand).unwrap_err();
+        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(error.to_string().contains("codex exited with status 42"));
@@ -1980,12 +2017,11 @@ mod tests {
 
         assert!(output.contains("Usage: ajax-cli [OPTIONS] [COMMAND]"));
         assert!(output.contains("Commands:"));
-        assert!(output.contains("runtime    Show Ajax runtime paths"));
     }
 
     #[test]
-    fn bare_command_still_reports_missing_subcommand_at_library_boundary() {
-        let error = run_with_context(["ajax-cli"], &sample_context()).unwrap_err();
+    fn bare_command_reports_missing_subcommand_as_error() {
+        let error = run_with_context(["ajax"], &sample_context()).unwrap_err();
 
         assert!(matches!(error, super::CliError::CommandFailed(message)
                 if message.contains("command is required; pass --help")));
@@ -2393,11 +2429,11 @@ mod tests {
     fn release_hygiene_documents_install_config_and_release_process() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
-        let cli_manifest =
-            std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
         let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
+        let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+        let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
         let license = std::fs::read_to_string(root.join("LICENSE")).unwrap();
 
         assert!(!workspace_manifest.contains("https://github.com/example/ajax-cli"));
@@ -2417,9 +2453,21 @@ mod tests {
         assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
         assert!(release.contains("cargo nextest run --all-features"));
+        let cli_manifest =
+            std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
         assert!(cli_manifest.contains("[[bin]]\nname = \"ajax-cli\""));
         assert!(!cli_manifest.contains("name = \"ajax\"\npath = \"src/main.rs\""));
         assert!(cli_manifest.contains("path = \"src/main.rs\""));
+        assert!(agents.contains("Release Please PR title"));
+        assert!(agents.contains("feat:"));
+        assert!(agents.contains("fix:"));
+        assert!(agents.contains("chore:"));
+        assert!(ci.contains("\n  ci:\n"));
+        assert!(ci.contains("name: CI"));
+        assert!(ci.contains("needs:"));
+        assert!(ci.contains("format-and-duplication"));
+        assert!(ci.contains("if: ${{ always() }}"));
+        assert!(ci.contains("needs.*.result"));
     }
 
     #[test]
@@ -2647,7 +2695,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Open,
+            super::TaskCommandKind::Resume,
             subcommand,
             &mut context,
             &mut runner,
@@ -2700,6 +2748,16 @@ mod tests {
 
         assert!(output.contains("repair task: web/fix-login"));
         assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+        let snapshot_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/snapshot_dispatch.rs")).unwrap();
+        let wrapper_definition = ["pub(crate) fn plan", "_task_command"].concat();
+        let wrapper_call = ["crate::dispatch::plan", "_task_command"].concat();
+
+        assert!(!dispatch.contains(&wrapper_definition));
+        assert!(!snapshot_dispatch.contains(&wrapper_call));
     }
 
     #[test]
@@ -4701,6 +4759,45 @@ mod tests {
     }
 
     #[test]
+    fn drop_execute_treats_no_such_branch_as_already_absent() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 1,
+                stdout: String::new(),
+                stderr: "error: no such branch 'ajax/fix-login'".to_string(),
+            },
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+    }
+
+    #[test]
     fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete() {
         let mut context = cleanable_context();
         let task = context
@@ -4835,7 +4932,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -4879,7 +4976,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -4957,7 +5054,7 @@ mod tests {
         // inside tmux, failing in CI). Pin the env-independent `Attach`
         // default so the full command sequence is asserted deterministically.
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -5205,12 +5302,7 @@ mod tests {
             priority: 0,
             action: "start".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
@@ -5220,9 +5312,7 @@ mod tests {
             _ => panic!("start task should remain inside Ajax cockpit"),
         }
 
-        assert!(runner.commands().is_empty());
         assert!(context.registry.list_tasks().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5236,12 +5326,7 @@ mod tests {
                 priority: 0,
                 action: action.to_string(),
             };
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match outcome {
                 ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5262,7 +5347,6 @@ mod tests {
                     panic!("{action} should defer for execution instead of confirming: {message}")
                 }
             }
-            assert!(!state_changed, "{action} should not mutate Ajax state");
         }
     }
 
@@ -5282,12 +5366,7 @@ mod tests {
                 priority: 0,
                 action: action.to_string(),
             };
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             if let ajax_tui::ActionOutcome::Message(message) = outcome {
                 assert!(!message.contains("try: ajax"), "{action}: {message}");
@@ -5297,12 +5376,7 @@ mod tests {
 
         let mut context = cleanable_context();
         let item = cockpit_item("web/fix-login", "drop");
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         if let ajax_tui::ActionOutcome::Message(message) = outcome {
             assert!(!message.contains("try: ajax"), "drop task: {message}");
@@ -5322,12 +5396,7 @@ mod tests {
             "review diff",
         ] {
             let item = cockpit_item("web/fix-login", action);
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match outcome {
                 ajax_tui::ActionOutcome::Message(message) => {
@@ -5336,7 +5405,6 @@ mod tests {
                 }
                 _ => panic!("{action} should be an unknown cockpit action"),
             }
-            assert!(!state_changed, "{action}");
         }
     }
 
@@ -5344,12 +5412,7 @@ mod tests {
     fn cockpit_unknown_action_does_not_suggest_shell_command() {
         let mut context = sample_context();
         let item = cockpit_item("web/fix-login", "mystery action");
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
@@ -5359,7 +5422,6 @@ mod tests {
             }
             _ => panic!("unknown cockpit action should stay in cockpit"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5402,12 +5464,7 @@ mod tests {
                 sample_context()
             };
             let item = cockpit_item(handle, action);
-            let mut runner = RecordingCommandRunner::default();
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match expected {
                 Expected::Defer => match outcome {
@@ -5415,11 +5472,6 @@ mod tests {
                         assert_eq!(pending.task_handle, handle, "{action}");
                         assert_eq!(pending.action, action);
                         assert!(pending.task_title.is_none(), "{action}");
-                        assert!(
-                            runner.commands().is_empty(),
-                            "{action} should not execute before pending handling"
-                        );
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Message(message) => {
                         panic!("{action} should defer, got message: {message}");
@@ -5439,11 +5491,6 @@ mod tests {
                         for part in parts {
                             assert!(message.contains(part), "{action}: missing {part:?}");
                         }
-                        assert!(
-                            runner.commands().is_empty(),
-                            "{action} should not execute commands"
-                        );
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
                         panic!("{action} should render in cockpit, got defer");
@@ -5465,8 +5512,6 @@ mod tests {
                         assert!(snapshot.inbox.items.is_empty(), "{action}");
                         assert_eq!(pending.task_handle, handle, "{action}");
                         assert_eq!(pending.action, action, "{action}");
-                        assert!(runner.commands().is_empty(), "{action}");
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
                         panic!("{action} should refresh before deferring, got defer");
@@ -5495,12 +5540,7 @@ mod tests {
             priority: 0,
             action: "ship".to_string(),
         };
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5510,7 +5550,6 @@ mod tests {
             }
             _ => panic!("completed task action should defer for execution"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5523,12 +5562,7 @@ mod tests {
             priority: 0,
             action: "resume".to_string(),
         };
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5538,7 +5572,6 @@ mod tests {
             }
             _ => panic!("task action should defer for execution"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5660,6 +5693,13 @@ mod tests {
         let inbox = ajax_core::commands::inbox(&context);
         assert_eq!(inbox.items.len(), 1);
         assert_eq!(inbox.items[0].action, OperatorAction::Resume);
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let execution_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
+        let wrapper = ["pub(crate) fn execute_new", "_task_plan<"].concat();
+
+        assert!(!execution_dispatch.contains(&wrapper));
     }
 
     #[test]
@@ -5679,7 +5719,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        let output = super::execute_pending_cockpit_action(
+        let outcome = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
@@ -5687,7 +5727,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output.contains("recorded task: api/fix-login"));
+        assert!(outcome
+            .as_deref()
+            .is_some_and(|output| output.contains("recorded task: api/fix-login")));
         assert_eq!(
             runner.commands(),
             &[
@@ -5747,60 +5789,37 @@ mod tests {
     }
 
     #[test]
-    fn task_command_operation_maps_cli_commands_and_cockpit_aliases() {
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("resume"),
-            Some(super::TaskCommandOperation::Open)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("repair"),
-            Some(super::TaskCommandOperation::Repair)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("review"),
-            Some(super::TaskCommandOperation::Review)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("ship"),
-            Some(super::TaskCommandOperation::Merge)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("drop"),
-            Some(super::TaskCommandOperation::Drop)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("status"),
-            None
-        );
+    fn task_command_routes_use_core_kinds_without_cli_mapper() {
+        let context = sample_context();
 
+        let resume = run_with_context(["ajax", "resume", "web/fix-login"], &context).unwrap();
+        let repair = run_with_context(["ajax", "repair", "web/fix-login"], &context).unwrap();
+        let review = run_with_context(["ajax", "review", "web/fix-login"], &context).unwrap();
+        let ship = run_with_context(["ajax", "ship", "web/fix-login"], &context).unwrap();
+
+        assert!(resume.contains("open task: web/fix-login"));
+        assert!(repair.contains("repair task: web/fix-login"));
+        assert!(review.contains("diff task: web/fix-login"));
+        assert!(ship.contains("merge task: web/fix-login"));
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+        let execution_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
+        let mapper = ["task_command_kind", "_for_cli_subcommand"].concat();
+
+        assert!(!dispatch.contains(&mapper));
+        assert!(!execution_dispatch.contains(&mapper));
         assert_eq!(OperatorAction::from_label("reconcile"), None);
     }
 
     #[test]
-    fn task_command_operation_uses_operator_review_language() {
+    fn task_command_kind_uses_operator_review_language() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
 
         assert!(dispatch.contains("Review"));
         assert!(!dispatch.contains("Diff"));
-        assert!(dispatch.contains("slices::review::review_task_plan"));
-    }
-
-    #[test]
-    fn task_command_operation_defines_cockpit_return_policy() {
-        assert!(!super::TaskCommandOperation::Open.returns_to_cockpit_after_execute());
-
-        for operation in [
-            super::TaskCommandOperation::Review,
-            super::TaskCommandOperation::Merge,
-            super::TaskCommandOperation::Repair,
-            super::TaskCommandOperation::Drop,
-        ] {
-            assert!(
-                operation.returns_to_cockpit_after_execute(),
-                "{operation:?} should return to the task picker"
-            );
-        }
     }
 
     #[test]
@@ -5850,14 +5869,7 @@ mod tests {
             output(0, "main\n"),
         ]);
 
-        let rendered = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let rendered = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap();
 
         assert!(rendered.state_changed);
         assert_eq!(
@@ -5930,7 +5942,7 @@ mod tests {
         ]);
 
         let rendered = super::render_task_command(
-            super::TaskCommandOperation::Open,
+            super::TaskCommandKind::Resume,
             subcommand,
             &mut context,
             &mut runner,
@@ -6030,14 +6042,7 @@ mod tests {
             },
         ]);
 
-        let error = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap_err();
+        let error = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap_err();
 
         assert!(matches!(
             error,
@@ -6153,14 +6158,7 @@ mod tests {
             output(0, "main\n"),
         ]);
 
-        let rendered = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let rendered = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap();
 
         assert_eq!(rendered.output, "removed task: web/fix-login");
         assert_eq!(
@@ -6210,7 +6208,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(outcome, None);
         assert_eq!(
             merge_context
                 .registry
@@ -6232,17 +6230,10 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
             if message.contains("press enter again") && message.contains("drop")));
-        assert!(runner.commands().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -6273,16 +6264,7 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
 
         let ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) = outcome else {
             panic!("confirmed force drop should optimistically refresh and defer cleanup");
@@ -6291,7 +6273,6 @@ mod tests {
         assert!(snapshot.inbox.items.is_empty());
         assert_eq!(pending.task_handle, "web/fix-login");
         assert_eq!(pending.action, "drop");
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -6300,7 +6281,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Reviewable
         );
-        assert!(!state_changed);
     }
 
     fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
@@ -6489,7 +6469,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(outcome, None);
         assert_eq!(runner.commands, missing_drop_observation_commands());
         assert_eq!(
             context
@@ -6535,7 +6515,7 @@ mod tests {
         let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::execute_pending_cockpit_action_with_task_session(
+        super::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6544,7 +6524,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(runner.commands, missing_drop_observation_commands());
         assert!(task_session.commands.is_empty());
         assert_eq!(
@@ -6601,7 +6580,7 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6610,7 +6589,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             runner.commands(),
             &[CommandSpec::new(
@@ -6642,7 +6620,7 @@ mod tests {
         let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6651,7 +6629,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             task_session.commands,
             vec![
@@ -6815,10 +6792,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(
-            outcome,
-            super::PendingCockpitOutcome::ReturnToCockpit
-        ));
+        assert_eq!(outcome, None);
         assert_eq!(
             runner.commands(),
             &[
@@ -7047,7 +7021,7 @@ mod tests {
             &mut cockpit_flash,
         );
 
-        assert!(outcome.is_none());
+        assert!(!outcome);
         assert_eq!(cockpit_flash.as_deref(), Some("git exited with status 42"));
     }
 
@@ -7192,7 +7166,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(output, None);
         assert_eq!(runner.commands, present_cleanable_drop_commands());
         assert_eq!(
             context
@@ -7215,15 +7189,8 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
         let ajax_tui::ActionOutcome::RefreshAndDefer(optimistic, pending) = outcome else {
             panic!("confirmed drop should optimistically refresh and defer cleanup");
         };
@@ -7260,7 +7227,7 @@ mod tests {
         let handled = super::handle_pending_cockpit_result(Err(error), &mut flash);
         let restored = crate::cockpit_backend::build_cockpit_snapshot(&context);
 
-        assert!(handled.is_none());
+        assert!(!handled);
         assert!(flash
             .as_deref()
             .is_some_and(|message| message.contains("branch delete failed")));
@@ -7288,17 +7255,10 @@ mod tests {
             priority: 0,
             action: "reconcile".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Message(message)
             if message == "cockpit action is not configured: reconcile"));
-        assert!(runner.commands().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -7316,16 +7276,10 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
             if message.contains("press enter again") && message.contains("drop")));
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -7334,7 +7288,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
-        assert!(!state_changed);
     }
 
     #[test]
@@ -7347,16 +7300,7 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) => {
@@ -7379,7 +7323,6 @@ mod tests {
                 panic!("confirmed drop task should run instead of confirming: {message}")
             }
         }
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -7388,7 +7331,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
-        assert!(!state_changed);
     }
 
     #[test]

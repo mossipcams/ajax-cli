@@ -1,13 +1,9 @@
-use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent};
+use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent, ProcessEvent};
 use clap::ArgMatches;
 
 use crate::CliError;
 
-#[cfg(test)]
-pub(crate) fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
-    let (output, _) = supervise_command_output_and_events(matches)?;
-    Ok(output)
-}
+const MAX_RETAINED_SUPERVISOR_EVENTS: usize = 256;
 
 pub(crate) fn supervise_command_output_and_events(
     matches: &ArgMatches,
@@ -28,21 +24,32 @@ pub(crate) fn supervise_command_output_and_events(
         .build()
         .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
 
-    let (events, supervise_result) = runtime.block_on(async move {
+    let (events, output, supervise_result) = runtime.block_on(async move {
         let mut config = MonitorConfig::codex_exec(prompt);
         config.codex_bin = codex_bin;
         let (handle, mut rx) =
             spawn_monitor(config).map_err(|error| CliError::CommandFailed(error.to_string()))?;
         let mut events = Vec::new();
+        let mut output = String::new();
         while let Some(event) = rx.recv().await {
-            events.push(event);
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            let rendered = if json {
+                serde_json::to_string(&event)
+                    .map_err(|error| CliError::JsonSerialization(error.to_string()))?
+            } else {
+                ajax_supervisor::renderer::render_event_log_line(&event)
+            };
+            output.push_str(&rendered);
+            retain_supervisor_event(&mut events, event);
         }
         let supervise_result = handle
             .wait()
             .await
             .map(|_| ())
             .map_err(|error| format!("supervisor failed: {error}"));
-        Ok::<_, CliError>((events, supervise_result))
+        Ok::<_, CliError>((events, output, supervise_result))
     })?;
     if let Err(message) = supervise_result {
         return Err(CliError::CommandFailed(supervisor_failure_message(
@@ -50,24 +57,25 @@ pub(crate) fn supervise_command_output_and_events(
         )));
     }
 
-    if json {
-        let output = events
+    Ok((output, events))
+}
+
+fn retain_supervisor_event(events: &mut Vec<MonitorEvent>, event: MonitorEvent) {
+    if events.len() >= MAX_RETAINED_SUPERVISOR_EVENTS {
+        let drop_index = events
             .iter()
-            .map(|event| {
-                serde_json::to_string(event)
-                    .map_err(|error| CliError::JsonSerialization(error.to_string()))
+            .position(|event| {
+                matches!(
+                    event,
+                    MonitorEvent::Process(
+                        ProcessEvent::Stdout { .. } | ProcessEvent::Stderr { .. }
+                    )
+                )
             })
-            .collect::<Result<Vec<_>, _>>()
-            .map(|lines| lines.join("\n"))?;
-        Ok((output, events))
-    } else {
-        let output = events
-            .iter()
-            .map(ajax_supervisor::renderer::render_event_log_line)
-            .collect::<Vec<_>>()
-            .join("\n");
-        Ok((output, events))
+            .unwrap_or(0);
+        events.remove(drop_index);
     }
+    events.push(event);
 }
 
 fn supervisor_failure_message(message: String, events: &[ajax_supervisor::MonitorEvent]) -> String {
@@ -86,4 +94,42 @@ fn supervisor_failure_message(message: String, events: &[ajax_supervisor::Monito
     }
 
     format!("{message}; stderr: {}", stderr.join(" | "))
+}
+
+#[cfg(test)]
+mod tests {
+    use ajax_supervisor::{MonitorEvent, ProcessEvent};
+
+    #[test]
+    fn retained_supervisor_events_are_bounded_for_noisy_process_output() {
+        let mut retained = Vec::new();
+
+        for index in 0..300 {
+            super::retain_supervisor_event(
+                &mut retained,
+                MonitorEvent::Process(ProcessEvent::Stdout {
+                    line: format!("line {index}"),
+                }),
+            );
+        }
+
+        assert!(retained.len() <= super::MAX_RETAINED_SUPERVISOR_EVENTS);
+        assert_eq!(
+            retained.last(),
+            Some(&MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "line 299".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn supervise_module_does_not_keep_single_use_event_predicate() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/supervise.rs"),
+        )
+        .unwrap();
+        let helper = ["fn ", "is_noisy_process_output"].concat();
+
+        assert!(!source.contains(&helper));
+    }
 }

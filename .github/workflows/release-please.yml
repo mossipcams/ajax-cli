@@ -17,16 +17,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Require release token
+      - name: Check release token
+        id: token
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
-            echo "::error title=Missing RELEASE_PLEASE_TOKEN::Configure a PAT or GitHub App token so Release Please PRs trigger CI."
-            exit 1
+            echo "::warning title=Missing RELEASE_PLEASE_TOKEN::Skipping Release Please. Configure a PAT or GitHub App token so Release Please PRs trigger CI."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Run Release Please
+        if: steps.token.outputs.present == 'true'
         uses: googleapis/release-please-action@v4
         with:
           token: ${{ secrets.RELEASE_PLEASE_TOKEN }}

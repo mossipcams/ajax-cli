@@ -13,33 +13,20 @@ use ajax_core::{
     models::CockpitActionItem,
     output::{InboxResponse, ReposResponse, TaskCard},
 };
-#[cfg(test)]
-pub(crate) use cockpit_state::FLASH_TICKS;
 pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
-use input::{
-    handle_action_result, handle_back_key, handle_cockpit_event, is_back_key_event,
-    is_help_key_event, is_input_delete_key, EventLoopAction,
-};
-pub(crate) use layout::{
-    feed_screen_rows, feed_top_row, selectable_row_layout, visible_feed_height,
-};
-use rendering::task_status_label;
+use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
+pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
 #[cfg(test)]
 use rendering::{
-    action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-    danger_accent, inbox_glyph, inbox_item_accent, muted_text, primary_accent, priority_accent,
-    project_glyph, project_name_color, project_subtitle, render_ui, secondary_accent,
-    selectable_feed_rows, selected_highlight, subtle_text, task_glyph, task_handle_color,
-    ui_state_bucket, StatusBucket,
+    action_glyph, bucket_color, bucket_glyph, priority_accent, project_subtitle, render_ui,
+    task_glyph, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
 };
-#[cfg(test)]
-use runtime::{terminal_entry_commands, terminal_exit_commands, TerminalModeCommand};
 use std::io;
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
@@ -58,9 +45,7 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
         lines.extend(cards.iter().map(|card| {
             format!(
                 "{}\t{}\t{}",
-                card.qualified_handle,
-                task_status_label(card),
-                card.title
+                card.qualified_handle, card.status_label, card.title
             )
         }));
     }
@@ -153,25 +138,21 @@ impl App {
     }
 }
 
-// ── Layout-coupled rendering geometry ──────────────────────────────────────────
-
-pub(crate) fn show_notice_row(app: &App) -> bool {
-    app.current_notice().is_some()
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
+    use crate::palette::{
+        accent_danger as danger_accent, accent_primary as primary_accent, accent_success,
+        accent_warning as secondary_accent, selected_highlight, text_chrome as subtle_text,
+        text_data as muted_text,
+    };
+
     use super::{
-        action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-        danger_accent, feed_top_row, handle_cockpit_event, inbox_glyph, inbox_item_accent,
-        muted_text, primary_accent, priority_accent, project_glyph, project_name_color,
-        project_subtitle, render_cockpit, render_ui, secondary_accent, selectable_feed_rows,
-        selectable_row_layout, selected_highlight, subtle_text, task_glyph, task_handle_color,
-        ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
-        EventLoopAction, PendingAction, SelectableKind, StatusBucket, TerminalModeCommand,
-        FLASH_TICKS,
+        action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event,
+        priority_accent, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
+        task_glyph, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
+        CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -216,6 +197,15 @@ mod tests {
             let legacy_export = ["pub mod ", legacy_module, ";"].concat();
             assert!(!lib.contains(&legacy_export));
         }
+        let legacy_flash_alias = ["FLASH", "_TICKS"].concat();
+        assert!(!lib.contains(&legacy_flash_alias));
+
+        let input = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/input.rs"),
+        )
+        .unwrap();
+        let back_key_wrapper = ["fn ", "handle_back_key"].concat();
+        assert!(!input.contains(&back_key_wrapper));
     }
 
     #[test]
@@ -246,16 +236,37 @@ mod tests {
         let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
         let layout = std::fs::read_to_string(manifest_dir.join("src/layout.rs")).unwrap();
 
-        for helper_name in [
-            "feed_top_row",
-            "visible_feed_height",
-            "feed_screen_rows",
-            "selectable_row_layout",
-        ] {
+        for helper_name in ["feed_top_row", "feed_screen_rows", "selectable_row_layout"] {
             let helper = format!("fn {helper_name}(");
             assert!(layout.contains(&helper), "layout.rs should own {helper}");
             assert!(!lib.contains(&helper), "lib.rs should not define {helper}");
         }
+
+        let visible_feed_height = ["fn ", "visible_feed_height"].concat();
+        assert!(!layout.contains(&visible_feed_height));
+        assert!(!lib.contains(&visible_feed_height));
+    }
+
+    #[test]
+    fn tui_root_does_not_keep_notice_row_forwarder() {
+        let lib = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+        let helper_name = ["fn ", "show_notice_row"].concat();
+
+        assert!(!lib.contains(&helper_name));
+    }
+
+    #[test]
+    fn selectable_layout_does_not_build_rendered_feed_items() {
+        let layout = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
+        )
+        .unwrap();
+
+        assert!(!layout.contains("rendering::selectable_feed_rows"));
+        assert!(!layout.contains("build_feed"));
     }
 
     #[test]
@@ -371,30 +382,13 @@ mod tests {
 
     #[test]
     fn palette_surface_is_four_accents_plus_two_greys() {
-        use crate::palette;
         let entries = [
-            (
-                "accent_primary",
-                palette::accent_primary(),
-                Color::Indexed(110),
-            ),
-            (
-                "accent_warning",
-                palette::accent_warning(),
-                Color::Indexed(179),
-            ),
-            (
-                "accent_danger",
-                palette::accent_danger(),
-                Color::Indexed(174),
-            ),
-            (
-                "accent_success",
-                palette::accent_success(),
-                Color::Indexed(108),
-            ),
-            ("text_data", palette::text_data(), Color::Indexed(248)),
-            ("text_chrome", palette::text_chrome(), Color::Indexed(244)),
+            ("accent_primary", primary_accent(), Color::Indexed(110)),
+            ("accent_warning", secondary_accent(), Color::Indexed(179)),
+            ("accent_danger", danger_accent(), Color::Indexed(174)),
+            ("accent_success", accent_success(), Color::Indexed(108)),
+            ("text_data", muted_text(), Color::Indexed(248)),
+            ("text_chrome", subtle_text(), Color::Indexed(244)),
         ];
         for (name, actual, expected) in entries {
             assert_eq!(actual, expected, "palette::{name} drift");
@@ -406,7 +400,7 @@ mod tests {
             }
         }
         assert_eq!(
-            palette::selected_highlight(),
+            selected_highlight(),
             Style::default().add_modifier(Modifier::BOLD)
         );
     }
@@ -458,18 +452,6 @@ mod tests {
 
     #[test]
     fn row_chrome_helpers_preserve_visible_glyphs_and_styles() {
-        let active_repo = RepoSummary {
-            name: "web".to_string(),
-            path: "/repo".to_string(),
-            active_tasks: 1,
-            attention_items: 0,
-            reviewable_tasks: 0,
-            cleanable_tasks: 0,
-        };
-        let idle_repo = RepoSummary {
-            active_tasks: 0,
-            ..active_repo.clone()
-        };
         let urgent_item = AnnotationItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix".to_string(),
@@ -478,28 +460,23 @@ mod tests {
             action: OperatorAction::Resume,
         };
 
-        assert_eq!(project_glyph(&active_repo).content.as_ref(), "*");
-        assert_eq!(project_glyph(&idle_repo).content.as_ref(), " ");
-        assert_eq!(project_name_color(&active_repo), primary_accent());
-        assert_eq!(project_name_color(&idle_repo), muted_text());
-        assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
-        assert_eq!(inbox_item_accent(&urgent_item), secondary_accent());
+        assert_eq!(priority_accent(urgent_item.severity), secondary_accent());
         assert_eq!(action_glyph("help").content.as_ref(), "?");
         assert_eq!(
             action_glyph("help").style,
             Style::default()
-                .fg(crate::palette::accent_warning())
+                .fg(secondary_accent())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(action_glyph("unknown").content.as_ref(), ".");
         assert_eq!(
-            action_label_style("help"),
+            crate::actions::action_chrome("help").label_style,
             Style::default()
-                .fg(crate::palette::accent_primary())
+                .fg(primary_accent())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(
-            action_label_style("unknown"),
+            crate::actions::action_chrome("unknown").label_style,
             Style::default().fg(muted_text())
         );
     }
@@ -758,14 +735,10 @@ mod tests {
         )];
         let card = &tasks[0];
 
-        assert_eq!(card_bucket(card), StatusBucket::NeedsYou);
+        assert_eq!(ui_state_bucket(card.ui_state), StatusBucket::NeedsYou);
         assert_eq!(
             task_glyph(card).style.fg,
             Some(bucket_color(StatusBucket::NeedsYou))
-        );
-        assert_eq!(
-            task_handle_color(card),
-            bucket_color(StatusBucket::NeedsYou)
         );
     }
 
@@ -1049,19 +1022,6 @@ mod tests {
             subtitle.contains(expected),
             "subtitle {subtitle:?} should contain {expected:?}"
         );
-    }
-
-    #[test]
-    fn project_glyph_blank_for_idle_repo() {
-        let idle = RepoSummary {
-            name: "web".to_string(),
-            path: "/repo".to_string(),
-            active_tasks: 0,
-            attention_items: 0,
-            reviewable_tasks: 0,
-            cleanable_tasks: 0,
-        };
-        assert_eq!(project_glyph(&idle).content.as_ref(), " ");
     }
 
     #[test]
@@ -1410,8 +1370,6 @@ mod tests {
             app.current_notice().map(|n| n.ticks_remaining),
             expected_remaining
         );
-        // FLASH_TICKS still exported for back-compat reference.
-        assert_ne!(FLASH_TICKS, 0);
     }
 
     #[test]
@@ -2098,7 +2056,7 @@ mod tests {
     fn top_level_back_stays_in_cockpit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-        assert!(!super::handle_back_key(&mut app));
+        assert!(!app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
@@ -2108,11 +2066,11 @@ mod tests {
     fn top_level_backspace_stays_in_cockpit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-        assert!(super::is_back_key_event(
+        assert!(crate::navigation::is_back_key_event(
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(!app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
@@ -2128,8 +2086,8 @@ mod tests {
         ] {
             let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-            assert!(super::is_back_key_event(code, modifiers));
-            assert!(!super::handle_back_key(&mut app));
+            assert!(crate::navigation::is_back_key_event(code, modifiers));
+            assert!(!app.go_back());
             let content = render_to_string(80, 30, &app);
             assert!(content.contains("Ajax"));
             assert!(content.contains("web"));
@@ -2137,37 +2095,18 @@ mod tests {
     }
 
     #[test]
-    fn terminal_entry_uses_only_unambiguous_tui_modes() {
-        assert_eq!(
-            super::terminal_entry_commands(),
-            &[
-                TerminalModeCommand::EnterAlternateScreen,
-                TerminalModeCommand::EnableMouseCapture
-            ]
-        );
-    }
+    fn lib_does_not_import_terminal_mode_command_mirror() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+        let command_mirror = ["Terminal", "ModeCommand"].concat();
+        let entry_helper = ["terminal", "_entry_commands"].concat();
+        let exit_helper = ["terminal", "_exit_commands"].concat();
 
-    #[test]
-    fn terminal_exit_restores_tui_modes() {
-        assert_eq!(
-            super::terminal_exit_commands(),
-            &[
-                TerminalModeCommand::LeaveAlternateScreen,
-                TerminalModeCommand::DisableMouseCapture
-            ]
-        );
-    }
-
-    #[test]
-    fn runtime_module_exposes_terminal_mode_commands() {
-        assert_eq!(
-            crate::runtime::terminal_entry_commands(),
-            super::terminal_entry_commands()
-        );
-        assert_eq!(
-            crate::runtime::terminal_exit_commands(),
-            super::terminal_exit_commands()
-        );
+        assert!(!source.contains(&command_mirror));
+        assert!(!source.contains(&entry_helper));
+        assert!(!source.contains(&exit_helper));
     }
 
     #[test]
@@ -2176,7 +2115,7 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(!content.contains("> web"));
     }
@@ -2187,11 +2126,11 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        assert!(super::is_back_key_event(
+        assert!(crate::navigation::is_back_key_event(
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(!content.contains("> web"));
     }
@@ -2205,7 +2144,7 @@ mod tests {
             KeyCode::Esc,
         ] {
             assert!(
-                super::is_back_key_event(key, KeyModifiers::NONE),
+                crate::navigation::is_back_key_event(key, KeyModifiers::NONE),
                 "{key:?} should navigate back"
             );
         }
@@ -2223,12 +2162,12 @@ mod tests {
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
             assert!(
-                super::is_back_key_event(code, modifiers),
+                crate::navigation::is_back_key_event(code, modifiers),
                 "{code:?} with {modifiers:?} should navigate back"
             );
         }
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Char('x'),
             KeyModifiers::NONE
         ));
@@ -2243,7 +2182,7 @@ mod tests {
         let selected_before = app.selected;
         let before = render_to_string(80, 30, &app);
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
@@ -2261,7 +2200,7 @@ mod tests {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let before = render_to_string(80, 30, &app);
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
@@ -2282,12 +2221,12 @@ mod tests {
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
             assert!(
-                super::is_input_delete_key(code, modifiers),
+                crate::navigation::is_input_delete_key(code, modifiers),
                 "{code:?} with {modifiers:?} should erase input"
             );
         }
 
-        assert!(!super::is_input_delete_key(
+        assert!(!crate::navigation::is_input_delete_key(
             KeyCode::Char('h'),
             KeyModifiers::NONE
         ));
@@ -2309,11 +2248,11 @@ mod tests {
             "Delete regression setup should be editing a web task title"
         );
 
-        assert!(super::is_input_delete_key(
+        assert!(crate::navigation::is_input_delete_key(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(
             matches!(
                 &app.view,
@@ -2365,15 +2304,15 @@ mod tests {
 
     #[test]
     fn question_mark_is_the_help_shortcut() {
-        assert!(super::is_help_key_event(
+        assert!(crate::navigation::is_help_key_event(
             KeyCode::Char('?'),
             KeyModifiers::NONE
         ));
-        assert!(super::is_help_key_event(
+        assert!(crate::navigation::is_help_key_event(
             KeyCode::Char('/'),
             KeyModifiers::SHIFT
         ));
-        assert!(!super::is_help_key_event(
+        assert!(!crate::navigation::is_help_key_event(
             KeyCode::Char('/'),
             KeyModifiers::NONE
         ));
@@ -2386,7 +2325,7 @@ mod tests {
 
         app.open_help();
         assert!(matches!(app.view, AppView::Help { .. }));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
 
         let content = render_to_string(80, 30, &app);
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
@@ -2525,7 +2464,7 @@ mod tests {
         app.activate_selected();
         assert!(app.expanded_task.is_some());
 
-        super::handle_back_key(&mut app);
+        assert!(app.go_back());
         assert!(app.expanded_task.is_none());
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
     }
@@ -2652,24 +2591,30 @@ mod tests {
             OperatorAction::Ship,
             OperatorAction::Drop,
         ] {
-            let chrome = action_chrome(action.as_str());
+            let chrome = crate::actions::action_chrome(action.as_str());
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
 
-        let open = action_chrome(OperatorAction::Resume.as_str());
-        assert_eq!(open.glyph_color, primary_accent());
-        assert_eq!(open.label_color, primary_accent());
+        let open = crate::actions::action_chrome(OperatorAction::Resume.as_str());
+        let open_style = Style::default()
+            .fg(primary_accent())
+            .add_modifier(Modifier::BOLD);
+        assert_eq!(open.glyph_style, open_style);
+        assert_eq!(open.label_style, open_style);
 
         let action = OperatorAction::Ship;
-        let chrome = action_chrome(action.as_str());
-        assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
-        assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
+        let chrome = crate::actions::action_chrome(action.as_str());
+        let ship_style = Style::default()
+            .fg(secondary_accent())
+            .add_modifier(Modifier::BOLD);
+        assert_eq!(chrome.glyph_style, ship_style, "{action:?}");
+        assert_eq!(chrome.label_style, ship_style, "{action:?}");
     }
 
     #[test]
     fn current_core_actions_have_dedicated_render_metadata() {
         for action in OperatorAction::all() {
-            let chrome = action_chrome(action.as_str());
+            let chrome = crate::actions::action_chrome(action.as_str());
 
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
@@ -2680,7 +2625,12 @@ mod tests {
         let chrome = crate::actions::operator_action_chrome(OperatorAction::Resume);
 
         assert_eq!(chrome.glyph, ">");
-        assert_eq!(chrome.label_color, primary_accent());
+        assert_eq!(
+            chrome.label_style,
+            Style::default()
+                .fg(primary_accent())
+                .add_modifier(Modifier::BOLD)
+        );
     }
 
     #[test]
@@ -2715,6 +2665,17 @@ mod tests {
     }
 
     #[test]
+    fn navigation_module_does_not_keep_single_use_backspace_helper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/navigation.rs"),
+        )
+        .unwrap();
+        let helper_name = ["fn ", "is_navigation_backspace_key"].concat();
+
+        assert!(!source.contains(&helper_name));
+    }
+
+    #[test]
     fn input_module_handles_navigation_events() {
         let mut app = App::new(
             sample_repos(),
@@ -2735,11 +2696,29 @@ mod tests {
     }
 
     #[test]
-    fn layout_module_exposes_selectable_row_ranges() {
-        assert_eq!(
-            crate::layout::selectable_row_ranges([1, 3, 5]),
-            vec![1..2, 3..4, 5..6]
-        );
+    fn layout_module_does_not_keep_selectable_row_ranges_helper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
+        )
+        .unwrap();
+
+        for helper_name in ["selectable_row_ranges", "selectable_group"] {
+            let function_name = ["fn ", helper_name].concat();
+            assert!(!source.contains(&function_name), "{helper_name}");
+        }
+    }
+
+    #[test]
+    fn cockpit_state_does_not_keep_project_repo_forwarders() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_state.rs"),
+        )
+        .unwrap();
+
+        for helper in ["task_handle_repo", "card_repo"] {
+            let helper_name = ["fn ", helper].concat();
+            assert!(!source.contains(&helper_name), "{helper}");
+        }
     }
 
     #[test]
@@ -2965,7 +2944,7 @@ mod tests {
         app.activate_selected();
 
         app.push_input_char('x');
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(
             matches!(
                 &app.view,
@@ -2974,7 +2953,7 @@ mod tests {
             "first backspace should edit the task title without leaving input"
         );
         assert!(render_to_string(80, 30, &app).contains("Task name"));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(matches!(app.view, AppView::Projects));
         assert_eq!(app.selected, 0);
 
@@ -3023,7 +3002,7 @@ mod tests {
             action: OperatorAction::Resume,
         };
 
-        assert_eq!(inbox_item_accent(&item), secondary_accent());
+        assert_eq!(priority_accent(item.severity), secondary_accent());
     }
 
     #[test]
@@ -3085,7 +3064,8 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        let expected = selectable_feed_rows(&app)
+        let (_, selectable_feed_rows) = crate::rendering::build_feed(&app, 0);
+        let expected = selectable_feed_rows
             .into_iter()
             .map(|row| row..row + 1)
             .collect::<Vec<_>>();

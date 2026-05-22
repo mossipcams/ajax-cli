@@ -1,6 +1,6 @@
 use ajax_core::{
     models::Annotation,
-    output::{AnnotationItem, RepoSummary, TaskCard},
+    output::{RepoSummary, TaskCard},
     ui_state::UiState,
 };
 use ratatui::{
@@ -14,7 +14,12 @@ use ratatui::{
 use crate::{
     actions,
     cockpit_state::{AppView, SelectableKind, Severity},
-    palette, App,
+    palette::{
+        accent_danger as danger_accent, accent_primary as primary_accent, accent_success,
+        accent_warning as secondary_accent, selected_highlight, text_chrome as subtle_text,
+        text_data as muted_text,
+    },
+    App,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,11 +33,11 @@ pub(crate) enum StatusBucket {
 
 pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
     match bucket {
-        StatusBucket::Active => palette::accent_primary(),
-        StatusBucket::NeedsYou => palette::accent_warning(),
-        StatusBucket::Stuck => palette::accent_danger(),
-        StatusBucket::Done => palette::accent_success(),
-        StatusBucket::Idle => palette::text_data(),
+        StatusBucket::Active => primary_accent(),
+        StatusBucket::NeedsYou => secondary_accent(),
+        StatusBucket::Stuck => danger_accent(),
+        StatusBucket::Done => accent_success(),
+        StatusBucket::Idle => muted_text(),
     }
 }
 
@@ -47,7 +52,7 @@ pub(crate) fn bucket_glyph(bucket: StatusBucket) -> &'static str {
 }
 
 pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
-    let show_notice = crate::show_notice_row(app);
+    let show_notice = app.current_notice().is_some();
     let mut constraints: Vec<Constraint> = vec![Constraint::Length(1)];
     constraints.push(Constraint::Min(0));
     if show_notice {
@@ -68,26 +73,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
     render_status_bar(frame, app, chunks[idx]);
 }
 
-pub(crate) fn primary_accent() -> Color {
-    palette::accent_primary()
-}
-
-pub(crate) fn secondary_accent() -> Color {
-    palette::accent_warning()
-}
-
-pub(crate) fn danger_accent() -> Color {
-    palette::accent_danger()
-}
-
-pub(crate) fn muted_text() -> Color {
-    palette::text_data()
-}
-
-pub(crate) fn subtle_text() -> Color {
-    palette::text_chrome()
-}
-
 pub(crate) fn ui_state_bucket(state: UiState) -> StatusBucket {
     match state {
         UiState::Blocked => StatusBucket::NeedsYou,
@@ -100,10 +85,6 @@ pub(crate) fn ui_state_bucket(state: UiState) -> StatusBucket {
         UiState::Idle => StatusBucket::Idle,
         UiState::Archived => StatusBucket::Idle,
     }
-}
-
-pub(crate) fn card_bucket(card: &TaskCard) -> StatusBucket {
-    ui_state_bucket(card.ui_state)
 }
 
 pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
@@ -157,32 +138,18 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn notice_glyph(severity: Severity) -> &'static str {
-    match severity {
-        Severity::Confirm => ">",
-        Severity::Error => "!",
-        Severity::Success => ".",
-        Severity::Hint => "-",
-    }
-}
-
-fn notice_color(severity: Severity) -> Color {
-    match severity {
-        Severity::Confirm => primary_accent(),
-        Severity::Error => danger_accent(),
-        Severity::Success => secondary_accent(),
-        Severity::Hint => subtle_text(),
-    }
-}
-
 fn render_notice_row(frame: &mut Frame, app: &App, area: Rect) {
     let Some(notice) = app.current_notice() else {
         return;
     };
-    let style = Style::default()
-        .fg(notice_color(notice.severity))
-        .add_modifier(Modifier::BOLD);
-    let text = format!(" {} {}", notice_glyph(notice.severity), notice.msg);
+    let (glyph, color) = match notice.severity {
+        Severity::Confirm => (">", primary_accent()),
+        Severity::Error => ("!", danger_accent()),
+        Severity::Success => (".", secondary_accent()),
+        Severity::Hint => ("-", subtle_text()),
+    };
+    let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let text = format!(" {glyph} {}", notice.msg);
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
@@ -228,109 +195,14 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-pub(crate) fn selected_highlight() -> Style {
-    palette::selected_highlight()
-}
-
-fn empty_state(text: &str) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![Span::styled(
-        format!("   {text}"),
-        Style::default()
-            .fg(subtle_text())
-            .add_modifier(Modifier::ITALIC),
-    )]))
-}
-
-fn blank_row() -> ListItem<'static> {
-    ListItem::new(Line::from(""))
-}
-
-fn group_of(kind: &SelectableKind) -> &'static str {
-    match kind {
-        SelectableKind::NewTask { .. } => "create",
-        SelectableKind::Inbox(_) => "hot",
-        SelectableKind::Project(_) => "projects",
-        SelectableKind::Task(_) => "tasks",
-        SelectableKind::TaskAction { .. } => "task-actions",
-    }
-}
-
-fn section_header_label(group: &str) -> &'static str {
-    match group {
-        "hot" => "inbox",
-        "create" => "start",
-        "projects" => "projects",
-        "tasks" => "tasks",
-        "task-actions" => "actions",
-        _ => "",
-    }
-}
-
-fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
-    let label = section_header_label(group);
-    let count_suffix = if group == "hot" {
-        format!(" ({})", app.inbox.items.len())
-    } else {
-        String::new()
-    };
-    let style = if group == "hot" {
-        Style::default()
-            .fg(secondary_accent())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(subtle_text())
-    };
-    ListItem::new(Line::from(vec![Span::styled(
-        format!("   -- {label}{count_suffix} --"),
-        style,
-    )]))
-}
-
 pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
-    let bucket = card_bucket(card);
+    let bucket = ui_state_bucket(card.ui_state);
     Span::styled(
         bucket_glyph(bucket),
         Style::default()
             .fg(bucket_color(bucket))
             .add_modifier(Modifier::BOLD),
     )
-}
-
-pub(crate) fn task_handle_color(card: &TaskCard) -> Color {
-    bucket_color(card_bucket(card))
-}
-
-pub(crate) fn task_status_label(card: &TaskCard) -> String {
-    card.status_label.clone()
-}
-
-pub(crate) fn project_glyph(repo: &RepoSummary) -> Span<'static> {
-    if repo.active_tasks > 0 {
-        Span::styled(
-            "*",
-            Style::default()
-                .fg(primary_accent())
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::raw(" ")
-    }
-}
-
-pub(crate) fn project_name_color(repo: &RepoSummary) -> Color {
-    if repo.active_tasks > 0 {
-        primary_accent()
-    } else {
-        muted_text()
-    }
-}
-
-pub(crate) fn inbox_glyph(color: Color) -> Span<'static> {
-    Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
-}
-
-pub(crate) fn inbox_item_accent(item: &AnnotationItem) -> Color {
-    priority_accent(item.severity)
 }
 
 pub(crate) fn priority_accent(priority: u32) -> Color {
@@ -343,17 +215,9 @@ pub(crate) fn priority_accent(priority: u32) -> Color {
     }
 }
 
-pub(crate) fn action_chrome(action: &str) -> actions::ActionChrome {
-    actions::action_chrome(action)
-}
-
 pub(crate) fn action_glyph(action: &str) -> Span<'static> {
-    let chrome = action_chrome(action);
-    Span::styled(chrome.glyph, chrome.glyph_style())
-}
-
-pub(crate) fn action_label_style(action: &str) -> Style {
-    action_chrome(action).label_style()
+    let chrome = actions::action_chrome(action);
+    Span::styled(chrome.glyph, chrome.glyph_style)
 }
 
 pub(crate) fn project_subtitle(repo: &RepoSummary) -> String {
@@ -382,39 +246,8 @@ pub(crate) fn project_subtitle(repo: &RepoSummary) -> String {
     }
 }
 
-fn task_row_label(card: &TaskCard) -> String {
-    card.status_label.clone()
-}
-
 fn column_separator() -> Span<'static> {
-    Span::styled("|", Style::default().fg(palette::text_chrome()))
-}
-
-fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
-    let bold = Modifier::BOLD;
-    let label = task_row_label(t);
-    let action_label = title_case(t.primary_action.as_str());
-    let chrome = crate::actions::operator_action_chrome(t.primary_action);
-    vec![
-        Span::styled(
-            t.qualified_handle.clone(),
-            Style::default().fg(task_handle_color(t)).add_modifier(bold),
-        ),
-        column_separator(),
-        Span::styled(label, Style::default().fg(palette::text_data())),
-        column_separator(),
-        Span::styled(action_label, chrome.label_style()),
-        Span::raw(" "),
-        Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
-    ]
-}
-
-pub(crate) fn title_case(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
+    Span::styled("|", Style::default().fg(subtle_text()))
 }
 
 fn render_row(
@@ -439,17 +272,20 @@ fn render_row(
 
 pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static> {
     let bold = Modifier::BOLD;
-    let dim = Style::default().fg(palette::text_data());
+    let dim = Style::default().fg(muted_text());
     match s {
         SelectableKind::Inbox(item) => {
-            let accent = inbox_item_accent(item);
+            let accent = priority_accent(item.severity);
             let (repo, task_id) = item
                 .task_handle
                 .split_once('/')
                 .unwrap_or((item.task_handle.as_str(), ""));
             render_row(
                 is_selected,
-                inbox_glyph(accent),
+                Span::styled(
+                    "!",
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                ),
                 vec![
                     Span::styled(
                         repo.to_string(),
@@ -465,20 +301,33 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                 ],
             )
         }
-        SelectableKind::Project(repo) => render_row(
-            is_selected,
-            project_glyph(repo),
-            vec![
-                Span::styled(
-                    repo.name.clone(),
-                    Style::default()
-                        .fg(project_name_color(repo))
-                        .add_modifier(bold),
-                ),
-                column_separator(),
-                Span::styled(project_subtitle(repo), dim),
-            ],
-        ),
+        SelectableKind::Project(repo) => {
+            let (glyph, name_color) = if repo.active_tasks > 0 {
+                (
+                    Span::styled(
+                        "*",
+                        Style::default()
+                            .fg(primary_accent())
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    primary_accent(),
+                )
+            } else {
+                (Span::raw(" "), muted_text())
+            };
+            render_row(
+                is_selected,
+                glyph,
+                vec![
+                    Span::styled(
+                        repo.name.clone(),
+                        Style::default().fg(name_color).add_modifier(bold),
+                    ),
+                    column_separator(),
+                    Span::styled(project_subtitle(repo), dim),
+                ],
+            )
+        }
         SelectableKind::NewTask { .. } => render_row(
             is_selected,
             action_glyph("start"),
@@ -490,9 +339,34 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
         SelectableKind::TaskAction { action, .. } => render_row(
             is_selected,
             action_glyph(action),
-            vec![Span::styled(action.clone(), action_label_style(action))],
+            vec![Span::styled(
+                action.clone(),
+                actions::action_chrome(action).label_style,
+            )],
         ),
-        SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
+        SelectableKind::Task(t) => {
+            let label = t.primary_action.as_str();
+            let action_label = format!("{}{}", label[..1].to_uppercase(), &label[1..]);
+            let chrome = crate::actions::operator_action_chrome(t.primary_action);
+            render_row(
+                is_selected,
+                task_glyph(t),
+                vec![
+                    Span::styled(
+                        t.qualified_handle.clone(),
+                        Style::default()
+                            .fg(bucket_color(ui_state_bucket(t.ui_state)))
+                            .add_modifier(bold),
+                    ),
+                    column_separator(),
+                    Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
+                    column_separator(),
+                    Span::styled(action_label, chrome.label_style),
+                    Span::raw(" "),
+                    Span::styled(chrome.glyph.to_string(), chrome.glyph_style),
+                ],
+            )
+        }
     }
 }
 
@@ -500,7 +374,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     let mut sel_to_row: Vec<usize> = Vec::new();
 
-    rows.push(blank_row());
+    rows.push(ListItem::new(Line::from("")));
 
     if let AppView::NewTaskInput { title, .. } = &app.view {
         let display_title = if title.is_empty() {
@@ -515,7 +389,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
                 Span::styled(
                     "Task name  ",
                     Style::default()
-                        .fg(palette::accent_primary())
+                        .fg(primary_accent())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(display_title, Style::default().fg(primary_accent())),
@@ -531,7 +405,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             vec![Span::styled(
                 "Keyboard shortcuts",
                 Style::default()
-                    .fg(palette::accent_primary())
+                    .fg(primary_accent())
                     .add_modifier(Modifier::BOLD),
             )],
         ));
@@ -555,7 +429,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
                 vec![
                     Span::styled(
                         format!("{key:<18}"),
-                        Style::default().fg(palette::accent_warning()),
+                        Style::default().fg(secondary_accent()),
                     ),
                     Span::styled(label.to_string(), Style::default().fg(subtle_text())),
                 ],
@@ -571,15 +445,48 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             AppView::NewTaskInput { .. } => "enter a task name",
             AppView::Help { .. } => "keyboard shortcuts",
         };
-        rows.push(empty_state(msg));
+        rows.push(ListItem::new(Line::from(vec![Span::styled(
+            format!("   {msg}"),
+            Style::default()
+                .fg(subtle_text())
+                .add_modifier(Modifier::ITALIC),
+        )])));
         return (rows, sel_to_row);
     }
 
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
-        let group = group_of(selectable);
+        let group = match selectable {
+            SelectableKind::NewTask { .. } => "create",
+            SelectableKind::Inbox(_) => "hot",
+            SelectableKind::Project(_) => "projects",
+            SelectableKind::Task(_) => "tasks",
+            SelectableKind::TaskAction { .. } => "task-actions",
+        };
         if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
-            rows.push(section_header_row(group, app));
+            let label = match group {
+                "hot" => "inbox",
+                "create" => "start",
+                "projects" => "projects",
+                "tasks" => "tasks",
+                _ => "",
+            };
+            let count_suffix = if group == "hot" {
+                format!(" ({})", app.inbox.items.len())
+            } else {
+                String::new()
+            };
+            let style = if group == "hot" {
+                Style::default()
+                    .fg(secondary_accent())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(subtle_text())
+            };
+            rows.push(ListItem::new(Line::from(vec![Span::styled(
+                format!("   -- {label}{count_suffix} --"),
+                style,
+            )])));
         }
         sel_to_row.push(rows.len());
         rows.push(render_selectable(selectable, app.selected == idx));
@@ -621,14 +528,9 @@ fn render_annotation_line(annotation: &Annotation) -> ListItem<'static> {
     let chrome = crate::actions::annotation_chrome(annotation.kind);
     let prefix = Span::raw("      ");
     let connector = Span::styled("├─ ".to_string(), Style::default().fg(subtle_text()));
-    let glyph = Span::styled(format!("{} ", chrome.glyph), chrome.glyph_style());
+    let glyph = Span::styled(format!("{} ", chrome.glyph), chrome.glyph_style);
     let label = Span::styled(annotation.row_label(), Style::default().fg(muted_text()));
     ListItem::new(Line::from(vec![prefix, connector, glyph, label]))
-}
-
-pub(crate) fn selectable_feed_rows(app: &App) -> Vec<usize> {
-    let (_, selectable_rows) = build_feed(app, 0);
-    selectable_rows
 }
 
 pub(crate) fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
@@ -647,4 +549,47 @@ pub(crate) fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default())
         .highlight_style(selected_highlight());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rendering_does_not_keep_trivial_forwarders() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rendering.rs"),
+        )
+        .unwrap();
+
+        for forwarder in [
+            "primary_accent",
+            "secondary_accent",
+            "danger_accent",
+            "muted_text",
+            "subtle_text",
+            "selected_highlight",
+            "notice_glyph",
+            "notice_color",
+            "empty_state",
+            "action_chrome",
+            "action_label_style",
+            "card_bucket",
+            "inbox_glyph",
+            "inbox_item_accent",
+            "group_of",
+            "project_glyph",
+            "project_name_color",
+            "task_handle_color",
+            "task_status_label",
+            "task_row_label",
+            "task_row_spans",
+            "title_case",
+            "selectable_feed_rows",
+            "blank_row",
+            "section_header_label",
+            "section_header_row",
+        ] {
+            let function_name = ["fn ", forwarder].concat();
+            assert!(!source.contains(&function_name), "{forwarder}");
+        }
+    }
 }
