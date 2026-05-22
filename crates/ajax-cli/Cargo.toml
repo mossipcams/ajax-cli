@@ -10,7 +10,7 @@ repository.workspace = true
 workspace = true
 
 [[bin]]
-name = "ajax"
+name = "ajax-cli"
 path = "src/main.rs"
 
 [dependencies]

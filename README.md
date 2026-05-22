@@ -5,7 +5,7 @@ replacement for tmux, git, Claude, Codex, or future agent runtimes. Ajax sits
 above those tools and tracks what tasks exist, what state they are in, what
 needs attention, and which actions are safe to take.
 
-The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
+The installed binary is `ajax-cli`. The Rust orchestration library is `ajax-core`.
 Cockpit is the primary operator experience; `ajax-core`, the CLI command
 surface, and the JSON contracts exist to make that experience deterministic,
 testable, and scriptable.
@@ -21,7 +21,7 @@ cargo build --release -p ajax-cli
 The compiled binary is:
 
 ```sh
-target/release/ajax
+target/release/ajax-cli
 ```
 
 For local daily use, put that binary on your `PATH` or install it from the
@@ -32,7 +32,7 @@ cargo install --path crates/ajax-cli
 ```
 
 Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
-`PATH`. Run `ajax doctor` after installing to check the local operator
+`PATH`. Run `ajax-cli doctor` after installing to check the local operator
 environment.
 
 ## Configuration
@@ -56,8 +56,8 @@ repo = "web"
 command = "cargo nextest run --all-features"
 ```
 
-Each managed repo should have a matching test command so `ajax repair` and
-`ajax doctor` can verify the workflow end to end.
+Each managed repo should have a matching test command so `ajax-cli repair` and
+`ajax-cli doctor` can verify the workflow end to end.
 
 Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
 inside each task worktree before the agent starts. Ajax runs the command from
@@ -69,27 +69,27 @@ the selected agent CLI are launched.
 After installing and writing a config file, start with:
 
 ```sh
-ajax doctor
-ajax repos
-ajax tasks
+ajax-cli doctor
+ajax-cli repos
+ajax-cli tasks
 ```
 
 Create a task plan before executing it:
 
 ```sh
-ajax start --repo web --title "fix login" --agent codex
+ajax-cli start --repo web --title "fix login" --agent codex
 ```
 
 When the plan looks right, execute it:
 
 ```sh
-ajax start --repo web --title "fix login" --agent codex --execute
+ajax-cli start --repo web --title "fix login" --agent codex --execute
 ```
 
 Before changing machines or testing a state migration, export a backup:
 
 ```sh
-ajax state export --output ~/ajax-state-backup.json
+ajax-cli state export --output ~/ajax-state-backup.json
 ```
 
 Run the deterministic local smoke workflow before release-sensitive changes:
@@ -124,7 +124,7 @@ every render.
 The preferred flow is:
 
 ```text
-SSH or dev command -> ajax cockpit/CLI -> ajax-core -> git/tmux/agents
+SSH or dev command -> ajax-cli cockpit/CLI -> ajax-core -> git/tmux/agents
 ```
 
 Rust owns the orchestration core because safety policy, live status projection,
@@ -137,48 +137,48 @@ Cockpit owns the operator workflow over those typed decisions.
 The CLI surface backs Cockpit and remains intentionally stable and scriptable:
 
 ```sh
-ajax repos
-ajax tasks
-ajax tasks --repo web
-ajax inspect web/fix-login
-ajax start --repo web --title "fix login" --agent codex
-ajax resume web/fix-login
-ajax repair web/fix-login
-ajax review web/fix-login
-ajax ship web/fix-login
-ajax drop web/fix-login
-ajax tidy
-ajax next
-ajax inbox
-ajax ready
-ajax status
-ajax doctor
-ajax supervise --task web/fix-login --prompt "implement the approved plan"
-ajax cockpit
-ajax cockpit --watch
+ajax-cli repos
+ajax-cli tasks
+ajax-cli tasks --repo web
+ajax-cli inspect web/fix-login
+ajax-cli start --repo web --title "fix login" --agent codex
+ajax-cli resume web/fix-login
+ajax-cli repair web/fix-login
+ajax-cli review web/fix-login
+ajax-cli ship web/fix-login
+ajax-cli drop web/fix-login
+ajax-cli tidy
+ajax-cli next
+ajax-cli inbox
+ajax-cli ready
+ajax-cli status
+ajax-cli doctor
+ajax-cli supervise --task web/fix-login --prompt "implement the approved plan"
+ajax-cli cockpit
+ajax-cli cockpit --watch
 ```
 
 Commands that feed a UI should support JSON output:
 
 ```sh
-ajax repos --json
-ajax tasks --json
-ajax inspect web/fix-login --json
-ajax next --json
-ajax inbox --json
-ajax ready --json
-ajax status --json
-ajax doctor --json
-ajax cockpit --json
+ajax-cli repos --json
+ajax-cli tasks --json
+ajax-cli inspect web/fix-login --json
+ajax-cli next --json
+ajax-cli inbox --json
+ajax-cli ready --json
+ajax-cli status --json
+ajax-cli doctor --json
+ajax-cli cockpit --json
 ```
 
 ## Native Rust Cockpit
 
 Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
-it through the `ajax` command:
+it through the `ajax-cli` command:
 
 ```sh
-ajax cockpit
+ajax-cli cockpit
 ```
 
 Cockpit is the place to decide what needs attention, what is safe to do next,
@@ -200,8 +200,39 @@ its normal key handling.
 Use watch mode when you want repeated cockpit frames:
 
 ```sh
-ajax cockpit --watch
+ajax-cli cockpit --watch
 ```
+
+## Stable/Dev Runtime Isolation
+
+Ajax supports runtime profiles so stable daily use and development dogfooding
+can run from the same source checkout without sharing state.
+
+Inspect the selected runtime before starting work:
+
+```sh
+ajax-cli runtime
+ajax-cli --profile stable runtime
+cargo run -p ajax-cli -- --profile dev runtime
+AJAX_PROFILE=dev cargo run -p ajax-cli -- status
+AJAX_HOME=~/.ajax-dev cargo run -p ajax-cli -- runtime
+```
+
+The `stable` profile is the default and preserves the existing paths:
+`~/.config/ajax/config.toml`, `~/.local/state/ajax/ajax.db`,
+`~/.local/state/ajax/logs`, `~/.cache/ajax`, and legacy sibling task
+worktrees.
+
+The `dev` profile uses isolated runtime state under `~/.ajax-dev`:
+`config.toml`, `ajax.db`, `logs`, `cache`, and `worktrees`. New dev-profile
+tasks create worktrees under that runtime worktree root. Existing tasks keep
+the concrete worktree paths already stored in their database records.
+
+Use `--home` or `AJAX_HOME` for a fully custom isolated runtime directory.
+`--config`, `--state`, `--worktree-root`, `AJAX_CONFIG`, `AJAX_STATE`, and
+`AJAX_WORKTREE_ROOT` override profile-derived paths. `ajax-cli runtime --json`
+reports those overrides so you can verify which database and worktree root a
+command will use.
 
 ## Source And Runtime Layout
 
@@ -209,7 +240,7 @@ Keep source, config, runtime state, logs, cache, managed repos, and task
 worktrees separate:
 
 - Source repo: `~/projects/ajax-cli`
-- Installed binary: `ajax`
+- Installed binary: `ajax-cli`
 - User config: `~/.config/ajax/config.toml`
 - Runtime state: `~/.local/state/ajax/ajax.db`
 - Logs: `~/.local/state/ajax/logs`

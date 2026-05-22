@@ -1,5 +1,8 @@
 use ajax_core::{
     commands::{self, CommandContext},
+    config::{
+        RuntimePathField, RuntimePathOverride, RuntimePathSource, RuntimePaths, WorktreePlacement,
+    },
     output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
 };
@@ -114,6 +117,9 @@ pub(crate) fn render_matches_with_paths(
             subcommand.get_flag("json"),
             render_tasks_human,
         ),
+        Some(("runtime", subcommand)) => {
+            render_runtime_paths(&context.runtime_paths, subcommand.get_flag("json"))
+        }
         Some(("state", subcommand)) => render_state_command(context, subcommand),
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
         Some(("supervise", _)) => Err(CliError::CommandFailed(
@@ -125,6 +131,88 @@ pub(crate) fn render_matches_with_paths(
         None => Err(CliError::CommandFailed(
             "command is required; pass --help".to_string(),
         )),
+    }
+}
+
+pub(crate) fn render_runtime_paths(paths: &RuntimePaths, json: bool) -> Result<String, CliError> {
+    if json {
+        return serde_json::to_string_pretty(&runtime_paths_json(paths))
+            .map_err(|error| CliError::JsonSerialization(error.to_string()));
+    }
+
+    let mut lines = vec![
+        format!("profile: {}", paths.profile),
+        format!("config_file: {}", paths.config_file.display()),
+        format!("state_db: {}", paths.state_db.display()),
+        format!("logs_dir: {}", paths.logs_dir.display()),
+        format!("cache_dir: {}", paths.cache_dir.display()),
+    ];
+    match &paths.worktree_placement {
+        WorktreePlacement::LegacySibling => {
+            lines.push("worktree_placement: legacy_sibling".to_string());
+        }
+        WorktreePlacement::Root(root) => {
+            lines.push("worktree_placement: root".to_string());
+            lines.push(format!("worktree_root: {}", root.display()));
+        }
+    }
+    if !paths.overrides.is_empty() {
+        for override_info in &paths.overrides {
+            lines.push(format!(
+                "override: {} from {}",
+                runtime_field_name(override_info.field),
+                runtime_source_name(override_info.source)
+            ));
+        }
+    }
+
+    Ok(lines.join("\n"))
+}
+
+fn runtime_paths_json(paths: &RuntimePaths) -> serde_json::Value {
+    serde_json::json!({
+        "profile": paths.profile,
+        "config_file": paths.config_file.display().to_string(),
+        "state_db": paths.state_db.display().to_string(),
+        "logs_dir": paths.logs_dir.display().to_string(),
+        "cache_dir": paths.cache_dir.display().to_string(),
+        "worktree_placement": worktree_placement_json(&paths.worktree_placement),
+        "overrides": paths.overrides.iter().map(runtime_override_json).collect::<Vec<_>>(),
+    })
+}
+
+fn worktree_placement_json(placement: &WorktreePlacement) -> serde_json::Value {
+    match placement {
+        WorktreePlacement::LegacySibling => serde_json::json!({
+            "kind": "legacy_sibling",
+            "root": null,
+        }),
+        WorktreePlacement::Root(root) => serde_json::json!({
+            "kind": "root",
+            "root": root.display().to_string(),
+        }),
+    }
+}
+
+fn runtime_override_json(override_info: &RuntimePathOverride) -> serde_json::Value {
+    serde_json::json!({
+        "field": runtime_field_name(override_info.field),
+        "source": runtime_source_name(override_info.source),
+    })
+}
+
+fn runtime_field_name(field: RuntimePathField) -> &'static str {
+    match field {
+        RuntimePathField::ConfigFile => "config_file",
+        RuntimePathField::StateDb => "state_db",
+        RuntimePathField::WorktreeRoot => "worktree_root",
+    }
+}
+
+fn runtime_source_name(source: RuntimePathSource) -> &'static str {
+    match source {
+        RuntimePathSource::Cli => "cli",
+        RuntimePathSource::Env => "env",
     }
 }
 

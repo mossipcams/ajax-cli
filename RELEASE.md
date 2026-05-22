@@ -35,7 +35,7 @@ npm run lint:duplication
 3. Export a local state backup before testing migrations against real data:
 
 ```sh
-ajax state export --output ~/ajax-state-backup.json
+ajax-cli state export --output ~/ajax-state-backup.json
 ```
 
 4. Build the release binary:
@@ -44,7 +44,7 @@ ajax state export --output ~/ajax-state-backup.json
 cargo build --release -p ajax-cli
 ```
 
-5. Smoke test the release binary with `ajax doctor`, `ajax repos`, `ajax tasks`,
+5. Smoke test the release binary with `ajax-cli doctor`, `ajax-cli repos`, `ajax-cli tasks`,
    one full fake-tool workflow, state export checks, and a partial-failure
    recovery journey:
 

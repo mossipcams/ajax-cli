@@ -12,7 +12,7 @@ use std::{
 };
 
 fn ajax_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_ajax"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ajax-cli"))
 }
 
 struct IsolatedAjaxHome {
@@ -428,7 +428,10 @@ fn live_help_exposes_the_scriptable_command_surface() {
     );
     assert_eq!(stderr(&output), "");
     let stdout = stdout(&output);
-    assert!(stdout.contains("Usage: ajax [COMMAND]"), "{stdout}");
+    assert!(
+        stdout.contains("Usage: ajax-cli [OPTIONS] [COMMAND]"),
+        "{stdout}"
+    );
     for command in [
         "repos",
         "tasks",

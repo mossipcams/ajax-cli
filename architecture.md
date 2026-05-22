@@ -227,7 +227,10 @@ or test-command operation.
 
 - `lib.rs` owns the Clap command tree, parsing, dispatch, and public test
   helpers.
-- `context` owns config/state path resolution and load/save behavior.
+- `context` owns runtime profile path resolution and load/save behavior.
+  Stable runtime resolution preserves the historical config/state/log/cache
+  defaults and legacy sibling task worktrees. Dev and custom-home runtimes use
+  isolated config, SQLite state, logs, cache, and rooted task worktrees.
 - `render` owns human, JSON, execution-output, and command-plan rendering.
 - `snapshot_dispatch` owns read-only command routing.
 - `execution_dispatch` owns mutable command routing.

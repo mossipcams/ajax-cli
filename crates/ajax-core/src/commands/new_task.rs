@@ -1,6 +1,7 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{AgentAdapter, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
+    config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
         AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, SideFlag,
@@ -8,7 +9,11 @@ use crate::{
     },
     registry::{Registry, RegistryError},
 };
-use std::path::{Path, PathBuf};
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+};
 
 const INSTALL_HUSKY_HOOKS: &str =
     "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
@@ -52,7 +57,13 @@ pub fn new_task_plan<R: Registry>(
     }
 
     let branch = format!("ajax/{handle}");
-    let worktree_path = ajax_worktree_path(&repo.path, &branch);
+    let worktree_path = ajax_worktree_path(
+        &context.runtime_paths.worktree_placement,
+        &repo.path,
+        &request.repo,
+        &branch,
+        &handle,
+    );
     let worktree_path_string = worktree_path.display().to_string();
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
     let git = GitAdapter::new("git");
@@ -102,7 +113,13 @@ pub fn task_from_new_request<R: Registry>(
     let task_id = TaskId::new(format!("{}/{}", request.repo, handle));
     let branch = format!("ajax/{handle}");
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
-    let worktree_path = ajax_worktree_path(&repo.path, &branch);
+    let worktree_path = ajax_worktree_path(
+        &context.runtime_paths.worktree_placement,
+        &repo.path,
+        &request.repo,
+        &branch,
+        &handle,
+    );
 
     let mut task = Task::new(
         task_id,
@@ -258,7 +275,22 @@ pub fn is_new_task_husky_hook_command(command: &CommandSpec) -> bool {
         && command.args[2] == "sh"
 }
 
-fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
+fn ajax_worktree_path(
+    placement: &WorktreePlacement,
+    repo_path: &Path,
+    repo_name: &str,
+    branch: &str,
+    handle: &str,
+) -> PathBuf {
+    match placement {
+        WorktreePlacement::LegacySibling => legacy_ajax_worktree_path(repo_path, branch),
+        WorktreePlacement::Root(root) => root
+            .join(rooted_repo_dir(repo_name, repo_path))
+            .join(handle),
+    }
+}
+
+fn legacy_ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
     let worktree_name = branch.replace('/', "-");
     let repo_dir = repo_path
         .file_name()
@@ -271,6 +303,17 @@ fn ajax_worktree_path(repo_path: &Path, branch: &str) -> PathBuf {
         .unwrap_or(repo_path)
         .join(worktrees_dir)
         .join(worktree_name)
+}
+
+fn rooted_repo_dir(repo_name: &str, repo_path: &Path) -> String {
+    let slug = slugify_title(repo_name);
+    format!("{slug}-{:08x}", short_path_hash(repo_path))
+}
+
+fn short_path_hash(path: &Path) -> u32 {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    (hasher.finish() & 0xffff_ffff) as u32
 }
 
 fn install_husky_hooks_command(worktree_path: &Path) -> CommandSpec {
@@ -346,15 +389,16 @@ fn agent_from_name(name: &str) -> AgentClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        mark_new_task_provisioning_step_completed, record_new_task, NewTaskRequest,
-        StartProvisioningStep,
+        mark_new_task_provisioning_step_completed, new_task_plan, record_new_task,
+        task_from_new_request, NewTaskRequest, StartProvisioningStep,
     };
     use crate::{
         commands::CommandContext,
-        config::{Config, ManagedRepo},
+        config::{Config, ManagedRepo, RuntimePathRequest, WorktreePlacement},
         models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
         registry::{InMemoryRegistry, Registry},
     };
+    use std::path::Path;
 
     fn context() -> CommandContext<InMemoryRegistry> {
         CommandContext::new(
@@ -364,6 +408,61 @@ mod tests {
             },
             InMemoryRegistry::default(),
         )
+    }
+
+    #[test]
+    fn default_new_task_plan_preserves_legacy_sibling_worktree_path() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let plan = new_task_plan(&context, request).unwrap();
+
+        assert!(plan.commands[0]
+            .args
+            .contains(&"/repo/web__worktrees/ajax-fix-login".to_string()));
+    }
+
+    #[test]
+    fn rooted_new_task_plan_and_recorded_task_use_runtime_worktree_root() {
+        let runtime_paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .resolve();
+        let worktree_root = match &runtime_paths.worktree_placement {
+            WorktreePlacement::Root(root) => root.clone(),
+            WorktreePlacement::LegacySibling => panic!("expected rooted placement"),
+        };
+        let context = CommandContext::with_runtime_paths(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+            runtime_paths,
+        );
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let plan = new_task_plan(&context, request.clone()).unwrap();
+        let task = task_from_new_request(&context, &request).unwrap();
+        let planned_worktree = plan.commands[0]
+            .args
+            .iter()
+            .find(|arg| arg.starts_with(worktree_root.to_str().unwrap()))
+            .unwrap();
+
+        assert!(task.worktree_path.starts_with(&worktree_root));
+        assert_eq!(Path::new(planned_worktree), task.worktree_path);
+        assert!(plan.commands.iter().any(|command| command
+            .args
+            .iter()
+            .any(|arg| arg == task.worktree_path.to_str().unwrap())));
     }
 
     #[test]

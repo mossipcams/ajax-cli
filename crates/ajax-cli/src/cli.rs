@@ -10,8 +10,17 @@ pub enum ParsedArgs {
 }
 
 pub fn build_cli() -> Command {
-    Command::new("ajax")
+    Command::new("ajax-cli")
         .about("Semi-agentic operator console for isolated AI coding tasks")
+        .arg(Arg::new("profile").long("profile").value_name("NAME"))
+        .arg(Arg::new("home").long("home").value_name("PATH"))
+        .arg(Arg::new("config").long("config").value_name("PATH"))
+        .arg(Arg::new("state").long("state").value_name("PATH"))
+        .arg(
+            Arg::new("worktree-root")
+                .long("worktree-root")
+                .value_name("PATH"),
+        )
         .subcommand(repos_command())
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
@@ -28,6 +37,7 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("inbox").about("Show global attention inbox"))
         .subcommand(json_command("ready").about("Show tasks ready for review"))
         .subcommand(json_command("status").about("Show Ajax status"))
+        .subcommand(json_command("runtime").about("Show Ajax runtime paths"))
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
@@ -166,4 +176,65 @@ fn json_command(name: &'static str) -> Command {
             .help("Emit machine-readable JSON")
             .action(ArgAction::SetTrue),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_cli;
+
+    #[test]
+    fn global_profile_is_accepted_before_runtime_subcommand() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "--profile", "dev", "runtime"])
+            .unwrap();
+
+        assert_eq!(matches.get_one::<String>("profile").unwrap(), "dev");
+        assert_eq!(matches.subcommand_name(), Some("runtime"));
+    }
+
+    #[test]
+    fn global_home_is_accepted_before_subcommands() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "--home", "/tmp/ajax-dev", "status"])
+            .unwrap();
+
+        assert_eq!(matches.get_one::<String>("home").unwrap(), "/tmp/ajax-dev");
+        assert_eq!(matches.subcommand_name(), Some("status"));
+    }
+
+    #[test]
+    fn global_direct_path_overrides_are_accepted() {
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "--config",
+                "/tmp/config.toml",
+                "--state",
+                "/tmp/ajax.db",
+                "--worktree-root",
+                "/tmp/worktrees",
+                "runtime",
+            ])
+            .unwrap();
+
+        assert_eq!(
+            matches.get_one::<String>("config").unwrap(),
+            "/tmp/config.toml"
+        );
+        assert_eq!(matches.get_one::<String>("state").unwrap(), "/tmp/ajax.db");
+        assert_eq!(
+            matches.get_one::<String>("worktree-root").unwrap(),
+            "/tmp/worktrees"
+        );
+    }
+
+    #[test]
+    fn runtime_command_accepts_json_flag() {
+        let matches = build_cli()
+            .try_get_matches_from(["ajax", "runtime", "--json"])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        assert!(subcommand.get_flag("json"));
+    }
 }
