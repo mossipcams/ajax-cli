@@ -392,8 +392,6 @@ pub mod drop_task {
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
         pub ops: Vec<DropOp>,
-        pub requires_confirmation: bool,
-        pub blocked_reasons: Vec<String>,
         pub cleanup_lifecycle: bool,
     }
 
@@ -423,11 +421,9 @@ pub mod drop_task {
         if !confirmation_plan.blocked_reasons.is_empty() {
             return Ok(DropTaskOperationPlan {
                 intent: task.intent(),
-                confirmation_plan: confirmation_plan.clone(),
+                confirmation_plan,
                 observation: unknown_observation(),
                 ops: Vec::new(),
-                requires_confirmation: confirmation_plan.requires_confirmation,
-                blocked_reasons: confirmation_plan.blocked_reasons,
                 cleanup_lifecycle,
             });
         }
@@ -437,11 +433,9 @@ pub mod drop_task {
 
         Ok(DropTaskOperationPlan {
             intent: task.intent(),
-            confirmation_plan: confirmation_plan.clone(),
+            confirmation_plan,
             observation,
             ops,
-            requires_confirmation: confirmation_plan.requires_confirmation,
-            blocked_reasons: confirmation_plan.blocked_reasons,
             cleanup_lifecycle,
         })
     }
@@ -486,10 +480,12 @@ pub mod drop_task {
         confirmed: bool,
         runner: &mut impl CommandRunner,
     ) -> Result<(Vec<CommandOutput>, DropTaskCompletion), CommandError> {
-        if !operation.blocked_reasons.is_empty() {
-            return Err(CommandError::PlanBlocked(operation.blocked_reasons));
+        if !operation.confirmation_plan.blocked_reasons.is_empty() {
+            return Err(CommandError::PlanBlocked(
+                operation.confirmation_plan.blocked_reasons,
+            ));
         }
-        if operation.requires_confirmation && !confirmed {
+        if operation.confirmation_plan.requires_confirmation && !confirmed {
             return Err(CommandError::ConfirmationRequired);
         }
 
@@ -1307,6 +1303,22 @@ mod tests {
             .unwrap();
 
         assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
+    }
+
+    #[test]
+    fn drop_operation_plan_does_not_duplicate_confirmation_state() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let plan_fields = source
+            .split("pub struct DropTaskOperationPlan")
+            .nth(1)
+            .and_then(|source| source.split("pub enum DropTaskCompletion").next())
+            .unwrap();
+
+        assert!(!plan_fields.contains("pub requires_confirmation"));
+        assert!(!plan_fields.contains("pub blocked_reasons"));
     }
 
     #[test]
