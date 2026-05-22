@@ -138,32 +138,18 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn notice_glyph(severity: Severity) -> &'static str {
-    match severity {
-        Severity::Confirm => ">",
-        Severity::Error => "!",
-        Severity::Success => ".",
-        Severity::Hint => "-",
-    }
-}
-
-fn notice_color(severity: Severity) -> Color {
-    match severity {
-        Severity::Confirm => primary_accent(),
-        Severity::Error => danger_accent(),
-        Severity::Success => secondary_accent(),
-        Severity::Hint => subtle_text(),
-    }
-}
-
 fn render_notice_row(frame: &mut Frame, app: &App, area: Rect) {
     let Some(notice) = app.current_notice() else {
         return;
     };
-    let style = Style::default()
-        .fg(notice_color(notice.severity))
-        .add_modifier(Modifier::BOLD);
-    let text = format!(" {} {}", notice_glyph(notice.severity), notice.msg);
+    let (glyph, color) = match notice.severity {
+        Severity::Confirm => (">", primary_accent()),
+        Severity::Error => ("!", danger_accent()),
+        Severity::Success => (".", secondary_accent()),
+        Severity::Hint => ("-", subtle_text()),
+    };
+    let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let text = format!(" {glyph} {}", notice.msg);
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
@@ -207,33 +193,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     push_hint(&mut parts, "q", "quit", true);
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
-}
-
-fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
-    let label = match group {
-        "hot" => "inbox",
-        "create" => "start",
-        "projects" => "projects",
-        "tasks" => "tasks",
-        "task-actions" => "actions",
-        _ => "",
-    };
-    let count_suffix = if group == "hot" {
-        format!(" ({})", app.inbox.items.len())
-    } else {
-        String::new()
-    };
-    let style = if group == "hot" {
-        Style::default()
-            .fg(secondary_accent())
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(subtle_text())
-    };
-    ListItem::new(Line::from(vec![Span::styled(
-        format!("   -- {label}{count_suffix} --"),
-        style,
-    )]))
 }
 
 pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
@@ -507,7 +466,29 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             SelectableKind::TaskAction { .. } => "task-actions",
         };
         if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
-            rows.push(section_header_row(group, app));
+            let label = match group {
+                "hot" => "inbox",
+                "create" => "start",
+                "projects" => "projects",
+                "tasks" => "tasks",
+                _ => "",
+            };
+            let count_suffix = if group == "hot" {
+                format!(" ({})", app.inbox.items.len())
+            } else {
+                String::new()
+            };
+            let style = if group == "hot" {
+                Style::default()
+                    .fg(secondary_accent())
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(subtle_text())
+            };
+            rows.push(ListItem::new(Line::from(vec![Span::styled(
+                format!("   -- {label}{count_suffix} --"),
+                style,
+            )])));
         }
         sel_to_row.push(rows.len());
         rows.push(render_selectable(selectable, app.selected == idx));
@@ -588,6 +569,8 @@ mod tests {
             "muted_text",
             "subtle_text",
             "selected_highlight",
+            "notice_glyph",
+            "notice_color",
             "empty_state",
             "action_chrome",
             "action_label_style",
@@ -604,6 +587,7 @@ mod tests {
             "selectable_feed_rows",
             "blank_row",
             "section_header_label",
+            "section_header_row",
         ] {
             let function_name = ["fn ", forwarder].concat();
             assert!(!source.contains(&function_name), "{forwarder}");
