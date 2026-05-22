@@ -18,6 +18,7 @@ dependencies = [
  "ajax-core",
  "ajax-supervisor",
  "ajax-tui",
+ "ajax-web",
  "clap",
  "nix",
  "serde",
@@ -57,6 +58,15 @@ dependencies = [
  "crossterm",
  "ratatui",
  "rstest",
+]
+
+[[package]]
+name = "ajax-web"
+version = "0.1.0"
+dependencies = [
+ "ajax-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

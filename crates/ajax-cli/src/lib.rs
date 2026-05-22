@@ -371,6 +371,46 @@ mod tests {
     }
 
     #[test]
+    fn web_companion_stays_out_of_cli_backend() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).unwrap();
+        let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let cli_source = std::fs::read_to_string(manifest_dir.join("src/cli.rs")).unwrap();
+        let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
+
+        assert!(
+            manifest.contains("ajax-web = { workspace = true, optional = true }"),
+            "ajax-cli should integrate the PWA through the ajax-web crate boundary"
+        );
+        assert!(
+            manifest.contains("web-companion = [\"dep:ajax-web\"]"),
+            "ajax-web should stay behind an explicit CLI feature"
+        );
+
+        for forbidden in [
+            ["mod ", "web_backend"].concat(),
+            ["mod ", "web_push"].concat(),
+            ["mod ", "web_tls"].concat(),
+        ] {
+            assert!(!lib_source.contains(&forbidden), "{forbidden}");
+        }
+        for forbidden_command in [
+            ["Command::new(\"", "stable", "\")"].concat(),
+            ["Command::new(\"", "dev", "\")"].concat(),
+        ] {
+            assert!(
+                !cli_source.contains(&forbidden_command),
+                "{forbidden_command} should not be an operator command"
+            );
+        }
+        let argv_rewrite_helper = ["expand", "_ajax_cli_args"].concat();
+        assert!(
+            !main_source.contains(&argv_rewrite_helper),
+            "startup should use normal CLI parsing rather than argv rewriting"
+        );
+    }
+
+    #[test]
     fn execution_dispatch_module_routes_mutating_commands() {
         let mut context = sample_context();
         let mut runner = RecordingCommandRunner::default();
