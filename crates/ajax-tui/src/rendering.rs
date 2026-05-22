@@ -312,7 +312,11 @@ fn column_separator() -> Span<'static> {
 
 fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
     let bold = Modifier::BOLD;
-    let action_label = title_case(t.primary_action.as_str());
+    let mut action_chars = t.primary_action.as_str().chars();
+    let action_label = match action_chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + action_chars.as_str(),
+        None => String::new(),
+    };
     let chrome = crate::actions::operator_action_chrome(t.primary_action);
     vec![
         Span::styled(
@@ -328,14 +332,6 @@ fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
         Span::raw(" "),
         Span::styled(chrome.glyph.to_string(), chrome.glyph_style),
     ]
-}
-
-pub(crate) fn title_case(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
-        None => String::new(),
-    }
 }
 
 fn render_row(
@@ -610,6 +606,7 @@ mod tests {
             "task_handle_color",
             "task_status_label",
             "task_row_label",
+            "title_case",
             "selectable_feed_rows",
             "blank_row",
             "section_header_label",
