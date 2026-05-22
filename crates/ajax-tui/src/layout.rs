@@ -5,11 +5,6 @@ use crate::{
     App,
 };
 
-#[cfg(test)]
-pub(crate) fn selectable_row_ranges(rows: impl IntoIterator<Item = usize>) -> Vec<Range<usize>> {
-    rows.into_iter().map(|row| row..row + 1).collect()
-}
-
 /// Compute the row range each selectable occupies in the feed,
 /// in the same order as `app.selectables`.
 pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {

@@ -2707,11 +2707,14 @@ mod tests {
     }
 
     #[test]
-    fn layout_module_exposes_selectable_row_ranges() {
-        assert_eq!(
-            crate::layout::selectable_row_ranges([1, 3, 5]),
-            vec![1..2, 3..4, 5..6]
-        );
+    fn layout_module_does_not_keep_selectable_row_ranges_helper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
+        )
+        .unwrap();
+        let helper_name = ["fn ", "selectable_row_ranges"].concat();
+
+        assert!(!source.contains(&helper_name));
     }
 
     #[test]
