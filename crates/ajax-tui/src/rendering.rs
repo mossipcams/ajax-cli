@@ -626,6 +626,7 @@ fn render_annotation_line(annotation: &Annotation) -> ListItem<'static> {
     ListItem::new(Line::from(vec![prefix, connector, glyph, label]))
 }
 
+#[cfg(test)]
 pub(crate) fn selectable_feed_rows(app: &App) -> Vec<usize> {
     let (_, selectable_rows) = build_feed(app, 0);
     selectable_rows

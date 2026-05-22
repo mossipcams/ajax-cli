@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -27,6 +27,24 @@ pub struct SqliteRegistryStore {
 impl SqliteRegistryStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
+    }
+
+    pub fn load_tasks_only(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
+        let connection = self.open()?;
+        Self::migrate(&connection)?;
+
+        let mut tasks = load_tasks(&connection)?;
+        for task in &mut tasks {
+            refresh_task_annotations(task);
+        }
+
+        Ok(InMemoryRegistry {
+            tasks: tasks
+                .into_iter()
+                .map(|task| (task.id.clone(), task))
+                .collect(),
+            events: Vec::new(),
+        })
     }
 
     fn open(&self) -> Result<Connection, RegistrySnapshotError> {
@@ -283,15 +301,13 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     let mut tasks = Vec::new();
 
     while let Some(row) = rows.next().map_err(database_error)? {
-        let mut task = task_from_row(row)?;
-        load_task_side_flags(connection, &mut task)?;
-        if is_registry_ghost_task(&task) {
-            continue;
-        }
-        load_task_metadata(connection, &mut task)?;
-        load_agent_attempts(connection, &mut task)?;
-        tasks.push(task);
+        tasks.push(task_from_row(row)?);
     }
+
+    load_task_side_flags_by_task(connection, &mut tasks)?;
+    tasks.retain(|task| !is_registry_ghost_task(task));
+    load_task_metadata_by_task(connection, &mut tasks)?;
+    load_agent_attempts_by_task(connection, &mut tasks)?;
 
     Ok(tasks)
 }
@@ -497,70 +513,100 @@ fn required_optional<T>(value: Option<T>, label: &'static str) -> Result<T, Regi
     value.ok_or_else(|| RegistrySnapshotError::Decode(format!("{label} missing")))
 }
 
-fn load_task_side_flags(
-    connection: &Connection,
-    task: &mut Task,
-) -> Result<(), RegistrySnapshotError> {
-    let mut statement = connection
-        .prepare("SELECT flag FROM registry_task_side_flags WHERE task_id = ?1 ORDER BY flag")
-        .map_err(database_error)?;
-    let flags = statement
-        .query_map(params![task.id.as_str()], |row| row.get::<_, String>(0))
-        .map_err(database_error)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(database_error)?;
-
-    for flag in flags {
-        task.add_side_flag(parse_side_flag(&flag)?);
-    }
-
-    Ok(())
+fn task_indexes_by_id(tasks: &[Task]) -> BTreeMap<TaskId, usize> {
+    tasks
+        .iter()
+        .enumerate()
+        .map(|(index, task)| (task.id.clone(), index))
+        .collect()
 }
 
-fn load_task_metadata(
+fn load_task_side_flags_by_task(
     connection: &Connection,
-    task: &mut Task,
+    tasks: &mut [Task],
 ) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
     let mut statement = connection
-        .prepare("SELECT key, value FROM registry_task_metadata WHERE task_id = ?1 ORDER BY key")
+        .prepare("SELECT task_id, flag FROM registry_task_side_flags ORDER BY task_id, flag")
         .map_err(database_error)?;
-    let entries = statement
-        .query_map(params![task.id.as_str()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    let flags = statement
+        .query_map([], |row| {
+            Ok((
+                TaskId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+            ))
         })
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
 
-    task.metadata.extend(entries);
+    for (task_id, flag) in flags {
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        tasks[index].add_side_flag(parse_side_flag(&flag)?);
+    }
 
     Ok(())
 }
 
-fn load_agent_attempts(
+fn load_task_metadata_by_task(
     connection: &Connection,
-    task: &mut Task,
+    tasks: &mut [Task],
 ) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
     let mut statement = connection
-        .prepare(
-            "SELECT agent, launch_target, started_at_unix_seconds, finished_at_unix_seconds, \
-             started_at_subsec_nanos, finished_at_subsec_nanos, status \
-             FROM registry_agent_attempts WHERE task_id = ?1 ORDER BY sequence",
-        )
+        .prepare("SELECT task_id, key, value FROM registry_task_metadata ORDER BY task_id, key")
         .map_err(database_error)?;
-    let mut rows = statement
-        .query(params![task.id.as_str()])
+    let entries = statement
+        .query_map([], |row| {
+            Ok((
+                TaskId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
 
+    for (task_id, key, value) in entries {
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        tasks[index].metadata.insert(key, value);
+    }
+
+    Ok(())
+}
+
+fn load_agent_attempts_by_task(
+    connection: &Connection,
+    tasks: &mut [Task],
+) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
+    let mut statement = connection
+        .prepare(
+            "SELECT task_id, agent, launch_target, started_at_unix_seconds, finished_at_unix_seconds, \
+             started_at_subsec_nanos, finished_at_subsec_nanos, status \
+             FROM registry_agent_attempts ORDER BY task_id, sequence",
+        )
+        .map_err(database_error)?;
+    let mut rows = statement.query([]).map_err(database_error)?;
+
     while let Some(row) = rows.next().map_err(database_error)? {
-        let agent = parse_agent_client(&row.get::<_, String>(0).map_err(database_error)?)?;
-        let launch_target = row.get::<_, String>(1).map_err(database_error)?;
+        let task_id = TaskId::new(row.get::<_, String>(0).map_err(database_error)?);
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        let agent = parse_agent_client(&row.get::<_, String>(1).map_err(database_error)?)?;
+        let launch_target = row.get::<_, String>(2).map_err(database_error)?;
         let started_at = unix_parts_to_system_time(
-            row.get::<_, i64>(2).map_err(database_error)?,
-            row.get::<_, u32>(4).map_err(database_error)?,
+            row.get::<_, i64>(3).map_err(database_error)?,
+            row.get::<_, u32>(5).map_err(database_error)?,
         )?;
-        let finished_seconds = row.get::<_, Option<i64>>(3).map_err(database_error)?;
-        let finished_nanos = row.get::<_, Option<u32>>(5).map_err(database_error)?;
+        let finished_seconds = row.get::<_, Option<i64>>(4).map_err(database_error)?;
+        let finished_nanos = row.get::<_, Option<u32>>(6).map_err(database_error)?;
         let finished_at = match (finished_seconds, finished_nanos) {
             (Some(seconds), Some(nanos)) => Some(unix_parts_to_system_time(seconds, nanos)?),
             (None, None) => None,
@@ -570,8 +616,8 @@ fn load_agent_attempts(
                 ))
             }
         };
-        let status = parse_agent_runtime_status(&row.get::<_, String>(6).map_err(database_error)?)?;
-        task.agent_attempts.push(AgentAttempt {
+        let status = parse_agent_runtime_status(&row.get::<_, String>(7).map_err(database_error)?)?;
+        tasks[index].agent_attempts.push(AgentAttempt {
             agent,
             launch_target,
             started_at,
@@ -1127,6 +1173,22 @@ mod tests {
     #[case("UserNote", RegistryEventKind::UserNote)]
     fn parses_registry_event_kind_names(#[case] name: &str, #[case] expected: RegistryEventKind) {
         assert_eq!(parse_registry_event_kind(name).unwrap(), expected);
+    }
+
+    #[test]
+    fn sqlite_registry_store_batches_task_detail_loads() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/registry/sqlite.rs"),
+        )
+        .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("fn load_task_side_flags_by_task"));
+        assert!(production_source.contains("fn load_task_metadata_by_task"));
+        assert!(production_source.contains("fn load_agent_attempts_by_task"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY flag"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY key"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY sequence"));
     }
 
     #[test]
