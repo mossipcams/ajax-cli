@@ -31,33 +31,21 @@ pub(crate) fn render_cockpit_command(
     let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
 
     if matches.get_flag("watch") {
-        return Ok(render_cockpit_frames(
-            context,
-            iterations.max(1),
-            Duration::from_millis(interval),
-        ));
+        let interval = Duration::from_millis(interval);
+        let frames = (0..iterations.max(1))
+            .map(|index| {
+                if index > 0 && !interval.is_zero() {
+                    std::thread::sleep(interval);
+                }
+                render_cockpit_frame(context)
+            })
+            .collect::<Vec<_>>();
+        return Ok(frames.join("\n\n"));
     }
 
     Err(CliError::CommandFailed(
         "interactive cockpit requires command execution support".to_string(),
     ))
-}
-
-fn render_cockpit_frames(
-    context: &CommandContext<InMemoryRegistry>,
-    iterations: u32,
-    interval: Duration,
-) -> String {
-    let frames = (0..iterations)
-        .map(|index| {
-            if index > 0 && !interval.is_zero() {
-                std::thread::sleep(interval);
-            }
-            render_cockpit_frame(context)
-        })
-        .collect::<Vec<_>>();
-
-    frames.join("\n\n")
 }
 
 pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
@@ -369,6 +357,17 @@ mod tests {
             let function_name = ["fn ", wrapper].concat();
             assert!(!source.contains(&function_name), "{wrapper}");
         }
+    }
+
+    #[test]
+    fn cockpit_backend_does_not_keep_cockpit_watch_frame_wrapper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let wrapper = ["fn ", "render_cockpit_frames"].concat();
+
+        assert!(!source.contains(&wrapper));
     }
 
     #[derive(Default)]
