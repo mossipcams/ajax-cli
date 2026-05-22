@@ -46,9 +46,9 @@ header {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px
-    calc(16px + env(safe-area-inset-left));
-  background: rgba(16, 20, 26, 0.86);
+  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px
+    calc(14px + env(safe-area-inset-left));
+  background: rgba(16, 20, 26, 0.92);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
@@ -56,32 +56,41 @@ header {
 .bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  min-height: 40px;
 }
 
 h1 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
   letter-spacing: 0.01em;
+  flex: none;
+}
+
+.status-line {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
-}
-
-.status-line {
-  margin: 8px 0 0;
-  font-size: 0.8rem;
-  color: var(--muted);
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 
 /* Layout ----------------------------------------------------------------- */
 main {
   width: min(760px, 100%);
   margin: 0 auto;
-  padding: 14px calc(14px + env(safe-area-inset-right)) 28px calc(14px + env(safe-area-inset-left));
+  padding: 12px calc(14px + env(safe-area-inset-right)) 32px calc(14px + env(safe-area-inset-left));
 }
 
 .group {
@@ -92,11 +101,27 @@ main {
   display: none;
 }
 
-.group-title {
-  margin: 18px 4px 8px;
-  font-size: 0.74rem;
+.section-title {
+  margin: 18px 4px 10px;
+  font-size: 0.92rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
+.section-title.attention {
+  color: var(--attention);
+}
+
+#inbox + #repos .section-title {
+  margin-top: 26px;
+}
+
+.group-title {
+  margin: 14px 4px 8px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -107,21 +132,37 @@ main {
 
 .cards {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 /* Cards ------------------------------------------------------------------ */
 .card {
   position: relative;
-  padding: 14px;
+  padding: 14px 14px 14px 16px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
   border-left: 3px solid var(--line);
+  transition: border-color 160ms ease;
+}
+
+.card.has-details {
+  cursor: pointer;
 }
 
 .card.attention {
   border-left-color: var(--attention);
+  background: linear-gradient(180deg, rgba(245, 166, 35, 0.06), var(--surface) 60%);
+}
+
+.card.attention[data-severity="high"] {
+  border-left-color: var(--danger);
+  background: linear-gradient(180deg, rgba(248, 113, 113, 0.08), var(--surface) 60%);
+}
+
+.card.attention[data-severity="low"] {
+  border-left-color: var(--line);
+  background: var(--surface);
 }
 
 .card-head {
@@ -134,12 +175,13 @@ main {
 .handle {
   font-weight: 700;
   font-size: 0.98rem;
+  line-height: 1.3;
   overflow-wrap: anywhere;
 }
 
 .badge {
   flex: none;
-  padding: 3px 9px;
+  padding: 4px 10px;
   border-radius: 999px;
   font-size: 0.7rem;
   font-weight: 700;
@@ -151,7 +193,7 @@ main {
 
 .summary {
   margin: 8px 0 0;
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   line-height: 1.45;
   color: var(--muted);
 }
@@ -161,7 +203,7 @@ main {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 button {
@@ -170,16 +212,21 @@ button {
 }
 
 .action {
-  min-height: 44px;
+  flex: 1 1 auto;
+  min-height: 46px;
   padding: 10px 16px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 11px;
   background: var(--surface-2);
   color: var(--text);
   font-weight: 600;
+  font-size: 0.95rem;
+  transition: background 120ms ease, transform 80ms ease;
 }
 
 .action.primary {
+  flex-basis: 100%;
+  order: -1;
   border-color: transparent;
   background: var(--accent);
   color: var(--accent-ink);
@@ -187,31 +234,127 @@ button {
 }
 
 .action:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .action:active {
   transform: translateY(1px);
 }
 
+.action.is-running {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.action.confirming {
+  background: var(--danger);
+  color: #1a0707;
+  border-color: transparent;
+  font-weight: 700;
+  animation: pulse-confirm 1s ease-in-out infinite;
+}
+
+@keyframes pulse-confirm {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+
+/* Card details (revealed by tapping the card body) ----------------------- */
+.card-details {
+  display: none;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 0.84rem;
+}
+
+.card.expanded .card-details {
+  display: block;
+}
+
+.detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.detail-label {
+  flex: 0 0 78px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.detail-value {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Offline: dim action buttons so taps don't silently fail. --------------- */
+body.is-offline .action {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Header ghost / icon buttons -------------------------------------------- */
 .ghost {
-  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
   padding: 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
+  transition: background 120ms ease;
 }
 
 .ghost:active {
   background: var(--surface-2);
 }
 
+.ghost.icon {
+  padding: 6px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.refresh-glyph {
+  display: inline-block;
+  font-size: 1.15rem;
+  line-height: 1;
+  transition: transform 200ms ease;
+}
+
+body.is-refreshing .refresh-glyph {
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Empty state ------------------------------------------------------------ */
 .empty {
-  margin: 48px 0;
+  margin: 56px 16px;
   text-align: center;
   color: var(--muted);
+}
+
+/* Narrow screens --------------------------------------------------------- */
+@media (max-width: 380px) {
+  h1 {
+    font-size: 1rem;
+  }
+  .status-line {
+    font-size: 0.78rem;
+  }
+  .ghost:not(.icon) {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+  }
 }

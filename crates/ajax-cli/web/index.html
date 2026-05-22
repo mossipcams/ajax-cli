@@ -20,16 +20,16 @@
 
   <header>
     <div class="bar">
-      <h1>Ajax Cockpit</h1>
+      <h1>Ajax</h1>
+      <p id="status-line" class="status-line" aria-live="polite">Loading…</p>
       <div class="header-actions">
         <button id="notify-button" type="button" class="ghost" hidden>Alerts</button>
         <button id="install-button" type="button" class="ghost" hidden>Install</button>
-        <button id="refresh-button" type="button" class="ghost" aria-label="Refresh">
-          Refresh
+        <button id="refresh-button" type="button" class="ghost icon" aria-label="Refresh">
+          <span class="refresh-glyph" aria-hidden="true">↻</span>
         </button>
       </div>
     </div>
-    <p id="status-line" class="status-line" aria-live="polite">Loading cockpit…</p>
   </header>
 
   <main>
