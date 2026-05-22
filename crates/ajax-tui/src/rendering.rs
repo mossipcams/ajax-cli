@@ -273,10 +273,6 @@ pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
     )
 }
 
-pub(crate) fn inbox_glyph(color: Color) -> Span<'static> {
-    Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
-}
-
 pub(crate) fn priority_accent(priority: u32) -> Color {
     if priority < 20 {
         danger_accent()
@@ -382,7 +378,10 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                 .unwrap_or((item.task_handle.as_str(), ""));
             render_row(
                 is_selected,
-                inbox_glyph(accent),
+                Span::styled(
+                    "!",
+                    Style::default().fg(accent).add_modifier(Modifier::BOLD),
+                ),
                 vec![
                     Span::styled(
                         repo.to_string(),
@@ -612,6 +611,7 @@ mod tests {
             "action_chrome",
             "action_label_style",
             "card_bucket",
+            "inbox_glyph",
             "inbox_item_accent",
             "project_glyph",
             "project_name_color",

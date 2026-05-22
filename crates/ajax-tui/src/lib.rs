@@ -21,8 +21,8 @@ use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
 #[cfg(test)]
 use rendering::{
-    action_glyph, bucket_color, bucket_glyph, inbox_glyph, priority_accent, project_subtitle,
-    render_ui, task_glyph, ui_state_bucket, StatusBucket,
+    action_glyph, bucket_color, bucket_glyph, priority_accent, project_subtitle, render_ui,
+    task_glyph, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -149,7 +149,7 @@ mod tests {
     };
 
     use super::{
-        action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event, inbox_glyph,
+        action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event,
         priority_accent, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
         task_glyph, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
         CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
@@ -460,7 +460,6 @@ mod tests {
             action: OperatorAction::Resume,
         };
 
-        assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
         assert_eq!(priority_accent(urgent_item.severity), secondary_accent());
         assert_eq!(action_glyph("help").content.as_ref(), "?");
         assert_eq!(
