@@ -44,6 +44,13 @@ From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
+When native Cockpit starts, Ajax also starts the mobile web Cockpit companion on
+`0.0.0.0:8787` when that port is free. Open `http://<this-machine-ip>:8787`
+from a phone on the same routed network. The companion inherits `AJAX_CONFIG`
+and `AJAX_STATE`, so development runs that point at a development database keep
+the mobile layer on that same database. Use `ajax cockpit --no-web` to keep
+native Cockpit terminal-only.
+
 The same loop is available from the CLI:
 
 ```sh

@@ -274,7 +274,12 @@ serves a serialized Cockpit view at `/api/cockpit`, and accepts mobile-safe
 operator actions at `/api/actions`. Actions that require an attached terminal
 session, such as `resume`, remain native-Cockpit only. Git, tmux, SQLite, task
 lifecycle, action policy, and projection rebuilding remain owned by the same
-core and CLI boundaries used by the terminal Cockpit.
+core and CLI boundaries used by the terminal Cockpit. Native Cockpit starts the
+mobile web layer as a companion `ajax web` process by default and keeps it alive
+for the Cockpit session; `ajax cockpit --no-web` disables the companion. The
+companion inherits `AJAX_CONFIG` and `AJAX_STATE`, so development runs and
+custom state paths keep the mobile layer on the same database as the parent
+Ajax process.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

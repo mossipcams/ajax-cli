@@ -142,6 +142,12 @@ fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
         .arg(
+            Arg::new("no-web")
+                .long("no-web")
+                .help("Do not auto-start the mobile web companion")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
             Arg::new("watch")
                 .long("watch")
                 .help("Keep rendering cockpit frames")
@@ -199,5 +205,18 @@ mod tests {
             web_matches.get_one::<String>("port").map(String::as_str),
             Some("8787")
         );
+    }
+
+    #[test]
+    fn cockpit_command_accepts_mobile_web_opt_out() {
+        let ParsedArgs::Matches(matches) = parse_args(["ajax", "cockpit", "--no-web"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some(("cockpit", cockpit_matches)) = matches.subcommand() else {
+            panic!("expected cockpit subcommand");
+        };
+
+        assert!(cockpit_matches.get_flag("no-web"));
     }
 }
