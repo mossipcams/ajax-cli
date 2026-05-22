@@ -1,0 +1,11 @@
+# cargo-audit configuration.
+#
+# RUSTSEC-2023-0071 — "Marvin Attack" timing sidechannel in the `rsa` crate.
+# The advisory has no fixed release. `rsa` reaches the dependency tree only via
+# `web-push` -> `jwt-simple` -> `superboring`, which compiles RSA JWT algorithm
+# support. The Ajax web companion performs no RSA operations: VAPID signing is
+# ECDSA P-256 and Web Push payload encryption is ECDH P-256 + AES-128-GCM, so
+# the vulnerable RSA code path is never executed. Re-evaluate if `rsa` ships a
+# fix or `web-push` drops the `jwt-simple` dependency.
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]

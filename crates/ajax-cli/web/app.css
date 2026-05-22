@@ -1,0 +1,217 @@
+:root {
+  color-scheme: dark;
+  --bg: #10141a;
+  --surface: #1a212b;
+  --surface-2: #222c38;
+  --line: #2c3744;
+  --text: #e6edf3;
+  --muted: #8b97a5;
+  --accent: #2dd4bf;
+  --accent-ink: #06241f;
+  --attention: #f5a623;
+  --danger: #f87171;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Offline banner --------------------------------------------------------- */
+.banner {
+  margin: 0;
+  padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--accent-ink);
+  background: var(--attention);
+}
+
+/* Header ----------------------------------------------------------------- */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px
+    calc(16px + env(safe-area-inset-left));
+  background: rgba(16, 20, 26, 0.86);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.status-line {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* Layout ----------------------------------------------------------------- */
+main {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  padding: 14px calc(14px + env(safe-area-inset-right)) 28px calc(14px + env(safe-area-inset-left));
+}
+
+.group {
+  display: block;
+}
+
+.group:empty {
+  display: none;
+}
+
+.group-title {
+  margin: 18px 4px 8px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.group-title.attention {
+  color: var(--attention);
+}
+
+.cards {
+  display: grid;
+  gap: 10px;
+}
+
+/* Cards ------------------------------------------------------------------ */
+.card {
+  position: relative;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  border-left: 3px solid var(--line);
+}
+
+.card.attention {
+  border-left-color: var(--attention);
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.handle {
+  font-weight: 700;
+  font-size: 0.98rem;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  flex: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--accent);
+  background: var(--surface-2);
+}
+
+.summary {
+  margin: 8px 0 0;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+/* Actions ---------------------------------------------------------------- */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.action {
+  min-height: 44px;
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.action.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+
+.action:disabled {
+  opacity: 0.5;
+}
+
+.action:active {
+  transform: translateY(1px);
+}
+
+.ghost {
+  min-height: 36px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.ghost:active {
+  background: var(--surface-2);
+}
+
+/* Empty state ------------------------------------------------------------ */
+.empty {
+  margin: 48px 0;
+  text-align: center;
+  color: var(--muted);
+}

@@ -44,11 +44,30 @@ From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
+### Mobile web companion (PWA)
+
 When native Cockpit starts through `ajax stable` or `ajax dev`, Ajax also starts
-the mobile web Cockpit companion. Stable serves on `0.0.0.0:8787`; dev serves
-on `0.0.0.0:8788` and uses a separate development state database. Open
-`http://<this-machine-ip>:8787` or `http://<this-machine-ip>:8788` from a phone
-on the same routed network. Use `--no-web` to keep native Cockpit terminal-only.
+the mobile web Cockpit companion — a mobile-first Progressive Web App. Stable
+serves on `0.0.0.0:8787`; dev serves on `0.0.0.0:8788` and uses a separate
+development state database. Use `--no-web` to keep native Cockpit
+terminal-only.
+
+The companion serves HTTPS, which browsers require before they will install a
+PWA, run its service worker, or deliver push notifications. Open
+`https://<this-machine-ip>:8787` (or `:8788`) from a phone on the same routed
+network. On first run Ajax generates a self-signed certificate and stores it
+beside the state database (`web-tls-cert.pem`); your browser will warn the first
+time. To install the app to your home screen and enable notifications, trust
+that certificate once — on iOS, open `web-tls-cert.pem`, install the profile,
+then enable full trust under Settings → General → About → Certificate Trust
+Settings.
+
+From the installed app you can monitor every repo's tasks, see the attention
+inbox, and run `review`, `ship`, `repair`, and `drop`. `resume` stays
+native-Cockpit only because it needs an attached terminal. Tap **Alerts** to
+enable Web Push: the phone is then notified when a task newly needs attention,
+even when the app is closed. Web Push on iOS requires iOS 16.4 or later and the
+app installed to the home screen.
 
 The same loop is available from the CLI:
 
