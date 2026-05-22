@@ -322,11 +322,7 @@ pub(crate) fn priority_accent(priority: u32) -> Color {
 
 pub(crate) fn action_glyph(action: &str) -> Span<'static> {
     let chrome = actions::action_chrome(action);
-    Span::styled(chrome.glyph, chrome.glyph_style())
-}
-
-pub(crate) fn action_label_style(action: &str) -> Style {
-    actions::action_chrome(action).label_style()
+    Span::styled(chrome.glyph, chrome.glyph_style)
 }
 
 pub(crate) fn project_subtitle(repo: &RepoSummary) -> String {
@@ -371,9 +367,9 @@ fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
         column_separator(),
         Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
         column_separator(),
-        Span::styled(action_label, chrome.label_style()),
+        Span::styled(action_label, chrome.label_style),
         Span::raw(" "),
-        Span::styled(chrome.glyph.to_string(), chrome.glyph_style()),
+        Span::styled(chrome.glyph.to_string(), chrome.glyph_style),
     ]
 }
 
@@ -458,7 +454,10 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
         SelectableKind::TaskAction { action, .. } => render_row(
             is_selected,
             action_glyph(action),
-            vec![Span::styled(action.clone(), action_label_style(action))],
+            vec![Span::styled(
+                action.clone(),
+                actions::action_chrome(action).label_style,
+            )],
         ),
         SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
     }
@@ -589,7 +588,7 @@ fn render_annotation_line(annotation: &Annotation) -> ListItem<'static> {
     let chrome = crate::actions::annotation_chrome(annotation.kind);
     let prefix = Span::raw("      ");
     let connector = Span::styled("├─ ".to_string(), Style::default().fg(subtle_text()));
-    let glyph = Span::styled(format!("{} ", chrome.glyph), chrome.glyph_style());
+    let glyph = Span::styled(format!("{} ", chrome.glyph), chrome.glyph_style);
     let label = Span::styled(annotation.row_label(), Style::default().fg(muted_text()));
     ListItem::new(Line::from(vec![prefix, connector, glyph, label]))
 }
@@ -629,6 +628,7 @@ mod tests {
             "subtle_text",
             "selected_highlight",
             "action_chrome",
+            "action_label_style",
             "inbox_item_accent",
             "task_row_label",
             "selectable_feed_rows",

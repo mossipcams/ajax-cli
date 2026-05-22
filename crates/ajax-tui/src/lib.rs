@@ -24,9 +24,9 @@ pub(crate) use layout::{
 use rendering::task_status_label;
 #[cfg(test)]
 use rendering::{
-    action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, inbox_glyph,
-    priority_accent, project_glyph, project_name_color, project_subtitle, render_ui, task_glyph,
-    task_handle_color, ui_state_bucket, StatusBucket,
+    action_glyph, bucket_color, bucket_glyph, card_bucket, inbox_glyph, priority_accent,
+    project_glyph, project_name_color, project_subtitle, render_ui, task_glyph, task_handle_color,
+    ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -155,11 +155,11 @@ mod tests {
     };
 
     use super::{
-        action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, feed_top_row,
-        handle_cockpit_event, inbox_glyph, priority_accent, project_glyph, project_name_color,
-        project_subtitle, render_cockpit, render_ui, selectable_row_layout, task_glyph,
-        task_handle_color, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
-        CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
+        action_glyph, bucket_color, bucket_glyph, card_bucket, feed_top_row, handle_cockpit_event,
+        inbox_glyph, priority_accent, project_glyph, project_name_color, project_subtitle,
+        render_cockpit, render_ui, selectable_row_layout, task_glyph, task_handle_color,
+        ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
+        EventLoopAction, PendingAction, SelectableKind, StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -495,13 +495,13 @@ mod tests {
         );
         assert_eq!(action_glyph("unknown").content.as_ref(), ".");
         assert_eq!(
-            action_label_style("help"),
+            crate::actions::action_chrome("help").label_style,
             Style::default()
                 .fg(primary_accent())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(
-            action_label_style("unknown"),
+            crate::actions::action_chrome("unknown").label_style,
             Style::default().fg(muted_text())
         );
     }
@@ -2638,13 +2638,19 @@ mod tests {
         }
 
         let open = crate::actions::action_chrome(OperatorAction::Resume.as_str());
-        assert_eq!(open.glyph_color, primary_accent());
-        assert_eq!(open.label_color, primary_accent());
+        let open_style = Style::default()
+            .fg(primary_accent())
+            .add_modifier(Modifier::BOLD);
+        assert_eq!(open.glyph_style, open_style);
+        assert_eq!(open.label_style, open_style);
 
         let action = OperatorAction::Ship;
         let chrome = crate::actions::action_chrome(action.as_str());
-        assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
-        assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
+        let ship_style = Style::default()
+            .fg(secondary_accent())
+            .add_modifier(Modifier::BOLD);
+        assert_eq!(chrome.glyph_style, ship_style, "{action:?}");
+        assert_eq!(chrome.label_style, ship_style, "{action:?}");
     }
 
     #[test]
@@ -2661,7 +2667,12 @@ mod tests {
         let chrome = crate::actions::operator_action_chrome(OperatorAction::Resume);
 
         assert_eq!(chrome.glyph, ">");
-        assert_eq!(chrome.label_color, primary_accent());
+        assert_eq!(
+            chrome.label_style,
+            Style::default()
+                .fg(primary_accent())
+                .add_modifier(Modifier::BOLD)
+        );
     }
 
     #[test]
