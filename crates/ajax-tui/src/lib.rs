@@ -27,9 +27,8 @@ use rendering::task_status_label;
 #[cfg(test)]
 use rendering::{
     action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-    danger_accent, inbox_glyph, inbox_item_accent, muted_text, primary_accent, priority_accent,
-    project_glyph, project_name_color, project_subtitle, render_ui, secondary_accent,
-    selectable_feed_rows, selected_highlight, subtle_text, task_glyph, task_handle_color,
+    inbox_glyph, inbox_item_accent, priority_accent, project_glyph, project_name_color,
+    project_subtitle, render_ui, selectable_feed_rows, task_glyph, task_handle_color,
     ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
@@ -158,12 +157,17 @@ pub(crate) fn show_notice_row(app: &App) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::palette::{
+        accent_danger as danger_accent, accent_primary as primary_accent, accent_success,
+        accent_warning as secondary_accent, selected_highlight, text_chrome as subtle_text,
+        text_data as muted_text,
+    };
+
     use super::{
         action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-        danger_accent, feed_top_row, handle_cockpit_event, inbox_glyph, inbox_item_accent,
-        muted_text, primary_accent, priority_accent, project_glyph, project_name_color,
-        project_subtitle, render_cockpit, render_ui, secondary_accent, selectable_feed_rows,
-        selectable_row_layout, selected_highlight, subtle_text, task_glyph, task_handle_color,
+        feed_top_row, handle_cockpit_event, inbox_glyph, inbox_item_accent, priority_accent,
+        project_glyph, project_name_color, project_subtitle, render_cockpit, render_ui,
+        selectable_feed_rows, selectable_row_layout, task_glyph, task_handle_color,
         ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
         EventLoopAction, PendingAction, SelectableKind, StatusBucket, FLASH_TICKS,
     };
@@ -376,30 +380,13 @@ mod tests {
 
     #[test]
     fn palette_surface_is_four_accents_plus_two_greys() {
-        use crate::palette;
         let entries = [
-            (
-                "accent_primary",
-                palette::accent_primary(),
-                Color::Indexed(110),
-            ),
-            (
-                "accent_warning",
-                palette::accent_warning(),
-                Color::Indexed(179),
-            ),
-            (
-                "accent_danger",
-                palette::accent_danger(),
-                Color::Indexed(174),
-            ),
-            (
-                "accent_success",
-                palette::accent_success(),
-                Color::Indexed(108),
-            ),
-            ("text_data", palette::text_data(), Color::Indexed(248)),
-            ("text_chrome", palette::text_chrome(), Color::Indexed(244)),
+            ("accent_primary", primary_accent(), Color::Indexed(110)),
+            ("accent_warning", secondary_accent(), Color::Indexed(179)),
+            ("accent_danger", danger_accent(), Color::Indexed(174)),
+            ("accent_success", accent_success(), Color::Indexed(108)),
+            ("text_data", muted_text(), Color::Indexed(248)),
+            ("text_chrome", subtle_text(), Color::Indexed(244)),
         ];
         for (name, actual, expected) in entries {
             assert_eq!(actual, expected, "palette::{name} drift");
@@ -411,7 +398,7 @@ mod tests {
             }
         }
         assert_eq!(
-            palette::selected_highlight(),
+            selected_highlight(),
             Style::default().add_modifier(Modifier::BOLD)
         );
     }
@@ -493,14 +480,14 @@ mod tests {
         assert_eq!(
             action_glyph("help").style,
             Style::default()
-                .fg(crate::palette::accent_warning())
+                .fg(secondary_accent())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(action_glyph("unknown").content.as_ref(), ".");
         assert_eq!(
             action_label_style("help"),
             Style::default()
-                .fg(crate::palette::accent_primary())
+                .fg(primary_accent())
                 .add_modifier(Modifier::BOLD)
         );
         assert_eq!(

@@ -14,7 +14,12 @@ use ratatui::{
 use crate::{
     actions,
     cockpit_state::{AppView, SelectableKind, Severity},
-    palette, App,
+    palette::{
+        accent_danger as danger_accent, accent_primary as primary_accent, accent_success,
+        accent_warning as secondary_accent, selected_highlight, text_chrome as subtle_text,
+        text_data as muted_text,
+    },
+    App,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,11 +33,11 @@ pub(crate) enum StatusBucket {
 
 pub(crate) fn bucket_color(bucket: StatusBucket) -> Color {
     match bucket {
-        StatusBucket::Active => palette::accent_primary(),
-        StatusBucket::NeedsYou => palette::accent_warning(),
-        StatusBucket::Stuck => palette::accent_danger(),
-        StatusBucket::Done => palette::accent_success(),
-        StatusBucket::Idle => palette::text_data(),
+        StatusBucket::Active => primary_accent(),
+        StatusBucket::NeedsYou => secondary_accent(),
+        StatusBucket::Stuck => danger_accent(),
+        StatusBucket::Done => accent_success(),
+        StatusBucket::Idle => muted_text(),
     }
 }
 
@@ -66,26 +71,6 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
         idx += 1;
     }
     render_status_bar(frame, app, chunks[idx]);
-}
-
-pub(crate) fn primary_accent() -> Color {
-    palette::accent_primary()
-}
-
-pub(crate) fn secondary_accent() -> Color {
-    palette::accent_warning()
-}
-
-pub(crate) fn danger_accent() -> Color {
-    palette::accent_danger()
-}
-
-pub(crate) fn muted_text() -> Color {
-    palette::text_data()
-}
-
-pub(crate) fn subtle_text() -> Color {
-    palette::text_chrome()
 }
 
 pub(crate) fn ui_state_bucket(state: UiState) -> StatusBucket {
@@ -226,10 +211,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     }
     push_hint(&mut parts, "q", "quit", true);
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
-}
-
-pub(crate) fn selected_highlight() -> Style {
-    palette::selected_highlight()
 }
 
 fn empty_state(text: &str) -> ListItem<'static> {
@@ -387,7 +368,7 @@ fn task_row_label(card: &TaskCard) -> String {
 }
 
 fn column_separator() -> Span<'static> {
-    Span::styled("|", Style::default().fg(palette::text_chrome()))
+    Span::styled("|", Style::default().fg(subtle_text()))
 }
 
 fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
@@ -401,7 +382,7 @@ fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
             Style::default().fg(task_handle_color(t)).add_modifier(bold),
         ),
         column_separator(),
-        Span::styled(label, Style::default().fg(palette::text_data())),
+        Span::styled(label, Style::default().fg(muted_text())),
         column_separator(),
         Span::styled(action_label, chrome.label_style()),
         Span::raw(" "),
@@ -439,7 +420,7 @@ fn render_row(
 
 pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListItem<'static> {
     let bold = Modifier::BOLD;
-    let dim = Style::default().fg(palette::text_data());
+    let dim = Style::default().fg(muted_text());
     match s {
         SelectableKind::Inbox(item) => {
             let accent = inbox_item_accent(item);
@@ -515,7 +496,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
                 Span::styled(
                     "Task name  ",
                     Style::default()
-                        .fg(palette::accent_primary())
+                        .fg(primary_accent())
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(display_title, Style::default().fg(primary_accent())),
@@ -531,7 +512,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             vec![Span::styled(
                 "Keyboard shortcuts",
                 Style::default()
-                    .fg(palette::accent_primary())
+                    .fg(primary_accent())
                     .add_modifier(Modifier::BOLD),
             )],
         ));
@@ -555,7 +536,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
                 vec![
                     Span::styled(
                         format!("{key:<18}"),
-                        Style::default().fg(palette::accent_warning()),
+                        Style::default().fg(secondary_accent()),
                     ),
                     Span::styled(label.to_string(), Style::default().fg(subtle_text())),
                 ],
@@ -648,4 +629,27 @@ pub(crate) fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
         .block(Block::default())
         .highlight_style(selected_highlight());
     frame.render_stateful_widget(list, area, &mut state);
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rendering_does_not_keep_palette_forwarders() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rendering.rs"),
+        )
+        .unwrap();
+
+        for forwarder in [
+            "primary_accent",
+            "secondary_accent",
+            "danger_accent",
+            "muted_text",
+            "subtle_text",
+            "selected_highlight",
+        ] {
+            let function_name = ["fn ", forwarder].concat();
+            assert!(!source.contains(&function_name), "{forwarder}");
+        }
+    }
 }
