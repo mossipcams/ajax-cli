@@ -6,11 +6,13 @@ release after that PR lands on `main`.
 
 ## Repository Setup
 
-Configure a repository secret named `RELEASE_PLEASE_TOKEN`. Use a fine-grained
-PAT or GitHub App token with permission to write contents and pull requests.
-Do not use the default `GITHUB_TOKEN` for Release Please, because PRs created
-with that token do not trigger the remote CI workflows that must protect a
-release.
+Configure `RELEASE_PLEASE_TOKEN` if you want a personal or app token.
+
+If this token is not set, the workflow falls back to `github.token` (the
+workflow's built-in token) and release automation still runs.
+
+Use `RELEASE_PLEASE_TOKEN` if you need the PR lifecycle behavior you get from
+a PAT/GitHub App token (for example, downstream CI expectations).
 
 ## Release Checklist
 
