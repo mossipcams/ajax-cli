@@ -3197,8 +3197,7 @@ mod tests {
             vec![
                 DropOp::EnsureAgentStopped,
                 DropOp::EnsureWorktreeAbsent,
-                DropOp::EnsureBranchAbsent,
-                DropOp::MarkRegistryRemoved,
+                DropOp::EnsureBranchAbsent
             ]
         );
     }

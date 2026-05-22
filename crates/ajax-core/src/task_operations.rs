@@ -419,22 +419,24 @@ pub mod drop_task {
     pub fn complete_drop_task_operation<R: Registry>(
         context: &mut CommandContext<R>,
         qualified_handle: &str,
-        incomplete_step: DropOp,
         final_observation: &DropObservation,
     ) -> Result<DropTaskCompletion, CommandError> {
-        if drop_observation_all_absent(final_observation) {
+        let Some(incomplete_step) = commands::plan_drop_from_observation(final_observation)
+            .into_iter()
+            .next()
+        else {
             commands::mark_task_removed(context, qualified_handle)?;
-            Ok(DropTaskCompletion::Removed)
-        } else {
-            commands::mark_task_removing(context, qualified_handle)?;
-            commands::mark_task_teardown_incomplete(
-                context,
-                qualified_handle,
-                incomplete_step,
-                final_observation,
-            )?;
-            Ok(DropTaskCompletion::TeardownIncomplete)
-        }
+            return Ok(DropTaskCompletion::Removed);
+        };
+
+        commands::mark_task_removing(context, qualified_handle)?;
+        commands::mark_task_teardown_incomplete(
+            context,
+            qualified_handle,
+            incomplete_step,
+            final_observation,
+        )?;
+        Ok(DropTaskCompletion::TeardownIncomplete)
     }
 
     pub fn execute_drop_task_operation<R: Registry>(
@@ -505,18 +507,13 @@ pub mod drop_task {
                         },
                     )?;
                 }
-                DropOp::MarkRegistryRemoved => {}
             }
         }
 
         let final_task = task(context, qualified_handle)?.clone();
         let final_observation = commands::observe_drop_resources(context, &final_task, runner)?;
-        let completion = complete_drop_task_operation(
-            context,
-            qualified_handle,
-            DropOp::MarkRegistryRemoved,
-            &final_observation,
-        )?;
+        let completion =
+            complete_drop_task_operation(context, qualified_handle, &final_observation)?;
 
         Ok((outputs, completion))
     }
@@ -528,13 +525,6 @@ pub mod drop_task {
             worktree: ResourceState::Unknown,
             branch: ResourceState::Unknown,
         }
-    }
-
-    fn drop_observation_all_absent(observation: &DropObservation) -> bool {
-        observation.agent == ResourceState::Absent
-            && observation.tmux_session == ResourceState::Absent
-            && observation.worktree == ResourceState::Absent
-            && observation.branch == ResourceState::Absent
     }
 
     fn task<'a, R: Registry>(
@@ -577,7 +567,7 @@ pub mod drop_task {
                 git.force_delete_branch(&repo_path, &task.branch)
             }
             DropOp::EnsureBranchAbsent => git.delete_branch(&repo_path, &task.branch),
-            DropOp::EnsureAgentStopped | DropOp::MarkRegistryRemoved => {
+            DropOp::EnsureAgentStopped => {
                 return Err(CommandError::PlanBlocked(vec![format!(
                     "drop op {op:?} does not have an external command"
                 )]));
@@ -669,7 +659,6 @@ pub mod drop_task {
                 ("worktree_absent", task.worktree_path.display().to_string())
             }
             DropOp::EnsureBranchAbsent => ("branch_absent", task.branch.clone()),
-            DropOp::MarkRegistryRemoved => return None,
         };
 
         Some(StepReceipt::new(
@@ -1718,7 +1707,7 @@ mod tests {
         assert_eq!(observation.tmux_session, ResourceState::Absent);
         assert_eq!(observation.worktree, ResourceState::Absent);
         assert_eq!(observation.branch, ResourceState::Absent);
-        assert_eq!(ops, vec![DropOp::MarkRegistryRemoved]);
+        assert_eq!(ops, Vec::<DropOp>::new());
     }
 
     #[test]
@@ -1768,13 +1757,45 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_records_remaining_resource_when_empty_plan_still_finishes_incomplete() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = absent_drop_observation_outputs();
+        outputs.extend(vec![
+            output(0, "", ""),
+            output(0, "", ""),
+            output(0, "ajax/fix-login\n", ""),
+        ]);
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner)
+            .expect("drop operation should plan");
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .expect("drop operation should complete with incomplete teardown");
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(completion, DropTaskCompletion::TeardownIncomplete);
+        assert_eq!(
+            task.metadata.get("drop_failed_step").map(String::as_str),
+            Some("EnsureBranchAbsent")
+        );
+    }
+
+    #[test]
     fn drop_completion_marks_removed_when_final_observation_is_absent() {
         let mut context = context_with_cleanable_task();
 
         let completion = complete_drop_task_operation(
             &mut context,
             "web/fix-login",
-            DropOp::MarkRegistryRemoved,
             &crate::commands::DropObservation {
                 agent: ResourceState::Absent,
                 tmux_session: ResourceState::Absent,
@@ -1799,7 +1820,6 @@ mod tests {
         let completion = complete_drop_task_operation(
             &mut context,
             "web/fix-login",
-            DropOp::EnsureBranchAbsent,
             &crate::commands::DropObservation {
                 agent: ResourceState::Absent,
                 tmux_session: ResourceState::Absent,
