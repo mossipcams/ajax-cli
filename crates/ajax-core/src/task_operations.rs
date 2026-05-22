@@ -245,34 +245,34 @@ pub mod task_command {
         }
         if operation.kind == TaskCommandKind::Repair {
             commands::mark_task_check_started(context, &qualified_handle)
-                .map_err(|error| operation_error(error, false))?;
+                .map_err(|error| (error, false))?;
         }
         let outputs = match execute_external_plan(&operation.plan, confirmed, runner) {
             Ok(execution) => execution,
             Err(error) if operation.kind == TaskCommandKind::Repair => {
                 commands::mark_task_check_failed(context, &qualified_handle)
-                    .map_err(|mark_error| operation_error(mark_error, true))?;
-                return Err(operation_error(error, true));
+                    .map_err(|mark_error| (mark_error, true))?;
+                return Err((error, true));
             }
-            Err(error) => return Err(operation_error(error, false)),
+            Err(error) => return Err((error, false)),
         };
         let state_changed = match operation.kind {
             TaskCommandKind::Review => false,
             TaskCommandKind::Resume => {
                 commands::mark_task_opened(context, &qualified_handle)
-                    .map_err(|error| operation_error(error, false))?;
+                    .map_err(|error| (error, false))?;
                 true
             }
             TaskCommandKind::Ship => {
                 commands::mark_task_merged(context, &qualified_handle)
-                    .map_err(|error| operation_error(error, false))?;
+                    .map_err(|error| (error, false))?;
                 true
             }
             TaskCommandKind::Repair => {
                 commands::mark_task_trunk_repaired(context, &qualified_handle)
-                    .map_err(|error| operation_error(error, true))?;
+                    .map_err(|error| (error, true))?;
                 commands::mark_task_check_succeeded(context, &qualified_handle)
-                    .map_err(|error| operation_error(error, true))?;
+                    .map_err(|error| (error, true))?;
                 true
             }
         };
@@ -288,20 +288,20 @@ pub mod task_command {
         qualified_handle: &str,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         if !operation.plan.blocked_reasons.is_empty() {
-            return Err(operation_error(
+            return Err((
                 CommandError::PlanBlocked(operation.plan.blocked_reasons.clone()),
                 false,
             ));
         }
         if operation.plan.requires_confirmation && !confirmed {
-            return Err(operation_error(CommandError::ConfirmationRequired, false));
+            return Err((CommandError::ConfirmationRequired, false));
         }
 
         let mut outputs = Vec::new();
         for (index, command) in operation.plan.commands.iter().enumerate() {
             let output = runner
                 .run(command)
-                .map_err(|error| operation_error(CommandError::CommandRun(error), false))?;
+                .map_err(|error| (CommandError::CommandRun(error), false))?;
             if output.status_code != 0 {
                 let error = CommandError::CommandRun(CommandRunError::NonZeroExit {
                     program: command.program.clone(),
@@ -315,18 +315,17 @@ pub mod task_command {
                         qualified_handle,
                         merge_error_looks_conflicted(&error),
                     )
-                    .map_err(|mark_error| operation_error(mark_error, true))?;
+                    .map_err(|mark_error| (mark_error, true))?;
                     true
                 } else {
                     false
                 };
-                return Err(operation_error(error, state_changed));
+                return Err((error, state_changed));
             }
             outputs.push(output);
         }
 
-        commands::mark_task_merged(context, qualified_handle)
-            .map_err(|error| operation_error(error, false))?;
+        commands::mark_task_merged(context, qualified_handle).map_err(|error| (error, false))?;
         Ok((outputs, true))
     }
 
@@ -348,10 +347,6 @@ pub mod task_command {
             }
             CommandRunError::SpawnFailed(_) | CommandRunError::MissingStatusCode => false,
         }
-    }
-
-    fn operation_error(error: CommandError, state_changed: bool) -> (CommandError, bool) {
-        (error, state_changed)
     }
 
     fn repair_task_plan<R: Registry>(
@@ -844,26 +839,23 @@ pub mod sweep_cleanup {
 
         for candidate in &operation.candidates {
             let plan = commands::clean_task_plan(context, candidate)
-                .map_err(|error| operation_error(error, state_changed))?;
+                .map_err(|error| (error, state_changed))?;
             if !plan.blocked_reasons.is_empty() {
-                return Err(operation_error(
+                return Err((
                     CommandError::PlanBlocked(plan.blocked_reasons),
                     state_changed,
                 ));
             }
             if plan.requires_confirmation && !confirmed {
-                return Err(operation_error(
-                    CommandError::ConfirmationRequired,
-                    state_changed,
-                ));
+                return Err((CommandError::ConfirmationRequired, state_changed));
             }
 
             for command in &plan.commands {
-                let output = runner.run(command).map_err(|error| {
-                    operation_error(CommandError::CommandRun(error), state_changed)
-                })?;
+                let output = runner
+                    .run(command)
+                    .map_err(|error| (CommandError::CommandRun(error), state_changed))?;
                 if output.status_code != 0 {
-                    return Err(operation_error(
+                    return Err((
                         CommandError::CommandRun(CommandRunError::NonZeroExit {
                             program: command.program.clone(),
                             status_code: output.status_code,
@@ -876,18 +868,14 @@ pub mod sweep_cleanup {
                 outputs.push(output);
                 state_changed |=
                     commands::mark_task_cleanup_step_completed(context, candidate, command)
-                        .map_err(|error| operation_error(error, state_changed))?;
+                        .map_err(|error| (error, state_changed))?;
             }
             commands::mark_task_removed(context, candidate)
-                .map_err(|error| operation_error(error, state_changed))?;
+                .map_err(|error| (error, state_changed))?;
             state_changed = true;
         }
 
         Ok((outputs, state_changed))
-    }
-
-    fn operation_error(error: CommandError, state_changed: bool) -> (CommandError, bool) {
-        (error, state_changed)
     }
 }
 
@@ -1319,6 +1307,27 @@ mod tests {
 
         assert!(!plan_fields.contains("pub requires_confirmation"));
         assert!(!plan_fields.contains("pub blocked_reasons"));
+    }
+
+    #[test]
+    fn operation_errors_use_plain_tuples_without_constructor_helpers() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let task_command_module = source
+            .split("pub mod task_command")
+            .nth(1)
+            .and_then(|source| source.split("pub mod drop_task").next())
+            .unwrap();
+        let sweep_cleanup_module = source
+            .split("pub mod sweep_cleanup")
+            .nth(1)
+            .and_then(|source| source.split("#[cfg(test)]").next())
+            .unwrap();
+
+        assert!(!task_command_module.contains("fn operation_error"));
+        assert!(!sweep_cleanup_module.contains("fn operation_error"));
     }
 
     #[test]
