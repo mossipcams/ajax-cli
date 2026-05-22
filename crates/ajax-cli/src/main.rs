@@ -3,7 +3,7 @@
 use std::io::{self, Write};
 
 fn main() {
-    match ajax_cli::run_with_args(expand_ajax_cli_args(std::env::args_os())) {
+    match ajax_cli::run_with_args(std::env::args_os()) {
         Ok(output) => {
             if let Err(error) = write_process_output(&mut io::stdout().lock(), &output) {
                 eprintln!("{error}");
@@ -17,28 +17,6 @@ fn main() {
     }
 }
 
-fn expand_ajax_cli_args<I, T>(args: I) -> Vec<std::ffi::OsString>
-where
-    I: IntoIterator<Item = T>,
-    T: Into<std::ffi::OsString>,
-{
-    let mut args = args.into_iter().map(Into::into).collect::<Vec<_>>();
-    match args.get(1).and_then(|arg| arg.to_str()) {
-        None => {
-            args.push("cockpit".into());
-        }
-        Some("dev") => {
-            args.remove(1);
-            args.insert(1, "--profile".into());
-            args.insert(2, "dev".into());
-            args.insert(3, "cockpit".into());
-        }
-        Some(_) => {}
-    }
-
-    args
-}
-
 fn write_process_output(writer: &mut impl Write, output: &str) -> io::Result<()> {
     match writeln!(writer, "{output}") {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => Ok(()),
@@ -48,7 +26,7 @@ fn write_process_output(writer: &mut impl Write, output: &str) -> io::Result<()>
 
 #[cfg(test)]
 mod tests {
-    use super::{expand_ajax_cli_args, write_process_output};
+    use super::write_process_output;
     use std::io;
 
     struct BrokenPipeWriter;
@@ -96,26 +74,5 @@ mod tests {
         let error = write_process_output(&mut FailingWriter, "hello").unwrap_err();
 
         assert_eq!(error.kind(), io::ErrorKind::Other);
-    }
-
-    #[test]
-    fn bare_ajax_cli_runs_stable_cockpit() {
-        let args = expand_ajax_cli_args(["ajax-cli"]);
-
-        assert_eq!(args, ["ajax-cli", "cockpit"]);
-    }
-
-    #[test]
-    fn ajax_cli_dev_runs_dev_profile_cockpit() {
-        let args = expand_ajax_cli_args(["ajax-cli", "dev"]);
-
-        assert_eq!(args, ["ajax-cli", "--profile", "dev", "cockpit"]);
-    }
-
-    #[test]
-    fn ajax_cli_dev_preserves_cockpit_options() {
-        let args = expand_ajax_cli_args(["ajax-cli", "dev", "--watch"]);
-
-        assert_eq!(args, ["ajax-cli", "--profile", "dev", "cockpit", "--watch"]);
     }
 }

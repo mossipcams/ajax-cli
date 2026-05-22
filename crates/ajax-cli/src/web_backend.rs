@@ -23,7 +23,7 @@ use crate::{
     command_error,
     context::{load_context, save_context},
     dispatch::execute_observed_drop,
-    web_push, web_tls, CliContextPaths, CliError,
+    web_companion_push, web_companion_tls, CliContextPaths, CliError,
 };
 
 pub(crate) struct HttpResponse {
@@ -171,7 +171,7 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
 /// Serves the VAPID application server key the browser needs to subscribe.
 fn handle_push_config(paths: Option<&CliContextPaths>) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let keys = web_push::load_or_create_vapid_keys(&dir)?;
+    let keys = web_companion_push::load_or_create_vapid_keys(&dir)?;
     json_response(
         200,
         serde_json::json!({
@@ -185,7 +185,7 @@ fn handle_push_subscribe(
     body: &str,
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
-    let subscription: web_push::PushSubscription = match serde_json::from_str(body) {
+    let subscription: web_companion_push::PushSubscription = match serde_json::from_str(body) {
         Ok(subscription) => subscription,
         Err(error) => {
             return json_response(
@@ -195,7 +195,7 @@ fn handle_push_subscribe(
         }
     };
     let dir = companion_state_dir(paths)?;
-    web_push::add_subscription(&dir, subscription)?;
+    web_companion_push::add_subscription(&dir, subscription)?;
     json_response(200, serde_json::json!({ "ok": true }))
 }
 
@@ -212,7 +212,7 @@ fn handle_push_unsubscribe(
         );
     };
     let dir = companion_state_dir(paths)?;
-    web_push::remove_subscription(&dir, endpoint)?;
+    web_companion_push::remove_subscription(&dir, endpoint)?;
     json_response(200, serde_json::json!({ "ok": true }))
 }
 
@@ -307,8 +307,8 @@ pub(crate) fn serve_mobile_web_with_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let cert_dir = companion_state_dir(paths)?;
-    let identity = web_tls::load_or_create_identity(&cert_dir)?;
-    let tls_config = web_tls::tls_server_config(&identity)?;
+    let identity = web_companion_tls::load_or_create_identity(&cert_dir)?;
+    let tls_config = web_companion_tls::tls_server_config(&identity)?;
 
     let listener = TcpListener::bind((host, port))
         .map_err(|error| CliError::CommandFailed(format!("web bind failed: {error}")))?;
@@ -362,12 +362,12 @@ fn run_attention_poller(state: &Mutex<&mut CommandContext<InMemoryRegistry>>, di
             attention_handles(&commands::rebuild_cockpit_view(&**guard))
         };
         for handle in newly_attention(&known, &current) {
-            let notification = web_push::PushNotification {
+            let notification = web_companion_push::PushNotification {
                 title: "Ajax task needs attention".to_string(),
                 body: handle.clone(),
                 tag: handle.clone(),
             };
-            if let Err(error) = web_push::send_to_all(dir, &notification) {
+            if let Err(error) = web_companion_push::send_to_all(dir, &notification) {
                 eprintln!("Ajax web push notification failed: {error}");
             }
         }
@@ -914,7 +914,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(subscribe.status_code, 200);
-        assert_eq!(crate::web_push::load_subscriptions(&dir).len(), 1);
+        assert_eq!(crate::web_companion_push::load_subscriptions(&dir).len(), 1);
 
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
@@ -926,7 +926,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unsubscribe.status_code, 200);
-        assert!(crate::web_push::load_subscriptions(&dir).is_empty());
+        assert!(crate::web_companion_push::load_subscriptions(&dir).is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }

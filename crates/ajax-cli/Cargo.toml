@@ -13,6 +13,7 @@ workspace = true
 default = ["interactive", "supervisor"]
 interactive = ["dep:ajax-tui", "dep:nix"]
 supervisor = ["dep:ajax-supervisor"]
+web-companion = ["dep:ajax-web"]
 
 [[bin]]
 name = "ajax-cli"
@@ -22,6 +23,7 @@ path = "src/main.rs"
 ajax-core = { workspace = true }
 ajax-supervisor = { workspace = true, optional = true }
 ajax-tui = { workspace = true, optional = true }
+ajax-web = { workspace = true, optional = true }
 clap = { workspace = true }
 nix = { workspace = true, optional = true }
 rcgen = { workspace = true }

@@ -4,6 +4,7 @@ members = [
     "crates/ajax-core",
     "crates/ajax-supervisor",
     "crates/ajax-tui",
+    "crates/ajax-web",
 ]
 resolver = "2"
 
@@ -18,6 +19,7 @@ repository = "https://github.com/mossipcams/ajax-cli"
 ajax-core = { version = "0.1.0", path = "crates/ajax-core" }
 ajax-supervisor = { version = "0.1.0", path = "crates/ajax-supervisor" }
 ajax-tui = { version = "0.1.0", path = "crates/ajax-tui" }
+ajax-web = { version = "0.1.0", path = "crates/ajax-web" }
 clap = "4.5"
 crossterm = "0.29"
 notify = "8"

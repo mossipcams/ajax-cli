@@ -5,7 +5,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::web_tls::write_private;
+use crate::web_companion_tls::write_private;
 use crate::CliError;
 
 const VAPID_FILE: &str = "web-push-vapid.pem";
