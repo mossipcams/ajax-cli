@@ -56,12 +56,12 @@ pub(crate) fn render_matches_mut(
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
-            let operation =
+            let (_intent, plan) =
                 plan_start_task_operation(context, request.clone()).map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+                    output: render_plan(plan, subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
@@ -70,7 +70,7 @@ pub(crate) fn render_matches_mut(
                 context,
                 runner,
                 &request,
-                &operation,
+                &plan,
                 subcommand.get_flag("yes"),
                 current_open_mode(),
             )

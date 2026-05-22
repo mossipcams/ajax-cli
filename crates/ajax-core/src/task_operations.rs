@@ -61,40 +61,28 @@ pub mod start {
         task_operations::kernel::execute_external_plan_with_success,
     };
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct StartTaskOperationPlan {
-        pub intent: TaskIntent,
-        pub plan: CommandPlan,
-    }
-
     pub fn plan_start_task_operation<R: Registry>(
         context: &CommandContext<R>,
         request: NewTaskRequest,
-    ) -> Result<StartTaskOperationPlan, CommandError> {
+    ) -> Result<(TaskIntent, CommandPlan), CommandError> {
         let task = commands::task_from_new_request(context, &request)?;
         let plan = commands::new_task_plan(context, request)?;
 
-        Ok(StartTaskOperationPlan {
-            intent: task.intent(),
-            plan,
-        })
+        Ok((task.intent(), plan))
     }
 
     pub fn execute_start_task_operation<R: Registry>(
         context: &mut CommandContext<R>,
         runner: &mut impl CommandRunner,
         request: &NewTaskRequest,
-        operation: &StartTaskOperationPlan,
+        plan: &CommandPlan,
         confirmed: bool,
         open_mode: OpenMode,
     ) -> Result<(Vec<CommandOutput>, Task), CommandError> {
         let task = commands::record_new_task(context, request)?;
-        let external_outputs = match execute_external_plan_with_success(
-            &operation.plan,
-            confirmed,
-            runner,
-            |index, _, _| {
-                if let Some(step) = start_step_for_command_index(&operation.plan, index) {
+        let external_outputs =
+            match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
+                if let Some(step) = start_step_for_command_index(plan, index) {
                     commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
                     context
                         .registry
@@ -102,17 +90,15 @@ pub mod start {
                         .map_err(CommandError::Registry)?;
                 }
                 Ok(())
-            },
-        ) {
-            Ok(execution) => execution,
-            Err(error @ CommandError::CommandRun(_)) => {
-                let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        };
-        let mut outputs = operation
-            .plan
+            }) {
+                Ok(execution) => execution,
+                Err(error @ CommandError::CommandRun(_)) => {
+                    let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+        let mut outputs = plan
             .commands
             .iter()
             .zip(external_outputs)
@@ -862,9 +848,7 @@ mod tests {
         DropTaskCompletion, DropTaskOperationPlan,
     };
     use super::kernel::execute_external_plan;
-    use super::start::{
-        execute_start_task_operation, plan_start_task_operation, StartTaskOperationPlan,
-    };
+    use super::start::{execute_start_task_operation, plan_start_task_operation};
     use super::sweep_cleanup::execute_sweep_cleanup_operation;
     use super::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
@@ -1216,6 +1200,7 @@ mod tests {
             .unwrap();
 
         assert!(start_module.contains("execute_external_plan_with_success"));
+        assert!(!start_module.contains("pub struct StartTaskOperationPlan"));
         assert!(!start_module.contains("operation.plan.requires_confirmation"));
         assert!(!start_module.contains("operation.plan.blocked_reasons"));
     }
@@ -1294,8 +1279,7 @@ mod tests {
             agent: "codex".to_string(),
         };
 
-        let StartTaskOperationPlan { intent, plan } =
-            plan_start_task_operation(&context, request).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request).unwrap();
 
         assert_eq!(context.registry.list_tasks().len(), 0);
         assert_eq!(context.registry.list_events().len(), 0);
@@ -1327,14 +1311,14 @@ mod tests {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
         };
-        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = FirstCommandFailsRunner::default();
 
         let error = execute_start_task_operation(
             &mut context,
             &mut runner,
             &request,
-            &operation,
+            &plan,
             true,
             OpenMode::Attach,
         )
@@ -1347,8 +1331,8 @@ mod tests {
                 ..
             })
         ));
-        let task = context.registry.get_task(&operation.intent.id).unwrap();
-        assert_eq!(task.intent(), operation.intent);
+        let task = context.registry.get_task(&intent.id).unwrap();
+        assert_eq!(task.intent(), intent);
         assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
         assert_eq!(
@@ -1372,22 +1356,20 @@ mod tests {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
         };
-        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = RecordingQueuedRunner::default();
 
         execute_start_task_operation(
             &mut context,
             &mut runner,
             &request,
-            &operation,
+            &plan,
             true,
             OpenMode::Attach,
         )
         .unwrap();
 
-        let receipts = context
-            .registry
-            .step_receipts_for_task(&operation.intent.id);
+        let receipts = context.registry.step_receipts_for_task(&intent.id);
         let keys = receipts
             .iter()
             .map(|receipt| {

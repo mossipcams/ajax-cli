@@ -1,10 +1,11 @@
 #[cfg(test)]
-use ajax_core::task_operations::start::{execute_start_task_operation, plan_start_task_operation};
+use ajax_core::task_operations::start::execute_start_task_operation;
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    task_operations::start::plan_start_task_operation,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
@@ -182,10 +183,10 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             title,
             agent: "codex".to_string(),
         };
-        let operation =
+        let (_intent, plan) =
             plan_start_task_operation(context, request.clone()).map_err(command_error)?;
         let (outputs, task) =
-            execute_start_task_operation(context, runner, &request, &operation, true, open_mode)
+            execute_start_task_operation(context, runner, &request, &plan, true, open_mode)
                 .map_err(|error| command_error(error).after_state_change())
                 .inspect_err(|error| {
                     if error.state_changed() {
@@ -258,7 +259,8 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             title,
             agent: "codex".to_string(),
         };
-        let plan = commands::new_task_plan(context, request.clone()).map_err(command_error)?;
+        let (_intent, plan) =
+            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
         execute_new_task_plan_with_task_session(
             context,
             runner,
