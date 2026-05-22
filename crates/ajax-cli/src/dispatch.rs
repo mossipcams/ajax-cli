@@ -199,7 +199,7 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     let operation =
         plan_drop_task_operation(context, task_handle, runner).map_err(command_error)?;
     let operation_confirmed = confirmed || resuming_incomplete || can_observe_before_confirmation;
-    let execution =
+    let (outputs, completion) =
         execute_drop_task_operation(context, task_handle, operation, operation_confirmed, runner)
             .map_err(|error| match error {
             CommandError::ConfirmationRequired | CommandError::PlanBlocked(_) => {
@@ -207,12 +207,12 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
             }
             error => command_error(error).after_state_change(),
         })?;
-    match execution.completion {
+    match completion {
         DropTaskCompletion::Removed => {
-            let output = if execution.outputs.is_empty() {
+            let output = if outputs.is_empty() {
                 format!("removed task: {task_handle}")
             } else {
-                render_execution_outputs(&execution.outputs, None)
+                render_execution_outputs(&outputs, None)
             };
             Ok(RenderedCommand {
                 output,

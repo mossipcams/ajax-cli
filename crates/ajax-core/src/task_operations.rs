@@ -403,12 +403,6 @@ pub mod drop_task {
         TeardownIncomplete,
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct DropTaskOperationExecution {
-        pub outputs: Vec<CommandOutput>,
-        pub completion: DropTaskCompletion,
-    }
-
     pub fn plan_drop_task_operation<R: Registry>(
         context: &mut CommandContext<R>,
         qualified_handle: &str,
@@ -491,7 +485,7 @@ pub mod drop_task {
         operation: DropTaskOperationPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
-    ) -> Result<DropTaskOperationExecution, CommandError> {
+    ) -> Result<(Vec<CommandOutput>, DropTaskCompletion), CommandError> {
         if !operation.blocked_reasons.is_empty() {
             return Err(CommandError::PlanBlocked(operation.blocked_reasons));
         }
@@ -569,10 +563,7 @@ pub mod drop_task {
             &final_observation,
         )?;
 
-        Ok(DropTaskOperationExecution {
-            outputs,
-            completion,
-        })
+        Ok((outputs, completion))
     }
 
     fn unknown_observation() -> DropObservation {
@@ -1304,6 +1295,21 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_returns_plain_execution_result() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let drop_module = source
+            .split("pub mod drop_task")
+            .nth(1)
+            .and_then(|source| source.split("pub mod sweep_cleanup").next())
+            .unwrap();
+
+        assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
+    }
+
+    #[test]
     fn start_operation_plan_returns_task_intent_and_commands_without_mutating_registry() {
         let context = context();
         let request = NewTaskRequest {
@@ -1799,7 +1805,7 @@ mod tests {
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        let execution = execute_drop_task_operation(
+        let (outputs, completion) = execute_drop_task_operation(
             &mut context,
             "web/fix-login",
             operation,
@@ -1808,8 +1814,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(execution.outputs.len(), 3);
-        assert_eq!(execution.completion, DropTaskCompletion::Removed);
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(completion, DropTaskCompletion::Removed);
         assert_eq!(
             context
                 .registry
@@ -1928,7 +1934,7 @@ mod tests {
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        let execution = execute_drop_task_operation(
+        let (outputs, completion) = execute_drop_task_operation(
             &mut context,
             "web/fix-login",
             operation,
@@ -1937,8 +1943,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(execution.outputs.len(), 3);
-        assert_eq!(execution.completion, DropTaskCompletion::Removed);
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(completion, DropTaskCompletion::Removed);
         assert_eq!(
             context
                 .registry
