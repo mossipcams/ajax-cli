@@ -211,6 +211,8 @@ fn generic_transition_allowed(from: LifecycleStatus, to: LifecycleStatus) -> boo
             | (LifecycleStatus::Merged, LifecycleStatus::Error)
             | (LifecycleStatus::Cleanable, LifecycleStatus::Removed)
             | (LifecycleStatus::Cleanable, LifecycleStatus::Error)
+            | (LifecycleStatus::Error, LifecycleStatus::Removing)
+            | (LifecycleStatus::Orphaned, LifecycleStatus::Removing)
             | (LifecycleStatus::Orphaned, LifecycleStatus::Error)
     )
 }
