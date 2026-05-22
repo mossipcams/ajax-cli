@@ -70,12 +70,23 @@ Task operations are the backend transaction boundary for operator actions. They
 plan external effects, apply operation evidence, and return typed outcomes that
 CLI and Cockpit render.
 
+Mutable task operations use local-first reconciliation and step receipts. Before
+planning or retrying a destructive or provisioning command, Ajax should observe
+the relevant substrates and build the next command from fresh evidence. After a
+successful external side effect, Ajax records a named step receipt in SQLite.
+Receipts are Ajax-owned evidence that an operation step succeeded or was skipped
+because the substrate was already in the desired state. They are not authority
+over Git, tmux, or process reality; retries still re-observe those substrates
+before deciding what to skip or repair.
+
 The task operation boundary now owns the main mutable task actions:
 
 - Start operation planning returns `TaskIntent` plus the external command plan
   without mutating the registry.
 - Start operation execution records the task, applies named provisioning steps,
-  marks provisioning failure in core, and opens the task after successful setup.
+  records step receipts for successful provisioning side effects, marks
+  provisioning failure in core with failed-step metadata, and opens the task
+  after successful setup.
 - Single-task command operations plan and execute `resume`, `review`, `repair`,
   and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
   core owns post-execution reducers such as opened, merged, repair/check
@@ -83,8 +94,9 @@ The task operation boundary now owns the main mutable task actions:
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
 - Drop execution runs teardown ops, records step evidence, re-observes external
-  resources, and decides `Removed` versus `TeardownIncomplete` from the final
-  observation inside core.
+  resources, records receipts for successful or already-satisfied cleanup steps,
+  and decides `Removed` versus `TeardownIncomplete` from the final observation
+  inside core.
 - Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
   candidates, executes each candidate, marks completed cleanup state, and
   reports whether an error happened after partial state changes.
@@ -130,9 +142,10 @@ Transient and test state use `InMemoryRegistry`.
 
 SQLite is the fast read model for Ajax task state. It records expected runtime
 identity, last observed Git/tmux evidence, derived runtime health, and typed
-events. Git and tmux still own live substrate reality; Ajax reconciles their
-observations into SQLite so Cockpit, command planning, and JSON output can read
-one coherent task record.
+events. It also stores step receipts for Ajax-owned operation evidence. Git and
+tmux still own live substrate reality; Ajax reconciles their observations into
+SQLite so Cockpit, command planning, and JSON output can read one coherent task
+record.
 
 ### Lifecycle
 
