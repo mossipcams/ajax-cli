@@ -21,7 +21,7 @@ use crate::{
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
-    CliError, RenderedCommand,
+    CliContextPaths, CliError, RenderedCommand,
 };
 
 pub(crate) fn render_cockpit_command(
@@ -62,11 +62,13 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     subcommand: &ArgMatches,
     runner: &mut R,
+    mobile_web_port: u16,
+    paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
     let _mobile_web_companion = if subcommand.get_flag("no-web") {
         None
     } else {
-        start_mobile_web_companion()
+        start_mobile_web_companion(mobile_web_port, paths)
     };
     let mut state_changed = false;
     let mut cockpit_flash = None;
@@ -111,8 +113,16 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
 }
 
 const MOBILE_WEB_HOST: &str = "0.0.0.0";
-const MOBILE_WEB_PORT: u16 = 8787;
-const MOBILE_WEB_ARGS: [&str; 5] = ["web", "--host", "0.0.0.0", "--port", "8787"];
+const STABLE_MOBILE_WEB_PORT: u16 = 8787;
+const DEV_MOBILE_WEB_PORT: u16 = 8788;
+
+pub(crate) fn mobile_web_port_for_command(command: &str) -> u16 {
+    match command {
+        "dev" => DEV_MOBILE_WEB_PORT,
+        "stable" | "cockpit" => STABLE_MOBILE_WEB_PORT,
+        _ => STABLE_MOBILE_WEB_PORT,
+    }
+}
 
 struct MobileWebCompanion {
     child: Child,
@@ -125,8 +135,11 @@ impl Drop for MobileWebCompanion {
     }
 }
 
-fn start_mobile_web_companion() -> Option<MobileWebCompanion> {
-    match TcpListener::bind((MOBILE_WEB_HOST, MOBILE_WEB_PORT)) {
+fn start_mobile_web_companion(
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Option<MobileWebCompanion> {
+    match TcpListener::bind((MOBILE_WEB_HOST, port)) {
         Ok(listener) => drop(listener),
         Err(error) if error.kind() == ErrorKind::AddrInUse => return None,
         Err(error) => {
@@ -143,13 +156,19 @@ fn start_mobile_web_companion() -> Option<MobileWebCompanion> {
         }
     };
     let mut command = Command::new(executable);
+    let port = port.to_string();
     command
-        .args(MOBILE_WEB_ARGS)
+        .args(["web", "--host", MOBILE_WEB_HOST, "--port", port.as_str()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
-    preserve_ajax_context_env(&mut command, "AJAX_STATE");
+    if let Some(paths) = paths {
+        command.env("AJAX_CONFIG", &paths.config_file);
+        command.env("AJAX_STATE", &paths.state_file);
+    } else {
+        preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
+        preserve_ajax_context_env(&mut command, "AJAX_STATE");
+    }
 
     command
         .spawn()
@@ -282,7 +301,7 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
 
 #[cfg(test)]
 mod tests {
-    use super::{build_cockpit_snapshot, refresh_cockpit_snapshot};
+    use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -457,6 +476,13 @@ mod tests {
     }
 
     #[test]
+    fn mobile_web_ports_are_separate_for_stable_and_dev() {
+        assert_eq!(mobile_web_port_for_command("stable"), 8787);
+        assert_eq!(mobile_web_port_for_command("cockpit"), 8787);
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
     fn mobile_web_companion_uses_child_process_and_guard() {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
@@ -466,7 +492,8 @@ mod tests {
         assert!(source.contains("struct MobileWebCompanion"));
         assert!(source.contains("impl Drop for MobileWebCompanion"));
         assert!(source.contains("std::env::current_exe"));
-        assert!(source.contains("[\"web\", \"--host\", \"0.0.0.0\", \"--port\", \"8787\"]"));
+        assert!(source.contains("\"web\", \"--host\", MOBILE_WEB_HOST, \"--port\""));
+        assert!(source.contains("port.to_string"));
     }
 
     #[test]

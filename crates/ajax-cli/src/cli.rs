@@ -38,6 +38,8 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
         .subcommand(web_command())
+        .subcommand(cockpit_alias_command("stable"))
+        .subcommand(cockpit_alias_command("dev"))
         .subcommand(cockpit_command())
 }
 
@@ -141,36 +143,38 @@ fn web_command() -> Command {
 fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
-        .arg(
-            Arg::new("no-web")
-                .long("no-web")
-                .help("Do not auto-start the mobile web companion")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("watch")
-                .long("watch")
-                .help("Keep rendering cockpit frames")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .help("Emit machine-readable JSON")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("interval-ms")
-                .long("interval-ms")
-                .value_name("MILLISECONDS")
-                .default_value("1000"),
-        )
-        .arg(
-            Arg::new("iterations")
-                .long("iterations")
-                .value_name("COUNT")
-                .hide(true),
-        )
+        .args(cockpit_args())
+}
+
+fn cockpit_alias_command(name: &'static str) -> Command {
+    Command::new(name)
+        .about("Start an Ajax Cockpit instance")
+        .args(cockpit_args())
+}
+
+fn cockpit_args() -> Vec<Arg> {
+    vec![
+        Arg::new("no-web")
+            .long("no-web")
+            .help("Do not auto-start the mobile web companion")
+            .action(ArgAction::SetTrue),
+        Arg::new("watch")
+            .long("watch")
+            .help("Keep rendering cockpit frames")
+            .action(ArgAction::SetTrue),
+        Arg::new("json")
+            .long("json")
+            .help("Emit machine-readable JSON")
+            .action(ArgAction::SetTrue),
+        Arg::new("interval-ms")
+            .long("interval-ms")
+            .value_name("MILLISECONDS")
+            .default_value("1000"),
+        Arg::new("iterations")
+            .long("iterations")
+            .value_name("COUNT")
+            .hide(true),
+    ]
 }
 
 fn json_command(name: &'static str) -> Command {

@@ -30,7 +30,8 @@ use crate::supervise::supervise_command_output_and_events;
 #[cfg(feature = "interactive")]
 use crate::{
     cockpit_backend::{
-        refresh_live_context, render_interactive_cockpit_command, render_live_cockpit_command,
+        mobile_web_port_for_command, refresh_live_context, render_interactive_cockpit_command,
+        render_live_cockpit_command,
     },
     task_session::{execute_task_entry_plan, TaskSessionRunner},
 };
@@ -162,17 +163,11 @@ pub(crate) fn render_matches_mut(
             "supervise support is not enabled in this build".to_string(),
         )),
         #[cfg(feature = "interactive")]
-        Some(("cockpit", subcommand)) => {
-            if subcommand.get_flag("json") {
-                return render_refreshed_read_command("cockpit", matches, context, runner);
-            }
-            if subcommand.get_flag("watch") {
-                return render_live_cockpit_command(context, subcommand, runner);
-            }
-            render_interactive_cockpit_command(context, subcommand, runner)
+        Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) => {
+            render_cockpit_entry_command(name, matches, subcommand, context, runner, None)
         }
         #[cfg(not(feature = "interactive"))]
-        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+        Some(("cockpit" | "stable" | "dev", _)) => Err(CliError::CommandFailed(
             "cockpit support is not enabled in this build".to_string(),
         )),
         _ => Ok(RenderedCommand {
@@ -256,6 +251,11 @@ pub(crate) fn render_matches_mut_with_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    #[cfg(feature = "interactive")]
+    if let Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) = matches.subcommand() {
+        return render_cockpit_entry_command(name, matches, subcommand, context, runner, paths);
+    }
+
     if let Some(("web", subcommand)) = matches.subcommand() {
         let host = subcommand
             .get_one::<String>("host")
@@ -293,6 +293,33 @@ pub(crate) fn render_matches_mut_with_paths(
     }
 
     render_matches_mut(matches, context, runner)
+}
+
+#[cfg(feature = "interactive")]
+fn render_cockpit_entry_command<R: CommandRunner>(
+    name: &str,
+    matches: &ArgMatches,
+    subcommand: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    paths: Option<&CliContextPaths>,
+) -> Result<RenderedCommand, CliError> {
+    if subcommand.get_flag("json") {
+        if name != "cockpit" {
+            return render_live_cockpit_command(context, subcommand, runner);
+        }
+        return render_refreshed_read_command(name, matches, context, runner);
+    }
+    if subcommand.get_flag("watch") {
+        return render_live_cockpit_command(context, subcommand, runner);
+    }
+    render_interactive_cockpit_command(
+        context,
+        subcommand,
+        runner,
+        mobile_web_port_for_command(name),
+        paths,
+    )
 }
 
 #[cfg(feature = "interactive")]

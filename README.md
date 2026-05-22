@@ -13,7 +13,7 @@ above them as the operator layer.
 The installed binary is `ajax`. The primary experience is Cockpit:
 
 ```sh
-ajax cockpit
+ajax stable
 ```
 
 ## What Ajax Does
@@ -37,19 +37,18 @@ want to do, then choose a task when the action needs one.
 Typical flow:
 
 ```sh
-ajax cockpit
+ajax stable
 ```
 
 From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
-When native Cockpit starts, Ajax also starts the mobile web Cockpit companion on
-`0.0.0.0:8787` when that port is free. Open `http://<this-machine-ip>:8787`
-from a phone on the same routed network. The companion inherits `AJAX_CONFIG`
-and `AJAX_STATE`, so development runs that point at a development database keep
-the mobile layer on that same database. Use `ajax cockpit --no-web` to keep
-native Cockpit terminal-only.
+When native Cockpit starts through `ajax stable` or `ajax dev`, Ajax also starts
+the mobile web Cockpit companion. Stable serves on `0.0.0.0:8787`; dev serves
+on `0.0.0.0:8788` and uses a separate development state database. Open
+`http://<this-machine-ip>:8787` or `http://<this-machine-ip>:8788` from a phone
+on the same routed network. Use `--no-web` to keep native Cockpit terminal-only.
 
 The same loop is available from the CLI:
 
@@ -94,7 +93,9 @@ environment.
 Ajax reads configuration from `~/.config/ajax/config.toml` unless
 `AJAX_CONFIG` points to another file. Runtime state is stored in
 `~/.local/state/ajax/ajax.db` unless `AJAX_STATE` points to another SQLite
-database path.
+database path. `ajax dev` defaults to `~/.local/state/ajax/ajax-dev.db` and can
+be pointed elsewhere with `AJAX_DEV_STATE`; `AJAX_DEV_CONFIG` can point dev at a
+separate config file.
 
 Minimal configuration:
 
@@ -131,7 +132,7 @@ ajax tasks
 Open the cockpit:
 
 ```sh
-ajax cockpit
+ajax stable
 ```
 
 Start a task from Cockpit, or create a CLI plan before executing it:
@@ -173,10 +174,11 @@ recovery path where Ajax keeps the task visible with attention.
 ## Native Rust Cockpit
 
 Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
-it through the `ajax` command:
+it through the stable or dev Ajax command:
 
 ```sh
-ajax cockpit
+ajax stable
+ajax dev
 ```
 
 Cockpit uses the project-first workflow: choose a project, choose an action, and
@@ -217,6 +219,8 @@ ajax ready
 ajax status
 ajax doctor
 ajax supervise --task web/fix-login --prompt "implement the approved plan"
+ajax stable
+ajax dev
 ajax cockpit
 ajax cockpit --watch
 ```
@@ -232,6 +236,8 @@ ajax inbox --json
 ajax ready --json
 ajax status --json
 ajax doctor --json
+ajax stable --json
+ajax dev --json
 ajax cockpit --json
 ```
 

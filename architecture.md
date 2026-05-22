@@ -276,10 +276,12 @@ session, such as `resume`, remain native-Cockpit only. Git, tmux, SQLite, task
 lifecycle, action policy, and projection rebuilding remain owned by the same
 core and CLI boundaries used by the terminal Cockpit. Native Cockpit starts the
 mobile web layer as a companion `ajax web` process by default and keeps it alive
-for the Cockpit session; `ajax cockpit --no-web` disables the companion. The
-companion inherits `AJAX_CONFIG` and `AJAX_STATE`, so development runs and
-custom state paths keep the mobile layer on the same database as the parent
-Ajax process.
+for the Cockpit session. `ajax stable` starts the companion on port `8787` with
+the stable state database, while `ajax dev` starts it on port `8788` with the
+development state database. `--no-web` disables the companion. The companion is
+started with explicit `AJAX_CONFIG` and `AJAX_STATE` values from the selected
+Ajax context so stable and dev browser sessions stay on their own SQLite
+databases.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

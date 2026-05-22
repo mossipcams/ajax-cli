@@ -104,7 +104,8 @@ pub fn run_with_args(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    let paths = default_context_paths()?;
+    let default_paths = default_context_paths()?;
+    let paths = context_paths_for_matches(&default_paths, &matches);
     let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
@@ -122,6 +123,31 @@ pub fn run_with_args(
     }
 
     Ok(rendered.output)
+}
+
+fn context_paths_for_matches(
+    default_paths: &CliContextPaths,
+    matches: &ArgMatches,
+) -> CliContextPaths {
+    if matches.subcommand().is_some_and(|(name, _)| name == "dev") {
+        return dev_context_paths(default_paths);
+    }
+
+    default_paths.clone()
+}
+
+fn dev_context_paths(default_paths: &CliContextPaths) -> CliContextPaths {
+    let config_file = std::env::var_os("AJAX_DEV_CONFIG")
+        .map(Into::into)
+        .unwrap_or_else(|| default_paths.config_file.clone());
+    let state_file = std::env::var_os("AJAX_DEV_STATE")
+        .map(Into::into)
+        .unwrap_or_else(|| default_paths.state_file.with_file_name("ajax-dev.db"));
+
+    CliContextPaths {
+        config_file,
+        state_file,
+    }
 }
 
 pub fn run_with_context(
@@ -259,8 +285,8 @@ pub(crate) fn command_error(error: CommandError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_cli, run_with_context, run_with_context_and_runner, run_with_context_paths,
-        run_with_context_paths_and_runner, CliContextPaths, CliError,
+        build_cli, context_paths_for_matches, run_with_context, run_with_context_and_runner,
+        run_with_context_paths, run_with_context_paths_and_runner, CliContextPaths, CliError,
     };
     use ajax_core::{
         adapters::{
@@ -782,6 +808,8 @@ mod tests {
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
+            vec!["ajax", "stable"],
+            vec!["ajax", "dev"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
@@ -819,6 +847,22 @@ mod tests {
             super::CliError::CommandFailed(message)
                 if message.contains("interactive cockpit requires command execution support")
         ));
+    }
+
+    #[test]
+    fn dev_command_uses_separate_default_state_database() {
+        let default_paths = CliContextPaths::new(
+            "/Users/matt/.config/ajax/config.toml",
+            "/Users/matt/.local/state/ajax/ajax.db",
+        );
+        let matches = build_cli().try_get_matches_from(["ajax", "dev"]).unwrap();
+
+        let paths = context_paths_for_matches(&default_paths, &matches);
+
+        assert_eq!(
+            paths.state_file,
+            std::path::Path::new("/Users/matt/.local/state/ajax/ajax-dev.db")
+        );
     }
 
     #[test]
