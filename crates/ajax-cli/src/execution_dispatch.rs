@@ -30,7 +30,8 @@ use crate::supervise::supervise_command_output_and_events;
 #[cfg(feature = "interactive")]
 use crate::{
     cockpit_backend::{
-        refresh_live_context, render_interactive_cockpit_command, render_live_cockpit_command,
+        mobile_web_port_for_command, refresh_live_context, render_interactive_cockpit_command,
+        render_live_cockpit_command,
     },
     task_session::{execute_task_entry_plan, TaskSessionRunner},
 };
@@ -40,6 +41,7 @@ use crate::{
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
+    web_backend::{serve_mobile_web, serve_mobile_web_with_paths},
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -89,6 +91,31 @@ pub(crate) fn render_matches_mut(
             render_task_command(kind, subcommand, context, runner, current_open_mode())
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
+        Some(("web", subcommand)) => {
+            let host = subcommand
+                .get_one::<String>("host")
+                .map(String::as_str)
+                .unwrap_or("0.0.0.0");
+            let port = subcommand
+                .get_one::<String>("port")
+                .map(String::as_str)
+                .unwrap_or("8787")
+                .parse::<u16>()
+                .map_err(|_| {
+                    CliError::CommandFailed(format!(
+                        "invalid --port value: {}",
+                        subcommand
+                            .get_one::<String>("port")
+                            .map(String::as_str)
+                            .unwrap_or("8787")
+                    ))
+                })?;
+            serve_mobile_web(host, port, context, runner)?;
+            Ok(RenderedCommand {
+                output: String::new(),
+                state_changed: false,
+            })
+        }
         Some(("tidy", subcommand)) => {
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
@@ -136,17 +163,11 @@ pub(crate) fn render_matches_mut(
             "supervise support is not enabled in this build".to_string(),
         )),
         #[cfg(feature = "interactive")]
-        Some(("cockpit", subcommand)) => {
-            if subcommand.get_flag("json") {
-                return render_refreshed_read_command("cockpit", matches, context, runner);
-            }
-            if subcommand.get_flag("watch") {
-                return render_live_cockpit_command(context, subcommand, runner);
-            }
-            render_interactive_cockpit_command(context, subcommand, runner)
+        Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) => {
+            render_cockpit_entry_command(name, matches, subcommand, context, runner, None)
         }
         #[cfg(not(feature = "interactive"))]
-        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+        Some(("cockpit" | "stable" | "dev", _)) => Err(CliError::CommandFailed(
             "cockpit support is not enabled in this build".to_string(),
         )),
         _ => Ok(RenderedCommand {
@@ -230,6 +251,37 @@ pub(crate) fn render_matches_mut_with_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    #[cfg(feature = "interactive")]
+    if let Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) = matches.subcommand() {
+        return render_cockpit_entry_command(name, matches, subcommand, context, runner, paths);
+    }
+
+    if let Some(("web", subcommand)) = matches.subcommand() {
+        let host = subcommand
+            .get_one::<String>("host")
+            .map(String::as_str)
+            .unwrap_or("0.0.0.0");
+        let port = subcommand
+            .get_one::<String>("port")
+            .map(String::as_str)
+            .unwrap_or("8787")
+            .parse::<u16>()
+            .map_err(|_| {
+                CliError::CommandFailed(format!(
+                    "invalid --port value: {}",
+                    subcommand
+                        .get_one::<String>("port")
+                        .map(String::as_str)
+                        .unwrap_or("8787")
+                ))
+            })?;
+        serve_mobile_web_with_paths(host, port, context, runner, paths)?;
+        return Ok(RenderedCommand {
+            output: String::new(),
+            state_changed: false,
+        });
+    }
+
     if matches
         .subcommand()
         .is_some_and(|(name, _)| name == "doctor")
@@ -241,6 +293,40 @@ pub(crate) fn render_matches_mut_with_paths(
     }
 
     render_matches_mut(matches, context, runner)
+}
+
+#[cfg(feature = "interactive")]
+fn render_cockpit_entry_command<R: CommandRunner>(
+    name: &str,
+    matches: &ArgMatches,
+    subcommand: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    paths: Option<&CliContextPaths>,
+) -> Result<RenderedCommand, CliError> {
+    if subcommand.get_flag("json") {
+        if name != "cockpit" {
+            return render_live_cockpit_command(context, subcommand, runner);
+        }
+        return render_refreshed_read_command(name, matches, context, runner);
+    }
+    if subcommand.get_flag("watch") {
+        return render_live_cockpit_command(context, subcommand, runner);
+    }
+    render_interactive_cockpit_command(
+        context,
+        subcommand,
+        runner,
+        mobile_web_port_for_cockpit_entry(name, paths),
+        paths,
+    )
+}
+
+#[cfg(feature = "interactive")]
+fn mobile_web_port_for_cockpit_entry(name: &str, paths: Option<&CliContextPaths>) -> u16 {
+    paths
+        .map(|paths| mobile_web_port_for_command(&paths.runtime_paths.profile))
+        .unwrap_or_else(|| mobile_web_port_for_command(name))
 }
 
 #[cfg(feature = "interactive")]
@@ -294,6 +380,27 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
         .unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+#[cfg(all(test, feature = "interactive"))]
+mod cockpit_entry_tests {
+    use super::mobile_web_port_for_cockpit_entry;
+    use crate::CliContextPaths;
+    use ajax_core::config::RuntimePathRequest;
+
+    #[test]
+    fn cockpit_entry_mobile_web_port_uses_runtime_profile_over_command_name() {
+        let paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new("/Users/matt")
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+
+        assert_eq!(
+            mobile_web_port_for_cockpit_entry("cockpit", Some(&paths)),
+            8788
+        );
+    }
 }
 
 #[cfg(feature = "interactive")]
@@ -381,5 +488,32 @@ mod tests {
         assert!(!source.contains(&plan_operation));
         assert!(!source.contains(&local_helper));
         assert!(!tidy_dispatch.contains(&wrapper_plan_render));
+    }
+
+    #[test]
+    fn web_dispatch_delegates_to_mobile_web_server() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("Some((\"web\", subcommand))"));
+        assert!(source.contains("serve_mobile_web"));
+    }
+
+    #[test]
+    fn web_dispatch_with_paths_can_persist_mobile_actions() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+        let with_paths_dispatch = source
+            .split("pub(crate) fn render_matches_mut_with_paths")
+            .nth(1)
+            .unwrap();
+
+        assert!(with_paths_dispatch.contains("Some((\"web\", subcommand))"));
+        assert!(with_paths_dispatch.contains("serve_mobile_web"));
+        assert!(with_paths_dispatch.contains("paths"));
     }
 }

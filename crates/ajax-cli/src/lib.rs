@@ -14,6 +14,9 @@ mod snapshot_dispatch;
 mod supervise;
 #[cfg(feature = "interactive")]
 mod task_session;
+mod web_backend;
+mod web_push;
+mod web_tls;
 
 #[cfg(test)]
 use ajax_core::task_operations::task_command::TaskCommandKind;
@@ -35,7 +38,7 @@ use cockpit_actions::{
 #[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{default_context_paths, load_context, load_context_with_events, save_context};
+use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
 #[cfg(test)]
 use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
@@ -103,7 +106,14 @@ pub fn run_with_args(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    let paths = default_context_paths()?;
+    let paths = context_paths_from_matches(&matches)?;
+    if let Some(("runtime", subcommand)) = matches.subcommand() {
+        return snapshot_dispatch::render_runtime_paths(
+            &paths.runtime_paths,
+            subcommand.get_flag("json"),
+        );
+    }
+
     let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
@@ -355,7 +365,9 @@ mod tests {
         )
         .unwrap();
 
-        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
+        // `tokio` is a base dependency of the always-compiled mobile web
+        // companion, so it is intentionally not optional.
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix"] {
             let line = manifest
                 .lines()
                 .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
@@ -367,7 +379,7 @@ mod tests {
         }
 
         assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
-        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\"]"));
     }
 
     #[test]
@@ -713,7 +725,7 @@ mod tests {
     }
 
     fn ajax_binary_path() -> PathBuf {
-        if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax") {
+        if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax-cli") {
             return binary.into();
         }
 
@@ -724,7 +736,11 @@ mod tests {
         let debug_dir = deps_dir
             .parent()
             .expect("test binary should live under target debug deps");
-        debug_dir.join(if cfg!(windows) { "ajax.exe" } else { "ajax" })
+        debug_dir.join(if cfg!(windows) {
+            "ajax-cli.exe"
+        } else {
+            "ajax-cli"
+        })
     }
 
     #[test]
@@ -740,6 +756,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("ajax-cli-empty-context-{}", std::process::id()));
         let output = std::process::Command::new(ajax_binary_path())
+            .args(["start", "--execute"])
             .env("AJAX_CONFIG", directory.join("missing-config.toml"))
             .env("AJAX_STATE", directory.join("missing-state.db"))
             .output()
@@ -747,7 +764,7 @@ mod tests {
         let stderr = String::from_utf8(output.stderr).unwrap();
 
         assert!(!output.status.success());
-        assert!(stderr.contains("command is required; pass --help"));
+        assert!(stderr.contains("task title is required; pass --title"));
         assert!(!stderr.contains("CommandFailed"));
     }
 
@@ -781,6 +798,8 @@ mod tests {
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
+            vec!["ajax", "stable"],
+            vec!["ajax", "dev"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
@@ -1998,9 +2017,9 @@ mod tests {
     #[test]
     fn help_output_is_successful() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "--help"], &context).unwrap();
+        let output = run_with_context(["ajax-cli", "--help"], &context).unwrap();
 
-        assert!(output.contains("Usage: ajax [COMMAND]"));
+        assert!(output.contains("Usage: ajax-cli [OPTIONS] [COMMAND]"));
         assert!(output.contains("Commands:"));
     }
 
@@ -2401,7 +2420,7 @@ mod tests {
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
 
         assert!(readme.contains("native Rust cockpit"));
-        assert!(readme.contains("ajax cockpit"));
+        assert!(readme.contains("ajax-cli cockpit"));
         assert!(readme.contains("project-first workflow"));
         assert!(readme.contains("choose a project"));
         assert!(!readme.contains("Textual"));
@@ -2438,6 +2457,11 @@ mod tests {
         assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
         assert!(release.contains("cargo nextest run --all-features"));
+        let cli_manifest =
+            std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
+        assert!(cli_manifest.contains("[[bin]]\nname = \"ajax-cli\""));
+        assert!(!cli_manifest.contains("name = \"ajax\"\npath = \"src/main.rs\""));
+        assert!(cli_manifest.contains("path = \"src/main.rs\""));
         assert!(agents.contains("Release Please PR title"));
         assert!(agents.contains("feat:"));
         assert!(agents.contains("fix:"));
@@ -2554,7 +2578,7 @@ mod tests {
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
 
-        assert!(smoke.contains("ajax doctor"));
+        assert!(smoke.contains("ajax-cli doctor"));
         assert!(smoke.contains("ajax start"));
         assert!(smoke.contains("ajax supervise --task"));
         assert!(smoke.contains("ajax ship"));
@@ -2577,11 +2601,11 @@ mod tests {
         assert!(smoke.contains("AJAX_SMOKE_FAIL_AFTER_WORKTREE"));
         assert!(smoke.contains("\"lifecycle_status\": \"Error\""));
         assert!(smoke.contains("state export target already exists"));
-        assert!(smoke.contains("target/release/ajax"));
+        assert!(smoke.contains("target/release/ajax-cli"));
         assert!(smoke.contains("cargo build --release -p ajax-cli"));
-        assert!(!smoke.contains("target/debug/ajax"));
+        assert!(!smoke.contains("target/debug/ajax-cli"));
         assert!(smoke.contains("if [[ -z \"${AJAX_BIN:-}\" ]]"));
-        assert!(smoke.contains("ajax binary is not executable"));
+        assert!(smoke.contains("ajax-cli binary is not executable"));
         assert!(readme.contains("scripts/smoke.sh"));
         assert!(!readme.contains("running checks"));
         assert!(!readme.contains("viewing diffs"));
