@@ -5,7 +5,6 @@ const statusLine = document.getElementById("status-line");
 const offlineBanner = document.getElementById("offline-banner");
 const emptyState = document.getElementById("empty-state");
 const refreshButton = document.getElementById("refresh-button");
-const installButton = document.getElementById("install-button");
 const notifyButton = document.getElementById("notify-button");
 
 const REFRESH_INTERVAL_MS = 1000;
@@ -13,7 +12,6 @@ const REFRESH_INTERVAL_MS = 1000;
 const DESTRUCTIVE_ACTIONS = new Set(["drop"]);
 const CONFIRM_TIMEOUT_MS = 3000;
 
-let installPrompt = null;
 let lastFingerprint = null;
 let refreshInFlight = false;
 // Card handles whose detail panel should stay expanded across re-renders.
@@ -132,17 +130,14 @@ function renderRepos(data) {
     byRepo.get(repo).push(card);
   }
   if (!byRepo.size) return;
-  const wrap = el("div", "tasks-wrap");
-  wrap.append(el("div", "section-title", "Tasks"));
   for (const repo of [...byRepo.keys()].sort()) {
     const block = el("section");
     block.append(el("div", "group-title", repo));
     const cards = el("div", "cards");
     for (const card of byRepo.get(repo)) cards.append(taskCard(card));
     block.append(cards);
-    wrap.append(block);
+    repos.append(block);
   }
-  repos.append(wrap);
 }
 
 function summarize(data) {
@@ -304,26 +299,6 @@ document.addEventListener("click", (event) => {
 });
 
 refreshButton.addEventListener("click", () => loadCockpit({ manual: true }));
-
-window.addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  installPrompt = event;
-  installButton.hidden = false;
-});
-
-installButton.addEventListener("click", async () => {
-  if (!installPrompt) return;
-  installButton.disabled = true;
-  installPrompt.prompt();
-  await installPrompt.userChoice;
-  installPrompt = null;
-  installButton.hidden = true;
-  installButton.disabled = false;
-});
-
-window.addEventListener("appinstalled", () => {
-  installButton.hidden = true;
-});
 
 window.addEventListener("online", () => loadCockpit());
 window.addEventListener("offline", () => setOnline(false));

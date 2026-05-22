@@ -46,8 +46,8 @@ header {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px
-    calc(14px + env(safe-area-inset-left));
+  padding: calc(6px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 6px
+    calc(12px + env(safe-area-inset-left));
   background: rgba(16, 20, 26, 0.92);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
@@ -57,12 +57,12 @@ header {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 40px;
+  min-height: 36px;
 }
 
 h1 {
   margin: 0;
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 700;
   letter-spacing: 0.01em;
   flex: none;
@@ -90,7 +90,7 @@ h1 {
 main {
   width: min(760px, 100%);
   margin: 0 auto;
-  padding: 12px calc(14px + env(safe-area-inset-right)) 32px calc(14px + env(safe-area-inset-left));
+  padding: 6px calc(12px + env(safe-area-inset-right)) 16px calc(12px + env(safe-area-inset-left));
 }
 
 .group {
@@ -102,8 +102,8 @@ main {
 }
 
 .section-title {
-  margin: 18px 4px 10px;
-  font-size: 0.92rem;
+  margin: 10px 4px 6px;
+  font-size: 0.86rem;
   font-weight: 700;
   letter-spacing: 0.01em;
   color: var(--text);
@@ -113,34 +113,26 @@ main {
   color: var(--attention);
 }
 
-#inbox + #repos .section-title {
-  margin-top: 26px;
-}
-
 .group-title {
-  margin: 14px 4px 8px;
-  font-size: 0.7rem;
+  margin: 10px 4px 6px;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-.group-title.attention {
-  color: var(--attention);
-}
-
 .cards {
   display: grid;
-  gap: 12px;
+  gap: 6px;
 }
 
 /* Cards ------------------------------------------------------------------ */
 .card {
   position: relative;
-  padding: 14px 14px 14px 16px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--surface);
   border-left: 3px solid var(--line);
   transition: border-color 160ms ease;
@@ -174,16 +166,16 @@ main {
 
 .handle {
   font-weight: 700;
-  font-size: 0.98rem;
-  line-height: 1.3;
+  font-size: 0.92rem;
+  line-height: 1.25;
   overflow-wrap: anywhere;
 }
 
 .badge {
   flex: none;
-  padding: 4px 10px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 0.66rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   white-space: nowrap;
@@ -192,18 +184,29 @@ main {
 }
 
 .summary {
-  margin: 8px 0 0;
-  font-size: 0.9rem;
-  line-height: 1.45;
+  margin: 4px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.35;
   color: var(--muted);
+}
+
+/* Compact (collapsed) cards: one-line summary, primary action only. */
+.card:not(.expanded) .summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card:not(.expanded) .actions .action:not(.primary) {
+  display: none;
 }
 
 /* Actions ---------------------------------------------------------------- */
 .actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 button {
@@ -213,24 +216,27 @@ button {
 
 .action {
   flex: 1 1 auto;
-  min-height: 46px;
-  padding: 10px 16px;
+  min-height: 36px;
+  padding: 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 11px;
+  border-radius: 9px;
   background: var(--surface-2);
   color: var(--text);
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   transition: background 120ms ease, transform 80ms ease;
 }
 
 .action.primary {
-  flex-basis: 100%;
   order: -1;
   border-color: transparent;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 700;
+}
+
+.card.expanded .action.primary {
+  flex-basis: 100%;
 }
 
 .action:disabled {
@@ -262,10 +268,10 @@ button {
 /* Card details (revealed by tapping the card body) ----------------------- */
 .card-details {
   display: none;
-  margin-top: 12px;
-  padding-top: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--line);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
 }
 
 .card.expanded .card-details {

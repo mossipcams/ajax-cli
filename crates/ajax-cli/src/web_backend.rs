@@ -613,7 +613,6 @@ mod tests {
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("id=\"offline-banner\""));
-        assert!(html.contains("id=\"install-button\""));
         assert!(html.contains("id=\"refresh-button\""));
     }
 
@@ -703,7 +702,7 @@ mod tests {
     }
 
     #[test]
-    fn app_script_wires_cockpit_actions_and_install_prompt() {
+    fn app_script_wires_cockpit_actions() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
@@ -713,7 +712,6 @@ mod tests {
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/actions"));
-        assert!(script.contains("beforeinstallprompt"));
     }
 
     #[test]
@@ -722,7 +720,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v5"));
+        assert!(sw_text.contains("ajax-cockpit-v6"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
