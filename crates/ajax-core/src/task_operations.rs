@@ -1761,7 +1761,7 @@ mod tests {
             let operation =
                 plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-            let execution = execute_drop_task_operation(
+            let (_outputs, completion) = execute_drop_task_operation(
                 &mut context,
                 "web/fix-login",
                 operation,
@@ -1770,7 +1770,7 @@ mod tests {
             )
             .unwrap();
 
-            assert_eq!(execution.completion, DropTaskCompletion::Removed);
+            assert_eq!(completion, DropTaskCompletion::Removed);
             assert_eq!(
                 context
                     .registry
