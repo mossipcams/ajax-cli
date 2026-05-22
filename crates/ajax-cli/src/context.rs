@@ -45,6 +45,13 @@ pub(crate) fn context_paths_from_matches(
     context_paths_from_matches_and_env(matches, RuntimeEnv::from_process()?)
 }
 
+pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
+    let matches = crate::build_cli()
+        .try_get_matches_from(["ajax-cli"])
+        .map_err(|error| CliError::CommandFailed(error.to_string()))?;
+    context_paths_from_matches(&matches)
+}
+
 pub(crate) fn context_paths_from_matches_and_env(
     matches: &ArgMatches,
     env: RuntimeEnv,

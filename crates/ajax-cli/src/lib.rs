@@ -15,6 +15,8 @@ mod supervise;
 #[cfg(feature = "interactive")]
 mod task_session;
 mod web_backend;
+mod web_push;
+mod web_tls;
 
 #[cfg(test)]
 use ajax_core::task_operations::task_command::TaskCommandKind;
@@ -363,7 +365,9 @@ mod tests {
         )
         .unwrap();
 
-        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
+        // `tokio` is a base dependency of the always-compiled mobile web
+        // companion, so it is intentionally not optional.
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix"] {
             let line = manifest
                 .lines()
                 .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
@@ -375,7 +379,7 @@ mod tests {
         }
 
         assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
-        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\"]"));
     }
 
     #[test]

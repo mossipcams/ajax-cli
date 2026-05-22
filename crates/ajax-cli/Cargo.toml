@@ -12,7 +12,7 @@ workspace = true
 [features]
 default = ["interactive", "supervisor"]
 interactive = ["dep:ajax-tui", "dep:nix"]
-supervisor = ["dep:ajax-supervisor", "dep:tokio"]
+supervisor = ["dep:ajax-supervisor"]
 
 [[bin]]
 name = "ajax-cli"
@@ -24,6 +24,9 @@ ajax-supervisor = { workspace = true, optional = true }
 ajax-tui = { workspace = true, optional = true }
 clap = { workspace = true }
 nix = { workspace = true, optional = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread"], optional = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"] }
+web-push = { workspace = true }

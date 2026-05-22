@@ -253,11 +253,21 @@ or test-command operation.
 - `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
   It calls core runtime refresh and explicit cockpit projection rebuilds rather
   than owning substrate refresh logic.
-- `web_backend` owns the mobile web presentation shell, HTTP request routing,
-  mobile Cockpit JSON serialization, and mobile-safe action dispatch. It serves
-  the same core Cockpit projection used by native Cockpit and delegates
-  non-interactive task actions to core task operations. It does not own task
-  truth, substrate refresh algorithms, or Git/tmux interpretation.
+- `web_backend` owns the mobile web companion: the HTTPS server, request
+  routing, compiled-in static assets, mobile Cockpit JSON serialization,
+  mobile-safe action dispatch, push subscription endpoints, and the background
+  attention poller. It serves the same core Cockpit projection used by native
+  Cockpit and delegates non-interactive task actions to core task operations. It
+  does not own task truth, substrate refresh algorithms, or Git/tmux
+  interpretation.
+- `web_tls` owns the companion's self-signed TLS identity: it generates a
+  certificate and key on first run, persists them beside the Ajax state
+  database, and builds the rustls server configuration.
+- `web_push` owns the Web Push subsystem: the VAPID identity, persisted browser
+  push subscriptions, and VAPID-signed encrypted notification delivery.
+- The Progressive Web App assets live in `crates/ajax-cli/web/` (HTML shell,
+  stylesheet, client script, web manifest, service worker, and PNG icons) and
+  are compiled into the binary with `include_str!` / `include_bytes!`.
 - `agent_status_cache` owns filesystem reads for hook-backed agent status caches
   such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
@@ -272,19 +282,32 @@ Cockpit is the primary operator surface over the JSON-backed command boundary.
 `ajax-tui` owns native terminal interaction and rendering.
 
 `ajax-cli::web_backend` owns the mobile browser presentation for Cockpit. The
-web layer is intentionally an adapter: it renders a mobile-first HTML shell,
-serves a serialized Cockpit view at `/api/cockpit`, and accepts mobile-safe
-operator actions at `/api/actions`. Actions that require an attached terminal
-session, such as `resume`, remain native-Cockpit only. Git, tmux, SQLite, task
-lifecycle, action policy, and projection rebuilding remain owned by the same
-core and CLI boundaries used by the terminal Cockpit. Native Cockpit starts the
-mobile web layer as a companion `ajax web` process by default and keeps it alive
-for the Cockpit session. `ajax stable` starts the companion on port `8787` with
-the stable state database, while `ajax dev` starts it on port `8788` with the
-development state database. `--no-web` disables the companion. The companion is
-started with explicit `AJAX_CONFIG` and `AJAX_STATE` values from the selected
-Ajax context so stable and dev browser sessions stay on their own SQLite
-databases.
+web layer is intentionally an adapter: it serves a mobile-first Progressive Web
+App, exposes a serialized Cockpit view at `/api/cockpit`, and accepts
+mobile-safe operator actions at `/api/actions`. Actions that require an attached
+terminal session, such as `resume`, remain native-Cockpit only. Git, tmux,
+SQLite, task lifecycle, action policy, and projection rebuilding remain owned by
+the same core and CLI boundaries used by the terminal Cockpit.
+
+The companion serves HTTPS so that browsers grant it a secure context: the
+prerequisite for installing the PWA, running its service worker, and receiving
+Web Push. On first run it generates a self-signed certificate and persists it
+beside the state database; the operator trusts it once on the phone.
+
+Web Push is opt-in. The companion holds a persisted VAPID identity, serves its
+public key at `/api/push/config`, and stores browser subscriptions posted to
+`/api/push/subscribe`. A background attention poller rebuilds the Cockpit view
+on an interval, diffs the attention inbox, and sends a VAPID-signed encrypted
+notification for each task that newly needs attention; subscriptions the push
+service reports as gone are pruned.
+
+Native Cockpit starts the companion as an `ajax-cli web` process by default and
+keeps it alive for the Cockpit session. `ajax-cli` starts the companion on port
+`8787` with the stable state database, while `ajax-cli dev` starts it on port
+`8788` with the development state database. `--no-web` disables the companion.
+The companion is started with explicit `AJAX_PROFILE`, `AJAX_CONFIG`,
+`AJAX_STATE`, and rooted worktree values from the selected Ajax context so
+stable and dev browser sessions stay on their own runtime profile.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

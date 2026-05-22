@@ -2,7 +2,7 @@ use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     models::OperatorAction,
-    output::{InboxResponse, ReposResponse, TaskCard},
+    output::{CockpitView, InboxResponse, ReposResponse, TaskCard},
     registry::InMemoryRegistry,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
@@ -10,19 +10,68 @@ use ajax_core::{
 };
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashSet,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use crate::{
-    command_error, context::save_context, dispatch::execute_observed_drop, CliContextPaths,
-    CliError,
+    command_error, context::save_context, dispatch::execute_observed_drop, web_push, web_tls,
+    CliContextPaths, CliError,
 };
 
 pub(crate) struct HttpResponse {
     pub(crate) status_code: u16,
     pub(crate) content_type: &'static str,
-    pub(crate) body: String,
+    pub(crate) body: Vec<u8>,
+}
+
+/// A compiled-in static web asset served from `crates/ajax-cli/web/`.
+struct StaticAsset {
+    content_type: &'static str,
+    body: &'static [u8],
+}
+
+/// Routes a request path to a compiled-in static asset, if one exists.
+fn static_asset(path: &str) -> Option<StaticAsset> {
+    match path {
+        "/app.css" => Some(StaticAsset {
+            content_type: "text/css; charset=utf-8",
+            body: include_bytes!("../web/app.css"),
+        }),
+        "/app.js" => Some(StaticAsset {
+            content_type: "text/javascript; charset=utf-8",
+            body: include_bytes!("../web/app.js"),
+        }),
+        "/manifest.webmanifest" => Some(StaticAsset {
+            content_type: "application/manifest+json; charset=utf-8",
+            body: include_bytes!("../web/manifest.webmanifest"),
+        }),
+        "/sw.js" => Some(StaticAsset {
+            content_type: "text/javascript; charset=utf-8",
+            body: include_bytes!("../web/sw.js"),
+        }),
+        "/icons/icon-192.png" => Some(StaticAsset {
+            content_type: "image/png",
+            body: include_bytes!("../web/icons/icon-192.png"),
+        }),
+        "/icons/icon-512.png" => Some(StaticAsset {
+            content_type: "image/png",
+            body: include_bytes!("../web/icons/icon-512.png"),
+        }),
+        "/icons/icon-maskable-512.png" => Some(StaticAsset {
+            content_type: "image/png",
+            body: include_bytes!("../web/icons/icon-maskable-512.png"),
+        }),
+        "/icons/apple-touch-icon.png" => Some(StaticAsset {
+            content_type: "image/png",
+            body: include_bytes!("../web/icons/apple-touch-icon.png"),
+        }),
+        _ => None,
+    }
 }
 
 #[derive(Serialize)]
@@ -52,142 +101,7 @@ struct MobileActionRequest {
 }
 
 pub(crate) fn render_mobile_shell() -> String {
-    r##"<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Ajax Mobile Cockpit</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --ink: #171b1f;
-      --muted: #58626d;
-      --paper: #f7f4ed;
-      --panel: #ffffff;
-      --line: #d7d0c5;
-      --accent: #0f766e;
-      --warn: #b45309;
-      --danger: #b91c1c;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: linear-gradient(180deg, #f7f4ed 0%, #edf4f1 100%);
-      color: var(--ink);
-    }
-    header {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      padding: 16px;
-      border-bottom: 1px solid var(--line);
-      background: rgba(247, 244, 237, 0.92);
-      backdrop-filter: blur(12px);
-    }
-    h1 { margin: 0; font-size: 1.15rem; }
-    main { width: min(760px, 100%); margin: 0 auto; padding: 14px; }
-    #task-list { display: grid; gap: 10px; }
-    .card {
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: var(--panel);
-      padding: 14px;
-      box-shadow: 0 1px 0 rgba(23, 27, 31, 0.04);
-    }
-    .row { display: flex; justify-content: space-between; gap: 12px; align-items: start; }
-    .handle { font-weight: 700; overflow-wrap: anywhere; }
-    .state { color: var(--accent); font-weight: 700; white-space: nowrap; }
-    .title { margin-top: 6px; color: var(--muted); }
-    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-    button {
-      min-height: 40px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #f8faf9;
-      color: var(--ink);
-      font: inherit;
-      font-weight: 700;
-      padding: 8px 12px;
-    }
-    .empty { color: var(--muted); padding: 24px 4px; text-align: center; }
-  </style>
-</head>
-<body>
-  <header><h1>Ajax Mobile Cockpit</h1></header>
-  <main>
-    <section id="task-list" aria-live="polite"></section>
-  </main>
-  <script>
-    const list = document.querySelector("#task-list");
-    function button(action, task) {
-      const el = document.createElement("button");
-      el.type = "button";
-      el.textContent = action;
-      el.dataset.action = action;
-      el.dataset.task = task.qualified_handle;
-      return el;
-    }
-    async function runAction(el) {
-      el.disabled = true;
-      const response = await fetch("/api/actions", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          task_handle: el.dataset.task,
-          action: el.dataset.action
-        })
-      });
-      const payload = await response.json();
-      if (payload.cockpit) render(payload.cockpit);
-      else await refresh();
-      if (!response.ok && payload.error) window.alert(payload.error);
-    }
-    function render(data) {
-      list.replaceChildren();
-      if (!data.cards.length) {
-        const empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = "No active Ajax tasks";
-        list.append(empty);
-        return;
-      }
-      for (const task of data.cards) {
-        const card = document.createElement("article");
-        card.className = "card";
-        const row = document.createElement("div");
-        row.className = "row";
-        const handle = document.createElement("div");
-        handle.className = "handle";
-        handle.textContent = task.qualified_handle;
-        const state = document.createElement("div");
-        state.className = "state";
-        state.textContent = task.ui_state;
-        row.append(handle, state);
-        const title = document.createElement("div");
-        title.className = "title";
-        title.textContent = task.live_summary || task.status_label || task.title;
-        const actions = document.createElement("div");
-        actions.className = "actions";
-        for (const action of task.available_actions) actions.append(button(action, task));
-        card.append(row, title, actions);
-        list.append(card);
-      }
-    }
-    async function refresh() {
-      const response = await fetch("/api/cockpit");
-      render(await response.json());
-    }
-    list.addEventListener("click", (event) => {
-      const el = event.target.closest("button[data-action]");
-      if (el) runAction(el).finally(() => { el.disabled = false; });
-    });
-    refresh();
-  </script>
-</body>
-</html>"##
-        .to_string()
+    include_str!("../web/index.html").to_string()
 }
 
 pub(crate) fn cockpit_json(
@@ -210,14 +124,21 @@ pub(crate) fn handle_http_request(
         "/" => Ok(HttpResponse {
             status_code: 200,
             content_type: "text/html; charset=utf-8",
-            body: render_mobile_shell(),
+            body: render_mobile_shell().into_bytes(),
         }),
         "/api/cockpit" => Ok(HttpResponse {
             status_code: 200,
             content_type: "application/json; charset=utf-8",
-            body: cockpit_json(context)?,
+            body: cockpit_json(context)?.into_bytes(),
         }),
-        _ => Ok(text_response(404, "not found")),
+        _ => match static_asset(path) {
+            Some(asset) => Ok(HttpResponse {
+                status_code: 200,
+                content_type: asset.content_type,
+                body: asset.body.to_vec(),
+            }),
+            None => Ok(text_response(404, "not found")),
+        },
     }
 }
 
@@ -229,12 +150,64 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
-    if method == "POST" && path == "/api/actions" {
-        return handle_action_request(body, context, runner, paths);
+    match (method, path) {
+        ("POST", "/api/actions") => return handle_action_request(body, context, runner, paths),
+        ("GET", "/api/push/config") => return handle_push_config(paths),
+        ("POST", "/api/push/subscribe") => return handle_push_subscribe(body, paths),
+        ("POST", "/api/push/unsubscribe") => return handle_push_unsubscribe(body, paths),
+        _ => {}
     }
 
     handle_http_request(method, path, body, context)
         .map_err(|error| CliError::JsonSerialization(error.to_string()))
+}
+
+/// Serves the VAPID application server key the browser needs to subscribe.
+fn handle_push_config(paths: Option<&CliContextPaths>) -> Result<HttpResponse, CliError> {
+    let dir = companion_state_dir(paths)?;
+    let keys = web_push::load_or_create_vapid_keys(&dir)?;
+    json_response(
+        200,
+        serde_json::json!({
+            "public_key": keys.public_key,
+        }),
+    )
+}
+
+/// Stores a browser push subscription so the companion can notify it later.
+fn handle_push_subscribe(
+    body: &str,
+    paths: Option<&CliContextPaths>,
+) -> Result<HttpResponse, CliError> {
+    let subscription: web_push::PushSubscription = match serde_json::from_str(body) {
+        Ok(subscription) => subscription,
+        Err(error) => {
+            return json_response(
+                400,
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            );
+        }
+    };
+    let dir = companion_state_dir(paths)?;
+    web_push::add_subscription(&dir, subscription)?;
+    json_response(200, serde_json::json!({ "ok": true }))
+}
+
+/// Removes a browser push subscription.
+fn handle_push_unsubscribe(
+    body: &str,
+    paths: Option<&CliContextPaths>,
+) -> Result<HttpResponse, CliError> {
+    let request: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let Some(endpoint) = request.get("endpoint").and_then(serde_json::Value::as_str) else {
+        return json_response(
+            400,
+            serde_json::json!({ "ok": false, "error": "endpoint is required" }),
+        );
+    };
+    let dir = companion_state_dir(paths)?;
+    web_push::remove_subscription(&dir, endpoint)?;
+    json_response(200, serde_json::json!({ "ok": true }))
 }
 
 fn handle_action_request(
@@ -306,21 +279,121 @@ pub(crate) fn serve_mobile_web_with_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
+    let cert_dir = companion_state_dir(paths)?;
+    let identity = web_tls::load_or_create_identity(&cert_dir)?;
+    let tls_config = web_tls::tls_server_config(&identity)?;
+
     let listener = TcpListener::bind((host, port))
         .map_err(|error| CliError::CommandFailed(format!("web bind failed: {error}")))?;
-    eprintln!("Ajax mobile web listening on http://{host}:{port}");
+    eprintln!("Ajax mobile web listening on https://{host}:{port}");
 
-    for stream in listener.incoming() {
-        let stream = stream
-            .map_err(|error| CliError::CommandFailed(format!("web accept failed: {error}")))?;
-        serve_connection(stream, context, runner, paths)?;
-    }
+    // The connection loop and the attention poller share one context, so it is
+    // guarded by a mutex. A scoped thread lets the poller borrow it without
+    // requiring a `'static` clone.
+    let shared = Mutex::new(context);
+    std::thread::scope(|scope| {
+        let poller_state = &shared;
+        let poller_dir = cert_dir.clone();
+        scope.spawn(move || run_attention_poller(poller_state, &poller_dir));
+
+        // A failed TLS handshake or connection error must not take down the
+        // companion: log it and keep accepting connections.
+        for stream in listener.incoming() {
+            let stream = match stream {
+                Ok(stream) => stream,
+                Err(error) => {
+                    eprintln!("Ajax web accept error: {error}");
+                    continue;
+                }
+            };
+            let mut guard = shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let context: &mut CommandContext<InMemoryRegistry> = &mut guard;
+            if let Err(error) = serve_tls_connection(stream, &tls_config, context, runner, paths) {
+                eprintln!("Ajax web connection error: {error}");
+            }
+        }
+    });
 
     Ok(())
 }
 
-fn serve_connection(
-    mut stream: TcpStream,
+/// Interval between attention-poll cycles.
+const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+/// Periodically rebuilds the cockpit view and sends a push notification for
+/// every task that has newly entered the attention inbox.
+fn run_attention_poller(state: &Mutex<&mut CommandContext<InMemoryRegistry>>, dir: &Path) {
+    let mut known: HashSet<String> = HashSet::new();
+    loop {
+        std::thread::sleep(ATTENTION_POLL_INTERVAL);
+        let current = {
+            let guard = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            attention_handles(&commands::rebuild_cockpit_view(&**guard))
+        };
+        for handle in newly_attention(&known, &current) {
+            let notification = web_push::PushNotification {
+                title: "Ajax task needs attention".to_string(),
+                body: handle.clone(),
+                tag: handle.clone(),
+            };
+            if let Err(error) = web_push::send_to_all(dir, &notification) {
+                eprintln!("Ajax web push notification failed: {error}");
+            }
+        }
+        known = current;
+    }
+}
+
+/// The set of task handles currently in the attention inbox.
+fn attention_handles(view: &CockpitView) -> HashSet<String> {
+    view.inbox
+        .items
+        .iter()
+        .map(|item| item.task_handle.clone())
+        .collect()
+}
+
+/// The handles present in `current` but not in `previous`, sorted for
+/// deterministic notification ordering.
+fn newly_attention(previous: &HashSet<String>, current: &HashSet<String>) -> Vec<String> {
+    let mut added: Vec<String> = current.difference(previous).cloned().collect();
+    added.sort();
+    added
+}
+
+/// Resolves the directory the companion persists its files in (TLS identity,
+/// VAPID keys, push subscriptions): the directory holding the Ajax state
+/// database.
+fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
+    let state_file = match paths {
+        Some(paths) => paths.state_file.clone(),
+        None => crate::context::default_context_paths()?.state_file,
+    };
+    state_file
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
+}
+
+fn serve_tls_connection(
+    tcp: TcpStream,
+    tls_config: &Arc<rustls::ServerConfig>,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    paths: Option<&CliContextPaths>,
+) -> Result<(), CliError> {
+    let connection = rustls::ServerConnection::new(Arc::clone(tls_config))
+        .map_err(|error| CliError::CommandFailed(format!("web tls session failed: {error}")))?;
+    let stream = rustls::StreamOwned::new(connection, tcp);
+    serve_connection(stream, context, runner, paths)
+}
+
+fn serve_connection<S: Read + Write>(
+    mut stream: S,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
@@ -348,7 +421,7 @@ fn serve_connection(
     write_http_response(stream, response)
 }
 
-fn write_http_response(mut stream: TcpStream, response: HttpResponse) -> Result<(), CliError> {
+fn write_http_response<S: Write>(mut stream: S, response: HttpResponse) -> Result<(), CliError> {
     let status_text = match response.status_code {
         200 => "OK",
         400 => "Bad Request",
@@ -356,17 +429,17 @@ fn write_http_response(mut stream: TcpStream, response: HttpResponse) -> Result<
         405 => "Method Not Allowed",
         _ => "Internal Server Error",
     };
-    let body = response.body.as_bytes();
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         response.status_code,
         status_text,
         response.content_type,
-        body.len()
+        response.body.len()
     );
     stream
         .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(body))
+        .and_then(|_| stream.write_all(&response.body))
+        .and_then(|_| stream.flush())
         .map_err(|error| CliError::CommandFailed(format!("web response write failed: {error}")))
 }
 
@@ -374,7 +447,7 @@ fn text_response(status_code: u16, body: impl Into<String>) -> HttpResponse {
     HttpResponse {
         status_code,
         content_type: "text/plain; charset=utf-8",
-        body: body.into(),
+        body: body.into().into_bytes(),
     }
 }
 
@@ -382,7 +455,7 @@ fn json_response(status_code: u16, value: serde_json::Value) -> Result<HttpRespo
     Ok(HttpResponse {
         status_code,
         content_type: "application/json; charset=utf-8",
-        body: serde_json::to_string(&value)
+        body: serde_json::to_vec(&value)
             .map_err(|error| CliError::JsonSerialization(error.to_string()))?,
     })
 }
@@ -455,8 +528,36 @@ fn mobile_task_card(card: &TaskCard) -> MobileTaskCard {
 mod tests {
     use super::{
         cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
-        render_mobile_shell,
+        newly_attention, render_mobile_shell, serve_connection,
     };
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+    use std::io::{Cursor, Read, Write};
+    use std::rc::Rc;
+
+    /// An in-memory bidirectional stream for exercising the generic connection
+    /// path without binding a socket.
+    struct MockStream {
+        input: Cursor<Vec<u8>>,
+        output: Rc<RefCell<Vec<u8>>>,
+    }
+
+    impl Read for MockStream {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.input.read(buf)
+        }
+    }
+
+    impl Write for MockStream {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.output.borrow_mut().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -474,10 +575,19 @@ mod tests {
         assert!(html.contains("<!doctype html>"));
         assert!(html.contains("name=\"viewport\""));
         assert!(html.contains("width=device-width"));
-        assert!(html.contains("id=\"task-list\""));
-        assert!(html.contains("/api/cockpit"));
-        assert!(html.contains("/api/actions"));
-        assert!(html.contains("method: \"POST\""));
+        assert!(html.contains("href=\"/app.css\""));
+        assert!(html.contains("src=\"/app.js\""));
+    }
+
+    #[test]
+    fn mobile_shell_exposes_redesigned_structure() {
+        let html = render_mobile_shell();
+
+        assert!(html.contains("id=\"inbox\""));
+        assert!(html.contains("id=\"repos\""));
+        assert!(html.contains("id=\"offline-banner\""));
+        assert!(html.contains("id=\"install-button\""));
+        assert!(html.contains("id=\"refresh-button\""));
     }
 
     #[test]
@@ -498,15 +608,112 @@ mod tests {
         let shell = handle_http_request("GET", "/", "", &context).unwrap();
         assert_eq!(shell.status_code, 200);
         assert_eq!(shell.content_type, "text/html; charset=utf-8");
-        assert!(shell.body.contains("Ajax Mobile Cockpit"));
+        assert!(String::from_utf8_lossy(&shell.body).contains("Ajax Mobile Cockpit"));
 
         let cockpit = handle_http_request("GET", "/api/cockpit", "", &context).unwrap();
         assert_eq!(cockpit.status_code, 200);
         assert_eq!(cockpit.content_type, "application/json; charset=utf-8");
         assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&cockpit.body).unwrap()["cards"],
+            serde_json::from_slice::<serde_json::Value>(&cockpit.body).unwrap()["cards"],
             serde_json::json!([])
         );
+    }
+
+    #[test]
+    fn http_router_serves_static_css_and_js() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let css = handle_http_request("GET", "/app.css", "", &context).unwrap();
+        assert_eq!(css.status_code, 200);
+        assert_eq!(css.content_type, "text/css; charset=utf-8");
+        assert!(!css.body.is_empty());
+
+        let js = handle_http_request("GET", "/app.js", "", &context).unwrap();
+        assert_eq!(js.status_code, 200);
+        assert_eq!(js.content_type, "text/javascript; charset=utf-8");
+        assert!(!js.body.is_empty());
+    }
+
+    #[test]
+    fn http_router_serves_web_manifest() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let manifest = handle_http_request("GET", "/manifest.webmanifest", "", &context).unwrap();
+        assert_eq!(manifest.status_code, 200);
+        assert_eq!(
+            manifest.content_type,
+            "application/manifest+json; charset=utf-8"
+        );
+
+        let value: serde_json::Value = serde_json::from_slice(&manifest.body).unwrap();
+        assert!(value["name"].is_string());
+        assert_eq!(value["display"], "standalone");
+        assert!(value["start_url"].is_string());
+        assert!(value["icons"]
+            .as_array()
+            .is_some_and(|icons| !icons.is_empty()));
+    }
+
+    #[test]
+    fn http_router_serves_app_icons() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        for path in [
+            "/icons/icon-192.png",
+            "/icons/icon-512.png",
+            "/icons/icon-maskable-512.png",
+            "/icons/apple-touch-icon.png",
+        ] {
+            let icon = handle_http_request("GET", path, "", &context).unwrap();
+            assert_eq!(icon.status_code, 200, "{path}");
+            assert_eq!(icon.content_type, "image/png", "{path}");
+            assert!(
+                icon.body
+                    .starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+                "{path} is not a PNG"
+            );
+        }
+    }
+
+    #[test]
+    fn app_script_wires_cockpit_actions_and_install_prompt() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
+        let script = String::from_utf8_lossy(&app.body);
+        assert!(script.contains("/api/cockpit"));
+        assert!(script.contains("/api/actions"));
+        assert!(script.contains("beforeinstallprompt"));
+    }
+
+    #[test]
+    fn service_worker_and_app_handle_push_notifications() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
+        let sw_text = String::from_utf8_lossy(&sw.body);
+        assert!(sw_text.contains("\"push\""));
+        assert!(sw_text.contains("notificationclick"));
+        assert!(sw_text.contains("showNotification"));
+
+        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
+        let app_text = String::from_utf8_lossy(&app.body);
+        assert!(app_text.contains("pushManager.subscribe"));
+        assert!(app_text.contains("/api/push/config"));
+        assert!(app_text.contains("/api/push/subscribe"));
+    }
+
+    #[test]
+    fn http_router_serves_service_worker_and_app_registers_it() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
+        assert_eq!(sw.status_code, 200);
+        assert_eq!(sw.content_type, "text/javascript; charset=utf-8");
+        assert!(!sw.body.is_empty());
+
+        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
+        assert!(String::from_utf8_lossy(&app.body).contains("serviceWorker.register"));
     }
 
     #[test]
@@ -515,11 +722,11 @@ mod tests {
 
         let missing = handle_http_request("GET", "/missing", "", &context).unwrap();
         assert_eq!(missing.status_code, 404);
-        assert!(missing.body.contains("not found"));
+        assert!(String::from_utf8_lossy(&missing.body).contains("not found"));
 
         let unsupported = handle_http_request("POST", "/", "", &context).unwrap();
         assert_eq!(unsupported.status_code, 405);
-        assert!(unsupported.body.contains("method not allowed"));
+        assert!(String::from_utf8_lossy(&unsupported.body).contains("method not allowed"));
     }
 
     #[test]
@@ -538,7 +745,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        assert!(response.body.contains("resume requires native cockpit"));
+        assert!(String::from_utf8_lossy(&response.body).contains("resume requires native cockpit"));
     }
 
     #[test]
@@ -555,7 +762,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
@@ -563,6 +770,95 @@ mod tests {
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
         );
+    }
+
+    #[test]
+    fn serve_connection_serves_a_request_over_a_generic_stream() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let stream = MockStream {
+            input: Cursor::new(b"GET /app.css HTTP/1.1\r\nHost: ajax\r\n\r\n".to_vec()),
+            output: Rc::clone(&output),
+        };
+
+        serve_connection(stream, &mut context, &mut runner, None).unwrap();
+
+        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
+        assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
+        assert!(written.contains("Content-Type: text/css"), "{written}");
+    }
+
+    fn scratch_dir(tag: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("ajax-web-be-{tag}-{}-{nanos}", std::process::id()))
+    }
+
+    #[test]
+    fn push_config_and_subscribe_endpoints_round_trip() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let dir = scratch_dir("push");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
+
+        let config = handle_http_request_with_runner_and_paths(
+            "GET",
+            "/api/push/config",
+            "",
+            &mut context,
+            &mut runner,
+            Some(&paths),
+        )
+        .unwrap();
+        assert_eq!(config.status_code, 200);
+        let config_body: serde_json::Value = serde_json::from_slice(&config.body).unwrap();
+        assert_eq!(config_body["public_key"].as_array().map(Vec::len), Some(65));
+
+        let subscribe = handle_http_request_with_runner_and_paths(
+            "POST",
+            "/api/push/subscribe",
+            r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
+            &mut context,
+            &mut runner,
+            Some(&paths),
+        )
+        .unwrap();
+        assert_eq!(subscribe.status_code, 200);
+        assert_eq!(crate::web_push::load_subscriptions(&dir).len(), 1);
+
+        let unsubscribe = handle_http_request_with_runner_and_paths(
+            "POST",
+            "/api/push/unsubscribe",
+            r#"{"endpoint":"https://push.example/x"}"#,
+            &mut context,
+            &mut runner,
+            Some(&paths),
+        )
+        .unwrap();
+        assert_eq!(unsubscribe.status_code, 200);
+        assert!(crate::web_push::load_subscriptions(&dir).is_empty());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn newly_attention_returns_only_freshly_added_handles() {
+        let previous: HashSet<String> = ["web/a".to_string(), "web/b".to_string()]
+            .into_iter()
+            .collect();
+        let current: HashSet<String> = [
+            "web/b".to_string(),
+            "web/c".to_string(),
+            "web/d".to_string(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(newly_attention(&previous, &current), vec!["web/c", "web/d"]);
+        assert!(newly_attention(&current, &current).is_empty());
     }
 
     struct OkRunner;
