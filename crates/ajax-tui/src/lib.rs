@@ -25,8 +25,8 @@ use rendering::task_status_label;
 #[cfg(test)]
 use rendering::{
     action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, inbox_glyph,
-    inbox_item_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
-    render_ui, task_glyph, task_handle_color, ui_state_bucket, StatusBucket,
+    priority_accent, project_glyph, project_name_color, project_subtitle, render_ui, task_glyph,
+    task_handle_color, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -162,11 +162,10 @@ mod tests {
 
     use super::{
         action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, feed_top_row,
-        handle_cockpit_event, inbox_glyph, inbox_item_accent, priority_accent, project_glyph,
-        project_name_color, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
-        task_glyph, task_handle_color, ui_state_bucket, ActionOutcome, App, AppView,
-        CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind,
-        StatusBucket,
+        handle_cockpit_event, inbox_glyph, priority_accent, project_glyph, project_name_color,
+        project_subtitle, render_cockpit, render_ui, selectable_row_layout, task_glyph,
+        task_handle_color, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
+        CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -481,7 +480,7 @@ mod tests {
         assert_eq!(project_name_color(&active_repo), primary_accent());
         assert_eq!(project_name_color(&idle_repo), muted_text());
         assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
-        assert_eq!(inbox_item_accent(&urgent_item), secondary_accent());
+        assert_eq!(priority_accent(urgent_item.severity), secondary_accent());
         assert_eq!(action_glyph("help").content.as_ref(), "?");
         assert_eq!(
             action_glyph("help").style,
@@ -3027,7 +3026,7 @@ mod tests {
             action: OperatorAction::Resume,
         };
 
-        assert_eq!(inbox_item_accent(&item), secondary_accent());
+        assert_eq!(priority_accent(item.severity), secondary_accent());
     }
 
     #[test]

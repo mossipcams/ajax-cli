@@ -1,6 +1,6 @@
 use ajax_core::{
     models::Annotation,
-    output::{AnnotationItem, RepoSummary, TaskCard},
+    output::{RepoSummary, TaskCard},
     ui_state::UiState,
 };
 use ratatui::{
@@ -310,10 +310,6 @@ pub(crate) fn inbox_glyph(color: Color) -> Span<'static> {
     Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
 
-pub(crate) fn inbox_item_accent(item: &AnnotationItem) -> Color {
-    priority_accent(item.severity)
-}
-
 pub(crate) fn priority_accent(priority: u32) -> Color {
     if priority < 20 {
         danger_accent()
@@ -414,7 +410,7 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
     let dim = Style::default().fg(muted_text());
     match s {
         SelectableKind::Inbox(item) => {
-            let accent = inbox_item_accent(item);
+            let accent = priority_accent(item.severity);
             let (repo, task_id) = item
                 .task_handle
                 .split_once('/')
@@ -633,6 +629,7 @@ mod tests {
             "subtle_text",
             "selected_highlight",
             "action_chrome",
+            "inbox_item_accent",
             "task_row_label",
             "selectable_feed_rows",
         ] {
