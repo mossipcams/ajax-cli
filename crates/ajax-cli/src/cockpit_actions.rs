@@ -5,6 +5,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    task_operations::drop_task::plan_drop_confirmation,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
@@ -15,7 +16,7 @@ use crate::render::render_execution_outputs;
 use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
-    dispatch::{drop_task_plan, execute_observed_drop},
+    dispatch::execute_observed_drop,
     execution_dispatch::execute_new_task_plan_with_task_session,
     task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliError,
@@ -71,7 +72,7 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
 
     match action {
         Some(OperatorAction::Drop) => {
-            let plan = drop_task_plan(context, handle).map_err(command_error_as_io)?;
+            let plan = plan_drop_confirmation(context, handle).map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
                 return Ok(ajax_tui::ActionOutcome::Confirm(format!(
                     "press enter again to confirm {}",
@@ -215,12 +216,18 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
         CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
     })?;
-    let operation = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
+    let plan = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
         .map_err(command_error)?;
-    let confirmed = !operation.plan.requires_confirmation;
-    let (outputs, operation_state_changed) =
-        execute_task_command_operation(context, &operation, confirmed, runner)
-            .map_err(|error| task_command_cli_error(error, state_changed))?;
+    let confirmed = !plan.requires_confirmation;
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context,
+        &pending.task_handle,
+        kind,
+        &plan,
+        confirmed,
+        runner,
+    )
+    .map_err(|error| task_command_cli_error(error, state_changed))?;
     *state_changed |= operation_state_changed;
     if kind != TaskCommandKind::Resume {
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
@@ -287,20 +294,26 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
         CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
     })?;
-    let operation =
+    let plan =
         plan_task_command_operation(context, kind, &pending.task_handle, task_entry_open_mode)
             .map_err(command_error)?;
 
     if kind != TaskCommandKind::Resume {
-        let confirmed = !operation.plan.requires_confirmation;
-        let (_outputs, operation_state_changed) =
-            execute_task_command_operation(context, &operation, confirmed, runner)
-                .map_err(|error| task_command_cli_error(error, state_changed))?;
+        let confirmed = !plan.requires_confirmation;
+        let (_outputs, operation_state_changed) = execute_task_command_operation(
+            context,
+            &pending.task_handle,
+            kind,
+            &plan,
+            confirmed,
+            runner,
+        )
+        .map_err(|error| task_command_cli_error(error, state_changed))?;
         *state_changed |= operation_state_changed;
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }
 
-    execute_task_entry_plan(&operation.plan, runner, task_session)?;
+    execute_task_entry_plan(&plan, runner, task_session)?;
     commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
     *state_changed = true;
     Ok(PendingCockpitOutcome::ReturnToCockpit)
