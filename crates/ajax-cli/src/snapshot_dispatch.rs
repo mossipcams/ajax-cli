@@ -70,8 +70,7 @@ pub(crate) fn render_matches_with_paths(
                 task,
                 current_open_mode(),
             )
-            .map_err(command_error)?
-            .plan;
+            .map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("review", subcommand)) => {
