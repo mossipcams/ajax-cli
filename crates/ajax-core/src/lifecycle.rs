@@ -243,6 +243,8 @@ mod tests {
     #[case(LifecycleStatus::Merged, LifecycleStatus::Removing)]
     #[case(LifecycleStatus::Merged, LifecycleStatus::Cleanable)]
     #[case(LifecycleStatus::Cleanable, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Error, LifecycleStatus::Removing)]
+    #[case(LifecycleStatus::Orphaned, LifecycleStatus::Removing)]
     #[case(LifecycleStatus::Removing, LifecycleStatus::TeardownIncomplete)]
     #[case(LifecycleStatus::TeardownIncomplete, LifecycleStatus::Removing)]
     #[case(LifecycleStatus::Removing, LifecycleStatus::Removed)]

@@ -132,31 +132,6 @@ fn leave_terminal_mode(output: &mut impl io::Write) -> io::Result<()> {
     execute!(output, LeaveAlternateScreen, DisableMouseCapture)
 }
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TerminalModeCommand {
-    EnterAlternateScreen,
-    EnableMouseCapture,
-    LeaveAlternateScreen,
-    DisableMouseCapture,
-}
-
-#[cfg(test)]
-pub(crate) fn terminal_entry_commands() -> &'static [TerminalModeCommand] {
-    &[
-        TerminalModeCommand::EnterAlternateScreen,
-        TerminalModeCommand::EnableMouseCapture,
-    ]
-}
-
-#[cfg(test)]
-pub(crate) fn terminal_exit_commands() -> &'static [TerminalModeCommand] {
-    &[
-        TerminalModeCommand::LeaveAlternateScreen,
-        TerminalModeCommand::DisableMouseCapture,
-    ]
-}
-
 fn run_event_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     app: &mut App,
@@ -170,7 +145,7 @@ fn run_event_loop<B: Backend>(
             .size()
             .map_err(|_| io::Error::other("terminal backend size error"))?
             .height as usize;
-        let feed_height = crate::visible_feed_height(app, height);
+        let feed_height = crate::feed_screen_rows(app, height).len();
 
         let notices_changed = app.tick_notices();
         let mut refreshed = false;
@@ -240,27 +215,46 @@ fn poll_timeout(
 mod tests {
     use std::time::{Duration, Instant};
 
+    use crossterm::{
+        event::{DisableMouseCapture, EnableMouseCapture},
+        execute,
+        terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+    };
+
     use super::{
-        poll_timeout, should_draw, should_refresh, terminal_entry_commands, terminal_exit_commands,
-        TerminalModeCommand,
+        enter_terminal_mode, leave_terminal_mode, poll_timeout, should_draw, should_refresh,
     };
 
     #[test]
-    fn terminal_mode_command_contract_lists_entry_and_exit_commands() {
-        assert_eq!(
-            terminal_entry_commands(),
-            &[
-                TerminalModeCommand::EnterAlternateScreen,
-                TerminalModeCommand::EnableMouseCapture,
-            ]
-        );
-        assert_eq!(
-            terminal_exit_commands(),
-            &[
-                TerminalModeCommand::LeaveAlternateScreen,
-                TerminalModeCommand::DisableMouseCapture,
-            ]
-        );
+    fn terminal_mode_helpers_write_crossterm_commands() {
+        let mut entry = Vec::new();
+        let mut expected_entry = Vec::new();
+        enter_terminal_mode(&mut entry).unwrap();
+        execute!(expected_entry, EnterAlternateScreen, EnableMouseCapture).unwrap();
+
+        let mut exit = Vec::new();
+        let mut expected_exit = Vec::new();
+        leave_terminal_mode(&mut exit).unwrap();
+        execute!(expected_exit, LeaveAlternateScreen, DisableMouseCapture).unwrap();
+
+        assert_eq!(entry, expected_entry);
+        assert_eq!(exit, expected_exit);
+    }
+
+    #[test]
+    fn terminal_mode_tests_do_not_keep_command_mirror() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .unwrap();
+
+        let command_mirror = ["enum ", "TerminalModeCommand"].concat();
+        let entry_helper = ["fn ", "terminal_entry_commands"].concat();
+        let exit_helper = ["fn ", "terminal_exit_commands"].concat();
+
+        assert!(!source.contains(&command_mirror));
+        assert!(!source.contains(&entry_helper));
+        assert!(!source.contains(&exit_helper));
     }
 
     #[test]

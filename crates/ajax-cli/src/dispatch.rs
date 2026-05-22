@@ -57,7 +57,7 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     }
 
     let (outputs, operation_state_changed) = execute_task_command_operation(
-        context, task, kind, &plan, confirmed, runner,
+        context, kind, task, &plan, confirmed, runner,
     )
     .map_err(|(error, error_state_changed)| {
         let cli_error = command_error(error);
@@ -253,13 +253,14 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
         )
         .unwrap();
+        let render_core_task_command = ["fn render_", "core_task_command"].concat();
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
             .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
             .unwrap();
 
-        assert!(!render_task_command.contains("fn render_core_task_command"));
+        assert!(!source.contains(&render_core_task_command));
         assert!(render_task_command.contains("plan_task_command_operation"));
         assert!(render_task_command.contains("execute_task_command_operation"));
     }
@@ -295,7 +296,7 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("pub(crate) fn render_drop_command").next())
+            .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
             .unwrap();
         let execute_plan = ["commands::execute", "_plan(&plan"].concat();
         let apply_after_execute = ["apply_after", "_execute"].concat();

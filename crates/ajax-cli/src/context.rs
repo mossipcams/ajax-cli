@@ -1,7 +1,7 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, ConfigPaths},
-    registry::{InMemoryRegistry, RegistryStore, SqliteRegistryStore},
+    registry::{InMemoryRegistry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore},
 };
 use std::path::PathBuf;
 
@@ -43,24 +43,18 @@ pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
 pub(crate) fn load_context(
     paths: &CliContextPaths,
 ) -> Result<CommandContext<InMemoryRegistry>, CliError> {
-    load_context_with_event_mode(paths, EventLoadMode::TasksOnly)
+    load_context_with_loader(paths, SqliteRegistryStore::load_tasks_only)
 }
 
 pub(crate) fn load_context_with_events(
     paths: &CliContextPaths,
 ) -> Result<CommandContext<InMemoryRegistry>, CliError> {
-    load_context_with_event_mode(paths, EventLoadMode::Full)
+    load_context_with_loader(paths, SqliteRegistryStore::load)
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum EventLoadMode {
-    TasksOnly,
-    Full,
-}
-
-fn load_context_with_event_mode(
+fn load_context_with_loader(
     paths: &CliContextPaths,
-    event_load_mode: EventLoadMode,
+    load_registry: fn(&SqliteRegistryStore) -> Result<InMemoryRegistry, RegistrySnapshotError>,
 ) -> Result<CommandContext<InMemoryRegistry>, CliError> {
     let config = if paths.config_file.exists() {
         let contents = std::fs::read_to_string(&paths.config_file)
@@ -73,11 +67,8 @@ fn load_context_with_event_mode(
     let store = SqliteRegistryStore::new(&paths.state_file);
     let registry = if paths.state_file.exists() {
         reject_legacy_json_state(&paths.state_file)?;
-        match event_load_mode {
-            EventLoadMode::TasksOnly => store.load_tasks_only(),
-            EventLoadMode::Full => store.load(),
-        }
-        .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
+        load_registry(&store)
+            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
     } else {
         InMemoryRegistry::default()
     };
@@ -127,6 +118,17 @@ mod tests {
             InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
         },
     };
+
+    #[test]
+    fn context_load_uses_store_loader_without_event_mode() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context.rs"),
+        )
+        .unwrap();
+        let event_load_mode = ["Event", "LoadMode"].concat();
+
+        assert!(!source.contains(&event_load_mode));
+    }
 
     #[test]
     fn ordinary_context_load_skips_registry_event_history() {
