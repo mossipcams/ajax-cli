@@ -6,7 +6,7 @@ use ajax_core::{
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
-use std::time::Duration;
+use std::{io::Write, time::Duration};
 
 use crate::{
     agent_status_cache::TmuxAgentStatusCache,
@@ -133,6 +133,51 @@ pub(crate) fn render_live_cockpit_command<R: CommandRunner>(
     })
 }
 
+pub(crate) fn stream_live_cockpit_command<R, W, P>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    matches: &ArgMatches,
+    runner: &mut R,
+    writer: &mut W,
+    mut persist: P,
+) -> Result<bool, CliError>
+where
+    R: CommandRunner,
+    W: Write,
+    P: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CliError>,
+{
+    let iterations = parse_optional_u32_arg(matches, "iterations")?.map(|value| value.max(1));
+    let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
+    let json = matches.get_flag("json");
+
+    let mut state_changed = false;
+    let mut index = 0;
+
+    loop {
+        if index > 0 && interval > 0 {
+            std::thread::sleep(Duration::from_millis(interval));
+        }
+        let changed = refresh_live_context(context, runner)?;
+        state_changed |= changed;
+        if changed {
+            persist(context)?;
+        }
+
+        let frame = if json {
+            render_response(commands::cockpit(context), true, |_| String::new())?
+        } else {
+            render_cockpit_frame(context)
+        };
+        if !write_stream_frame(writer, &frame)? {
+            return Ok(state_changed);
+        }
+
+        index += 1;
+        if iterations.is_some_and(|limit| index >= limit) {
+            return Ok(state_changed);
+        }
+    }
+}
+
 pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -203,6 +248,17 @@ fn parse_u32_arg(matches: &ArgMatches, name: &str, default: u32) -> Result<u32, 
         .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
 }
 
+fn parse_optional_u32_arg(matches: &ArgMatches, name: &str) -> Result<Option<u32>, CliError> {
+    let Some(value) = matches.get_one::<String>(name) else {
+        return Ok(None);
+    };
+
+    value
+        .parse::<u32>()
+        .map(Some)
+        .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
+}
+
 fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, CliError> {
     let Some(value) = matches.get_one::<String>(name) else {
         return Ok(default);
@@ -211,6 +267,25 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
     value
         .parse::<u64>()
         .map_err(|_| CliError::CommandFailed(format!("invalid --{name} value: {value}")))
+}
+
+fn write_stream_frame(writer: &mut impl Write, frame: &str) -> Result<bool, CliError> {
+    for chunk in [frame.as_bytes(), b"\n\n"] {
+        if let Err(error) = writer.write_all(chunk) {
+            if error.kind() == std::io::ErrorKind::BrokenPipe {
+                return Ok(false);
+            }
+            return Err(CliError::CommandFailed(error.to_string()));
+        }
+    }
+    if let Err(error) = writer.flush() {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            return Ok(false);
+        }
+        return Err(CliError::CommandFailed(error.to_string()));
+    }
+
+    Ok(true)
 }
 
 #[cfg(test)]
