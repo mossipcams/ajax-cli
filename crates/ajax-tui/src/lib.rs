@@ -21,9 +21,8 @@ use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
 #[cfg(test)]
 use rendering::{
-    action_glyph, bucket_color, bucket_glyph, card_bucket, inbox_glyph, priority_accent,
-    project_glyph, project_name_color, project_subtitle, render_ui, task_glyph, task_handle_color,
-    ui_state_bucket, StatusBucket,
+    action_glyph, bucket_color, bucket_glyph, inbox_glyph, priority_accent, project_glyph,
+    project_name_color, project_subtitle, render_ui, task_glyph, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -150,11 +149,11 @@ mod tests {
     };
 
     use super::{
-        action_glyph, bucket_color, bucket_glyph, card_bucket, feed_top_row, handle_cockpit_event,
-        inbox_glyph, priority_accent, project_glyph, project_name_color, project_subtitle,
-        render_cockpit, render_ui, selectable_row_layout, task_glyph, task_handle_color,
-        ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
-        EventLoopAction, PendingAction, SelectableKind, StatusBucket,
+        action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event, inbox_glyph,
+        priority_accent, project_glyph, project_name_color, project_subtitle, render_cockpit,
+        render_ui, selectable_row_layout, task_glyph, ui_state_bucket, ActionOutcome, App, AppView,
+        CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind,
+        StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -754,14 +753,10 @@ mod tests {
         )];
         let card = &tasks[0];
 
-        assert_eq!(card_bucket(card), StatusBucket::NeedsYou);
+        assert_eq!(ui_state_bucket(card.ui_state), StatusBucket::NeedsYou);
         assert_eq!(
             task_glyph(card).style.fg,
             Some(bucket_color(StatusBucket::NeedsYou))
-        );
-        assert_eq!(
-            task_handle_color(card),
-            bucket_color(StatusBucket::NeedsYou)
         );
     }
 

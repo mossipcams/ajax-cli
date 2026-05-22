@@ -87,10 +87,6 @@ pub(crate) fn ui_state_bucket(state: UiState) -> StatusBucket {
     }
 }
 
-pub(crate) fn card_bucket(card: &TaskCard) -> StatusBucket {
-    ui_state_bucket(card.ui_state)
-}
-
 pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     let mut parts = vec![Span::styled(
         " Ajax",
@@ -268,17 +264,13 @@ fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
 }
 
 pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
-    let bucket = card_bucket(card);
+    let bucket = ui_state_bucket(card.ui_state);
     Span::styled(
         bucket_glyph(bucket),
         Style::default()
             .fg(bucket_color(bucket))
             .add_modifier(Modifier::BOLD),
     )
-}
-
-pub(crate) fn task_handle_color(card: &TaskCard) -> Color {
-    bucket_color(card_bucket(card))
 }
 
 pub(crate) fn project_glyph(repo: &RepoSummary) -> Span<'static> {
@@ -358,7 +350,9 @@ fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
     vec![
         Span::styled(
             t.qualified_handle.clone(),
-            Style::default().fg(task_handle_color(t)).add_modifier(bold),
+            Style::default()
+                .fg(bucket_color(ui_state_bucket(t.ui_state)))
+                .add_modifier(bold),
         ),
         column_separator(),
         Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
@@ -625,7 +619,9 @@ mod tests {
             "selected_highlight",
             "action_chrome",
             "action_label_style",
+            "card_bucket",
             "inbox_item_accent",
+            "task_handle_color",
             "task_status_label",
             "task_row_label",
             "selectable_feed_rows",
