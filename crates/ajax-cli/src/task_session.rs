@@ -135,12 +135,6 @@ struct TaskAttachExit {
     attached_for: Duration,
 }
 
-#[derive(Debug)]
-enum TaskSessionOutcome {
-    Detached,
-    AttachClientExited(TaskAttachExit),
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TerminalOwnedSequence {
     FocusReport { len: usize },
@@ -485,11 +479,11 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             &mut terminal.output,
             &mut trace,
         )? {
-            TaskSessionOutcome::Detached => {
+            None => {
                 trace.log("session_end", "outcome=detached");
                 return Ok(());
             }
-            TaskSessionOutcome::AttachClientExited(exit) => {
+            Some(exit) => {
                 if !attach_exit_allows_retry(&exit) {
                     trace.log(
                         "session_end",
@@ -533,7 +527,7 @@ fn run_pty_task_attach(
     terminal_input: &mut File,
     terminal_output: &mut File,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
     // either execs the requested command or exits immediately.
@@ -665,7 +659,7 @@ fn pump_task_pty(
     master: OwnedFd,
     child: nix::unistd::Pid,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
     let mut pty_output = [0_u8; 8192];
@@ -799,7 +793,7 @@ fn attach_client_exit(
     output: Vec<u8>,
     attached_for: Duration,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     let status = wait_for_attach_child_status(child)?;
     trace.log(
         "child_status",
@@ -809,7 +803,7 @@ fn attach_client_exit(
             output.len()
         ),
     );
-    Ok(TaskSessionOutcome::AttachClientExited(TaskAttachExit {
+    Ok(Some(TaskAttachExit {
         output,
         status,
         attached_for,
@@ -839,10 +833,10 @@ fn wait_for_attach_child_status(child: nix::unistd::Pid) -> Result<Option<WaitSt
 fn detach_task_child(
     master: File,
     child: nix::unistd::Pid,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     drop(master);
     request_task_child_exit(child)?;
-    Ok(TaskSessionOutcome::Detached)
+    Ok(None)
 }
 
 fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
@@ -1321,8 +1315,10 @@ mod tests {
         let source = include_str!("task_session.rs");
         let terminal_source_type = ["TaskOperator", "TerminalSource"].concat();
         let terminal_source_fn = ["task_operator", "_terminal_source"].concat();
+        let session_outcome_type = ["TaskSession", "Outcome"].concat();
         assert!(!source.contains(&terminal_source_type));
         assert!(!source.contains(&terminal_source_fn));
+        assert!(!source.contains(&session_outcome_type));
     }
 
     #[test]
