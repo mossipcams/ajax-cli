@@ -49,8 +49,14 @@ pub(crate) fn render_matches_mut(
     runner: &mut impl CommandRunner,
 ) -> Result<RenderedCommand, CliError> {
     match matches.subcommand() {
-        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "ready" | "status"), _)) => {
-            render_refreshed_read_command(name, matches, context, runner)
+        Some((name @ ("repos" | "tasks" | "next" | "inbox" | "ready" | "status"), subcommand)) => {
+            render_refreshed_read_command(
+                name,
+                subcommand.get_flag("json"),
+                matches,
+                context,
+                runner,
+            )
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
@@ -141,7 +147,7 @@ pub(crate) fn render_matches_mut(
                 return render_live_cockpit_command(context, subcommand, runner);
             }
             if subcommand.get_flag("json") {
-                return render_refreshed_read_command("cockpit", matches, context, runner);
+                return render_refreshed_read_command("cockpit", true, matches, context, runner);
             }
             render_interactive_cockpit_command(context, subcommand, runner)
         }
@@ -157,12 +163,13 @@ pub(crate) fn render_matches_mut(
 }
 
 fn render_refreshed_read_command<R: CommandRunner>(
-    _name: &str,
+    name: &str,
+    json: bool,
     matches: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let changed = refresh_read_context(context, runner)?;
+    let changed = refresh_read_context(name, json, context, runner)?;
     Ok(RenderedCommand {
         output: render_snapshot_matches(matches, context)?,
         state_changed: changed,
@@ -171,9 +178,14 @@ fn render_refreshed_read_command<R: CommandRunner>(
 
 #[cfg(feature = "interactive")]
 fn refresh_read_context<R: CommandRunner>(
+    name: &str,
+    json: bool,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
+    if json || name == "cockpit" {
+        return refresh_live_context(context, runner);
+    }
     if !read_context_needs_live_refresh(context) {
         return Ok(false);
     }
@@ -182,6 +194,8 @@ fn refresh_read_context<R: CommandRunner>(
 
 #[cfg(not(feature = "interactive"))]
 fn refresh_read_context<R: CommandRunner>(
+    _name: &str,
+    _json: bool,
     _context: &mut CommandContext<InMemoryRegistry>,
     _runner: &mut R,
 ) -> Result<bool, CliError> {

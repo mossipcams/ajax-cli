@@ -954,6 +954,35 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
+        let mut context = sample_context();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.runtime_projection = RuntimeProjection::new(
+                RuntimeHealth::Healthy,
+                SystemTime::now(),
+                RuntimeObservationSource::TmuxProbe,
+            );
+        }
+        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+
+        let output =
+            run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["live_status"]["summary"],
+            "agent running"
+        );
+    }
+
+    #[test]
     fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
         let mut context = sample_context();
         let task = context
@@ -1075,6 +1104,44 @@ mod tests {
     }
 
     #[test]
+    fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
+        for command in [
+            vec!["ajax", "tasks", "--json"],
+            vec!["ajax", "status", "--json"],
+            vec!["ajax", "cockpit", "--json"],
+        ] {
+            let mut context = sample_context();
+            {
+                let task = context
+                    .registry
+                    .get_task_mut(&TaskId::new("task-1"))
+                    .unwrap();
+                task.lifecycle_status = LifecycleStatus::Active;
+                task.remove_side_flag(SideFlag::NeedsInput);
+                task.runtime_projection = RuntimeProjection::new(
+                    RuntimeHealth::Healthy,
+                    SystemTime::now(),
+                    RuntimeObservationSource::TmuxProbe,
+                );
+            }
+
+            let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+            let output = run_with_context_and_runner(command.clone(), &mut context, &mut runner)
+                .unwrap_or_else(|error| panic!("{command:?} failed: {error}"));
+            let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+            let task_json = if command[1] == "cockpit" {
+                &parsed["tasks"]["tasks"]
+            } else {
+                &parsed["tasks"]
+            };
+
+            assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
+            assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
+            assert_eq!(runner.commands, tmux_live_commands(), "{command:?}");
+        }
+    }
+
+    #[test]
     fn read_commands_share_live_refresh_contract() {
         for args in [
             vec!["ajax", "repos", "--json"],
@@ -1137,8 +1204,7 @@ mod tests {
         let mut runner = QueuedRunner::default();
 
         let output =
-            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
-                .unwrap();
+            run_with_context_and_runner(["ajax", "tasks"], &mut context, &mut runner).unwrap();
 
         assert!(output.contains("web/fix-login"));
         assert!(runner.commands.is_empty());
