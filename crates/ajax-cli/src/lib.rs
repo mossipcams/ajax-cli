@@ -1,6 +1,5 @@
 #[cfg(feature = "interactive")]
 mod agent_status_cache;
-mod classifiers;
 mod cli;
 #[cfg(feature = "interactive")]
 mod cockpit_actions;
@@ -292,6 +291,16 @@ mod tests {
         time::SystemTime,
     };
 
+    #[test]
+    fn cli_does_not_keep_duplicate_conflict_classifier_module() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let duplicate_module_decl = ["mod ", "classifiers;"].concat();
+
+        assert!(!lib_source.contains(&duplicate_module_decl));
+        assert!(!manifest_dir.join("src/classifiers.rs").exists());
+    }
+
     fn sample_context() -> CommandContext<InMemoryRegistry> {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
@@ -400,18 +409,6 @@ mod tests {
             assert!(snapshot.cards.is_empty(), "{flag:?}");
             assert!(snapshot.inbox.items.is_empty(), "{flag:?}");
         }
-    }
-
-    #[test]
-    fn classifiers_module_detects_merge_conflict_errors() {
-        let error = CommandRunError::NonZeroExit {
-            program: "git".to_string(),
-            status_code: 1,
-            stderr: "Automatic merge failed; fix conflicts and then commit.".to_string(),
-            cwd: None,
-        };
-
-        assert!(crate::classifiers::command_error_looks_conflicted(&error));
     }
 
     #[test]
