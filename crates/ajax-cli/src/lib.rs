@@ -132,7 +132,7 @@ pub fn run_with_context(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    render_snapshot_matches(&matches, context)
+    snapshot_dispatch::render_snapshot_matches(&matches, context)
 }
 
 pub fn run_with_context_and_runner(
@@ -192,13 +192,6 @@ pub fn run_with_context_paths_and_runner(
 pub(crate) struct RenderedCommand {
     pub(crate) output: String,
     pub(crate) state_changed: bool,
-}
-
-fn render_snapshot_matches(
-    matches: &ArgMatches,
-    context: &CommandContext<InMemoryRegistry>,
-) -> Result<String, CliError> {
-    snapshot_dispatch::render_snapshot_matches(matches, context)
 }
 
 // The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
@@ -307,7 +300,11 @@ mod tests {
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs"))
                 .unwrap();
 
-        for wrapper in ["repos_command", "executable_task_command"] {
+        for wrapper in [
+            "repos_command",
+            "executable_task_command",
+            "executable_new_command",
+        ] {
             let function_name = ["fn ", wrapper].concat();
             assert!(!cli_source.contains(&function_name), "{wrapper}");
         }
@@ -1223,10 +1220,11 @@ mod tests {
     fn snapshot_only_read_dispatch_is_explicitly_named() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-        let snapshot_dispatch = ["fn render_", "snapshot_matches("].concat();
+        let wrapper = ["fn ", "render_snapshot_matches"].concat();
 
-        assert!(lib_source.contains(&snapshot_dispatch));
+        assert!(lib_source.contains("snapshot_dispatch::render_snapshot_matches"));
         assert!(lib_source.contains("render_refreshed_read_command"));
+        assert!(!lib_source.contains(&wrapper));
     }
 
     #[test]

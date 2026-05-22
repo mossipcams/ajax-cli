@@ -250,30 +250,6 @@ fn column_separator() -> Span<'static> {
     Span::styled("|", Style::default().fg(subtle_text()))
 }
 
-fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
-    let bold = Modifier::BOLD;
-    let mut action_chars = t.primary_action.as_str().chars();
-    let action_label = match action_chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + action_chars.as_str(),
-        None => String::new(),
-    };
-    let chrome = crate::actions::operator_action_chrome(t.primary_action);
-    vec![
-        Span::styled(
-            t.qualified_handle.clone(),
-            Style::default()
-                .fg(bucket_color(ui_state_bucket(t.ui_state)))
-                .add_modifier(bold),
-        ),
-        column_separator(),
-        Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
-        column_separator(),
-        Span::styled(action_label, chrome.label_style),
-        Span::raw(" "),
-        Span::styled(chrome.glyph.to_string(), chrome.glyph_style),
-    ]
-}
-
 fn render_row(
     is_selected: bool,
     glyph: Span<'static>,
@@ -368,7 +344,29 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                 actions::action_chrome(action).label_style,
             )],
         ),
-        SelectableKind::Task(t) => render_row(is_selected, task_glyph(t), task_row_spans(t)),
+        SelectableKind::Task(t) => {
+            let label = t.primary_action.as_str();
+            let action_label = format!("{}{}", label[..1].to_uppercase(), &label[1..]);
+            let chrome = crate::actions::operator_action_chrome(t.primary_action);
+            render_row(
+                is_selected,
+                task_glyph(t),
+                vec![
+                    Span::styled(
+                        t.qualified_handle.clone(),
+                        Style::default()
+                            .fg(bucket_color(ui_state_bucket(t.ui_state)))
+                            .add_modifier(bold),
+                    ),
+                    column_separator(),
+                    Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
+                    column_separator(),
+                    Span::styled(action_label, chrome.label_style),
+                    Span::raw(" "),
+                    Span::styled(chrome.glyph.to_string(), chrome.glyph_style),
+                ],
+            )
+        }
     }
 }
 
@@ -583,6 +581,7 @@ mod tests {
             "task_handle_color",
             "task_status_label",
             "task_row_label",
+            "task_row_spans",
             "title_case",
             "selectable_feed_rows",
             "blank_row",
