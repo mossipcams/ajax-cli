@@ -356,10 +356,7 @@ pub mod drop_task {
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
-        models::{
-            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent,
-            TaskOperationKind,
-        },
+        models::{SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent, TaskOperationKind},
         registry::{Registry, RegistryEventKind},
     };
 
@@ -369,7 +366,6 @@ pub mod drop_task {
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
         pub ops: Vec<DropOp>,
-        pub cleanup_lifecycle: bool,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -391,17 +387,12 @@ pub mod drop_task {
             .find(|task| task.qualified_handle() == qualified_handle)
             .cloned()
             .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-        let cleanup_lifecycle = matches!(
-            task.lifecycle_status,
-            LifecycleStatus::Merged | LifecycleStatus::Cleanable
-        );
         if !confirmation_plan.blocked_reasons.is_empty() {
             return Ok(DropTaskOperationPlan {
                 intent: task.intent(),
                 confirmation_plan,
                 observation: unknown_observation(),
                 ops: Vec::new(),
-                cleanup_lifecycle,
             });
         }
 
@@ -413,7 +404,6 @@ pub mod drop_task {
             confirmation_plan,
             observation,
             ops,
-            cleanup_lifecycle,
         })
     }
 
@@ -467,12 +457,7 @@ pub mod drop_task {
         }
 
         commands::mark_task_removing(context, qualified_handle)?;
-        let force = drop_needs_force(
-            context,
-            qualified_handle,
-            &operation.confirmation_plan,
-            operation.cleanup_lifecycle,
-        )?;
+        let force = drop_needs_force(context, qualified_handle, &operation.confirmation_plan)?;
         record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
@@ -608,28 +593,15 @@ pub mod drop_task {
         context: &CommandContext<R>,
         qualified_handle: &str,
         confirmation_plan: &CommandPlan,
-        cleanup_lifecycle: bool,
     ) -> Result<bool, CommandError> {
         if confirmation_plan.title.starts_with("remove task:") {
             return Ok(true);
         }
         let task = task(context, qualified_handle)?;
-        if cleanup_lifecycle {
-            return Ok(task.has_side_flag(SideFlag::Dirty)
-                || task.has_side_flag(SideFlag::Conflicted)
-                || task.git_status.as_ref().is_some_and(|status| {
-                    status.dirty || status.untracked_files > 0 || status.conflicted
-                }));
-        }
         Ok(task.has_side_flag(SideFlag::Dirty)
             || task.has_side_flag(SideFlag::Conflicted)
-            || task.has_side_flag(SideFlag::Unpushed)
             || task.git_status.as_ref().is_some_and(|status| {
-                status.dirty
-                    || status.untracked_files > 0
-                    || status.conflicted
-                    || status.unpushed_commits > 0
-                    || !status.merged
+                status.dirty || status.untracked_files > 0 || status.conflicted
             }))
     }
 
@@ -1287,6 +1259,7 @@ mod tests {
 
         assert!(!plan_fields.contains("pub requires_confirmation"));
         assert!(!plan_fields.contains("pub blocked_reasons"));
+        assert!(!plan_fields.contains("pub cleanup_lifecycle"));
     }
 
     #[test]
