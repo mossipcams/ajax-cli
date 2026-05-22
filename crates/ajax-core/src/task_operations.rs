@@ -1643,6 +1643,52 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_removes_failed_or_orphaned_tasks_when_resources_are_absent() {
+        for lifecycle_status in [LifecycleStatus::Error, LifecycleStatus::Orphaned] {
+            let mut context = context();
+            let mut task = Task::new(
+                TaskId::new("web/fix-login"),
+                "web",
+                "fix-login",
+                "Fix login",
+                "ajax/fix-login",
+                "main",
+                "/repo/web__worktrees/ajax-fix-login",
+                "ajax-web-fix-login",
+                "worktrunk",
+                AgentClient::Codex,
+            );
+            task.lifecycle_status = lifecycle_status;
+            context.registry.create_task(task).unwrap();
+            let mut outputs = absent_drop_observation_outputs();
+            outputs.extend(absent_drop_observation_outputs());
+            let mut runner = RecordingQueuedRunner::new(outputs);
+            let operation =
+                plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+            let execution = execute_drop_task_operation(
+                &mut context,
+                "web/fix-login",
+                operation,
+                true,
+                &mut runner,
+            )
+            .unwrap();
+
+            assert_eq!(execution.completion, DropTaskCompletion::Removed);
+            assert_eq!(
+                context
+                    .registry
+                    .get_task(&TaskId::new("web/fix-login"))
+                    .unwrap()
+                    .lifecycle_status,
+                LifecycleStatus::Removed,
+                "{lifecycle_status:?}"
+            );
+        }
+    }
+
+    #[test]
     fn drop_completion_marks_removed_when_final_observation_is_absent() {
         let mut context = context_with_cleanable_task();
 
