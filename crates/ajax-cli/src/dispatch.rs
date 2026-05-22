@@ -27,45 +27,6 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
-    render_core_task_command(kind, subcommand, context, runner, open_mode, task)
-}
-
-pub(crate) fn render_drop_command<R: CommandRunner>(
-    subcommand: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-) -> Result<RenderedCommand, CliError> {
-    let task = task_arg(subcommand)?;
-    let execute = subcommand.get_flag("execute");
-    let confirmed = subcommand.get_flag("yes");
-    if execute {
-        return execute_observed_drop(context, task, confirmed, runner);
-    }
-    let mut state_changed = false;
-    if (!execute || confirmed) && !drop_should_refresh_cleanup_evidence(context, task) {
-        match commands::refresh_git_substrate_evidence(context, runner) {
-            Ok(changed) => state_changed |= changed,
-            Err(_) => {
-                state_changed |= commands::mark_task_git_substrate_missing(context, task)
-                    .map_err(command_error)?;
-            }
-        }
-    }
-    let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
-    Ok(RenderedCommand {
-        output: render_plan(plan, subcommand.get_flag("json"))?,
-        state_changed,
-    })
-}
-
-fn render_core_task_command<R: CommandRunner>(
-    kind: TaskCommandKind,
-    subcommand: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    open_mode: commands::OpenMode,
-    task: &str,
-) -> Result<RenderedCommand, CliError> {
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
     let mut state_changed = false;
@@ -109,6 +70,34 @@ fn render_core_task_command<R: CommandRunner>(
     Ok(RenderedCommand {
         output: render_execution_outputs(&outputs, None),
         state_changed: state_changed || operation_state_changed,
+    })
+}
+
+pub(crate) fn render_drop_command<R: CommandRunner>(
+    subcommand: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let task = task_arg(subcommand)?;
+    let execute = subcommand.get_flag("execute");
+    let confirmed = subcommand.get_flag("yes");
+    if execute {
+        return execute_observed_drop(context, task, confirmed, runner);
+    }
+    let mut state_changed = false;
+    if (!execute || confirmed) && !drop_should_refresh_cleanup_evidence(context, task) {
+        match commands::refresh_git_substrate_evidence(context, runner) {
+            Ok(changed) => state_changed |= changed,
+            Err(_) => {
+                state_changed |= commands::mark_task_git_substrate_missing(context, task)
+                    .map_err(command_error)?;
+            }
+        }
+    }
+    let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
+    Ok(RenderedCommand {
+        output: render_plan(plan, subcommand.get_flag("json"))?,
+        state_changed,
     })
 }
 
@@ -270,6 +259,7 @@ mod tests {
             .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
             .unwrap();
 
+        assert!(!render_task_command.contains("fn render_core_task_command"));
         assert!(render_task_command.contains("plan_task_command_operation"));
         assert!(render_task_command.contains("execute_task_command_operation"));
     }
@@ -305,7 +295,7 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn render_core_task_command").next())
+            .and_then(|source| source.split("pub(crate) fn render_drop_command").next())
             .unwrap();
         let execute_plan = ["commands::execute", "_plan(&plan"].concat();
         let apply_after_execute = ["apply_after", "_execute"].concat();
