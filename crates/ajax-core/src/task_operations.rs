@@ -385,7 +385,6 @@ pub mod drop_task {
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
         pub ops: Vec<DropOp>,
-        pub cleanup_lifecycle: bool,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -407,16 +406,11 @@ pub mod drop_task {
             .find(|task| task.qualified_handle() == qualified_handle)
             .cloned()
             .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-        let cleanup_lifecycle = matches!(
-            task.lifecycle_status,
-            LifecycleStatus::Merged | LifecycleStatus::Cleanable
-        );
         if !confirmation_plan.blocked_reasons.is_empty() {
             return Ok(DropTaskOperationPlan {
                 confirmation_plan,
                 observation: unknown_observation(),
                 ops: Vec::new(),
-                cleanup_lifecycle,
             });
         }
 
@@ -427,7 +421,6 @@ pub mod drop_task {
             confirmation_plan,
             observation,
             ops,
-            cleanup_lifecycle,
         })
     }
 
@@ -479,12 +472,13 @@ pub mod drop_task {
             return Err(CommandError::ConfirmationRequired);
         }
 
+        let cleanup_lifecycle = task_is_in_cleanup_lifecycle(context, qualified_handle)?;
         commands::mark_task_removing(context, qualified_handle)?;
         let force = drop_needs_force(
             context,
             qualified_handle,
             &operation.confirmation_plan,
-            operation.cleanup_lifecycle,
+            cleanup_lifecycle,
         )?;
         record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
@@ -561,6 +555,16 @@ pub mod drop_task {
             && observation.tmux_session == ResourceState::Absent
             && observation.worktree == ResourceState::Absent
             && observation.branch == ResourceState::Absent
+    }
+
+    fn task_is_in_cleanup_lifecycle<R: Registry>(
+        context: &CommandContext<R>,
+        qualified_handle: &str,
+    ) -> Result<bool, CommandError> {
+        Ok(matches!(
+            task(context, qualified_handle)?.lifecycle_status,
+            LifecycleStatus::Merged | LifecycleStatus::Cleanable
+        ))
     }
 
     fn incomplete_drop_step(observation: &DropObservation) -> DropOp {
@@ -1315,6 +1319,21 @@ mod tests {
             .unwrap();
 
         assert!(!plan_fields.contains("pub intent"));
+    }
+
+    #[test]
+    fn drop_operation_plan_does_not_carry_lifecycle_policy_state() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let plan_fields = source
+            .split("pub struct DropTaskOperationPlan")
+            .nth(1)
+            .and_then(|source| source.split("pub enum DropTaskCompletion").next())
+            .unwrap();
+
+        assert!(!plan_fields.contains("pub cleanup_lifecycle"));
     }
 
     #[test]
