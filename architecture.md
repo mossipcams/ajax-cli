@@ -261,9 +261,10 @@ task-operation commands or separate operator domains.
 
 - `lib.rs` owns the Clap command tree, parsing, dispatch, and public test
   helpers.
-- `context` owns runtime profile resolution, config/state path resolution, and
-  load/save behavior. Stable and development runtime profiles are inputs to
-  normal CLI parsing and context resolution.
+- `context` owns runtime profile path resolution and load/save behavior.
+  Stable runtime resolution preserves the historical config/state/log/cache
+  defaults and legacy sibling task worktrees. Dev and custom-home runtimes use
+  isolated config, SQLite state, logs, cache, and rooted task worktrees.
 - `render` owns human, JSON, execution-output, and command-plan rendering.
 - `snapshot_dispatch` owns read-only command routing.
 - `execution_dispatch` owns mutable command routing.
@@ -364,6 +365,26 @@ Cockpit is the primary operator surface over the JSON-backed command boundary.
 Cockpit are sibling presentation adapters over shared core projections and
 actions; neither surface owns task truth. `ajax-tui` must not know about HTTP,
 TLS, Web Push, service workers, browser manifests, or static web assets.
+
+The companion serves HTTPS so that browsers grant it a secure context: the
+prerequisite for installing the PWA, running its service worker, and receiving
+Web Push. On first run it generates a self-signed certificate and persists it
+beside the state database; the operator trusts it once on the phone.
+
+Web Push is opt-in. The companion holds a persisted VAPID identity, serves its
+public key at `/api/push/config`, and stores browser subscriptions posted to
+`/api/push/subscribe`. A background attention poller rebuilds the Cockpit view
+on an interval, diffs the attention inbox, and sends a VAPID-signed encrypted
+notification for each task that newly needs attention; subscriptions the push
+service reports as gone are pruned.
+
+Native Cockpit starts the companion as an `ajax-cli web` process by default and
+keeps it alive for the Cockpit session. `ajax-cli` starts the companion on port
+`8787` with the stable state database, while `ajax-cli dev` starts it on port
+`8788` with the development state database. `--no-web` disables the companion.
+The companion is started with explicit `AJAX_PROFILE`, `AJAX_CONFIG`,
+`AJAX_STATE`, and rooted worktree values from the selected Ajax context so
+stable and dev browser sessions stay on their own runtime profile.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

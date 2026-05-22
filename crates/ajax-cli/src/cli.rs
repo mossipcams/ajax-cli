@@ -10,8 +10,17 @@ pub enum ParsedArgs {
 }
 
 pub fn build_cli() -> Command {
-    Command::new("ajax")
+    Command::new("ajax-cli")
         .about("Semi-agentic operator console for isolated AI coding tasks")
+        .arg(Arg::new("profile").long("profile").value_name("NAME"))
+        .arg(Arg::new("home").long("home").value_name("PATH"))
+        .arg(Arg::new("config").long("config").value_name("PATH"))
+        .arg(Arg::new("state").long("state").value_name("PATH"))
+        .arg(
+            Arg::new("worktree-root")
+                .long("worktree-root")
+                .value_name("PATH"),
+        )
         .subcommand(json_command("repos").about("List configured repos"))
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
@@ -34,9 +43,13 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("inbox").about("Show global attention inbox"))
         .subcommand(json_command("ready").about("Show tasks ready for review"))
         .subcommand(json_command("status").about("Show Ajax status"))
+        .subcommand(json_command("runtime").about("Show Ajax runtime paths"))
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
+        .subcommand(web_command())
+        .subcommand(cockpit_alias_command("stable"))
+        .subcommand(cockpit_alias_command("dev"))
         .subcommand(cockpit_command())
 }
 
@@ -120,33 +133,58 @@ fn state_command() -> Command {
         )
 }
 
+fn web_command() -> Command {
+    Command::new("web")
+        .about("Serve the Ajax mobile web cockpit")
+        .arg(
+            Arg::new("host")
+                .long("host")
+                .value_name("HOST")
+                .default_value("0.0.0.0"),
+        )
+        .arg(
+            Arg::new("port")
+                .long("port")
+                .value_name("PORT")
+                .default_value("8787"),
+        )
+}
+
 fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
-        .arg(
-            Arg::new("watch")
-                .long("watch")
-                .help("Keep rendering cockpit frames")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("json")
-                .long("json")
-                .help("Emit machine-readable JSON")
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("interval-ms")
-                .long("interval-ms")
-                .value_name("MILLISECONDS")
-                .default_value("1000"),
-        )
-        .arg(
-            Arg::new("iterations")
-                .long("iterations")
-                .value_name("COUNT")
-                .hide(true),
-        )
+        .args(cockpit_args())
+}
+
+fn cockpit_alias_command(name: &'static str) -> Command {
+    Command::new(name)
+        .about("Start an Ajax Cockpit instance")
+        .args(cockpit_args())
+}
+
+fn cockpit_args() -> Vec<Arg> {
+    vec![
+        Arg::new("no-web")
+            .long("no-web")
+            .help("Do not auto-start the mobile web companion")
+            .action(ArgAction::SetTrue),
+        Arg::new("watch")
+            .long("watch")
+            .help("Keep rendering cockpit frames")
+            .action(ArgAction::SetTrue),
+        Arg::new("json")
+            .long("json")
+            .help("Emit machine-readable JSON")
+            .action(ArgAction::SetTrue),
+        Arg::new("interval-ms")
+            .long("interval-ms")
+            .value_name("MILLISECONDS")
+            .default_value("1000"),
+        Arg::new("iterations")
+            .long("iterations")
+            .value_name("COUNT")
+            .hide(true),
+    ]
 }
 
 fn json_command(name: &'static str) -> Command {
@@ -156,4 +194,107 @@ fn json_command(name: &'static str) -> Command {
             .help("Emit machine-readable JSON")
             .action(ArgAction::SetTrue),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, ParsedArgs};
+
+    #[test]
+    fn global_profile_is_accepted_before_runtime_subcommand() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax-cli", "--profile", "dev", "runtime"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(matches.get_one::<String>("profile").unwrap(), "dev");
+        assert_eq!(matches.subcommand_name(), Some("runtime"));
+    }
+
+    #[test]
+    fn global_home_is_accepted_before_subcommands() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax-cli", "--home", "/tmp/ajax-dev", "status"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(matches.get_one::<String>("home").unwrap(), "/tmp/ajax-dev");
+        assert_eq!(matches.subcommand_name(), Some("status"));
+    }
+
+    #[test]
+    fn global_direct_path_overrides_are_accepted() {
+        let ParsedArgs::Matches(matches) = parse_args([
+            "ajax-cli",
+            "--config",
+            "/tmp/config.toml",
+            "--state",
+            "/tmp/ajax.db",
+            "--worktree-root",
+            "/tmp/worktrees",
+            "runtime",
+        ])
+        .unwrap() else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(
+            matches.get_one::<String>("config").unwrap(),
+            "/tmp/config.toml"
+        );
+        assert_eq!(matches.get_one::<String>("state").unwrap(), "/tmp/ajax.db");
+        assert_eq!(
+            matches.get_one::<String>("worktree-root").unwrap(),
+            "/tmp/worktrees"
+        );
+    }
+
+    #[test]
+    fn runtime_command_accepts_json_flag() {
+        let ParsedArgs::Matches(matches) = parse_args(["ajax-cli", "runtime", "--json"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("expected runtime subcommand");
+        };
+
+        assert!(subcommand.get_flag("json"));
+    }
+
+    #[test]
+    fn web_command_accepts_mobile_bind_options() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax", "web", "--host", "0.0.0.0", "--port", "8787"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some(("web", web_matches)) = matches.subcommand() else {
+            panic!("expected web subcommand");
+        };
+
+        assert_eq!(
+            web_matches.get_one::<String>("host").map(String::as_str),
+            Some("0.0.0.0")
+        );
+        assert_eq!(
+            web_matches.get_one::<String>("port").map(String::as_str),
+            Some("8787")
+        );
+    }
+
+    #[test]
+    fn cockpit_command_accepts_mobile_web_opt_out() {
+        let ParsedArgs::Matches(matches) = parse_args(["ajax", "cockpit", "--no-web"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some(("cockpit", cockpit_matches)) = matches.subcommand() else {
+            panic!("expected cockpit subcommand");
+        };
+
+        assert!(cockpit_matches.get_flag("no-web"));
+    }
 }

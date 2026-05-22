@@ -10,10 +10,10 @@ inside durable tmux sessions, while Ajax keeps the task list, live status, and
 cleanup path organized. Ajax does not replace Git, tmux, or agent CLIs. It sits
 above them as the operator layer.
 
-The installed binary is `ajax`. The primary experience is Cockpit:
+The installed binary is `ajax-cli`. The primary experience is Cockpit:
 
 ```sh
-ajax cockpit
+ajax-cli
 ```
 
 ## What Ajax Does
@@ -37,24 +37,49 @@ want to do, then choose a task when the action needs one.
 Typical flow:
 
 ```sh
-ajax cockpit
+ajax-cli
 ```
 
 From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
+### Mobile web companion (PWA)
+
+When native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
+starts the mobile web Cockpit companion: a mobile-first Progressive Web App.
+Stable serves on `0.0.0.0:8787`; dev serves on `0.0.0.0:8788` and uses the
+isolated dev runtime profile. Use `--no-web` to keep native Cockpit
+terminal-only.
+
+The companion serves HTTPS, which browsers require before they will install a
+PWA, run its service worker, or deliver push notifications. Open
+`https://<this-machine-ip>:8787` or `https://<this-machine-ip>:8788` from a
+phone on the same routed network. On first run Ajax generates a self-signed
+certificate and stores it beside the state database (`web-tls-cert.pem`); your
+browser will warn the first time. To install the app to your home screen and
+enable notifications, trust that certificate once. On iOS, open
+`web-tls-cert.pem`, install the profile, then enable full trust under Settings,
+General, About, Certificate Trust Settings.
+
+From the installed app you can monitor every repo's tasks, see the attention
+inbox, and run `review`, `ship`, `repair`, and `drop`. `resume` stays
+native-Cockpit only because it needs an attached terminal. Tap Alerts to enable
+Web Push: the phone is then notified when a task newly needs attention, even
+when the app is closed. Web Push on iOS requires iOS 16.4 or later and the app
+installed to the home screen.
+
 The same loop is available from the CLI:
 
 ```sh
-ajax start --repo web --title "fix login" --agent codex --execute
-ajax inbox
-ajax resume web/fix-login
-ajax repair web/fix-login
-ajax review web/fix-login
-ajax ship web/fix-login
-ajax drop web/fix-login
-ajax tidy
+ajax-cli start --repo web --title "fix login" --agent codex --execute
+ajax-cli inbox
+ajax-cli resume web/fix-login
+ajax-cli repair web/fix-login
+ajax-cli review web/fix-login
+ajax-cli ship web/fix-login
+ajax-cli drop web/fix-login
+ajax-cli tidy
 ```
 
 ## Install
@@ -68,7 +93,7 @@ cargo build --release -p ajax-cli
 The compiled binary is:
 
 ```sh
-target/release/ajax
+target/release/ajax-cli
 ```
 
 For local daily use, put that binary on your `PATH` or install it from the
@@ -79,15 +104,21 @@ cargo install --path crates/ajax-cli
 ```
 
 Ajax expects `git`, `tmux`, and an agent CLI such as `codex` to be available on
-`PATH`. Run `ajax doctor` after installing to check the local operator
+`PATH`. Run `ajax-cli doctor` after installing to check the local operator
 environment.
 
 ## Configuration
 
 Ajax reads configuration from `~/.config/ajax/config.toml` unless
-`AJAX_CONFIG` points to another file. Runtime state is stored in
+`AJAX_CONFIG` points to another file. Stable runtime state is stored in
 `~/.local/state/ajax/ajax.db` unless `AJAX_STATE` points to another SQLite
-database path.
+database path. `ajax-cli dev` uses the isolated dev runtime profile under
+`~/.ajax-dev`.
+
+Use `ajax-cli runtime` or `ajax-cli --profile dev runtime` to inspect the
+selected config, state DB, logs, cache, and worktree placement before starting
+tasks. `AJAX_PROFILE`, `AJAX_HOME`, `AJAX_CONFIG`, `AJAX_STATE`, and
+`AJAX_WORKTREE_ROOT` can override profile-derived paths.
 
 Minimal configuration:
 
@@ -103,8 +134,8 @@ repo = "web"
 command = "cargo nextest run --all-features"
 ```
 
-Each managed repo should have a matching test command so `ajax repair` and
-`ajax doctor` can verify the workflow end to end.
+Each managed repo should have a matching test command so `ajax-cli repair` and
+`ajax-cli doctor` can verify the workflow end to end.
 
 Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
 inside each task worktree before the agent starts. Ajax runs the command from
@@ -116,41 +147,41 @@ the selected agent CLI are launched.
 After installing and writing a config file, check the environment:
 
 ```sh
-ajax doctor
-ajax repos
-ajax tasks
+ajax-cli doctor
+ajax-cli repos
+ajax-cli tasks
 ```
 
 Open the cockpit:
 
 ```sh
-ajax cockpit
+ajax-cli
 ```
 
 Start a task from Cockpit, or create a CLI plan before executing it:
 
 ```sh
-ajax start --repo web --title "fix login" --agent codex
+ajax-cli start --repo web --title "fix login" --agent codex
 ```
 
 When the plan looks right, execute it:
 
 ```sh
-ajax start --repo web --title "fix login" --agent codex --execute
+ajax-cli start --repo web --title "fix login" --agent codex --execute
 ```
 
 Come back later through Cockpit or the attention queues:
 
 ```sh
-ajax inbox
-ajax ready
-ajax status
+ajax-cli inbox
+ajax-cli ready
+ajax-cli status
 ```
 
 Before changing machines or testing a state migration, export a backup:
 
 ```sh
-ajax state export --output ~/ajax-state-backup.json
+ajax-cli state export --output ~/ajax-state-backup.json
 ```
 
 Run the deterministic local smoke workflow before release-sensitive changes:
@@ -166,10 +197,11 @@ recovery path where Ajax keeps the task visible with attention.
 ## Native Rust Cockpit
 
 Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
-it through the `ajax` command:
+it through the stable or dev Ajax command:
 
 ```sh
-ajax cockpit
+ajax-cli
+ajax-cli dev
 ```
 
 Cockpit uses the project-first workflow: choose a project, choose an action, and
@@ -185,7 +217,7 @@ its normal key handling.
 Use watch mode when you want repeated cockpit frames:
 
 ```sh
-ajax cockpit --watch
+ajax-cli cockpit --watch
 ```
 
 ## Command Surface
@@ -193,39 +225,43 @@ ajax cockpit --watch
 The CLI surface backs Cockpit and remains intentionally stable and scriptable:
 
 ```sh
-ajax repos
-ajax tasks
-ajax tasks --repo web
-ajax inspect web/fix-login
-ajax start --repo web --title "fix login" --agent codex
-ajax resume web/fix-login
-ajax repair web/fix-login
-ajax review web/fix-login
-ajax ship web/fix-login
-ajax drop web/fix-login
-ajax tidy
-ajax next
-ajax inbox
-ajax ready
-ajax status
-ajax doctor
-ajax supervise --task web/fix-login --prompt "implement the approved plan"
-ajax cockpit
-ajax cockpit --watch
+ajax-cli repos
+ajax-cli tasks
+ajax-cli tasks --repo web
+ajax-cli inspect web/fix-login
+ajax-cli start --repo web --title "fix login" --agent codex
+ajax-cli resume web/fix-login
+ajax-cli repair web/fix-login
+ajax-cli review web/fix-login
+ajax-cli ship web/fix-login
+ajax-cli drop web/fix-login
+ajax-cli tidy
+ajax-cli next
+ajax-cli inbox
+ajax-cli ready
+ajax-cli status
+ajax-cli doctor
+ajax-cli supervise --task web/fix-login --prompt "implement the approved plan"
+ajax-cli
+ajax-cli dev
+ajax-cli cockpit
+ajax-cli cockpit --watch
 ```
 
 Commands that feed a UI support JSON output:
 
 ```sh
-ajax repos --json
-ajax tasks --json
-ajax inspect web/fix-login --json
-ajax next --json
-ajax inbox --json
-ajax ready --json
-ajax status --json
-ajax doctor --json
-ajax cockpit --json
+ajax-cli repos --json
+ajax-cli tasks --json
+ajax-cli inspect web/fix-login --json
+ajax-cli next --json
+ajax-cli inbox --json
+ajax-cli ready --json
+ajax-cli status --json
+ajax-cli doctor --json
+ajax-cli --json
+ajax-cli dev --json
+ajax-cli cockpit --json
 ```
 
 ## How It Works
@@ -253,13 +289,15 @@ Keep source, config, runtime state, logs, cache, managed repos, and task
 worktrees separate:
 
 - Source repo: `~/projects/ajax-cli`
-- Installed binary: `ajax`
+- Installed binary: `ajax-cli`
 - User config: `~/.config/ajax/config.toml`
-- Runtime state: `~/.local/state/ajax/ajax.db`
-- Logs: `~/.local/state/ajax/logs`
-- Cache: `~/.cache/ajax`
+- Stable runtime state: `~/.local/state/ajax/ajax.db`
+- Dev runtime state: `~/.ajax-dev/ajax.db`
+- Stable logs/cache: `~/.local/state/ajax/logs`, `~/.cache/ajax`
+- Dev logs/cache: `~/.ajax-dev/logs`, `~/.ajax-dev/cache`
 - Managed repos: for example `~/projects/api`, `~/projects/web`, `~/projects/infra`
 - Task worktrees: sibling directories such as `repo__worktrees/ajax-fix-login`
+- Dev task worktrees: rooted under `~/.ajax-dev/worktrees`
 
 The `ajax-cli` source repo should not be included in the default managed repo
 list at first.
@@ -279,6 +317,5 @@ npm run lint:duplication
 
 Use `scripts/smoke.sh` for the deterministic end-to-end smoke workflow.
 
-Releases are managed by Release Please. The repository needs a
-`RELEASE_PLEASE_TOKEN` secret so Release Please PRs trigger the real GitHub CI
-workflow before they are merged.
+Releases are managed by Release Please. If set, `RELEASE_PLEASE_TOKEN` is used;
+otherwise the workflow falls back to `github.token` so releases still run.

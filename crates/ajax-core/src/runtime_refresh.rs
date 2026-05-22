@@ -1,8 +1,9 @@
-use std::{collections::BTreeSet, time::SystemTime};
+use std::{collections::BTreeSet, path::Path, time::SystemTime};
 
 use crate::{
     adapters::{CommandRunner, GitAdapter, TmuxAdapter},
     commands::{self, CommandContext, CommandError},
+    config::WorktreePlacement,
     live::{self, LiveObservation, LiveStatusKind},
     models::{
         AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId,
@@ -350,6 +351,12 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
         };
 
         for worktree in GitAdapter::parse_worktrees(&output) {
+            if !worktree_allowed_for_runtime(
+                &context.runtime_paths.worktree_placement,
+                &worktree.path,
+            ) {
+                continue;
+            }
             let Some(branch) = worktree.branch.as_deref() else {
                 continue;
             };
@@ -425,6 +432,13 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
     Ok(changed)
 }
 
+fn worktree_allowed_for_runtime(placement: &WorktreePlacement, worktree_path: &str) -> bool {
+    match placement {
+        WorktreePlacement::LegacySibling => true,
+        WorktreePlacement::Root(root) => Path::new(worktree_path).starts_with(root),
+    }
+}
+
 fn refresh_cached_annotations(task: &mut Task) {
     task.annotations = crate::attention::annotate(task);
 }
@@ -442,7 +456,7 @@ mod tests {
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
-        config::{Config, ManagedRepo},
+        config::{Config, ManagedRepo, RuntimePathRequest},
         live::{LiveObservation, LiveStatusKind},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, RuntimeHealth,
@@ -886,5 +900,25 @@ mod tests {
             "expected refresh to reuse a task snapshot instead of scanning once per worktree, got {} list_tasks calls",
             context.registry.list_tasks_calls()
         );
+    }
+
+    #[test]
+    fn rooted_runtime_recovery_ignores_legacy_sibling_worktrees() {
+        let base = context_with_unchanged_running_task();
+        let runtime_paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .resolve();
+        let mut context = CommandContext::with_runtime_paths(
+            base.config,
+            CountingRegistry::from_registry(base.registry),
+            runtime_paths,
+        );
+        let mut runner = OrphanRecoveryRunner::default();
+
+        let _changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(context.registry.get_task(&TaskId::new("web/a")).is_none());
+        assert!(context.registry.get_task(&TaskId::new("web/b")).is_none());
+        assert!(context.registry.get_task(&TaskId::new("web/c")).is_none());
     }
 }

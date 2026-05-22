@@ -14,6 +14,12 @@ mod snapshot_dispatch;
 mod supervise;
 #[cfg(feature = "interactive")]
 mod task_session;
+#[path = "web_backend.rs"]
+mod web_companion_backend;
+#[path = "web_push.rs"]
+mod web_companion_push;
+#[path = "web_tls.rs"]
+mod web_companion_tls;
 
 #[cfg(test)]
 use ajax_core::task_operations::task_command::TaskCommandKind;
@@ -35,7 +41,7 @@ use cockpit_actions::{
 #[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{default_context_paths, load_context, load_context_with_events, save_context};
+use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
 #[cfg(test)]
 use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
@@ -103,7 +109,14 @@ pub fn run_with_args(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    let paths = default_context_paths()?;
+    let paths = context_paths_from_matches(&matches)?;
+    if let Some(("runtime", subcommand)) = matches.subcommand() {
+        return snapshot_dispatch::render_runtime_paths(
+            &paths.runtime_paths,
+            subcommand.get_flag("json"),
+        );
+    }
+
     let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
@@ -267,7 +280,7 @@ mod tests {
             RecordingCommandRunner,
         },
         commands::{CommandContext, OpenMode},
-        config::{Config, ManagedRepo},
+        config::{Config, ManagedRepo, RuntimePathRequest},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
             LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource,
@@ -355,7 +368,9 @@ mod tests {
         )
         .unwrap();
 
-        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
+        // `tokio` is a base dependency of the always-compiled mobile web
+        // companion, so it is intentionally not optional.
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix"] {
             let line = manifest
                 .lines()
                 .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
@@ -367,7 +382,7 @@ mod tests {
         }
 
         assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
-        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\"]"));
     }
 
     #[test]
@@ -753,7 +768,7 @@ mod tests {
     }
 
     fn ajax_binary_path() -> PathBuf {
-        if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax") {
+        if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax-cli") {
             return binary.into();
         }
 
@@ -764,7 +779,11 @@ mod tests {
         let debug_dir = deps_dir
             .parent()
             .expect("test binary should live under target debug deps");
-        debug_dir.join(if cfg!(windows) { "ajax.exe" } else { "ajax" })
+        debug_dir.join(if cfg!(windows) {
+            "ajax-cli.exe"
+        } else {
+            "ajax-cli"
+        })
     }
 
     #[test]
@@ -780,6 +799,7 @@ mod tests {
         let directory =
             std::env::temp_dir().join(format!("ajax-cli-empty-context-{}", std::process::id()));
         let output = std::process::Command::new(ajax_binary_path())
+            .args(["start", "--execute"])
             .env("AJAX_CONFIG", directory.join("missing-config.toml"))
             .env("AJAX_STATE", directory.join("missing-state.db"))
             .output()
@@ -787,8 +807,124 @@ mod tests {
         let stderr = String::from_utf8(output.stderr).unwrap();
 
         assert!(!output.status.success());
-        assert!(stderr.contains("command is required; pass --help"));
+        assert!(stderr.contains("task title is required; pass --title"));
         assert!(!stderr.contains("CommandFailed"));
+    }
+
+    #[test]
+    fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
+        let directory =
+            std::env::temp_dir().join(format!("ajax-cli-selected-db-{}", std::process::id()));
+        let home = directory.join("home");
+        let stable_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("stable")
+                .resolve(),
+        );
+        let dev_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+        let config = r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#;
+        std::fs::create_dir_all(stable_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(stable_paths.state_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dev_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dev_paths.state_file.parent().unwrap()).unwrap();
+        std::fs::write(&stable_paths.config_file, config).unwrap();
+        std::fs::write(&dev_paths.config_file, config).unwrap();
+        SqliteRegistryStore::new(&stable_paths.state_file)
+            .save(&registry_with_task("stable-task"))
+            .unwrap();
+        SqliteRegistryStore::new(&dev_paths.state_file)
+            .save(&registry_with_task("dev-task"))
+            .unwrap();
+        let mut read_runner = RecordingCommandRunner::default();
+
+        let dev_output =
+            run_with_context_paths_and_runner(["ajax-cli", "tasks"], &dev_paths, &mut read_runner)
+                .unwrap();
+
+        assert!(dev_output.contains("web/dev-task"));
+        assert!(!dev_output.contains("web/stable-task"));
+
+        let mut stable_read_runner = RecordingCommandRunner::default();
+        let stable_output = run_with_context_paths_and_runner(
+            ["ajax-cli", "tasks"],
+            &stable_paths,
+            &mut stable_read_runner,
+        )
+        .unwrap();
+
+        assert!(stable_output.contains("web/stable-task"));
+        assert!(!stable_output.contains("web/dev-task"));
+
+        let mut write_runner = RecordingCommandRunner::default();
+        run_with_context_paths_and_runner(
+            [
+                "ajax-cli",
+                "start",
+                "--repo",
+                "web",
+                "--title",
+                "new dev task",
+                "--agent",
+                "codex",
+                "--execute",
+            ],
+            &dev_paths,
+            &mut write_runner,
+        )
+        .unwrap();
+
+        let stable_after = SqliteRegistryStore::new(&stable_paths.state_file)
+            .load()
+            .unwrap();
+        let dev_after = SqliteRegistryStore::new(&dev_paths.state_file)
+            .load()
+            .unwrap();
+        assert!(stable_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/stable-task"));
+        assert!(!stable_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/new-dev-task"));
+        assert!(dev_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/dev-task"));
+        assert!(dev_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/new-dev-task"));
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn registry_with_task(handle: &str) -> InMemoryRegistry {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new(format!("web/{handle}")),
+            "web",
+            handle,
+            handle.replace('-', " "),
+            format!("ajax/{handle}"),
+            "main",
+            format!("/tmp/worktrees/web-{handle}"),
+            format!("ajax-web-{handle}"),
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        registry.create_task(task).unwrap();
+        registry
     }
 
     fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::CockpitActionItem {
@@ -821,6 +957,8 @@ mod tests {
             vec!["ajax", "status"],
             vec!["ajax", "doctor"],
             vec!["ajax", "supervise", "--prompt", "fix tests"],
+            vec!["ajax", "stable"],
+            vec!["ajax", "dev"],
             vec!["ajax", "cockpit"],
         ] {
             let matches = build_cli().try_get_matches_from(args.clone());
@@ -2038,9 +2176,9 @@ mod tests {
     #[test]
     fn help_output_is_successful() {
         let context = sample_context();
-        let output = run_with_context(["ajax", "--help"], &context).unwrap();
+        let output = run_with_context(["ajax-cli", "--help"], &context).unwrap();
 
-        assert!(output.contains("Usage: ajax [COMMAND]"));
+        assert!(output.contains("Usage: ajax-cli [OPTIONS] [COMMAND]"));
         assert!(output.contains("Commands:"));
     }
 
@@ -2441,7 +2579,7 @@ mod tests {
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
 
         assert!(readme.contains("native Rust cockpit"));
-        assert!(readme.contains("ajax cockpit"));
+        assert!(readme.contains("ajax-cli cockpit"));
         assert!(readme.contains("project-first workflow"));
         assert!(readme.contains("choose a project"));
         assert!(!readme.contains("Textual"));
@@ -2478,6 +2616,11 @@ mod tests {
         assert!(release.contains("RELEASE_PLEASE_TOKEN"));
         assert!(release.contains("cargo fmt --check"));
         assert!(release.contains("cargo nextest run --all-features"));
+        let cli_manifest =
+            std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
+        assert!(cli_manifest.contains("[[bin]]\nname = \"ajax-cli\""));
+        assert!(!cli_manifest.contains("name = \"ajax\"\npath = \"src/main.rs\""));
+        assert!(cli_manifest.contains("path = \"src/main.rs\""));
         assert!(agents.contains("Release Please PR title"));
         assert!(agents.contains("feat:"));
         assert!(agents.contains("fix:"));
@@ -2594,7 +2737,7 @@ mod tests {
         let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
         let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
 
-        assert!(smoke.contains("ajax doctor"));
+        assert!(smoke.contains("ajax-cli doctor"));
         assert!(smoke.contains("ajax start"));
         assert!(smoke.contains("ajax supervise --task"));
         assert!(smoke.contains("ajax ship"));
@@ -2617,11 +2760,11 @@ mod tests {
         assert!(smoke.contains("AJAX_SMOKE_FAIL_AFTER_WORKTREE"));
         assert!(smoke.contains("\"lifecycle_status\": \"Error\""));
         assert!(smoke.contains("state export target already exists"));
-        assert!(smoke.contains("target/release/ajax"));
+        assert!(smoke.contains("target/release/ajax-cli"));
         assert!(smoke.contains("cargo build --release -p ajax-cli"));
-        assert!(!smoke.contains("target/debug/ajax"));
+        assert!(!smoke.contains("target/debug/ajax-cli"));
         assert!(smoke.contains("if [[ -z \"${AJAX_BIN:-}\" ]]"));
-        assert!(smoke.contains("ajax binary is not executable"));
+        assert!(smoke.contains("ajax-cli binary is not executable"));
         assert!(readme.contains("scripts/smoke.sh"));
         assert!(!readme.contains("running checks"));
         assert!(!readme.contains("viewing diffs"));
