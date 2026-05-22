@@ -218,16 +218,6 @@ fn empty_state(text: &str) -> ListItem<'static> {
     )]))
 }
 
-fn group_of(kind: &SelectableKind) -> &'static str {
-    match kind {
-        SelectableKind::NewTask { .. } => "create",
-        SelectableKind::Inbox(_) => "hot",
-        SelectableKind::Project(_) => "projects",
-        SelectableKind::Task(_) => "tasks",
-        SelectableKind::TaskAction { .. } => "task-actions",
-    }
-}
-
 fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
     let label = match group {
         "hot" => "inbox",
@@ -513,7 +503,13 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
 
     let mut prev_group: Option<&'static str> = None;
     for (idx, selectable) in app.selectables.iter().enumerate() {
-        let group = group_of(selectable);
+        let group = match selectable {
+            SelectableKind::NewTask { .. } => "create",
+            SelectableKind::Inbox(_) => "hot",
+            SelectableKind::Project(_) => "projects",
+            SelectableKind::Task(_) => "tasks",
+            SelectableKind::TaskAction { .. } => "task-actions",
+        };
         if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
             rows.push(section_header_row(group, app));
         }
@@ -601,6 +597,7 @@ mod tests {
             "card_bucket",
             "inbox_glyph",
             "inbox_item_accent",
+            "group_of",
             "project_glyph",
             "project_name_color",
             "task_handle_color",
