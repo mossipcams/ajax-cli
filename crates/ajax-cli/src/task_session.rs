@@ -432,14 +432,6 @@ fn task_detach_sequence() -> &'static [TaskDetachStep] {
     ]
 }
 
-fn task_screen_entry_sequence() -> &'static [u8] {
-    TASK_SCREEN_ENTRY_SEQUENCE
-}
-
-fn task_screen_exit_sequence() -> &'static [u8] {
-    TASK_SCREEN_EXIT_SEQUENCE
-}
-
 #[derive(Default)]
 pub(crate) struct PtyTaskSessionRunner;
 
@@ -629,7 +621,7 @@ struct TaskScreenGuard {
 impl TaskScreenGuard {
     fn enter(output: &mut File) -> Result<Self, CliError> {
         output
-            .write_all(task_screen_entry_sequence())
+            .write_all(TASK_SCREEN_ENTRY_SEQUENCE)
             .and_then(|_| output.flush())
             .map_err(io_error("failed to enter task screen"))?;
         let output = output.try_clone().map_err(|error| {
@@ -641,7 +633,7 @@ impl TaskScreenGuard {
 
 impl Drop for TaskScreenGuard {
     fn drop(&mut self) {
-        let _ = self.output.write_all(task_screen_exit_sequence());
+        let _ = self.output.write_all(TASK_SCREEN_EXIT_SEQUENCE);
         let _ = self.output.flush();
     }
 }
@@ -1324,10 +1316,20 @@ mod tests {
     #[test]
     fn task_screen_commands_clear_normal_buffer_without_disabling_scrollback() {
         assert_eq!(
-            super::task_screen_entry_sequence(),
+            super::TASK_SCREEN_ENTRY_SEQUENCE,
             b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[2J\x1b[H"
         );
-        assert_eq!(super::task_screen_exit_sequence(), b"\x1b[?25h");
+        assert_eq!(super::TASK_SCREEN_EXIT_SEQUENCE, b"\x1b[?25h");
+    }
+
+    #[test]
+    fn task_session_does_not_keep_screen_sequence_wrappers() {
+        let source = include_str!("task_session.rs");
+
+        for helper in ["task_screen_entry_sequence", "task_screen_exit_sequence"] {
+            let function_name = ["fn ", helper].concat();
+            assert!(!source.contains(&function_name), "{helper}");
+        }
     }
 
     #[test]
