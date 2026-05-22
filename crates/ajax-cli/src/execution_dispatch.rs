@@ -137,11 +137,11 @@ pub(crate) fn render_matches_mut(
         )),
         #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => {
-            if subcommand.get_flag("json") {
-                return render_refreshed_read_command("cockpit", matches, context, runner);
-            }
             if subcommand.get_flag("watch") {
                 return render_live_cockpit_command(context, subcommand, runner);
+            }
+            if subcommand.get_flag("json") {
+                return render_refreshed_read_command("cockpit", matches, context, runner);
             }
             render_interactive_cockpit_command(context, subcommand, runner)
         }

@@ -954,6 +954,58 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
+        let second_refresh = tmux_live_outputs("codex is working\n");
+        let mut runner = QueuedRunner::new(vec![
+            first_refresh[0].clone(),
+            first_refresh[1].clone(),
+            first_refresh[2].clone(),
+            output(0, ""),
+            second_refresh[0].clone(),
+            second_refresh[1].clone(),
+            second_refresh[2].clone(),
+        ]);
+
+        let output = run_with_context_and_runner(
+            [
+                "ajax",
+                "cockpit",
+                "--json",
+                "--watch",
+                "--iterations",
+                "2",
+                "--interval-ms",
+                "0",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+        let frames: Vec<_> = output.split("\n\n").collect();
+
+        assert_eq!(frames.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(frames[0]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(frames[1]).unwrap();
+        assert_eq!(
+            first["tasks"]["tasks"][0]["live_status"]["summary"],
+            "waiting for approval"
+        );
+        assert_eq!(
+            second["tasks"]["tasks"][0]["live_status"]["summary"],
+            "agent running"
+        );
+        assert!(runner.commands.len() >= 5);
+    }
+
+    #[test]
     fn cockpit_watch_renders_refreshed_live_status_in_frame() {
         let mut context = sample_context();
         let task = context

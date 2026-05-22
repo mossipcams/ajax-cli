@@ -107,26 +107,25 @@ pub(crate) fn render_live_cockpit_command<R: CommandRunner>(
 ) -> Result<RenderedCommand, CliError> {
     let iterations = parse_u32_arg(matches, "iterations", 1)?.max(1);
     let interval = parse_u64_arg(matches, "interval-ms", 1000)?;
-
-    if matches.get_flag("json") {
-        let changed = refresh_live_context(context, runner)?;
-        return Ok(RenderedCommand {
-            output: render_response(commands::cockpit(context), true, |_| String::new())?,
-            state_changed: changed,
-        });
-    }
+    let json = matches.get_flag("json");
 
     let mut state_changed = false;
-    let frames = (0..iterations)
-        .map(|index| {
-            if index > 0 && interval > 0 {
-                std::thread::sleep(Duration::from_millis(interval));
-            }
-            let changed = refresh_live_context(context, runner)?;
-            state_changed |= changed;
-            Ok(render_cockpit_frame(context))
-        })
-        .collect::<Result<Vec<_>, CliError>>()?;
+    let mut frames = Vec::with_capacity(iterations as usize);
+
+    for index in 0..iterations {
+        if index > 0 && interval > 0 {
+            std::thread::sleep(Duration::from_millis(interval));
+        }
+        let changed = refresh_live_context(context, runner)?;
+        state_changed |= changed;
+        if json {
+            frames.push(render_response(commands::cockpit(context), true, |_| {
+                String::new()
+            })?);
+        } else {
+            frames.push(render_cockpit_frame(context));
+        }
+    }
 
     Ok(RenderedCommand {
         output: frames.join("\n\n"),
