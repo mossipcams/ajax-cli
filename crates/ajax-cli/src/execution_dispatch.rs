@@ -1,7 +1,6 @@
 #[cfg(any(test, feature = "interactive"))]
 use ajax_core::adapters::CommandOutput;
 use ajax_core::adapters::CommandRunner;
-#[cfg(any(test, feature = "interactive"))]
 use ajax_core::commands;
 use ajax_core::commands::CommandContext;
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
@@ -94,16 +93,19 @@ pub(crate) fn render_matches_mut(
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("tidy", subcommand)) => {
-            let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+                    output: render_plan(
+                        commands::sweep_cleanup_plan(context),
+                        subcommand.get_flag("json"),
+                    )?,
                     state_changed: false,
                 });
             }
+            let candidates = plan_sweep_cleanup_operation(context);
             let (outputs, state_changed) = execute_sweep_cleanup_operation(
                 context,
-                &operation,
+                &candidates,
                 subcommand.get_flag("yes"),
                 runner,
             )
@@ -370,12 +372,19 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
+        let tidy_dispatch = source
+            .split("Some((\"tidy\", subcommand))")
+            .nth(1)
+            .and_then(|source| source.split("Some((\"doctor\", subcommand))").next())
+            .unwrap();
         let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
         let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
         let local_helper = ["fn execute_sweep", "_cleanup"].concat();
+        let wrapper_plan_render = ["operation", ".plan"].concat();
 
-        assert!(source.contains(&plan_operation));
-        assert!(source.contains(&execute_operation));
+        assert!(tidy_dispatch.contains(&plan_operation));
+        assert!(tidy_dispatch.contains(&execute_operation));
+        assert!(!tidy_dispatch.contains(&wrapper_plan_render));
         assert!(!source.contains(&local_helper));
     }
 }
