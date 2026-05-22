@@ -22,7 +22,13 @@ pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
 
     let mut prev_group: Option<&'static str> = None;
     for selectable in &app.selectables {
-        let group = selectable_group(selectable);
+        let group = match selectable {
+            SelectableKind::NewTask { .. } => "create",
+            SelectableKind::Inbox(_) => "hot",
+            SelectableKind::Project(_) => "projects",
+            SelectableKind::Task(_) => "tasks",
+            SelectableKind::TaskAction { .. } => "task-actions",
+        };
         if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
             row += 1;
         }
@@ -33,16 +39,6 @@ pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
     }
 
     rows
-}
-
-fn selectable_group(kind: &SelectableKind) -> &'static str {
-    match kind {
-        SelectableKind::NewTask { .. } => "create",
-        SelectableKind::Inbox(_) => "hot",
-        SelectableKind::Project(_) => "projects",
-        SelectableKind::Task(_) => "tasks",
-        SelectableKind::TaskAction { .. } => "task-actions",
-    }
 }
 
 fn expanded_annotation_rows(selectable: &SelectableKind, app: &App) -> usize {
