@@ -307,7 +307,11 @@ mod tests {
             std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs"))
                 .unwrap();
 
-        for wrapper in ["repos_command", "executable_task_command"] {
+        for wrapper in [
+            "repos_command",
+            "executable_task_command",
+            "executable_new_command",
+        ] {
             let function_name = ["fn ", wrapper].concat();
             assert!(!cli_source.contains(&function_name), "{wrapper}");
         }
