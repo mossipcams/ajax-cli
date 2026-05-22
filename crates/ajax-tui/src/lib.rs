@@ -259,6 +259,17 @@ mod tests {
     }
 
     #[test]
+    fn selectable_layout_does_not_build_rendered_feed_items() {
+        let layout = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
+        )
+        .unwrap();
+
+        assert!(!layout.contains("rendering::selectable_feed_rows"));
+        assert!(!layout.contains("build_feed"));
+    }
+
+    #[test]
     fn tui_does_not_keep_local_evidence_label_mapper() {
         let lib = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
