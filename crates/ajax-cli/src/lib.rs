@@ -14,6 +14,7 @@ mod snapshot_dispatch;
 mod supervise;
 #[cfg(feature = "interactive")]
 mod task_session;
+mod web_backend;
 
 #[cfg(test)]
 use ajax_core::task_operations::task_command::TaskCommandKind;

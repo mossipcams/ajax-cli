@@ -37,6 +37,7 @@ pub fn build_cli() -> Command {
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
+        .subcommand(web_command())
         .subcommand(cockpit_command())
 }
 
@@ -120,6 +121,23 @@ fn state_command() -> Command {
         )
 }
 
+fn web_command() -> Command {
+    Command::new("web")
+        .about("Serve the Ajax mobile web cockpit")
+        .arg(
+            Arg::new("host")
+                .long("host")
+                .value_name("HOST")
+                .default_value("0.0.0.0"),
+        )
+        .arg(
+            Arg::new("port")
+                .long("port")
+                .value_name("PORT")
+                .default_value("8787"),
+        )
+}
+
 fn cockpit_command() -> Command {
     Command::new("cockpit")
         .about("Render the Ajax operator cockpit")
@@ -156,4 +174,30 @@ fn json_command(name: &'static str) -> Command {
             .help("Emit machine-readable JSON")
             .action(ArgAction::SetTrue),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_args, ParsedArgs};
+
+    #[test]
+    fn web_command_accepts_mobile_bind_options() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax", "web", "--host", "0.0.0.0", "--port", "8787"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some(("web", web_matches)) = matches.subcommand() else {
+            panic!("expected web subcommand");
+        };
+
+        assert_eq!(
+            web_matches.get_one::<String>("host").map(String::as_str),
+            Some("0.0.0.0")
+        );
+        assert_eq!(
+            web_matches.get_one::<String>("port").map(String::as_str),
+            Some("8787")
+        );
+    }
 }

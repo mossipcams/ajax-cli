@@ -40,6 +40,7 @@ use crate::{
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
+    web_backend::{serve_mobile_web, serve_mobile_web_with_paths},
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -89,6 +90,31 @@ pub(crate) fn render_matches_mut(
             render_task_command(kind, subcommand, context, runner, current_open_mode())
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
+        Some(("web", subcommand)) => {
+            let host = subcommand
+                .get_one::<String>("host")
+                .map(String::as_str)
+                .unwrap_or("0.0.0.0");
+            let port = subcommand
+                .get_one::<String>("port")
+                .map(String::as_str)
+                .unwrap_or("8787")
+                .parse::<u16>()
+                .map_err(|_| {
+                    CliError::CommandFailed(format!(
+                        "invalid --port value: {}",
+                        subcommand
+                            .get_one::<String>("port")
+                            .map(String::as_str)
+                            .unwrap_or("8787")
+                    ))
+                })?;
+            serve_mobile_web(host, port, context, runner)?;
+            Ok(RenderedCommand {
+                output: String::new(),
+                state_changed: false,
+            })
+        }
         Some(("tidy", subcommand)) => {
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
@@ -230,6 +256,32 @@ pub(crate) fn render_matches_mut_with_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    if let Some(("web", subcommand)) = matches.subcommand() {
+        let host = subcommand
+            .get_one::<String>("host")
+            .map(String::as_str)
+            .unwrap_or("0.0.0.0");
+        let port = subcommand
+            .get_one::<String>("port")
+            .map(String::as_str)
+            .unwrap_or("8787")
+            .parse::<u16>()
+            .map_err(|_| {
+                CliError::CommandFailed(format!(
+                    "invalid --port value: {}",
+                    subcommand
+                        .get_one::<String>("port")
+                        .map(String::as_str)
+                        .unwrap_or("8787")
+                ))
+            })?;
+        serve_mobile_web_with_paths(host, port, context, runner, paths)?;
+        return Ok(RenderedCommand {
+            output: String::new(),
+            state_changed: false,
+        });
+    }
+
     if matches
         .subcommand()
         .is_some_and(|(name, _)| name == "doctor")
@@ -381,5 +433,32 @@ mod tests {
         assert!(!source.contains(&plan_operation));
         assert!(!source.contains(&local_helper));
         assert!(!tidy_dispatch.contains(&wrapper_plan_render));
+    }
+
+    #[test]
+    fn web_dispatch_delegates_to_mobile_web_server() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("Some((\"web\", subcommand))"));
+        assert!(source.contains("serve_mobile_web"));
+    }
+
+    #[test]
+    fn web_dispatch_with_paths_can_persist_mobile_actions() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+        let with_paths_dispatch = source
+            .split("pub(crate) fn render_matches_mut_with_paths")
+            .nth(1)
+            .unwrap();
+
+        assert!(with_paths_dispatch.contains("Some((\"web\", subcommand))"));
+        assert!(with_paths_dispatch.contains("serve_mobile_web"));
+        assert!(with_paths_dispatch.contains("paths"));
     }
 }
