@@ -277,7 +277,7 @@ mod tests {
             RecordingCommandRunner,
         },
         commands::{CommandContext, OpenMode},
-        config::{Config, ManagedRepo},
+        config::{Config, ManagedRepo, RuntimePathRequest},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
             LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource,
@@ -766,6 +766,122 @@ mod tests {
         assert!(!output.status.success());
         assert!(stderr.contains("task title is required; pass --title"));
         assert!(!stderr.contains("CommandFailed"));
+    }
+
+    #[test]
+    fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
+        let directory =
+            std::env::temp_dir().join(format!("ajax-cli-selected-db-{}", std::process::id()));
+        let home = directory.join("home");
+        let stable_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("stable")
+                .resolve(),
+        );
+        let dev_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+        let config = r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#;
+        std::fs::create_dir_all(stable_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(stable_paths.state_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dev_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dev_paths.state_file.parent().unwrap()).unwrap();
+        std::fs::write(&stable_paths.config_file, config).unwrap();
+        std::fs::write(&dev_paths.config_file, config).unwrap();
+        SqliteRegistryStore::new(&stable_paths.state_file)
+            .save(&registry_with_task("stable-task"))
+            .unwrap();
+        SqliteRegistryStore::new(&dev_paths.state_file)
+            .save(&registry_with_task("dev-task"))
+            .unwrap();
+        let mut read_runner = RecordingCommandRunner::default();
+
+        let dev_output =
+            run_with_context_paths_and_runner(["ajax-cli", "tasks"], &dev_paths, &mut read_runner)
+                .unwrap();
+
+        assert!(dev_output.contains("web/dev-task"));
+        assert!(!dev_output.contains("web/stable-task"));
+
+        let mut stable_read_runner = RecordingCommandRunner::default();
+        let stable_output = run_with_context_paths_and_runner(
+            ["ajax-cli", "tasks"],
+            &stable_paths,
+            &mut stable_read_runner,
+        )
+        .unwrap();
+
+        assert!(stable_output.contains("web/stable-task"));
+        assert!(!stable_output.contains("web/dev-task"));
+
+        let mut write_runner = RecordingCommandRunner::default();
+        run_with_context_paths_and_runner(
+            [
+                "ajax-cli",
+                "start",
+                "--repo",
+                "web",
+                "--title",
+                "new dev task",
+                "--agent",
+                "codex",
+                "--execute",
+            ],
+            &dev_paths,
+            &mut write_runner,
+        )
+        .unwrap();
+
+        let stable_after = SqliteRegistryStore::new(&stable_paths.state_file)
+            .load()
+            .unwrap();
+        let dev_after = SqliteRegistryStore::new(&dev_paths.state_file)
+            .load()
+            .unwrap();
+        assert!(stable_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/stable-task"));
+        assert!(!stable_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/new-dev-task"));
+        assert!(dev_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/dev-task"));
+        assert!(dev_after
+            .list_tasks()
+            .iter()
+            .any(|task| task.qualified_handle() == "web/new-dev-task"));
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn registry_with_task(handle: &str) -> InMemoryRegistry {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new(format!("web/{handle}")),
+            "web",
+            handle,
+            handle.replace('-', " "),
+            format!("ajax/{handle}"),
+            "main",
+            format!("/tmp/worktrees/web-{handle}"),
+            format!("ajax-web-{handle}"),
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        registry.create_task(task).unwrap();
+        registry
     }
 
     fn cockpit_item(handle: &str, action: &str) -> ajax_core::models::CockpitActionItem {
