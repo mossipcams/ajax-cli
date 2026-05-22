@@ -58,7 +58,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
     handler: &mut H,
 ) -> io::Result<EventLoopAction> {
     match code {
-        code if is_help_key_event(code, modifiers) => {
+        code if navigation::is_help_key_event(code, modifiers) => {
             app.open_help();
         }
         KeyCode::Enter if app.is_collecting_input() => {
@@ -66,7 +66,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
                 return Ok(EventLoopAction::Pending(pending));
             }
         }
-        code if app.is_collecting_input() && is_input_delete_key(code, modifiers) => {
+        code if app.is_collecting_input() && navigation::is_input_delete_key(code, modifiers) => {
             handle_back_key(app);
         }
         KeyCode::Char(character) if app.is_collecting_input() => {
@@ -76,7 +76,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
             app.go_home();
         }
         KeyCode::Char('q') if modifiers.is_empty() => return Ok(EventLoopAction::Quit),
-        code if is_back_key_event(code, modifiers) => {
+        code if navigation::is_back_key_event(code, modifiers) => {
             handle_back_key(app);
         }
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
@@ -185,14 +185,20 @@ pub(crate) fn handle_back_key(app: &mut App) -> bool {
     false
 }
 
-pub(crate) fn is_back_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_back_key_event(code, modifiers)
-}
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn input_module_does_not_keep_navigation_forwarders() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/input.rs"),
+        )
+        .unwrap();
+        let back_forwarder = ["fn ", "is_back_key_event"].concat();
+        let help_forwarder = ["fn ", "is_help_key_event"].concat();
+        let delete_forwarder = ["fn ", "is_input_delete_key"].concat();
 
-pub(crate) fn is_help_key_event(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_help_key_event(code, modifiers)
-}
-
-pub(crate) fn is_input_delete_key(code: KeyCode, modifiers: KeyModifiers) -> bool {
-    navigation::is_input_delete_key(code, modifiers)
+        assert!(!source.contains(&back_forwarder));
+        assert!(!source.contains(&help_forwarder));
+        assert!(!source.contains(&delete_forwarder));
+    }
 }

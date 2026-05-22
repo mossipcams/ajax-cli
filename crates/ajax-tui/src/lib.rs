@@ -19,10 +19,7 @@ pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
-use input::{
-    handle_action_result, handle_back_key, handle_cockpit_event, is_back_key_event,
-    is_help_key_event, is_input_delete_key, EventLoopAction,
-};
+use input::{handle_action_result, handle_back_key, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{
     feed_screen_rows, feed_top_row, selectable_row_layout, visible_feed_height,
 };
@@ -2116,7 +2113,7 @@ mod tests {
     fn top_level_backspace_stays_in_cockpit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-        assert!(super::is_back_key_event(
+        assert!(crate::navigation::is_back_key_event(
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
@@ -2136,7 +2133,7 @@ mod tests {
         ] {
             let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-            assert!(super::is_back_key_event(code, modifiers));
+            assert!(crate::navigation::is_back_key_event(code, modifiers));
             assert!(!super::handle_back_key(&mut app));
             let content = render_to_string(80, 30, &app);
             assert!(content.contains("Ajax"));
@@ -2176,7 +2173,7 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        assert!(super::is_back_key_event(
+        assert!(crate::navigation::is_back_key_event(
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
@@ -2194,7 +2191,7 @@ mod tests {
             KeyCode::Esc,
         ] {
             assert!(
-                super::is_back_key_event(key, KeyModifiers::NONE),
+                crate::navigation::is_back_key_event(key, KeyModifiers::NONE),
                 "{key:?} should navigate back"
             );
         }
@@ -2212,12 +2209,12 @@ mod tests {
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
             assert!(
-                super::is_back_key_event(code, modifiers),
+                crate::navigation::is_back_key_event(code, modifiers),
                 "{code:?} with {modifiers:?} should navigate back"
             );
         }
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Char('x'),
             KeyModifiers::NONE
         ));
@@ -2232,7 +2229,7 @@ mod tests {
         let selected_before = app.selected;
         let before = render_to_string(80, 30, &app);
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
@@ -2250,7 +2247,7 @@ mod tests {
         let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let before = render_to_string(80, 30, &app);
 
-        assert!(!super::is_back_key_event(
+        assert!(!crate::navigation::is_back_key_event(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
@@ -2271,12 +2268,12 @@ mod tests {
             (KeyCode::Char('h'), KeyModifiers::CONTROL),
         ] {
             assert!(
-                super::is_input_delete_key(code, modifiers),
+                crate::navigation::is_input_delete_key(code, modifiers),
                 "{code:?} with {modifiers:?} should erase input"
             );
         }
 
-        assert!(!super::is_input_delete_key(
+        assert!(!crate::navigation::is_input_delete_key(
             KeyCode::Char('h'),
             KeyModifiers::NONE
         ));
@@ -2298,7 +2295,7 @@ mod tests {
             "Delete regression setup should be editing a web task title"
         );
 
-        assert!(super::is_input_delete_key(
+        assert!(crate::navigation::is_input_delete_key(
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
@@ -2354,15 +2351,15 @@ mod tests {
 
     #[test]
     fn question_mark_is_the_help_shortcut() {
-        assert!(super::is_help_key_event(
+        assert!(crate::navigation::is_help_key_event(
             KeyCode::Char('?'),
             KeyModifiers::NONE
         ));
-        assert!(super::is_help_key_event(
+        assert!(crate::navigation::is_help_key_event(
             KeyCode::Char('/'),
             KeyModifiers::SHIFT
         ));
-        assert!(!super::is_help_key_event(
+        assert!(!crate::navigation::is_help_key_event(
             KeyCode::Char('/'),
             KeyModifiers::NONE
         ));
