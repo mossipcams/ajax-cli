@@ -77,26 +77,26 @@ fn render_core_task_command<R: CommandRunner>(
             state_changed |= changed;
         }
     }
-    let mut operation =
+    let mut plan =
         plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
-            output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+            output: render_plan(plan, subcommand.get_flag("json"))?,
             state_changed,
         });
     }
     if kind == TaskCommandKind::Ship
-        && operation.plan.blocked_reasons.is_empty()
-        && (!operation.plan.requires_confirmation || confirmed)
+        && plan.blocked_reasons.is_empty()
+        && (!plan.requires_confirmation || confirmed)
         && merge_task_has_cached_git_evidence(context, task)
     {
         refresh_merge_evidence_if_available(context, task, runner);
-        operation =
+        plan =
             plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     }
 
     let (outputs, operation_state_changed) = execute_task_command_operation(
-        context, task, &operation, confirmed, runner,
+        context, task, kind, &plan, confirmed, runner,
     )
     .map_err(|(error, error_state_changed)| {
         let cli_error = command_error(error);
