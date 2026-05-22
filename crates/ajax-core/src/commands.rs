@@ -174,7 +174,7 @@ fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
         .filter(|task| is_visible_task(task))
         .collect::<Vec<_>>();
     InboxResponse {
-        items: annotation_items(visible.as_slice()),
+        items: annotation_items_matching(visible.as_slice(), |_| true),
     }
 }
 
@@ -185,7 +185,7 @@ fn cockpit_inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
         .filter(|task| is_visible_task(task))
         .collect::<Vec<_>>();
     InboxResponse {
-        items: cockpit_annotation_items(visible.as_slice()),
+        items: annotation_items_matching(visible.as_slice(), is_cockpit_inbox_annotation),
     }
 }
 
@@ -193,14 +193,6 @@ pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     NextResponse {
         item: inbox(context).items.into_iter().next(),
     }
-}
-
-fn annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
-    annotation_items_matching(tasks, |_| true)
-}
-
-fn cockpit_annotation_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
-    annotation_items_matching(tasks, is_cockpit_inbox_annotation)
 }
 
 fn annotation_items_matching(
@@ -1657,12 +1649,15 @@ mod tests {
         let context = context_with_tasks();
 
         let response = inbox(&context);
+        let source = std::fs::read_to_string("src/commands.rs").unwrap();
 
         assert_eq!(response.items.len(), 1);
         assert_eq!(response.items[0].task_handle, "web/fix-login");
         assert_eq!(response.items[0].reason, "needs_input");
         assert_eq!(response.items[0].severity, 1);
         assert_eq!(response.items[0].action, OperatorAction::Resume);
+        assert!(!source.contains(&["fn ", "annotation_items("].concat()));
+        assert!(!source.contains(&["fn ", "cockpit_annotation_items("].concat()));
     }
 
     #[test]
