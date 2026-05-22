@@ -1,11 +1,9 @@
 #[cfg(any(test, feature = "interactive"))]
 use ajax_core::adapters::CommandOutput;
 use ajax_core::adapters::CommandRunner;
-#[cfg(any(test, feature = "interactive"))]
-use ajax_core::commands;
-use ajax_core::commands::CommandContext;
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
+use ajax_core::commands::{self, CommandContext};
 #[cfg(feature = "supervisor")]
 use ajax_core::events::apply_monitor_event_to_registry;
 #[cfg(feature = "interactive")]
@@ -95,7 +93,7 @@ pub(crate) fn render_matches_mut(
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
                     output: render_plan(
-                        ajax_core::commands::sweep_cleanup_plan(context),
+                        commands::sweep_cleanup_plan(context),
                         subcommand.get_flag("json"),
                     )?,
                     state_changed: false,

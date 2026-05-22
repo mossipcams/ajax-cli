@@ -3198,7 +3198,6 @@ mod tests {
                 DropOp::EnsureAgentStopped,
                 DropOp::EnsureWorktreeAbsent,
                 DropOp::EnsureBranchAbsent,
-                DropOp::MarkRegistryRemoved,
             ]
         );
     }

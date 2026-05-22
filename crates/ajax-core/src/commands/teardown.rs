@@ -332,7 +332,6 @@ pub enum DropOp {
     EnsureTmuxSessionAbsent,
     EnsureWorktreeAbsent,
     EnsureBranchAbsent,
-    MarkRegistryRemoved,
 }
 
 pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> {
@@ -350,7 +349,6 @@ pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> 
     if observation.branch != ResourceState::Absent {
         ops.push(DropOp::EnsureBranchAbsent);
     }
-    ops.push(DropOp::MarkRegistryRemoved);
 
     ops
 }
