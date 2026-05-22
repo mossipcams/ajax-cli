@@ -364,14 +364,22 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
+        let tidy_dispatch = source
+            .split("Some((\"tidy\", subcommand))")
+            .nth(1)
+            .and_then(|source| source.split("Some((\"doctor\", subcommand))").next())
+            .unwrap();
         let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
         let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
         let direct_plan = ["commands::sweep", "_cleanup_plan"].concat();
         let local_helper = ["fn execute_sweep", "_cleanup"].concat();
+        let wrapper_plan_render = ["operation", ".plan"].concat();
 
         assert!(source.contains(&direct_plan));
         assert!(source.contains(&execute_operation));
+        assert!(tidy_dispatch.contains(&execute_operation));
         assert!(!source.contains(&plan_operation));
         assert!(!source.contains(&local_helper));
+        assert!(!tidy_dispatch.contains(&wrapper_plan_render));
     }
 }

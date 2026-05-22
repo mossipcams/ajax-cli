@@ -347,7 +347,6 @@ pub mod drop_task {
     pub struct DropTaskOperationPlan {
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
-        pub ops: Vec<DropOp>,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -373,17 +372,14 @@ pub mod drop_task {
             return Ok(DropTaskOperationPlan {
                 confirmation_plan,
                 observation: unknown_observation(),
-                ops: Vec::new(),
             });
         }
 
         let observation = commands::observe_drop_resources(context, &task, runner)?;
-        let ops = commands::plan_drop_from_observation(&observation);
 
         Ok(DropTaskOperationPlan {
             confirmation_plan,
             observation,
-            ops,
         })
     }
 
@@ -404,19 +400,22 @@ pub mod drop_task {
         qualified_handle: &str,
         final_observation: &DropObservation,
     ) -> Result<DropTaskCompletion, CommandError> {
-        if drop_observation_all_absent(final_observation) {
+        let Some(incomplete_step) = commands::plan_drop_from_observation(final_observation)
+            .into_iter()
+            .next()
+        else {
             commands::mark_task_removed(context, qualified_handle)?;
-            Ok(DropTaskCompletion::Removed)
-        } else {
-            commands::mark_task_removing(context, qualified_handle)?;
-            commands::mark_task_teardown_incomplete(
-                context,
-                qualified_handle,
-                incomplete_drop_step(final_observation),
-                final_observation,
-            )?;
-            Ok(DropTaskCompletion::TeardownIncomplete)
-        }
+            return Ok(DropTaskCompletion::Removed);
+        };
+
+        commands::mark_task_removing(context, qualified_handle)?;
+        commands::mark_task_teardown_incomplete(
+            context,
+            qualified_handle,
+            incomplete_step,
+            final_observation,
+        )?;
+        Ok(DropTaskCompletion::TeardownIncomplete)
     }
 
     pub fn execute_drop_task_operation<R: Registry>(
@@ -446,7 +445,7 @@ pub mod drop_task {
         record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
-        for op in operation.ops {
+        for op in commands::plan_drop_from_observation(&operation.observation) {
             match op {
                 DropOp::EnsureAgentStopped => {
                     commands::mark_drop_agent_stopped(context, qualified_handle)?;
@@ -513,13 +512,6 @@ pub mod drop_task {
         }
     }
 
-    fn drop_observation_all_absent(observation: &DropObservation) -> bool {
-        observation.agent == ResourceState::Absent
-            && observation.tmux_session == ResourceState::Absent
-            && observation.worktree == ResourceState::Absent
-            && observation.branch == ResourceState::Absent
-    }
-
     fn task_is_in_cleanup_lifecycle<R: Registry>(
         context: &CommandContext<R>,
         qualified_handle: &str,
@@ -528,18 +520,6 @@ pub mod drop_task {
             task(context, qualified_handle)?.lifecycle_status,
             LifecycleStatus::Merged | LifecycleStatus::Cleanable
         ))
-    }
-
-    fn incomplete_drop_step(observation: &DropObservation) -> DropOp {
-        if observation.agent != ResourceState::Absent {
-            DropOp::EnsureAgentStopped
-        } else if observation.tmux_session != ResourceState::Absent {
-            DropOp::EnsureTmuxSessionAbsent
-        } else if observation.worktree != ResourceState::Absent {
-            DropOp::EnsureWorktreeAbsent
-        } else {
-            DropOp::EnsureBranchAbsent
-        }
     }
 
     fn task<'a, R: Registry>(
@@ -831,7 +811,7 @@ mod tests {
 
     use super::drop_task::{
         complete_drop_task_operation, execute_drop_task_operation, plan_drop_task_operation,
-        DropTaskCompletion, DropTaskOperationPlan,
+        DropTaskCompletion,
     };
     use super::kernel::execute_external_plan;
     use super::start::{execute_start_task_operation, plan_start_task_operation};
@@ -1204,6 +1184,7 @@ mod tests {
 
         assert!(!task_command_module.contains("pub struct TaskCommandOperationExecution"));
         assert!(!task_command_module.contains("pub struct TaskCommandOperationError"));
+        assert!(!task_command_module.contains("fn operation_error"));
     }
 
     #[test]
@@ -1217,11 +1198,12 @@ mod tests {
             .nth(1)
             .and_then(|source| source.split("#[cfg(test)]").next())
             .unwrap();
+        let sweep_cleanup_plan = ["pub struct ", "SweepCleanupOperationPlan"].concat();
 
-        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationPlan"));
+        assert!(!sweep_cleanup_module.contains(&sweep_cleanup_plan));
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationExecution"));
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationError"));
-        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationPlan"));
+        assert!(!sweep_cleanup_module.contains("fn operation_error"));
         assert!(!sweep_cleanup_module.contains("plan_sweep_cleanup_operation"));
     }
 
@@ -1238,6 +1220,8 @@ mod tests {
             .unwrap();
 
         assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
+        assert!(!drop_module.contains("-> Option<StepReceipt>"));
+        assert!(!drop_module.contains("let Some(receipt)"));
     }
 
     #[test]
@@ -1254,8 +1238,9 @@ mod tests {
 
         assert!(!plan_fields.contains("pub requires_confirmation"));
         assert!(!plan_fields.contains("pub blocked_reasons"));
-        assert!(!plan_fields.contains("pub intent"));
         assert!(!plan_fields.contains("pub cleanup_lifecycle"));
+        assert!(!plan_fields.contains("pub intent"));
+        assert!(!plan_fields.contains("pub ops"));
     }
 
     #[test]
@@ -1442,8 +1427,9 @@ mod tests {
         let production_source = source.split("#[cfg(test)]").next().unwrap();
         let refresh_policy = ["TaskCommand", "RefreshPolicy"].concat();
         let post_execution = ["TaskCommand", "PostExecution"].concat();
+        let task_command_plan = ["pub struct ", "TaskCommandOperationPlan"].concat();
 
-        assert!(!production_source.contains("pub struct TaskCommandOperationPlan"));
+        assert!(!production_source.contains(&task_command_plan));
         assert!(!source.contains(&refresh_policy));
         assert!(!source.contains(&post_execution));
     }
@@ -1727,14 +1713,12 @@ mod tests {
             },
         ]);
 
-        let DropTaskOperationPlan {
-            observation, ops, ..
-        } = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        assert_eq!(observation.tmux_session, ResourceState::Absent);
-        assert_eq!(observation.worktree, ResourceState::Absent);
-        assert_eq!(observation.branch, ResourceState::Absent);
-        assert!(ops.is_empty());
+        assert_eq!(operation.observation.tmux_session, ResourceState::Absent);
+        assert_eq!(operation.observation.worktree, ResourceState::Absent);
+        assert_eq!(operation.observation.branch, ResourceState::Absent);
     }
 
     #[test]
@@ -1781,6 +1765,39 @@ mod tests {
                 "{lifecycle_status:?}"
             );
         }
+    }
+
+    #[test]
+    fn drop_operation_records_remaining_resource_when_empty_plan_still_finishes_incomplete() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = absent_drop_observation_outputs();
+        outputs.extend(vec![
+            output(0, "", ""),
+            output(0, "", ""),
+            output(0, "ajax/fix-login\n", ""),
+        ]);
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner)
+            .expect("drop operation should plan");
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .expect("drop operation should complete with incomplete teardown");
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(completion, DropTaskCompletion::TeardownIncomplete);
+        assert_eq!(
+            task.metadata.get("drop_failed_step").map(String::as_str),
+            Some("EnsureBranchAbsent")
+        );
     }
 
     #[test]

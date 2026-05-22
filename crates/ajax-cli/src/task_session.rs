@@ -80,11 +80,6 @@ enum TaskPollAttempt {
     Fatal(nix::errno::Errno),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TaskOperatorTerminalSource {
-    InheritedStdio,
-}
-
 struct TaskSessionTrace {
     started: Instant,
     file: Option<File>,
@@ -138,12 +133,6 @@ struct TaskAttachExit {
     output: Vec<u8>,
     status: Option<WaitStatus>,
     attached_for: Duration,
-}
-
-#[derive(Debug)]
-enum TaskSessionOutcome {
-    Detached,
-    AttachClientExited(TaskAttachExit),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -490,11 +479,11 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             &mut terminal.output,
             &mut trace,
         )? {
-            TaskSessionOutcome::Detached => {
+            None => {
                 trace.log("session_end", "outcome=detached");
                 return Ok(());
             }
-            TaskSessionOutcome::AttachClientExited(exit) => {
+            Some(exit) => {
                 if !attach_exit_allows_retry(&exit) {
                     trace.log(
                         "session_end",
@@ -538,7 +527,7 @@ fn run_pty_task_attach(
     terminal_input: &mut File,
     terminal_output: &mut File,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
     // either execs the requested command or exits immediately.
@@ -564,10 +553,6 @@ fn run_pty_task_attach(
             pump_task_pty(terminal_input, terminal_output, master, child, trace)
         }
     }
-}
-
-fn task_operator_terminal_source() -> TaskOperatorTerminalSource {
-    TaskOperatorTerminalSource::InheritedStdio
 }
 
 fn task_pty_fork_config(original_termios: &Termios, rows: u16, columns: u16) -> TaskPtyForkConfig {
@@ -607,21 +592,17 @@ struct TaskOperatorTerminal {
 
 impl TaskOperatorTerminal {
     fn open() -> Result<Self, CliError> {
-        match task_operator_terminal_source() {
-            TaskOperatorTerminalSource::InheritedStdio => {
-                let stdin = io::stdin();
-                let stdout = io::stdout();
-                let input = duplicate_task_terminal_fd(
-                    stdin.as_raw_fd(),
-                    "failed to duplicate task terminal input",
-                )?;
-                let output = duplicate_task_terminal_fd(
-                    stdout.as_raw_fd(),
-                    "failed to duplicate task terminal output",
-                )?;
-                Ok(Self { input, output })
-            }
-        }
+        let stdin = io::stdin();
+        let stdout = io::stdout();
+        let input = duplicate_task_terminal_fd(
+            stdin.as_raw_fd(),
+            "failed to duplicate task terminal input",
+        )?;
+        let output = duplicate_task_terminal_fd(
+            stdout.as_raw_fd(),
+            "failed to duplicate task terminal output",
+        )?;
+        Ok(Self { input, output })
     }
 
     fn enter_raw_mode(
@@ -678,7 +659,7 @@ fn pump_task_pty(
     master: OwnedFd,
     child: nix::unistd::Pid,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
     let mut pty_output = [0_u8; 8192];
@@ -812,7 +793,7 @@ fn attach_client_exit(
     output: Vec<u8>,
     attached_for: Duration,
     trace: &mut TaskSessionTrace,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     let status = wait_for_attach_child_status(child)?;
     trace.log(
         "child_status",
@@ -822,7 +803,7 @@ fn attach_client_exit(
             output.len()
         ),
     );
-    Ok(TaskSessionOutcome::AttachClientExited(TaskAttachExit {
+    Ok(Some(TaskAttachExit {
         output,
         status,
         attached_for,
@@ -852,10 +833,10 @@ fn wait_for_attach_child_status(child: nix::unistd::Pid) -> Result<Option<WaitSt
 fn detach_task_child(
     master: File,
     child: nix::unistd::Pid,
-) -> Result<TaskSessionOutcome, CliError> {
+) -> Result<Option<TaskAttachExit>, CliError> {
     drop(master);
     request_task_child_exit(child)?;
-    Ok(TaskSessionOutcome::Detached)
+    Ok(None)
 }
 
 fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
@@ -1331,10 +1312,13 @@ mod tests {
 
     #[test]
     fn task_operator_terminal_uses_inherited_stdio_instead_of_reopening_dev_tty() {
-        assert_eq!(
-            super::task_operator_terminal_source(),
-            super::TaskOperatorTerminalSource::InheritedStdio
-        );
+        let source = include_str!("task_session.rs");
+        let terminal_source_type = ["TaskOperator", "TerminalSource"].concat();
+        let terminal_source_fn = ["task_operator", "_terminal_source"].concat();
+        let session_outcome_type = ["TaskSession", "Outcome"].concat();
+        assert!(!source.contains(&terminal_source_type));
+        assert!(!source.contains(&terminal_source_fn));
+        assert!(!source.contains(&session_outcome_type));
     }
 
     #[test]

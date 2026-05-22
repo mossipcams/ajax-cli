@@ -49,9 +49,14 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     if kind == TaskCommandKind::Ship
         && plan.blocked_reasons.is_empty()
         && (!plan.requires_confirmation || confirmed)
-        && merge_task_has_cached_git_evidence(context, task)
+        && context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|candidate| candidate.qualified_handle() == task)
+            .is_some_and(|candidate| candidate.git_status.is_some())
     {
-        refresh_merge_evidence_if_available(context, task, runner);
+        let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false);
         plan =
             plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     }
@@ -101,18 +106,6 @@ pub(crate) fn render_drop_command<R: CommandRunner>(
     })
 }
 
-fn merge_task_has_cached_git_evidence<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-) -> bool {
-    context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.qualified_handle() == task)
-        .is_some_and(|candidate| candidate.git_status.is_some())
-}
-
 fn drop_should_refresh_cleanup_evidence<R: Registry>(
     context: &CommandContext<R>,
     task: &str,
@@ -128,17 +121,6 @@ fn drop_should_refresh_cleanup_evidence<R: Registry>(
                 LifecycleStatus::Merged | LifecycleStatus::Cleanable
             )
         })
-}
-
-fn refresh_merge_evidence_if_available<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    task: &str,
-    runner: &mut R,
-) {
-    // Merge still runs the fresh-evidence probe first when available; if the
-    // probe itself cannot run, the existing plan remains the operator-facing
-    // source of confirmation and execution errors.
-    let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false).is_ok();
 }
 
 pub(crate) fn execute_observed_drop<R: CommandRunner>(
@@ -239,12 +221,14 @@ mod tests {
         let production_source = source.split("#[cfg(test)]").next().unwrap();
         let local_completion_helper = ["drop_observation", "_all_absent"].concat();
         let local_execution_loop = ["for op in operation.", "ops"].concat();
+        let local_drop_plan = ["fn drop_", "task_plan"].concat();
 
         assert!(source.contains("plan_drop_task_operation"));
         assert!(source.contains("execute_drop_task_operation"));
         assert!(!production_source.contains("pub(crate) fn drop_task_plan"));
         assert!(!source.contains(&local_completion_helper));
         assert!(!source.contains(&local_execution_loop));
+        assert!(!production_source.contains(&local_drop_plan));
     }
 
     #[test]
@@ -257,7 +241,11 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
+            .and_then(|source| {
+                source
+                    .split("fn drop_should_refresh_cleanup_evidence")
+                    .next()
+            })
             .unwrap();
 
         assert!(!source.contains(&render_core_task_command));
@@ -296,14 +284,22 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
+            .and_then(|source| {
+                source
+                    .split("fn drop_should_refresh_cleanup_evidence")
+                    .next()
+            })
             .unwrap();
         let execute_plan = ["commands::execute", "_plan(&plan"].concat();
         let apply_after_execute = ["apply_after", "_execute"].concat();
+        let cached_evidence_helper = ["fn merge_task_has", "_cached_git_evidence"].concat();
+        let refresh_helper = ["fn refresh_merge", "_evidence_if_available"].concat();
 
         assert!(!render_task_command.contains(&execute_plan));
         assert!(!render_task_command.contains(&apply_after_execute));
         assert!(!render_task_command.contains("mark_task_check_started"));
         assert!(!render_task_command.contains("mark_task_merged"));
+        assert!(!source.contains(&cached_evidence_helper));
+        assert!(!source.contains(&refresh_helper));
     }
 }
