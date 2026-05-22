@@ -4719,6 +4719,45 @@ mod tests {
     }
 
     #[test]
+    fn drop_execute_treats_no_such_branch_as_already_absent() {
+        let mut context = cleanable_context();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+            output(0, ""),
+            CommandOutput {
+                status_code: 1,
+                stdout: String::new(),
+                stderr: "error: no such branch 'ajax/fix-login'".to_string(),
+            },
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        run_with_context_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+    }
+
+    #[test]
     fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete() {
         let mut context = cleanable_context();
         let task = context
