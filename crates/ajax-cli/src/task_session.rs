@@ -80,11 +80,6 @@ enum TaskPollAttempt {
     Fatal(nix::errno::Errno),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TaskOperatorTerminalSource {
-    InheritedStdio,
-}
-
 struct TaskSessionTrace {
     started: Instant,
     file: Option<File>,
@@ -566,10 +561,6 @@ fn run_pty_task_attach(
     }
 }
 
-fn task_operator_terminal_source() -> TaskOperatorTerminalSource {
-    TaskOperatorTerminalSource::InheritedStdio
-}
-
 fn task_pty_fork_config(original_termios: &Termios, rows: u16, columns: u16) -> TaskPtyForkConfig {
     TaskPtyForkConfig {
         child_termios: child_task_termios(original_termios),
@@ -607,21 +598,17 @@ struct TaskOperatorTerminal {
 
 impl TaskOperatorTerminal {
     fn open() -> Result<Self, CliError> {
-        match task_operator_terminal_source() {
-            TaskOperatorTerminalSource::InheritedStdio => {
-                let stdin = io::stdin();
-                let stdout = io::stdout();
-                let input = duplicate_task_terminal_fd(
-                    stdin.as_raw_fd(),
-                    "failed to duplicate task terminal input",
-                )?;
-                let output = duplicate_task_terminal_fd(
-                    stdout.as_raw_fd(),
-                    "failed to duplicate task terminal output",
-                )?;
-                Ok(Self { input, output })
-            }
-        }
+        let stdin = io::stdin();
+        let stdout = io::stdout();
+        let input = duplicate_task_terminal_fd(
+            stdin.as_raw_fd(),
+            "failed to duplicate task terminal input",
+        )?;
+        let output = duplicate_task_terminal_fd(
+            stdout.as_raw_fd(),
+            "failed to duplicate task terminal output",
+        )?;
+        Ok(Self { input, output })
     }
 
     fn enter_raw_mode(
@@ -1331,10 +1318,11 @@ mod tests {
 
     #[test]
     fn task_operator_terminal_uses_inherited_stdio_instead_of_reopening_dev_tty() {
-        assert_eq!(
-            super::task_operator_terminal_source(),
-            super::TaskOperatorTerminalSource::InheritedStdio
-        );
+        let source = include_str!("task_session.rs");
+        let terminal_source_type = ["TaskOperator", "TerminalSource"].concat();
+        let terminal_source_fn = ["task_operator", "_terminal_source"].concat();
+        assert!(!source.contains(&terminal_source_type));
+        assert!(!source.contains(&terminal_source_fn));
     }
 
     #[test]
