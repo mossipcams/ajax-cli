@@ -3,7 +3,6 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
-    slices,
     task_operations::drop_task::{
         execute_drop_task_operation, plan_drop_task_operation, DropTaskCompletion,
     },
@@ -19,82 +18,7 @@ use crate::{
     task_arg, CliError, RenderedCommand,
 };
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum TaskCommandOperation {
-    Open,
-    Review,
-    Merge,
-    Repair,
-    Drop,
-}
-
-impl TaskCommandOperation {
-    pub(crate) fn from_cli_subcommand(name: &str) -> Option<Self> {
-        match name {
-            "resume" => Some(Self::Open),
-            "repair" => Some(Self::Repair),
-            "review" => Some(Self::Review),
-            "ship" => Some(Self::Merge),
-            "drop" => Some(Self::Drop),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn plan<R: Registry>(
-        self,
-        context: &CommandContext<R>,
-        task: &str,
-    ) -> Result<commands::CommandPlan, CommandError> {
-        self.plan_with_open_mode(context, task, commands::OpenMode::Attach)
-    }
-
-    pub(crate) fn plan_with_open_mode<R: Registry>(
-        self,
-        context: &CommandContext<R>,
-        task: &str,
-        open_mode: commands::OpenMode,
-    ) -> Result<commands::CommandPlan, CommandError> {
-        match self {
-            Self::Open => commands::open_task_plan(context, task, open_mode),
-            Self::Review => slices::review::review_task_plan(context, task),
-            Self::Merge => commands::merge_task_plan(context, task),
-            Self::Repair => repair_task_plan(context, task, open_mode),
-            Self::Drop => drop_task_plan(context, task),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn returns_to_cockpit_after_execute(self) -> bool {
-        matches!(self, Self::Review | Self::Merge | Self::Repair | Self::Drop)
-    }
-
-    fn core_task_command_kind(self) -> Option<TaskCommandKind> {
-        match self {
-            Self::Open => Some(TaskCommandKind::Resume),
-            Self::Review => Some(TaskCommandKind::Review),
-            Self::Merge => Some(TaskCommandKind::Ship),
-            Self::Repair => Some(TaskCommandKind::Repair),
-            Self::Drop => None,
-        }
-    }
-}
-
-fn repair_task_plan<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-    open_mode: commands::OpenMode,
-) -> Result<commands::CommandPlan, CommandError> {
-    let mut plan = commands::trunk_task_plan_with_open_mode(context, task, open_mode)?;
-    plan.title = format!("repair task: {task}");
-    if let Ok(check_plan) = commands::check_task_plan(context, task) {
-        plan.commands.extend(check_plan.commands);
-        plan.requires_confirmation |= check_plan.requires_confirmation;
-        plan.blocked_reasons.extend(check_plan.blocked_reasons);
-    }
-    Ok(plan)
-}
-
-fn drop_task_plan<R: Registry>(
+pub(crate) fn drop_task_plan<R: Registry>(
     context: &CommandContext<R>,
     task: &str,
 ) -> Result<commands::CommandPlan, CommandError> {
@@ -107,20 +31,26 @@ fn drop_task_plan<R: Registry>(
 }
 
 pub(crate) fn render_task_command<R: CommandRunner>(
-    operation: TaskCommandOperation,
+    kind: TaskCommandKind,
     subcommand: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
+    render_core_task_command(kind, subcommand, context, runner, open_mode, task)
+}
+
+pub(crate) fn render_drop_command<R: CommandRunner>(
+    subcommand: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<RenderedCommand, CliError> {
+    let task = task_arg(subcommand)?;
     let execute = subcommand.get_flag("execute");
     let confirmed = subcommand.get_flag("yes");
-    if operation == TaskCommandOperation::Drop && execute {
+    if execute {
         return execute_observed_drop(context, task, confirmed, runner);
-    }
-    if let Some(kind) = operation.core_task_command_kind() {
-        return render_core_task_command(kind, subcommand, context, runner, open_mode, task);
     }
     let mut state_changed = false;
     if (!execute || confirmed) && !drop_should_refresh_cleanup_evidence(context, task) {
@@ -176,18 +106,20 @@ fn render_core_task_command<R: CommandRunner>(
             plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     }
 
-    let execution = execute_task_command_operation(context, &operation, confirmed, runner)
-        .map_err(|error| {
-            let cli_error = command_error(error.error);
-            if error.state_changed {
-                cli_error.after_state_change()
-            } else {
-                cli_error
-            }
-        })?;
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context, &operation, confirmed, runner,
+    )
+    .map_err(|(error, error_state_changed)| {
+        let cli_error = command_error(error);
+        if error_state_changed {
+            cli_error.after_state_change()
+        } else {
+            cli_error
+        }
+    })?;
     Ok(RenderedCommand {
-        output: render_execution_outputs(&execution.outputs, None),
-        state_changed: state_changed || execution.state_changed,
+        output: render_execution_outputs(&outputs, None),
+        state_changed: state_changed || operation_state_changed,
     })
 }
 
@@ -215,8 +147,7 @@ fn drop_should_refresh_cleanup_evidence<R: Registry>(
         .is_some_and(|candidate| {
             matches!(
                 candidate.lifecycle_status,
-                ajax_core::models::LifecycleStatus::Merged
-                    | ajax_core::models::LifecycleStatus::Cleanable
+                LifecycleStatus::Merged | LifecycleStatus::Cleanable
             )
         })
 }
@@ -309,6 +240,19 @@ fn cli_task<'a>(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn cli_task_dispatch_uses_core_task_command_kind_without_local_enum() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+        )
+        .unwrap();
+        let local_enum = ["enum Task", "CommandOperation"].concat();
+        let mapper = ["task_command_kind", "_for_cli_subcommand"].concat();
+
+        assert!(!source.contains(&local_enum));
+        assert!(!source.contains(&mapper));
+    }
+
+    #[test]
     fn cli_drop_dispatch_delegates_observed_drop_decision_to_core_operation() {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
@@ -342,10 +286,10 @@ mod tests {
     #[test]
     fn cli_ship_dispatch_delegates_execution_to_core_task_command_operation() {
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
-        let ship_mapping = ["Self::Merge => Some(TaskCommandKind::", "Ship)"].concat();
+        let ship_mapping = ["\"ship\" => TaskCommandKind::", "Ship"].concat();
 
         assert!(source.contains(&ship_mapping));
     }
@@ -353,10 +297,10 @@ mod tests {
     #[test]
     fn cli_repair_dispatch_delegates_execution_to_core_task_command_operation() {
         let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
         )
         .unwrap();
-        let repair_mapping = ["Self::Repair => Some(TaskCommandKind::", "Repair)"].concat();
+        let repair_mapping = ["\"repair\" => TaskCommandKind::", "Repair"].concat();
 
         assert!(source.contains(&repair_mapping));
     }

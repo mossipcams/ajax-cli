@@ -10,6 +10,8 @@ mod snapshot_dispatch;
 mod supervise;
 mod task_session;
 
+#[cfg(test)]
+use ajax_core::task_operations::task_command::TaskCommandKind;
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext, CommandError},
@@ -29,7 +31,7 @@ use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
 use context::{default_context_paths, load_context, save_context};
 #[cfg(test)]
-use dispatch::{render_task_command, TaskCommandOperation};
+use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 #[cfg(test)]
 use snapshot_dispatch::parent_directory_available;
@@ -2566,7 +2568,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Open,
+            super::TaskCommandKind::Resume,
             subcommand,
             &mut context,
             &mut runner,
@@ -2619,6 +2621,16 @@ mod tests {
 
         assert!(output.contains("repair task: web/fix-login"));
         assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+        let snapshot_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/snapshot_dispatch.rs")).unwrap();
+        let wrapper_definition = ["pub(crate) fn plan", "_task_command"].concat();
+        let wrapper_call = ["crate::dispatch::plan", "_task_command"].concat();
+
+        assert!(!dispatch.contains(&wrapper_definition));
+        assert!(!snapshot_dispatch.contains(&wrapper_call));
     }
 
     #[test]
@@ -4754,7 +4766,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -4798,7 +4810,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -4876,7 +4888,7 @@ mod tests {
         // inside tmux, failing in CI). Pin the env-independent `Attach`
         // default so the full command sequence is asserted deterministically.
         super::render_task_command(
-            super::TaskCommandOperation::Repair,
+            super::TaskCommandKind::Repair,
             subcommand,
             &mut context,
             &mut runner,
@@ -5579,6 +5591,13 @@ mod tests {
         let inbox = ajax_core::commands::inbox(&context);
         assert_eq!(inbox.items.len(), 1);
         assert_eq!(inbox.items[0].action, OperatorAction::Resume);
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let execution_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
+        let wrapper = ["pub(crate) fn execute_new", "_task_plan<"].concat();
+
+        assert!(!execution_dispatch.contains(&wrapper));
     }
 
     #[test]
@@ -5598,7 +5617,7 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
 
-        let output = super::execute_pending_cockpit_action(
+        let outcome = super::execute_pending_cockpit_action(
             &pending,
             &mut context,
             &mut runner,
@@ -5606,7 +5625,11 @@ mod tests {
         )
         .unwrap();
 
-        assert!(output.contains("recorded task: api/fix-login"));
+        assert!(matches!(
+            outcome,
+            super::PendingCockpitOutcome::Exit(output)
+                if output.contains("recorded task: api/fix-login")
+        ));
         assert_eq!(
             runner.commands(),
             &[
@@ -5666,60 +5689,37 @@ mod tests {
     }
 
     #[test]
-    fn task_command_operation_maps_cli_commands_and_cockpit_aliases() {
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("resume"),
-            Some(super::TaskCommandOperation::Open)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("repair"),
-            Some(super::TaskCommandOperation::Repair)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("review"),
-            Some(super::TaskCommandOperation::Review)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("ship"),
-            Some(super::TaskCommandOperation::Merge)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("drop"),
-            Some(super::TaskCommandOperation::Drop)
-        );
-        assert_eq!(
-            super::TaskCommandOperation::from_cli_subcommand("status"),
-            None
-        );
+    fn task_command_routes_use_core_kinds_without_cli_mapper() {
+        let context = sample_context();
 
+        let resume = run_with_context(["ajax", "resume", "web/fix-login"], &context).unwrap();
+        let repair = run_with_context(["ajax", "repair", "web/fix-login"], &context).unwrap();
+        let review = run_with_context(["ajax", "review", "web/fix-login"], &context).unwrap();
+        let ship = run_with_context(["ajax", "ship", "web/fix-login"], &context).unwrap();
+
+        assert!(resume.contains("open task: web/fix-login"));
+        assert!(repair.contains("repair task: web/fix-login"));
+        assert!(review.contains("diff task: web/fix-login"));
+        assert!(ship.contains("merge task: web/fix-login"));
+
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
+        let execution_dispatch =
+            std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
+        let mapper = ["task_command_kind", "_for_cli_subcommand"].concat();
+
+        assert!(!dispatch.contains(&mapper));
+        assert!(!execution_dispatch.contains(&mapper));
         assert_eq!(OperatorAction::from_label("reconcile"), None);
     }
 
     #[test]
-    fn task_command_operation_uses_operator_review_language() {
+    fn task_command_kind_uses_operator_review_language() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
 
         assert!(dispatch.contains("Review"));
         assert!(!dispatch.contains("Diff"));
-        assert!(dispatch.contains("slices::review::review_task_plan"));
-    }
-
-    #[test]
-    fn task_command_operation_defines_cockpit_return_policy() {
-        assert!(!super::TaskCommandOperation::Open.returns_to_cockpit_after_execute());
-
-        for operation in [
-            super::TaskCommandOperation::Review,
-            super::TaskCommandOperation::Merge,
-            super::TaskCommandOperation::Repair,
-            super::TaskCommandOperation::Drop,
-        ] {
-            assert!(
-                operation.returns_to_cockpit_after_execute(),
-                "{operation:?} should return to the task picker"
-            );
-        }
     }
 
     #[test]
@@ -5769,14 +5769,7 @@ mod tests {
             output(0, "main\n"),
         ]);
 
-        let rendered = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let rendered = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap();
 
         assert!(rendered.state_changed);
         assert_eq!(
@@ -5849,7 +5842,7 @@ mod tests {
         ]);
 
         let rendered = super::render_task_command(
-            super::TaskCommandOperation::Open,
+            super::TaskCommandKind::Resume,
             subcommand,
             &mut context,
             &mut runner,
@@ -5949,14 +5942,7 @@ mod tests {
             },
         ]);
 
-        let error = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap_err();
+        let error = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap_err();
 
         assert!(matches!(
             error,
@@ -6072,14 +6058,7 @@ mod tests {
             output(0, "main\n"),
         ]);
 
-        let rendered = super::render_task_command(
-            super::TaskCommandOperation::Drop,
-            subcommand,
-            &mut context,
-            &mut runner,
-            OpenMode::Attach,
-        )
-        .unwrap();
+        let rendered = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap();
 
         assert_eq!(rendered.output, "removed task: web/fix-login");
         assert_eq!(

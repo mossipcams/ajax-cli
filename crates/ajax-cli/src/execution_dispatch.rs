@@ -1,15 +1,15 @@
-#[cfg(test)]
-use ajax_core::task_operations::start::StartTaskOperationPlan;
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner},
+    adapters::{CommandOutput, CommandRunner},
     commands::{self, CommandContext, CommandError},
     events::apply_monitor_event_to_registry,
     models::LifecycleStatus,
     registry::{InMemoryRegistry, Registry},
+    task_operations::kernel::execute_external_plan_with_success,
     task_operations::start::{execute_start_task_operation, plan_start_task_operation},
     task_operations::sweep_cleanup::{
         execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
     },
+    task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
 
@@ -18,7 +18,7 @@ use crate::{
         refresh_live_context, render_interactive_cockpit_command, render_live_cockpit_command,
     },
     command_error, current_open_mode,
-    dispatch::{render_task_command, TaskCommandOperation},
+    dispatch::{render_drop_command, render_task_command},
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
@@ -62,12 +62,17 @@ pub(crate) fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some((name @ ("resume" | "repair" | "review" | "ship" | "drop"), subcommand)) => {
-            let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
-                CliError::CommandFailed(format!("unsupported task command: {name}"))
-            })?;
-            render_task_command(operation, subcommand, context, runner, current_open_mode())
+        Some((name @ ("resume" | "repair" | "review" | "ship"), subcommand)) => {
+            let kind = match name {
+                "resume" => TaskCommandKind::Resume,
+                "repair" => TaskCommandKind::Repair,
+                "review" => TaskCommandKind::Review,
+                "ship" => TaskCommandKind::Ship,
+                _ => unreachable!("task command pattern only matches known commands"),
+            };
+            render_task_command(kind, subcommand, context, runner, current_open_mode())
         }
+        Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("tidy", subcommand)) => {
             let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
@@ -76,23 +81,23 @@ pub(crate) fn render_matches_mut(
                     state_changed: false,
                 });
             }
-            let execution = execute_sweep_cleanup_operation(
+            let (outputs, state_changed) = execute_sweep_cleanup_operation(
                 context,
                 &operation,
                 subcommand.get_flag("yes"),
                 runner,
             )
-            .map_err(|error| {
-                let cli_error = command_error(error.error);
-                if error.state_changed {
+            .map_err(|(error, error_state_changed)| {
+                let cli_error = command_error(error);
+                if error_state_changed {
                     cli_error.after_state_change()
                 } else {
                     cli_error
                 }
             })?;
             Ok(RenderedCommand {
-                output: render_execution_outputs(&execution.outputs, None),
-                state_changed: execution.state_changed,
+                output: render_execution_outputs(&outputs, None),
+                state_changed,
             })
         }
         Some(("supervise", subcommand)) => {
@@ -159,26 +164,6 @@ pub(crate) fn render_matches_mut_with_paths(
     render_matches_mut(matches, context, runner)
 }
 
-#[cfg(test)]
-pub(crate) fn execute_new_task_plan<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    request: &commands::NewTaskRequest,
-    plan: &commands::CommandPlan,
-    confirmed: bool,
-    open_mode: commands::OpenMode,
-) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let intent = commands::task_from_new_request(context, request)
-        .map_err(command_error)?
-        .intent();
-    let operation = StartTaskOperationPlan {
-        intent,
-        plan: plan.clone(),
-    };
-    execute_start_task_operation(context, runner, request, &operation, confirmed, open_mode)
-        .map_err(|error| command_error(error).after_state_change())
-}
-
 pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -189,42 +174,28 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     open_mode: commands::OpenMode,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
     let task = commands::record_new_task(context, request).map_err(command_error)?;
-    if plan.requires_confirmation && !confirmed {
-        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
-    }
-    if !plan.blocked_reasons.is_empty() {
-        return Err(
-            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
-                .after_state_change(),
-        );
-    }
-
-    let mut outputs = Vec::new();
-    for (index, command) in plan.commands.iter().enumerate() {
-        let output = runner.run(command).map_err(|error| {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            command_error(CommandError::CommandRun(error)).after_state_change()
-        })?;
-        if output.status_code != 0 {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            return Err(
-                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                    program: command.program.clone(),
-                    status_code: output.status_code,
-                    stderr: output.stderr,
-                    cwd: command.cwd.clone(),
-                }))
-                .after_state_change(),
-            );
-        }
-        if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
-            commands::mark_new_task_provisioning_step_completed(context, &task.id, step)
-                .map_err(|error| command_error(error).after_state_change())?;
-        }
-        if !commands::is_new_task_husky_hook_command(command) {
-            outputs.push(output);
-        }
-    }
+    let external_outputs =
+        match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
+            if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
+                commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
+            }
+            Ok(())
+        }) {
+            Ok(outputs) => outputs,
+            Err(error @ CommandError::CommandRun(_)) => {
+                let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
+                return Err(command_error(error).after_state_change());
+            }
+            Err(error) => return Err(command_error(error).after_state_change()),
+        };
+    let mut outputs = plan
+        .commands
+        .iter()
+        .zip(external_outputs)
+        .filter_map(|(command, output)| {
+            (!commands::is_new_task_husky_hook_command(command)).then_some(output)
+        })
+        .collect::<Vec<_>>();
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
@@ -293,9 +264,16 @@ mod tests {
         .unwrap();
 
         let numeric_step_helper = ["mark_new_task", "_step_completed"].concat();
+        let manual_confirmation = ["plan.requires", "_confirmation"].concat();
+        let manual_blocked = ["plan.blocked", "_reasons"].concat();
+        let manual_runner = ["runner.run", "(command)"].concat();
 
         assert!(source.contains("execute_start_task_operation"));
+        assert!(source.contains("execute_external_plan_with_success"));
         assert!(!source.contains(&numeric_step_helper));
+        assert!(!source.contains(&manual_confirmation));
+        assert!(!source.contains(&manual_blocked));
+        assert!(!source.contains(&manual_runner));
     }
 
     #[test]

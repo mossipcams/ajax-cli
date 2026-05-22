@@ -110,6 +110,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
         };
 
         match outcome {
+            #[cfg(test)]
             PendingCockpitOutcome::Exit(output) => {
                 return Ok(RenderedCommand {
                     output,

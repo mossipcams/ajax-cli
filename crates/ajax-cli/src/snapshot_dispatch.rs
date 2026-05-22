@@ -2,6 +2,7 @@ use ajax_core::{
     commands::{self, CommandContext},
     output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
+    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
 };
 use clap::ArgMatches;
 
@@ -62,10 +63,14 @@ pub(crate) fn render_matches_with_paths(
         }
         Some(("repair", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let operation = crate::dispatch::TaskCommandOperation::Repair;
-            let plan = operation
-                .plan_with_open_mode(context, task, current_open_mode())
-                .map_err(command_error)?;
+            let plan = plan_task_command_operation(
+                context,
+                TaskCommandKind::Repair,
+                task,
+                current_open_mode(),
+            )
+            .map_err(command_error)?
+            .plan;
             render_readonly_plan(plan, subcommand)
         }
         Some(("review", subcommand)) => {
@@ -80,8 +85,7 @@ pub(crate) fn render_matches_with_paths(
         }
         Some(("drop", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let operation = crate::dispatch::TaskCommandOperation::Drop;
-            let plan = operation.plan(context, task).map_err(command_error)?;
+            let plan = crate::dispatch::drop_task_plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("tidy", subcommand)) => {
