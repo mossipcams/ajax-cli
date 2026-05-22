@@ -110,6 +110,7 @@ When finished, report the final validation results.
 - Replace internal legacy implementation when required, but preserve public APIs and user-visible behavior unless the approved task explicitly changes them.
 - Never hide failures. Surface them with explicit errors, tests, or documented limitations.
 - Do not claim a command passed unless it was actually run and passed.
+- Compare both sides of this conflict. Identify what behavior each branch added or changed. Then propose a merged version that preserves both behaviors unless they are incompatible.
 
 ---
 
