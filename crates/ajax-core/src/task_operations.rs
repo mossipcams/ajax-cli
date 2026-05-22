@@ -811,6 +811,7 @@ pub mod drop_task {
         stderr.contains("not found")
             || stderr.contains("not a branch")
             || stderr.contains("no such branch")
+            || stderr.contains("not a valid branch name")
     }
 }
 
@@ -1740,6 +1741,45 @@ mod tests {
         assert!(runner.commands.iter().any(|command| {
             command.program == "git" && command.args.iter().any(|arg| arg == "branch")
         }));
+    }
+
+    #[test]
+    fn drop_operation_treats_invalid_branch_delete_error_as_already_absent() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([
+            output(0, "", ""),
+            output(0, "", ""),
+            output(
+                128,
+                "",
+                "fatal: 'ajax/fix-login' is not a valid branch name",
+            ),
+        ]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let execution = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(execution.outputs.len(), 3);
+        assert_eq!(execution.completion, DropTaskCompletion::Removed);
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
     }
 
     #[test]
