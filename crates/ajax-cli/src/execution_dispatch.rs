@@ -94,16 +94,19 @@ pub(crate) fn render_matches_mut(
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("tidy", subcommand)) => {
-            let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+                    output: render_plan(
+                        commands::sweep_cleanup_plan(context),
+                        subcommand.get_flag("json"),
+                    )?,
                     state_changed: false,
                 });
             }
+            let candidates = plan_sweep_cleanup_operation(context);
             let (outputs, state_changed) = execute_sweep_cleanup_operation(
                 context,
-                &operation,
+                &candidates,
                 subcommand.get_flag("yes"),
                 runner,
             )
