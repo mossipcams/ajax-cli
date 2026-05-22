@@ -306,10 +306,14 @@ Every pull request must pass the strongest applicable checks from `Required Vali
 
 ### PR Title Expectations
 
-When creating a PR, always align the PR title with Release Please PR title
-expectations. Use a conventional commit style title such as `feat: ...`,
-`fix: ...`, or `chore: ...` so Release Please can infer the release impact and
-changelog entry correctly.
+Every PR title must align with Release Please PR title expectations. Use a
+conventional commit style title such as `feat: ...`, `fix: ...`, or
+`chore: ...` so Release Please can infer the release impact and changelog entry
+correctly.
+
+This applies when creating, updating, renaming, or reviewing any PR. If an
+existing PR title does not follow this convention, update it before reporting the
+PR as ready.
 
 Recommended warning check:
 
