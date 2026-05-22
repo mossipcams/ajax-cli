@@ -356,13 +356,12 @@ pub mod drop_task {
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
-        models::{SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent, TaskOperationKind},
+        models::{SideFlag, StepReceipt, StepReceiptStatus, Task, TaskOperationKind},
         registry::{Registry, RegistryEventKind},
     };
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct DropTaskOperationPlan {
-        pub intent: TaskIntent,
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
         pub ops: Vec<DropOp>,
@@ -389,7 +388,6 @@ pub mod drop_task {
             .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
         if !confirmation_plan.blocked_reasons.is_empty() {
             return Ok(DropTaskOperationPlan {
-                intent: task.intent(),
                 confirmation_plan,
                 observation: unknown_observation(),
                 ops: Vec::new(),
@@ -400,7 +398,6 @@ pub mod drop_task {
         let ops = commands::plan_drop_from_observation(&observation);
 
         Ok(DropTaskOperationPlan {
-            intent: task.intent(),
             confirmation_plan,
             observation,
             ops,
@@ -1260,6 +1257,7 @@ mod tests {
         assert!(!plan_fields.contains("pub requires_confirmation"));
         assert!(!plan_fields.contains("pub blocked_reasons"));
         assert!(!plan_fields.contains("pub cleanup_lifecycle"));
+        assert!(!plan_fields.contains("pub intent"));
     }
 
     #[test]
@@ -1714,13 +1712,9 @@ mod tests {
         ]);
 
         let DropTaskOperationPlan {
-            intent,
-            observation,
-            ops,
-            ..
+            observation, ops, ..
         } = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        assert_eq!(intent.id, TaskId::new("web/fix-login"));
         assert_eq!(observation.tmux_session, ResourceState::Absent);
         assert_eq!(observation.worktree, ResourceState::Absent);
         assert_eq!(observation.branch, ResourceState::Absent);
