@@ -160,8 +160,11 @@ fields.
 
 Runtime refresh lives in `runtime_refresh`. It probes Git and tmux, reconciles
 runtime evidence, refreshes cached annotations, and recovers missing task
-records from observed Ajax worktrees. Cockpit invokes it through the CLI adapter
-but does not own the refresh algorithm.
+records from observed Ajax worktrees. Core also accepts a small external
+agent-status cache port for hook-backed status values; adapters read filesystem
+or terminal cache formats and core reduces those values into live observations.
+Cockpit invokes runtime refresh through the CLI adapter but does not own the
+refresh algorithm.
 
 ### Live Status
 
@@ -234,6 +237,8 @@ or test-command operation.
 - `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
   It calls core runtime refresh and explicit cockpit projection rebuilds rather
   than owning substrate refresh logic.
+- `agent_status_cache` owns filesystem reads for hook-backed agent status caches
+  such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux

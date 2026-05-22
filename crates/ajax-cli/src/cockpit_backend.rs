@@ -1,14 +1,17 @@
+#[cfg(test)]
+use ajax_core::runtime_refresh::AgentStatusCache;
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     registry::InMemoryRegistry,
-    runtime_refresh::refresh_runtime_context,
+    runtime_refresh::{refresh_runtime_context, refresh_runtime_context_with_agent_status_cache},
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
 use std::time::Duration;
 
 use crate::{
+    agent_status_cache::TmuxAgentStatusCache,
     cockpit_actions::{
         execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
         tui_cockpit_action, tui_cockpit_confirmed_action, PendingCockpitOutcome,
@@ -160,7 +163,22 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    refresh_runtime_context(context, runner).map_err(crate::command_error)
+    if let Some(cache) = TmuxAgentStatusCache::from_default_location() {
+        refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
+            .map_err(crate::command_error)
+    } else {
+        refresh_runtime_context(context, runner).map_err(crate::command_error)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn refresh_live_context_with_agent_status_cache<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    agent_status_cache: &impl AgentStatusCache,
+) -> Result<bool, CliError> {
+    refresh_runtime_context_with_agent_status_cache(context, runner, agent_status_cache)
+        .map_err(crate::command_error)
 }
 
 pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
@@ -169,6 +187,18 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     state_changed: &mut bool,
 ) -> Result<CockpitSnapshot, CliError> {
     *state_changed |= refresh_live_context(context, runner)?;
+    Ok(build_cockpit_snapshot(context))
+}
+
+#[cfg(test)]
+pub(crate) fn refresh_cockpit_snapshot_with_agent_status_cache<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    agent_status_cache: &impl AgentStatusCache,
+    state_changed: &mut bool,
+) -> Result<CockpitSnapshot, CliError> {
+    *state_changed |=
+        refresh_live_context_with_agent_status_cache(context, runner, agent_status_cache)?;
     Ok(build_cockpit_snapshot(context))
 }
 
@@ -244,6 +274,7 @@ mod tests {
             Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
+        runtime_refresh::AgentStatusCache,
     };
 
     #[derive(Default)]
@@ -410,6 +441,16 @@ mod tests {
         context
     }
 
+    struct StaticAgentStatusCache {
+        values: Vec<String>,
+    }
+
+    impl AgentStatusCache for StaticAgentStatusCache {
+        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+            self.values.clone()
+        }
+    }
+
     #[test]
     fn live_refresh_updates_cached_annotations_for_cockpit_inbox() {
         let mut context = context_with_active_task();
@@ -440,6 +481,34 @@ mod tests {
             task.runtime_projection.source,
             RuntimeObservationSource::TmuxProbe
         );
+    }
+
+    #[test]
+    fn cockpit_refresh_uses_hook_backed_agent_status_cache() {
+        let mut context = context_with_active_task();
+        let mut runner = LiveRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+        let mut state_changed = false;
+
+        let snapshot = super::refresh_cockpit_snapshot_with_agent_status_cache(
+            &mut context,
+            &mut runner,
+            &cache,
+            &mut state_changed,
+        )
+        .unwrap();
+
+        assert!(state_changed);
+        let card = snapshot
+            .cards
+            .iter()
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("task should stay visible in cockpit");
+        assert_eq!(card.status_label, "agent running");
+        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
+        assert_eq!(card.live_summary.as_deref(), Some("agent running"));
     }
 
     #[test]
@@ -871,7 +940,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(runner.commands.iter().any(
+        assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(
@@ -906,7 +975,7 @@ mod tests {
         let changed = super::refresh_live_context(&mut context, &mut runner).unwrap();
 
         assert!(!changed);
-        assert!(runner.commands.iter().any(
+        assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "list-sessions")
         ));
         assert!(!runner.commands.iter().any(

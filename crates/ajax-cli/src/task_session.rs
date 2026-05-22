@@ -68,6 +68,19 @@ enum TaskPollAction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskPollErrorAction {
+    Retry,
+    Fatal,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TaskPollAttempt {
+    Retry,
+    Ready(TaskPollAction),
+    Fatal(nix::errno::Errno),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum TaskOperatorTerminalSource {
     InheritedStdio,
 }
@@ -358,6 +371,28 @@ fn attach_status_succeeded(status: Option<&WaitStatus>) -> bool {
 fn attach_output_mentions_interrupted(output: &[u8]) -> bool {
     let output = String::from_utf8_lossy(output).to_ascii_lowercase();
     output.contains("eintr") || output.contains("interrupted system call")
+}
+
+fn classify_task_poll_error(error: nix::errno::Errno) -> TaskPollErrorAction {
+    if error == nix::errno::Errno::EINTR {
+        TaskPollErrorAction::Retry
+    } else {
+        TaskPollErrorAction::Fatal
+    }
+}
+
+fn classify_task_poll_attempt(
+    result: Result<i32, nix::errno::Errno>,
+    tty_flags: PollFlags,
+    master_flags: PollFlags,
+) -> TaskPollAttempt {
+    match result {
+        Ok(_) => TaskPollAttempt::Ready(classify_task_poll_events(tty_flags, master_flags)),
+        Err(error) => match classify_task_poll_error(error) {
+            TaskPollErrorAction::Retry => TaskPollAttempt::Retry,
+            TaskPollErrorAction::Fatal => TaskPollAttempt::Fatal(error),
+        },
+    }
 }
 
 fn trace_path_from_env(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
@@ -659,18 +694,26 @@ fn pump_task_pty(
                     PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
                 ),
             ];
-            if let Err(error) = poll(&mut poll_fds, PollTimeout::NONE) {
-                trace.log("poll_err", format!("error={error}"));
-                return Err(tty_error("failed to poll task PTY")(error));
-            }
+            let poll_result = poll(&mut poll_fds, PollTimeout::NONE);
             let tty_flags = poll_fds[0].revents().unwrap_or_else(PollFlags::empty);
             let master_flags = poll_fds[1].revents().unwrap_or_else(PollFlags::empty);
-            let action = classify_task_poll_events(tty_flags, master_flags);
-            trace.log(
-                "poll_flags",
-                format!("tty={tty_flags:?} master={master_flags:?} action={action:?}"),
-            );
-            action
+            match classify_task_poll_attempt(poll_result, tty_flags, master_flags) {
+                TaskPollAttempt::Retry => {
+                    trace.log("poll_interrupted", "action=retry");
+                    continue;
+                }
+                TaskPollAttempt::Fatal(error) => {
+                    trace.log("poll_err", format!("error={error}"));
+                    return Err(tty_error("failed to poll task PTY")(error));
+                }
+                TaskPollAttempt::Ready(action) => {
+                    trace.log(
+                        "poll_flags",
+                        format!("tty={tty_flags:?} master={master_flags:?} action={action:?}"),
+                    );
+                    action
+                }
+            }
         };
 
         let (tty_ready, master_ready) = match poll_action {
@@ -1185,6 +1228,45 @@ mod tests {
                 tty_ready: false,
                 master_ready: true,
             }
+        );
+    }
+
+    #[test]
+    fn interrupted_task_pty_poll_is_retried_in_same_attach_loop() {
+        assert_eq!(
+            super::classify_task_poll_error(nix::errno::Errno::EINTR),
+            super::TaskPollErrorAction::Retry
+        );
+        assert_eq!(
+            super::classify_task_poll_error(nix::errno::Errno::EBADF),
+            super::TaskPollErrorAction::Fatal
+        );
+    }
+
+    #[test]
+    fn interrupted_task_pty_poll_attempt_continues_without_detach_or_fatal_error() {
+        assert_eq!(
+            super::classify_task_poll_attempt(
+                Err(nix::errno::Errno::EINTR),
+                PollFlags::empty(),
+                PollFlags::empty(),
+            ),
+            super::TaskPollAttempt::Retry
+        );
+        assert_eq!(
+            super::classify_task_poll_attempt(
+                Err(nix::errno::Errno::EBADF),
+                PollFlags::empty(),
+                PollFlags::empty(),
+            ),
+            super::TaskPollAttempt::Fatal(nix::errno::Errno::EBADF)
+        );
+        assert_eq!(
+            super::classify_task_poll_attempt(Ok(1), PollFlags::empty(), PollFlags::POLLIN,),
+            super::TaskPollAttempt::Ready(super::TaskPollAction::Pump {
+                tty_ready: false,
+                master_ready: true,
+            })
         );
     }
 

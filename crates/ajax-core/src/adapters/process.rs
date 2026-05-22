@@ -12,6 +12,9 @@ impl CommandRunner for ProcessCommandRunner {
         if let Some(cwd) = &command.cwd {
             process.current_dir(cwd);
         }
+        if command.program == "git" {
+            clear_repo_local_git_env(&mut process);
+        }
         match command.mode {
             CommandMode::Capture => {
                 let output = process
@@ -44,5 +47,18 @@ impl CommandRunner for ProcessCommandRunner {
                 })
             }
         }
+    }
+}
+
+fn clear_repo_local_git_env(process: &mut Command) {
+    for variable in [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ] {
+        process.env_remove(variable);
     }
 }

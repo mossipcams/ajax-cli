@@ -1,10 +1,24 @@
+#[cfg(any(test, feature = "interactive"))]
+use ajax_core::adapters::CommandOutput;
+use ajax_core::adapters::CommandRunner;
+#[cfg(any(test, feature = "interactive"))]
+use ajax_core::commands;
+use ajax_core::commands::CommandContext;
+#[cfg(any(test, feature = "interactive", feature = "supervisor"))]
+use ajax_core::commands::CommandError;
+#[cfg(feature = "supervisor")]
+use ajax_core::events::apply_monitor_event_to_registry;
+#[cfg(feature = "interactive")]
+use ajax_core::task_operations::kernel::execute_external_plan_with_success;
+#[cfg(any(feature = "interactive", feature = "supervisor"))]
+use ajax_core::{models::LifecycleStatus, registry::Registry};
+#[cfg(feature = "interactive")]
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunner},
-    commands::{self, CommandContext, CommandError},
-    events::apply_monitor_event_to_registry,
-    models::LifecycleStatus,
-    registry::{InMemoryRegistry, Registry},
-    task_operations::kernel::execute_external_plan_with_success,
+    models::{RuntimeObservationSource, SideFlag, Task},
+    runtime::RUNTIME_PROJECTION_FRESH_FOR,
+};
+use ajax_core::{
+    registry::InMemoryRegistry,
     task_operations::start::{execute_start_task_operation, plan_start_task_operation},
     task_operations::sweep_cleanup::{
         execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
@@ -12,18 +26,24 @@ use ajax_core::{
     task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
+#[cfg(feature = "interactive")]
+use std::time::SystemTime;
 
+#[cfg(feature = "supervisor")]
+use crate::supervise::supervise_command_output_and_events;
+#[cfg(feature = "interactive")]
 use crate::{
     cockpit_backend::{
         refresh_live_context, render_interactive_cockpit_command, render_live_cockpit_command,
     },
+    task_session::{execute_task_entry_plan, TaskSessionRunner},
+};
+use crate::{
     command_error, current_open_mode,
     dispatch::{render_drop_command, render_task_command},
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
-    supervise::supervise_command_output_and_events,
-    task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -100,6 +120,7 @@ pub(crate) fn render_matches_mut(
                 state_changed,
             })
         }
+        #[cfg(feature = "supervisor")]
         Some(("supervise", subcommand)) => {
             let supervised_task = validate_supervised_task(context, subcommand)?;
             let (output, events) = supervise_command_output_and_events(subcommand)?;
@@ -116,6 +137,11 @@ pub(crate) fn render_matches_mut(
                 state_changed,
             })
         }
+        #[cfg(not(feature = "supervisor"))]
+        Some(("supervise", _)) => Err(CliError::CommandFailed(
+            "supervise support is not enabled in this build".to_string(),
+        )),
+        #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => {
             if subcommand.get_flag("json") {
                 return render_refreshed_read_command("cockpit", matches, context, runner);
@@ -125,6 +151,10 @@ pub(crate) fn render_matches_mut(
             }
             render_interactive_cockpit_command(context, subcommand, runner)
         }
+        #[cfg(not(feature = "interactive"))]
+        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+            "cockpit support is not enabled in this build".to_string(),
+        )),
         _ => Ok(RenderedCommand {
             output: render_snapshot_matches(matches, context)?,
             state_changed: false,
@@ -138,11 +168,66 @@ fn render_refreshed_read_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let changed = refresh_live_context(context, runner)?;
+    let changed = refresh_read_context(context, runner)?;
     Ok(RenderedCommand {
         output: render_snapshot_matches(matches, context)?,
         state_changed: changed,
     })
+}
+
+#[cfg(feature = "interactive")]
+fn refresh_read_context<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<bool, CliError> {
+    if !read_context_needs_live_refresh(context) {
+        return Ok(false);
+    }
+    refresh_live_context(context, runner)
+}
+
+#[cfg(not(feature = "interactive"))]
+fn refresh_read_context<R: CommandRunner>(
+    _context: &mut CommandContext<InMemoryRegistry>,
+    _runner: &mut R,
+) -> Result<bool, CliError> {
+    Ok(false)
+}
+
+#[cfg(feature = "interactive")]
+fn read_context_needs_live_refresh(context: &CommandContext<InMemoryRegistry>) -> bool {
+    let now = SystemTime::now();
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .any(|task| read_task_needs_live_refresh(task, now))
+}
+
+#[cfg(feature = "interactive")]
+fn read_task_needs_live_refresh(task: &Task, now: SystemTime) -> bool {
+    if task.has_side_flag(SideFlag::TmuxMissing)
+        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::WorktreeMissing)
+    {
+        return true;
+    }
+
+    let live_lifecycle = matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Provisioning
+            | LifecycleStatus::Active
+            | LifecycleStatus::Waiting
+            | LifecycleStatus::Reviewable
+    );
+    if !live_lifecycle {
+        return false;
+    }
+
+    task.runtime_projection.source == RuntimeObservationSource::Unknown
+        || task
+            .runtime_projection
+            .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
 }
 
 pub(crate) fn render_matches_mut_with_paths(
@@ -164,6 +249,7 @@ pub(crate) fn render_matches_mut_with_paths(
     render_matches_mut(matches, context, runner)
 }
 
+#[cfg(feature = "interactive")]
 pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -216,6 +302,7 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     Ok((outputs, task))
 }
 
+#[cfg(feature = "interactive")]
 fn start_provisioning_step_for_command_index(
     plan: &commands::CommandPlan,
     index: usize,
@@ -231,6 +318,7 @@ fn start_provisioning_step_for_command_index(
     }
 }
 
+#[cfg(feature = "supervisor")]
 fn validate_supervised_task(
     context: &CommandContext<InMemoryRegistry>,
     matches: &ArgMatches,

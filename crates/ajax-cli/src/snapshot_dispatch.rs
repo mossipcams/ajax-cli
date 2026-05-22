@@ -6,8 +6,9 @@ use ajax_core::{
 };
 use clap::ArgMatches;
 
+#[cfg(feature = "interactive")]
+use crate::cockpit_backend::render_cockpit_command;
 use crate::{
-    cockpit_backend::render_cockpit_command,
     command_error, current_open_mode, new_task_request,
     render::{
         render_doctor_human, render_inbox_human, render_inspect_human, render_next_human,
@@ -119,7 +120,12 @@ pub(crate) fn render_matches_with_paths(
             render_tasks_human,
         ),
         Some(("state", subcommand)) => render_state_command(context, subcommand),
+        #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
+        #[cfg(not(feature = "interactive"))]
+        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+            "cockpit support is not enabled in this build".to_string(),
+        )),
         Some(("supervise", _)) => Err(CliError::CommandFailed(
             "supervise requires mutable context and runner support".to_string(),
         )),
