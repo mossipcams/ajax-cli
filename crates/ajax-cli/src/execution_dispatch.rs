@@ -1,29 +1,49 @@
-#[cfg(test)]
-use ajax_core::task_operations::start::StartTaskOperationPlan;
+#[cfg(any(test, feature = "interactive"))]
+use ajax_core::adapters::CommandOutput;
+use ajax_core::adapters::CommandRunner;
+#[cfg(any(test, feature = "interactive"))]
+use ajax_core::commands;
+use ajax_core::commands::CommandContext;
+#[cfg(any(test, feature = "interactive", feature = "supervisor"))]
+use ajax_core::commands::CommandError;
+#[cfg(feature = "supervisor")]
+use ajax_core::events::apply_monitor_event_to_registry;
+#[cfg(feature = "interactive")]
+use ajax_core::task_operations::kernel::execute_external_plan_with_success;
+#[cfg(any(feature = "interactive", feature = "supervisor"))]
+use ajax_core::{models::LifecycleStatus, registry::Registry};
+#[cfg(feature = "interactive")]
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner},
-    commands::{self, CommandContext, CommandError},
-    events::apply_monitor_event_to_registry,
-    models::LifecycleStatus,
-    registry::{InMemoryRegistry, Registry},
+    models::{RuntimeObservationSource, SideFlag, Task},
+    runtime::RUNTIME_PROJECTION_FRESH_FOR,
+};
+use ajax_core::{
+    registry::InMemoryRegistry,
     task_operations::start::{execute_start_task_operation, plan_start_task_operation},
     task_operations::sweep_cleanup::{
         execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
     },
+    task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
+#[cfg(feature = "interactive")]
+use std::time::SystemTime;
 
+#[cfg(feature = "supervisor")]
+use crate::supervise::supervise_command_output_and_events;
+#[cfg(feature = "interactive")]
 use crate::{
     cockpit_backend::{
         refresh_live_context, render_interactive_cockpit_command, render_live_cockpit_command,
     },
+    task_session::{execute_task_entry_plan, TaskSessionRunner},
+};
+use crate::{
     command_error, current_open_mode,
-    dispatch::{render_task_command, TaskCommandOperation},
+    dispatch::{render_drop_command, render_task_command},
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
-    supervise::supervise_command_output_and_events,
-    task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliContextPaths, CliError, RenderedCommand,
 };
 
@@ -62,12 +82,17 @@ pub(crate) fn render_matches_mut(
                 state_changed: true,
             })
         }
-        Some((name @ ("resume" | "repair" | "review" | "ship" | "drop"), subcommand)) => {
-            let operation = TaskCommandOperation::from_cli_subcommand(name).ok_or_else(|| {
-                CliError::CommandFailed(format!("unsupported task command: {name}"))
-            })?;
-            render_task_command(operation, subcommand, context, runner, current_open_mode())
+        Some((name @ ("resume" | "repair" | "review" | "ship"), subcommand)) => {
+            let kind = match name {
+                "resume" => TaskCommandKind::Resume,
+                "repair" => TaskCommandKind::Repair,
+                "review" => TaskCommandKind::Review,
+                "ship" => TaskCommandKind::Ship,
+                _ => unreachable!("task command pattern only matches known commands"),
+            };
+            render_task_command(kind, subcommand, context, runner, current_open_mode())
         }
+        Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("tidy", subcommand)) => {
             let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
@@ -76,25 +101,26 @@ pub(crate) fn render_matches_mut(
                     state_changed: false,
                 });
             }
-            let execution = execute_sweep_cleanup_operation(
+            let (outputs, state_changed) = execute_sweep_cleanup_operation(
                 context,
                 &operation,
                 subcommand.get_flag("yes"),
                 runner,
             )
-            .map_err(|error| {
-                let cli_error = command_error(error.error);
-                if error.state_changed {
+            .map_err(|(error, error_state_changed)| {
+                let cli_error = command_error(error);
+                if error_state_changed {
                     cli_error.after_state_change()
                 } else {
                     cli_error
                 }
             })?;
             Ok(RenderedCommand {
-                output: render_execution_outputs(&execution.outputs, None),
-                state_changed: execution.state_changed,
+                output: render_execution_outputs(&outputs, None),
+                state_changed,
             })
         }
+        #[cfg(feature = "supervisor")]
         Some(("supervise", subcommand)) => {
             let supervised_task = validate_supervised_task(context, subcommand)?;
             let (output, events) = supervise_command_output_and_events(subcommand)?;
@@ -111,6 +137,11 @@ pub(crate) fn render_matches_mut(
                 state_changed,
             })
         }
+        #[cfg(not(feature = "supervisor"))]
+        Some(("supervise", _)) => Err(CliError::CommandFailed(
+            "supervise support is not enabled in this build".to_string(),
+        )),
+        #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => {
             if subcommand.get_flag("json") {
                 return render_refreshed_read_command("cockpit", matches, context, runner);
@@ -120,6 +151,10 @@ pub(crate) fn render_matches_mut(
             }
             render_interactive_cockpit_command(context, subcommand, runner)
         }
+        #[cfg(not(feature = "interactive"))]
+        Some(("cockpit", _)) => Err(CliError::CommandFailed(
+            "cockpit support is not enabled in this build".to_string(),
+        )),
         _ => Ok(RenderedCommand {
             output: render_snapshot_matches(matches, context)?,
             state_changed: false,
@@ -133,11 +168,66 @@ fn render_refreshed_read_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let changed = refresh_live_context(context, runner)?;
+    let changed = refresh_read_context(context, runner)?;
     Ok(RenderedCommand {
         output: render_snapshot_matches(matches, context)?,
         state_changed: changed,
     })
+}
+
+#[cfg(feature = "interactive")]
+fn refresh_read_context<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+) -> Result<bool, CliError> {
+    if !read_context_needs_live_refresh(context) {
+        return Ok(false);
+    }
+    refresh_live_context(context, runner)
+}
+
+#[cfg(not(feature = "interactive"))]
+fn refresh_read_context<R: CommandRunner>(
+    _context: &mut CommandContext<InMemoryRegistry>,
+    _runner: &mut R,
+) -> Result<bool, CliError> {
+    Ok(false)
+}
+
+#[cfg(feature = "interactive")]
+fn read_context_needs_live_refresh(context: &CommandContext<InMemoryRegistry>) -> bool {
+    let now = SystemTime::now();
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .any(|task| read_task_needs_live_refresh(task, now))
+}
+
+#[cfg(feature = "interactive")]
+fn read_task_needs_live_refresh(task: &Task, now: SystemTime) -> bool {
+    if task.has_side_flag(SideFlag::TmuxMissing)
+        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::WorktreeMissing)
+    {
+        return true;
+    }
+
+    let live_lifecycle = matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Provisioning
+            | LifecycleStatus::Active
+            | LifecycleStatus::Waiting
+            | LifecycleStatus::Reviewable
+    );
+    if !live_lifecycle {
+        return false;
+    }
+
+    task.runtime_projection.source == RuntimeObservationSource::Unknown
+        || task
+            .runtime_projection
+            .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
 }
 
 pub(crate) fn render_matches_mut_with_paths(
@@ -159,26 +249,7 @@ pub(crate) fn render_matches_mut_with_paths(
     render_matches_mut(matches, context, runner)
 }
 
-#[cfg(test)]
-pub(crate) fn execute_new_task_plan<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    request: &commands::NewTaskRequest,
-    plan: &commands::CommandPlan,
-    confirmed: bool,
-    open_mode: commands::OpenMode,
-) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
-    let intent = commands::task_from_new_request(context, request)
-        .map_err(command_error)?
-        .intent();
-    let operation = StartTaskOperationPlan {
-        intent,
-        plan: plan.clone(),
-    };
-    execute_start_task_operation(context, runner, request, &operation, confirmed, open_mode)
-        .map_err(|error| command_error(error).after_state_change())
-}
-
+#[cfg(feature = "interactive")]
 pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -189,42 +260,28 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     open_mode: commands::OpenMode,
 ) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
     let task = commands::record_new_task(context, request).map_err(command_error)?;
-    if plan.requires_confirmation && !confirmed {
-        return Err(command_error(CommandError::ConfirmationRequired).after_state_change());
-    }
-    if !plan.blocked_reasons.is_empty() {
-        return Err(
-            command_error(CommandError::PlanBlocked(plan.blocked_reasons.clone()))
-                .after_state_change(),
-        );
-    }
-
-    let mut outputs = Vec::new();
-    for (index, command) in plan.commands.iter().enumerate() {
-        let output = runner.run(command).map_err(|error| {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            command_error(CommandError::CommandRun(error)).after_state_change()
-        })?;
-        if output.status_code != 0 {
-            let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-            return Err(
-                command_error(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                    program: command.program.clone(),
-                    status_code: output.status_code,
-                    stderr: output.stderr,
-                    cwd: command.cwd.clone(),
-                }))
-                .after_state_change(),
-            );
-        }
-        if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
-            commands::mark_new_task_provisioning_step_completed(context, &task.id, step)
-                .map_err(|error| command_error(error).after_state_change())?;
-        }
-        if !commands::is_new_task_husky_hook_command(command) {
-            outputs.push(output);
-        }
-    }
+    let external_outputs =
+        match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
+            if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
+                commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
+            }
+            Ok(())
+        }) {
+            Ok(outputs) => outputs,
+            Err(error @ CommandError::CommandRun(_)) => {
+                let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
+                return Err(command_error(error).after_state_change());
+            }
+            Err(error) => return Err(command_error(error).after_state_change()),
+        };
+    let mut outputs = plan
+        .commands
+        .iter()
+        .zip(external_outputs)
+        .filter_map(|(command, output)| {
+            (!commands::is_new_task_husky_hook_command(command)).then_some(output)
+        })
+        .collect::<Vec<_>>();
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
@@ -245,6 +302,7 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     Ok((outputs, task))
 }
 
+#[cfg(feature = "interactive")]
 fn start_provisioning_step_for_command_index(
     plan: &commands::CommandPlan,
     index: usize,
@@ -260,6 +318,7 @@ fn start_provisioning_step_for_command_index(
     }
 }
 
+#[cfg(feature = "supervisor")]
 fn validate_supervised_task(
     context: &CommandContext<InMemoryRegistry>,
     matches: &ArgMatches,
@@ -293,9 +352,16 @@ mod tests {
         .unwrap();
 
         let numeric_step_helper = ["mark_new_task", "_step_completed"].concat();
+        let manual_confirmation = ["plan.requires", "_confirmation"].concat();
+        let manual_blocked = ["plan.blocked", "_reasons"].concat();
+        let manual_runner = ["runner.run", "(command)"].concat();
 
         assert!(source.contains("execute_start_task_operation"));
+        assert!(source.contains("execute_external_plan_with_success"));
         assert!(!source.contains(&numeric_step_helper));
+        assert!(!source.contains(&manual_confirmation));
+        assert!(!source.contains(&manual_blocked));
+        assert!(!source.contains(&manual_runner));
     }
 
     #[test]

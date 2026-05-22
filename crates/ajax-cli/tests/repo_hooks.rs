@@ -5,7 +5,7 @@ const REQUIRED_LOCAL_GATES: &[&str] = &[
     "cargo fmt --check",
     "cargo check --all-targets --all-features",
     "cargo clippy --all-targets --all-features -- -D warnings",
-    "cargo nextest run --all-features",
+    "cargo nextest run --all-features --test-threads=1",
     "cargo test --doc",
     "npm run lint:duplication",
 ];
@@ -26,6 +26,16 @@ const REQUIRED_REMOTE_GATES: &[&str] = &[
     "cargo audit",
 ];
 
+const CI_REQUIRED_STATUS_NEEDS: &[&str] = &[
+    "format-and-duplication",
+    "check",
+    "clippy",
+    "test",
+    "docs",
+    "audit",
+    "smoke",
+];
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -33,6 +43,29 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("crates directory should live under workspace root")
         .to_path_buf()
+}
+
+#[test]
+fn github_actions_exposes_ruleset_required_ci_status_check() {
+    let root = workspace_root();
+    let workflow_path = root.join(".github/workflows/ci.yml");
+    let workflow = std::fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", workflow_path.display()));
+
+    assert!(
+        workflow.contains("\n  ci:\n"),
+        "CI workflow should include a job that publishes the required `CI` check:\n{workflow}"
+    );
+    assert!(
+        workflow.contains("\n    name: CI\n"),
+        "CI workflow should publish a job-level check named `CI` for repository rulesets:\n{workflow}"
+    );
+    for dependency in CI_REQUIRED_STATUS_NEEDS {
+        assert!(
+            workflow.contains(&format!("      - {dependency}")),
+            "the required `CI` check should depend on `{dependency}`:\n{workflow}"
+        );
+    }
 }
 
 #[test]

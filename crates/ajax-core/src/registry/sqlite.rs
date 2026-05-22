@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -13,11 +13,11 @@ use super::{
 use crate::lifecycle::hydrate_lifecycle_status;
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-    LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task,
-    TaskId, TmuxStatus, WorktrunkStatus,
+    LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag,
+    StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 3;
+const SQLITE_SCHEMA_VERSION: i64 = 4;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -27,6 +27,25 @@ pub struct SqliteRegistryStore {
 impl SqliteRegistryStore {
     pub fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
+    }
+
+    pub fn load_tasks_only(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
+        let connection = self.open()?;
+        Self::migrate(&connection)?;
+
+        let mut tasks = load_tasks(&connection)?;
+        for task in &mut tasks {
+            refresh_task_annotations(task);
+        }
+
+        Ok(InMemoryRegistry {
+            tasks: tasks
+                .into_iter()
+                .map(|task| (task.id.clone(), task))
+                .collect(),
+            events: Vec::new(),
+            step_receipts: BTreeMap::new(),
+        })
     }
 
     fn open(&self) -> Result<Connection, RegistrySnapshotError> {
@@ -40,6 +59,9 @@ impl SqliteRegistryStore {
         }
         if user_version == 2 {
             migrate_v2_to_v3(connection)?;
+        }
+        if sqlite_user_version(connection)? == 3 {
+            migrate_v3_to_v4(connection)?;
         }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
@@ -128,6 +150,18 @@ impl SqliteRegistryStore {
                     occurred_at_unix_seconds INTEGER NOT NULL,
                     occurred_at_subsec_nanos INTEGER NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS step_receipts (
+                    task_id TEXT NOT NULL,
+                    operation TEXT NOT NULL,
+                    step_key TEXT NOT NULL,
+                    target TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    receipt_json TEXT NOT NULL,
+                    created_at_unix_seconds INTEGER NOT NULL,
+                    created_at_subsec_nanos INTEGER NOT NULL,
+                    PRIMARY KEY (task_id, operation, step_key, target)
+                );
                 "#,
             )
             .map_err(database_error)?;
@@ -135,6 +169,28 @@ impl SqliteRegistryStore {
             .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
             .map_err(database_error)
     }
+}
+
+fn migrate_v3_to_v4(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    connection
+        .execute_batch(
+            r#"
+            CREATE TABLE IF NOT EXISTS step_receipts (
+                task_id TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                step_key TEXT NOT NULL,
+                target TEXT NOT NULL,
+                status TEXT NOT NULL,
+                receipt_json TEXT NOT NULL,
+                created_at_unix_seconds INTEGER NOT NULL,
+                created_at_subsec_nanos INTEGER NOT NULL,
+                PRIMARY KEY (task_id, operation, step_key, target)
+            );
+
+            PRAGMA user_version = 4;
+            "#,
+        )
+        .map_err(database_error)
 }
 
 fn migrate_v2_to_v3(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -183,6 +239,7 @@ impl RegistryStore for SqliteRegistryStore {
             refresh_task_annotations(task);
         }
         let events = load_events(&connection)?;
+        let step_receipts = load_step_receipts(&connection)?;
 
         Ok(InMemoryRegistry {
             tasks: tasks
@@ -190,6 +247,10 @@ impl RegistryStore for SqliteRegistryStore {
                 .map(|task| (task.id.clone(), task))
                 .collect(),
             events,
+            step_receipts: step_receipts
+                .into_iter()
+                .map(|receipt| (receipt.identity(), receipt))
+                .collect(),
         })
     }
 
@@ -216,6 +277,9 @@ impl RegistryStore for SqliteRegistryStore {
             .map_err(database_error)?;
         transaction
             .execute("DELETE FROM registry_tasks", [])
+            .map_err(database_error)?;
+        transaction
+            .execute("DELETE FROM step_receipts", [])
             .map_err(database_error)?;
 
         let live_task_ids = registry
@@ -259,6 +323,14 @@ impl RegistryStore for SqliteRegistryStore {
                 .map_err(database_error)?;
         }
 
+        for receipt in registry
+            .step_receipts
+            .values()
+            .filter(|receipt| live_task_ids.contains(&receipt.task_id))
+        {
+            save_step_receipt(&transaction, receipt)?;
+        }
+
         transaction.commit().map_err(database_error)
     }
 }
@@ -283,15 +355,13 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     let mut tasks = Vec::new();
 
     while let Some(row) = rows.next().map_err(database_error)? {
-        let mut task = task_from_row(row)?;
-        load_task_side_flags(connection, &mut task)?;
-        if is_registry_ghost_task(&task) {
-            continue;
-        }
-        load_task_metadata(connection, &mut task)?;
-        load_agent_attempts(connection, &mut task)?;
-        tasks.push(task);
+        tasks.push(task_from_row(row)?);
     }
+
+    load_task_side_flags_by_task(connection, &mut tasks)?;
+    tasks.retain(|task| !is_registry_ghost_task(task));
+    load_task_metadata_by_task(connection, &mut tasks)?;
+    load_agent_attempts_by_task(connection, &mut tasks)?;
 
     Ok(tasks)
 }
@@ -497,70 +567,100 @@ fn required_optional<T>(value: Option<T>, label: &'static str) -> Result<T, Regi
     value.ok_or_else(|| RegistrySnapshotError::Decode(format!("{label} missing")))
 }
 
-fn load_task_side_flags(
-    connection: &Connection,
-    task: &mut Task,
-) -> Result<(), RegistrySnapshotError> {
-    let mut statement = connection
-        .prepare("SELECT flag FROM registry_task_side_flags WHERE task_id = ?1 ORDER BY flag")
-        .map_err(database_error)?;
-    let flags = statement
-        .query_map(params![task.id.as_str()], |row| row.get::<_, String>(0))
-        .map_err(database_error)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(database_error)?;
-
-    for flag in flags {
-        task.add_side_flag(parse_side_flag(&flag)?);
-    }
-
-    Ok(())
+fn task_indexes_by_id(tasks: &[Task]) -> BTreeMap<TaskId, usize> {
+    tasks
+        .iter()
+        .enumerate()
+        .map(|(index, task)| (task.id.clone(), index))
+        .collect()
 }
 
-fn load_task_metadata(
+fn load_task_side_flags_by_task(
     connection: &Connection,
-    task: &mut Task,
+    tasks: &mut [Task],
 ) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
     let mut statement = connection
-        .prepare("SELECT key, value FROM registry_task_metadata WHERE task_id = ?1 ORDER BY key")
+        .prepare("SELECT task_id, flag FROM registry_task_side_flags ORDER BY task_id, flag")
         .map_err(database_error)?;
-    let entries = statement
-        .query_map(params![task.id.as_str()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    let flags = statement
+        .query_map([], |row| {
+            Ok((
+                TaskId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+            ))
         })
         .map_err(database_error)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
 
-    task.metadata.extend(entries);
+    for (task_id, flag) in flags {
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        tasks[index].add_side_flag(parse_side_flag(&flag)?);
+    }
 
     Ok(())
 }
 
-fn load_agent_attempts(
+fn load_task_metadata_by_task(
     connection: &Connection,
-    task: &mut Task,
+    tasks: &mut [Task],
 ) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
     let mut statement = connection
-        .prepare(
-            "SELECT agent, launch_target, started_at_unix_seconds, finished_at_unix_seconds, \
-             started_at_subsec_nanos, finished_at_subsec_nanos, status \
-             FROM registry_agent_attempts WHERE task_id = ?1 ORDER BY sequence",
-        )
+        .prepare("SELECT task_id, key, value FROM registry_task_metadata ORDER BY task_id, key")
         .map_err(database_error)?;
-    let mut rows = statement
-        .query(params![task.id.as_str()])
+    let entries = statement
+        .query_map([], |row| {
+            Ok((
+                TaskId::new(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(database_error)?
+        .collect::<Result<Vec<_>, _>>()
         .map_err(database_error)?;
 
+    for (task_id, key, value) in entries {
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        tasks[index].metadata.insert(key, value);
+    }
+
+    Ok(())
+}
+
+fn load_agent_attempts_by_task(
+    connection: &Connection,
+    tasks: &mut [Task],
+) -> Result<(), RegistrySnapshotError> {
+    let task_indexes = task_indexes_by_id(tasks);
+    let mut statement = connection
+        .prepare(
+            "SELECT task_id, agent, launch_target, started_at_unix_seconds, finished_at_unix_seconds, \
+             started_at_subsec_nanos, finished_at_subsec_nanos, status \
+             FROM registry_agent_attempts ORDER BY task_id, sequence",
+        )
+        .map_err(database_error)?;
+    let mut rows = statement.query([]).map_err(database_error)?;
+
     while let Some(row) = rows.next().map_err(database_error)? {
-        let agent = parse_agent_client(&row.get::<_, String>(0).map_err(database_error)?)?;
-        let launch_target = row.get::<_, String>(1).map_err(database_error)?;
+        let task_id = TaskId::new(row.get::<_, String>(0).map_err(database_error)?);
+        let Some(index) = task_indexes.get(&task_id).copied() else {
+            continue;
+        };
+        let agent = parse_agent_client(&row.get::<_, String>(1).map_err(database_error)?)?;
+        let launch_target = row.get::<_, String>(2).map_err(database_error)?;
         let started_at = unix_parts_to_system_time(
-            row.get::<_, i64>(2).map_err(database_error)?,
-            row.get::<_, u32>(4).map_err(database_error)?,
+            row.get::<_, i64>(3).map_err(database_error)?,
+            row.get::<_, u32>(5).map_err(database_error)?,
         )?;
-        let finished_seconds = row.get::<_, Option<i64>>(3).map_err(database_error)?;
-        let finished_nanos = row.get::<_, Option<u32>>(5).map_err(database_error)?;
+        let finished_seconds = row.get::<_, Option<i64>>(4).map_err(database_error)?;
+        let finished_nanos = row.get::<_, Option<u32>>(6).map_err(database_error)?;
         let finished_at = match (finished_seconds, finished_nanos) {
             (Some(seconds), Some(nanos)) => Some(unix_parts_to_system_time(seconds, nanos)?),
             (None, None) => None,
@@ -570,8 +670,8 @@ fn load_agent_attempts(
                 ))
             }
         };
-        let status = parse_agent_runtime_status(&row.get::<_, String>(6).map_err(database_error)?)?;
-        task.agent_attempts.push(AgentAttempt {
+        let status = parse_agent_runtime_status(&row.get::<_, String>(7).map_err(database_error)?)?;
+        tasks[index].agent_attempts.push(AgentAttempt {
             agent,
             launch_target,
             started_at,
@@ -606,6 +706,38 @@ fn load_events(connection: &Connection) -> Result<Vec<RegistryEvent>, RegistrySn
     }
 
     Ok(events)
+}
+
+fn load_step_receipts(connection: &Connection) -> Result<Vec<StepReceipt>, RegistrySnapshotError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT task_id, operation, step_key, target, status, receipt_json, \
+             created_at_unix_seconds, created_at_subsec_nanos \
+             FROM step_receipts ORDER BY task_id, operation, step_key, target",
+        )
+        .map_err(database_error)?;
+    let mut rows = statement.query([]).map_err(database_error)?;
+    let mut receipts = Vec::new();
+
+    while let Some(row) = rows.next().map_err(database_error)? {
+        let operation =
+            parse_task_operation_kind(&row.get::<_, String>(1).map_err(database_error)?)?;
+        let status = parse_step_receipt_status(&row.get::<_, String>(4).map_err(database_error)?)?;
+        receipts.push(StepReceipt {
+            task_id: TaskId::new(row.get::<_, String>(0).map_err(database_error)?),
+            operation,
+            step_key: row.get::<_, String>(2).map_err(database_error)?,
+            target: row.get::<_, String>(3).map_err(database_error)?,
+            status,
+            receipt_json: row.get::<_, String>(5).map_err(database_error)?,
+            created_at: unix_parts_to_system_time(
+                row.get::<_, i64>(6).map_err(database_error)?,
+                row.get::<_, u32>(7).map_err(database_error)?,
+            )?,
+        });
+    }
+
+    Ok(receipts)
 }
 
 fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistrySnapshotError> {
@@ -742,6 +874,38 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
             )
             .map_err(database_error)?;
     }
+
+    Ok(())
+}
+
+fn save_step_receipt(
+    transaction: &Transaction<'_>,
+    receipt: &StepReceipt,
+) -> Result<(), RegistrySnapshotError> {
+    let (created_at_seconds, created_at_nanos) = system_time_to_unix_parts(receipt.created_at)?;
+    transaction
+        .execute(
+            "INSERT INTO step_receipts \
+             (task_id, operation, step_key, target, status, receipt_json, \
+              created_at_unix_seconds, created_at_subsec_nanos) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) \
+             ON CONFLICT(task_id, operation, step_key, target) DO UPDATE SET \
+                status = excluded.status, \
+                receipt_json = excluded.receipt_json, \
+                created_at_unix_seconds = excluded.created_at_unix_seconds, \
+                created_at_subsec_nanos = excluded.created_at_subsec_nanos",
+            params![
+                receipt.task_id.as_str(),
+                receipt.operation.as_str(),
+                receipt.step_key,
+                receipt.target,
+                receipt.status.as_str(),
+                receipt.receipt_json,
+                created_at_seconds,
+                created_at_nanos,
+            ],
+        )
+        .map_err(database_error)?;
 
     Ok(())
 }
@@ -1009,6 +1173,18 @@ fn parse_registry_event_kind(value: &str) -> Result<RegistryEventKind, RegistryS
     }
 }
 
+fn parse_task_operation_kind(value: &str) -> Result<TaskOperationKind, RegistrySnapshotError> {
+    TaskOperationKind::from_label(value).ok_or_else(|| {
+        RegistrySnapshotError::Decode(format!("unknown task operation kind: {value}"))
+    })
+}
+
+fn parse_step_receipt_status(value: &str) -> Result<StepReceiptStatus, RegistrySnapshotError> {
+    StepReceiptStatus::from_label(value).ok_or_else(|| {
+        RegistrySnapshotError::Decode(format!("unknown step receipt status: {value}"))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1017,8 +1193,8 @@ mod tests {
     };
     use crate::models::{
         AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-        LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, Task,
-        TaskId, TmuxStatus, WorktrunkStatus,
+        LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag,
+        StepReceipt, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
     };
     use crate::registry::{
         InMemoryRegistry, Registry, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
@@ -1130,6 +1306,22 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_registry_store_batches_task_detail_loads() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/registry/sqlite.rs"),
+        )
+        .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("fn load_task_side_flags_by_task"));
+        assert!(production_source.contains("fn load_task_metadata_by_task"));
+        assert!(production_source.contains("fn load_agent_attempts_by_task"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY flag"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY key"));
+        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY sequence"));
+    }
+
+    #[test]
     fn sqlite_registry_store_saves_and_loads_registry_state() {
         let mut registry = InMemoryRegistry::default();
         registry
@@ -1152,6 +1344,39 @@ mod tests {
         assert_eq!(restored.list_tasks().len(), 1);
         assert_eq!(restored.list_tasks()[0].qualified_handle(), "web/fix-login");
         assert_eq!(restored.events_for_task(&TaskId::new("task-1")).len(), 2);
+    }
+
+    #[test]
+    fn sqlite_registry_store_persists_step_receipts_idempotently() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let receipt = StepReceipt::succeeded(
+            TaskId::new("task-1"),
+            TaskOperationKind::Drop,
+            "tmux_session_absent",
+            "ajax-web-fix-login",
+            r#"{"program":"tmux"}"#,
+        );
+        registry.record_step_receipt(receipt.clone()).unwrap();
+        registry.record_step_receipt(receipt).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-step-receipts"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let receipts = restored.step_receipts_for_task(&TaskId::new("task-1"));
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].operation, TaskOperationKind::Drop);
+        assert_eq!(receipts[0].step_key, "tmux_session_absent");
+        assert_eq!(receipts[0].target, "ajax-web-fix-login");
     }
 
     #[test]
@@ -1498,7 +1723,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     #[test]
@@ -1695,7 +1920,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         assert!(columns.contains(&"runtime_health".to_string()));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
     }
@@ -1767,7 +1992,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 3
+                supported: 4
             }
         );
     }

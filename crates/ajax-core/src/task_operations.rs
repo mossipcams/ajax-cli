@@ -4,48 +4,16 @@ pub mod kernel {
         commands::{CommandError, CommandPlan},
     };
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum OperationErrorState {
-        BeforeStateChange,
-        AfterStateChange,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct OperationPlan {
-        pub command_plan: CommandPlan,
-        pub error_state: OperationErrorState,
-    }
-
-    impl OperationPlan {
-        pub fn new(command_plan: CommandPlan) -> Self {
-            Self {
-                command_plan,
-                error_state: OperationErrorState::BeforeStateChange,
-            }
-        }
-
-        pub fn after_state_change(mut self) -> Self {
-            self.error_state = OperationErrorState::AfterStateChange;
-            self
-        }
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct OperationExecution {
-        pub outputs: Vec<CommandOutput>,
-        pub error_state: OperationErrorState,
-    }
-
     pub fn execute_external_plan(
-        plan: &OperationPlan,
+        plan: &CommandPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
-    ) -> Result<OperationExecution, CommandError> {
+    ) -> Result<Vec<CommandOutput>, CommandError> {
         execute_external_plan_with_success(plan, confirmed, runner, |_, _, _| Ok(()))
     }
 
     pub fn execute_external_plan_with_success(
-        plan: &OperationPlan,
+        plan: &CommandPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
         mut on_success: impl FnMut(
@@ -53,19 +21,17 @@ pub mod kernel {
             &crate::adapters::CommandSpec,
             &CommandOutput,
         ) -> Result<(), CommandError>,
-    ) -> Result<OperationExecution, CommandError> {
-        if !plan.command_plan.blocked_reasons.is_empty() {
-            return Err(CommandError::PlanBlocked(
-                plan.command_plan.blocked_reasons.clone(),
-            ));
+    ) -> Result<Vec<CommandOutput>, CommandError> {
+        if !plan.blocked_reasons.is_empty() {
+            return Err(CommandError::PlanBlocked(plan.blocked_reasons.clone()));
         }
 
-        if plan.command_plan.requires_confirmation && !confirmed {
+        if plan.requires_confirmation && !confirmed {
             return Err(CommandError::ConfirmationRequired);
         }
 
         let mut outputs = Vec::new();
-        for (index, command) in plan.command_plan.commands.iter().enumerate() {
+        for (index, command) in plan.commands.iter().enumerate() {
             let output = runner.run(command).map_err(CommandError::CommandRun)?;
             if output.status_code != 0 {
                 return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
@@ -79,10 +45,7 @@ pub mod kernel {
             outputs.push(output);
         }
 
-        Ok(OperationExecution {
-            outputs,
-            error_state: plan.error_state,
-        })
+        Ok(outputs)
     }
 }
 
@@ -93,9 +56,9 @@ pub mod start {
             self, CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode,
             StartProvisioningStep,
         },
-        models::{Task, TaskIntent},
+        models::{StepReceipt, Task, TaskIntent, TaskOperationKind},
         registry::Registry,
-        task_operations::kernel::{execute_external_plan_with_success, OperationPlan},
+        task_operations::kernel::execute_external_plan_with_success,
     };
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,22 +89,17 @@ pub mod start {
         open_mode: OpenMode,
     ) -> Result<(Vec<CommandOutput>, Task), CommandError> {
         let task = commands::record_new_task(context, request)?;
-        if operation.plan.requires_confirmation && !confirmed {
-            return Err(CommandError::ConfirmationRequired);
-        }
-        if !operation.plan.blocked_reasons.is_empty() {
-            return Err(CommandError::PlanBlocked(
-                operation.plan.blocked_reasons.clone(),
-            ));
-        }
-
-        let execution = match execute_external_plan_with_success(
-            &OperationPlan::new(operation.plan.clone()),
+        let external_outputs = match execute_external_plan_with_success(
+            &operation.plan,
             confirmed,
             runner,
             |index, _, _| {
                 if let Some(step) = start_step_for_command_index(&operation.plan, index) {
                     commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
+                    context
+                        .registry
+                        .record_step_receipt(start_step_receipt(&task, step))
+                        .map_err(CommandError::Registry)?;
                 }
                 Ok(())
             },
@@ -157,7 +115,7 @@ pub mod start {
             .plan
             .commands
             .iter()
-            .zip(execution.outputs)
+            .zip(external_outputs)
             .filter_map(|(command, output)| {
                 (!commands::is_new_task_husky_hook_command(command)).then_some(output)
             })
@@ -186,6 +144,33 @@ pub mod start {
             None
         }
     }
+
+    fn start_step_receipt(task: &Task, step: StartProvisioningStep) -> StepReceipt {
+        let (step_key, target) = match step {
+            StartProvisioningStep::WorktreeCreated => {
+                ("worktree_created", task.worktree_path.display().to_string())
+            }
+            StartProvisioningStep::TaskSessionCreated => {
+                ("task_session_created", task.tmux_session.clone())
+            }
+            StartProvisioningStep::AgentCommandSent => (
+                "agent_command_sent",
+                format!("{}:{}", task.tmux_session, task.worktrunk_window),
+            ),
+        };
+
+        StepReceipt::succeeded(
+            task.id.clone(),
+            TaskOperationKind::Start,
+            step_key,
+            target,
+            serde_json::json!({
+                "source": "command_result",
+                "step": step_key,
+            })
+            .to_string(),
+        )
+    }
 }
 
 pub mod task_command {
@@ -194,7 +179,7 @@ pub mod task_command {
         commands::{self, CommandContext, CommandError, CommandPlan, OpenMode},
         models::TaskIntent,
         registry::Registry,
-        task_operations::kernel::{execute_external_plan, OperationPlan},
+        task_operations::kernel::execute_external_plan,
     };
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -205,39 +190,11 @@ pub mod task_command {
         Ship,
     }
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum TaskCommandRefreshPolicy {
-        RefreshGitSubstrateBeforePlanning,
-        NoPrePlanRefresh,
-    }
-
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub enum TaskCommandPostExecution {
-        NoStateChange,
-        MarkOpened,
-        MarkRepairAndCheckSucceeded,
-        MarkMerged,
-    }
-
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct TaskCommandOperationPlan {
         pub kind: TaskCommandKind,
         pub intent: TaskIntent,
         pub plan: CommandPlan,
-        pub refresh_policy: TaskCommandRefreshPolicy,
-        pub post_execution: TaskCommandPostExecution,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct TaskCommandOperationExecution {
-        pub outputs: Vec<CommandOutput>,
-        pub state_changed: bool,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct TaskCommandOperationError {
-        pub error: CommandError,
-        pub state_changed: bool,
     }
 
     pub fn plan_task_command_operation<R: Registry>(
@@ -267,8 +224,6 @@ pub mod task_command {
             kind,
             intent: task.intent(),
             plan,
-            refresh_policy: refresh_policy(kind),
-            post_execution: post_execution(kind),
         })
     }
 
@@ -277,9 +232,9 @@ pub mod task_command {
         operation: &TaskCommandOperationPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
-    ) -> Result<TaskCommandOperationExecution, TaskCommandOperationError> {
+    ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         let qualified_handle = qualified_handle(&operation.intent);
-        if operation.post_execution == TaskCommandPostExecution::MarkMerged {
+        if operation.kind == TaskCommandKind::Ship {
             return execute_ship_task_command_operation(
                 context,
                 operation,
@@ -288,39 +243,32 @@ pub mod task_command {
                 &qualified_handle,
             );
         }
-        if operation.post_execution == TaskCommandPostExecution::MarkRepairAndCheckSucceeded {
+        if operation.kind == TaskCommandKind::Repair {
             commands::mark_task_check_started(context, &qualified_handle)
                 .map_err(|error| operation_error(error, false))?;
         }
-        let execution = match execute_external_plan(
-            &OperationPlan::new(operation.plan.clone()),
-            confirmed,
-            runner,
-        ) {
+        let outputs = match execute_external_plan(&operation.plan, confirmed, runner) {
             Ok(execution) => execution,
-            Err(error)
-                if operation.post_execution
-                    == TaskCommandPostExecution::MarkRepairAndCheckSucceeded =>
-            {
+            Err(error) if operation.kind == TaskCommandKind::Repair => {
                 commands::mark_task_check_failed(context, &qualified_handle)
                     .map_err(|mark_error| operation_error(mark_error, true))?;
                 return Err(operation_error(error, true));
             }
             Err(error) => return Err(operation_error(error, false)),
         };
-        let state_changed = match operation.post_execution {
-            TaskCommandPostExecution::NoStateChange => false,
-            TaskCommandPostExecution::MarkOpened => {
+        let state_changed = match operation.kind {
+            TaskCommandKind::Review => false,
+            TaskCommandKind::Resume => {
                 commands::mark_task_opened(context, &qualified_handle)
                     .map_err(|error| operation_error(error, false))?;
                 true
             }
-            TaskCommandPostExecution::MarkMerged => {
+            TaskCommandKind::Ship => {
                 commands::mark_task_merged(context, &qualified_handle)
                     .map_err(|error| operation_error(error, false))?;
                 true
             }
-            TaskCommandPostExecution::MarkRepairAndCheckSucceeded => {
+            TaskCommandKind::Repair => {
                 commands::mark_task_trunk_repaired(context, &qualified_handle)
                     .map_err(|error| operation_error(error, true))?;
                 commands::mark_task_check_succeeded(context, &qualified_handle)
@@ -329,10 +277,7 @@ pub mod task_command {
             }
         };
 
-        Ok(TaskCommandOperationExecution {
-            outputs: execution.outputs,
-            state_changed,
-        })
+        Ok((outputs, state_changed))
     }
 
     fn execute_ship_task_command_operation<R: Registry>(
@@ -341,7 +286,7 @@ pub mod task_command {
         confirmed: bool,
         runner: &mut impl CommandRunner,
         qualified_handle: &str,
-    ) -> Result<TaskCommandOperationExecution, TaskCommandOperationError> {
+    ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         if !operation.plan.blocked_reasons.is_empty() {
             return Err(operation_error(
                 CommandError::PlanBlocked(operation.plan.blocked_reasons.clone()),
@@ -382,28 +327,7 @@ pub mod task_command {
 
         commands::mark_task_merged(context, qualified_handle)
             .map_err(|error| operation_error(error, false))?;
-        Ok(TaskCommandOperationExecution {
-            outputs,
-            state_changed: true,
-        })
-    }
-
-    fn refresh_policy(kind: TaskCommandKind) -> TaskCommandRefreshPolicy {
-        match kind {
-            TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair => {
-                TaskCommandRefreshPolicy::RefreshGitSubstrateBeforePlanning
-            }
-            TaskCommandKind::Ship => TaskCommandRefreshPolicy::NoPrePlanRefresh,
-        }
-    }
-
-    fn post_execution(kind: TaskCommandKind) -> TaskCommandPostExecution {
-        match kind {
-            TaskCommandKind::Resume => TaskCommandPostExecution::MarkOpened,
-            TaskCommandKind::Review => TaskCommandPostExecution::NoStateChange,
-            TaskCommandKind::Repair => TaskCommandPostExecution::MarkRepairAndCheckSucceeded,
-            TaskCommandKind::Ship => TaskCommandPostExecution::MarkMerged,
-        }
+        Ok((outputs, true))
     }
 
     fn qualified_handle(intent: &TaskIntent) -> String {
@@ -426,11 +350,8 @@ pub mod task_command {
         }
     }
 
-    fn operation_error(error: CommandError, state_changed: bool) -> TaskCommandOperationError {
-        TaskCommandOperationError {
-            error,
-            state_changed,
-        }
+    fn operation_error(error: CommandError, state_changed: bool) -> (CommandError, bool) {
+        (error, state_changed)
     }
 
     fn repair_task_plan<R: Registry>(
@@ -458,7 +379,10 @@ pub mod drop_task {
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
-        models::{LifecycleStatus, SideFlag, Task, TaskIntent},
+        models::{
+            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent,
+            TaskOperationKind,
+        },
         registry::{Registry, RegistryEventKind},
     };
 
@@ -477,12 +401,6 @@ pub mod drop_task {
     pub enum DropTaskCompletion {
         Removed,
         TeardownIncomplete,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct DropTaskOperationExecution {
-        pub outputs: Vec<CommandOutput>,
-        pub completion: DropTaskCompletion,
     }
 
     pub fn plan_drop_task_operation<R: Registry>(
@@ -567,7 +485,7 @@ pub mod drop_task {
         operation: DropTaskOperationPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
-    ) -> Result<DropTaskOperationExecution, CommandError> {
+    ) -> Result<(Vec<CommandOutput>, DropTaskCompletion), CommandError> {
         if !operation.blocked_reasons.is_empty() {
             return Err(CommandError::PlanBlocked(operation.blocked_reasons));
         }
@@ -582,6 +500,7 @@ pub mod drop_task {
             &operation.confirmation_plan,
             operation.cleanup_lifecycle,
         )?;
+        record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
         for op in operation.ops {
@@ -589,15 +508,21 @@ pub mod drop_task {
                 DropOp::EnsureAgentStopped => {
                     commands::mark_drop_agent_stopped(context, qualified_handle)?;
                     record_drop_step_event(context, qualified_handle, op)?;
+                    record_drop_step_receipt(
+                        context,
+                        qualified_handle,
+                        op,
+                        StepReceiptStatus::Succeeded,
+                    )?;
                 }
                 DropOp::EnsureTmuxSessionAbsent
                 | DropOp::EnsureWorktreeAbsent
                 | DropOp::EnsureBranchAbsent => {
                     let command = drop_op_command(context, qualified_handle, op, force)?;
                     let output = runner.run(&command).map_err(CommandError::CommandRun)?;
-                    if output.status_code != 0
-                        && !drop_cleanup_resource_is_already_missing(&command, &output)
-                    {
+                    let already_missing = output.status_code != 0
+                        && drop_cleanup_resource_is_already_missing(&command, &output);
+                    if output.status_code != 0 && !already_missing {
                         let drop_error = CommandError::CommandRun(CommandRunError::NonZeroExit {
                             program: command.program.clone(),
                             status_code: output.status_code,
@@ -614,6 +539,16 @@ pub mod drop_task {
                         &command,
                     )?;
                     record_drop_step_event(context, qualified_handle, op)?;
+                    record_drop_step_receipt(
+                        context,
+                        qualified_handle,
+                        op,
+                        if already_missing {
+                            StepReceiptStatus::SkippedObserved
+                        } else {
+                            StepReceiptStatus::Succeeded
+                        },
+                    )?;
                 }
                 DropOp::MarkRegistryRemoved => {}
             }
@@ -628,10 +563,7 @@ pub mod drop_task {
             &final_observation,
         )?;
 
-        Ok(DropTaskOperationExecution {
-            outputs,
-            completion,
-        })
+        Ok((outputs, completion))
     }
 
     fn unknown_observation() -> DropObservation {
@@ -744,6 +676,74 @@ pub mod drop_task {
             .map_err(CommandError::Registry)
     }
 
+    fn record_observed_absent_drop_receipts<R: Registry>(
+        context: &mut CommandContext<R>,
+        qualified_handle: &str,
+        observation: &DropObservation,
+    ) -> Result<(), CommandError> {
+        for (op, state) in [
+            (DropOp::EnsureTmuxSessionAbsent, observation.tmux_session),
+            (DropOp::EnsureWorktreeAbsent, observation.worktree),
+            (DropOp::EnsureBranchAbsent, observation.branch),
+        ] {
+            if state == ResourceState::Absent {
+                record_drop_step_receipt(
+                    context,
+                    qualified_handle,
+                    op,
+                    StepReceiptStatus::SkippedObserved,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn record_drop_step_receipt<R: Registry>(
+        context: &mut CommandContext<R>,
+        qualified_handle: &str,
+        op: DropOp,
+        status: StepReceiptStatus,
+    ) -> Result<(), CommandError> {
+        let task = task(context, qualified_handle)?.clone();
+        let Some(receipt) = drop_step_receipt(&task, op, status) else {
+            return Ok(());
+        };
+        context
+            .registry
+            .record_step_receipt(receipt)
+            .map_err(CommandError::Registry)
+    }
+
+    fn drop_step_receipt(
+        task: &Task,
+        op: DropOp,
+        status: StepReceiptStatus,
+    ) -> Option<StepReceipt> {
+        let (step_key, target) = match op {
+            DropOp::EnsureAgentStopped => ("agent_stopped", task.tmux_session.clone()),
+            DropOp::EnsureTmuxSessionAbsent => ("tmux_session_absent", task.tmux_session.clone()),
+            DropOp::EnsureWorktreeAbsent => {
+                ("worktree_absent", task.worktree_path.display().to_string())
+            }
+            DropOp::EnsureBranchAbsent => ("branch_absent", task.branch.clone()),
+            DropOp::MarkRegistryRemoved => return None,
+        };
+
+        Some(StepReceipt::new(
+            task.id.clone(),
+            TaskOperationKind::Drop,
+            step_key,
+            target,
+            status,
+            serde_json::json!({
+                "source": "command_result",
+                "step": step_key,
+            })
+            .to_string(),
+        ))
+    }
+
     fn mark_observed_drop_failure<R: Registry>(
         context: &mut CommandContext<R>,
         qualified_handle: &str,
@@ -808,7 +808,10 @@ pub mod drop_task {
     }
 
     fn git_error_says_branch_missing(stderr: &str) -> bool {
-        stderr.contains("not found") || stderr.contains("not a branch")
+        stderr.contains("not found")
+            || stderr.contains("not a branch")
+            || stderr.contains("no such branch")
+            || stderr.contains("not a valid branch name")
     }
 }
 
@@ -825,18 +828,6 @@ pub mod sweep_cleanup {
         pub candidates: Vec<String>,
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct SweepCleanupOperationExecution {
-        pub outputs: Vec<CommandOutput>,
-        pub state_changed: bool,
-    }
-
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct SweepCleanupOperationError {
-        pub error: CommandError,
-        pub state_changed: bool,
-    }
-
     pub fn plan_sweep_cleanup_operation<R: Registry>(
         context: &CommandContext<R>,
     ) -> SweepCleanupOperationPlan {
@@ -851,7 +842,7 @@ pub mod sweep_cleanup {
         operation: &SweepCleanupOperationPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
-    ) -> Result<SweepCleanupOperationExecution, SweepCleanupOperationError> {
+    ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         let mut outputs = Vec::new();
         let mut state_changed = false;
 
@@ -896,17 +887,11 @@ pub mod sweep_cleanup {
             state_changed = true;
         }
 
-        Ok(SweepCleanupOperationExecution {
-            outputs,
-            state_changed,
-        })
+        Ok((outputs, state_changed))
     }
 
-    fn operation_error(error: CommandError, state_changed: bool) -> SweepCleanupOperationError {
-        SweepCleanupOperationError {
-            error,
-            state_changed,
-        }
+    fn operation_error(error: CommandError, state_changed: bool) -> (CommandError, bool) {
+        (error, state_changed)
     }
 }
 
@@ -918,16 +903,13 @@ mod tests {
         complete_drop_task_operation, execute_drop_task_operation, plan_drop_task_operation,
         DropTaskCompletion, DropTaskOperationPlan,
     };
-    use super::kernel::{
-        execute_external_plan, OperationErrorState, OperationExecution, OperationPlan,
-    };
+    use super::kernel::execute_external_plan;
     use super::start::{
         execute_start_task_operation, plan_start_task_operation, StartTaskOperationPlan,
     };
     use super::sweep_cleanup::{execute_sweep_cleanup_operation, plan_sweep_cleanup_operation};
     use super::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-        TaskCommandPostExecution, TaskCommandRefreshPolicy,
     };
     use crate::{
         adapters::{CommandOutput, CommandRunner, CommandSpec},
@@ -937,8 +919,8 @@ mod tests {
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskId,
-            TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, StepReceiptStatus,
+            Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -1176,7 +1158,7 @@ mod tests {
         blocked_plan.blocked_reasons = vec!["not ready".to_string()];
         let mut runner = RecordingQueuedRunner::default();
         assert_eq!(
-            execute_external_plan(&OperationPlan::new(blocked_plan), true, &mut runner),
+            execute_external_plan(&blocked_plan, true, &mut runner),
             Err(CommandError::PlanBlocked(vec!["not ready".to_string()]))
         );
         assert!(runner.commands.is_empty());
@@ -1184,7 +1166,7 @@ mod tests {
         let mut confirmation_plan = CommandPlan::new("confirm");
         confirmation_plan.requires_confirmation = true;
         assert_eq!(
-            execute_external_plan(&OperationPlan::new(confirmation_plan), false, &mut runner),
+            execute_external_plan(&confirmation_plan, false, &mut runner),
             Err(CommandError::ConfirmationRequired)
         );
         assert!(runner.commands.is_empty());
@@ -1199,11 +1181,7 @@ mod tests {
             stderr: "fatal".to_string(),
         }]);
         assert_eq!(
-            execute_external_plan(
-                &OperationPlan::new(failing_plan).after_state_change(),
-                true,
-                &mut runner
-            ),
+            execute_external_plan(&failing_plan, true, &mut runner),
             Err(CommandError::CommandRun(
                 crate::adapters::CommandRunError::NonZeroExit {
                     program: "git".to_string(),
@@ -1234,24 +1212,37 @@ mod tests {
         ]);
 
         assert_eq!(
-            execute_external_plan(&OperationPlan::new(success_plan), true, &mut runner).unwrap(),
-            OperationExecution {
-                outputs: vec![
-                    CommandOutput {
-                        status_code: 0,
-                        stdout: "ok".to_string(),
-                        stderr: String::new(),
-                    },
-                    CommandOutput {
-                        status_code: 0,
-                        stdout: "session".to_string(),
-                        stderr: String::new(),
-                    },
-                ],
-                error_state: OperationErrorState::BeforeStateChange,
-            }
+            execute_external_plan(&success_plan, true, &mut runner).unwrap(),
+            vec![
+                CommandOutput {
+                    status_code: 0,
+                    stdout: "ok".to_string(),
+                    stderr: String::new(),
+                },
+                CommandOutput {
+                    status_code: 0,
+                    stdout: "session".to_string(),
+                    stderr: String::new(),
+                },
+            ]
         );
         assert_eq!(runner.commands.len(), 2);
+
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let error_state = ["Operation", "ErrorState"].concat();
+        let execution = ["struct Operation", "Execution"].concat();
+        let state_change_method = ["after", "_state", "_change"].concat();
+        let wrapper_type = ["struct Operation", "Plan"].concat();
+        let wrapper_constructor = ["Operation", "Plan::new"].concat();
+
+        assert!(!source.contains(&error_state));
+        assert!(!source.contains(&execution));
+        assert!(!source.contains(&state_change_method));
+        assert!(!source.contains(&wrapper_type));
+        assert!(!source.contains(&wrapper_constructor));
     }
 
     #[test]
@@ -1263,10 +1254,59 @@ mod tests {
         let start_module = source
             .split("pub mod start")
             .nth(1)
-            .and_then(|source| source.split("pub mod drop_task").next())
+            .and_then(|source| source.split("pub mod task_command").next())
             .unwrap();
 
         assert!(start_module.contains("execute_external_plan_with_success"));
+        assert!(!start_module.contains("operation.plan.requires_confirmation"));
+        assert!(!start_module.contains("operation.plan.blocked_reasons"));
+    }
+
+    #[test]
+    fn task_command_operation_returns_plain_execution_result() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let task_command_module = source
+            .split("pub mod task_command")
+            .nth(1)
+            .and_then(|source| source.split("pub mod drop_task").next())
+            .unwrap();
+
+        assert!(!task_command_module.contains("pub struct TaskCommandOperationExecution"));
+        assert!(!task_command_module.contains("pub struct TaskCommandOperationError"));
+    }
+
+    #[test]
+    fn sweep_cleanup_operation_returns_plain_execution_result() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let sweep_cleanup_module = source
+            .split("pub mod sweep_cleanup")
+            .nth(1)
+            .and_then(|source| source.split("#[cfg(test)]").next())
+            .unwrap();
+
+        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationExecution"));
+        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationError"));
+    }
+
+    #[test]
+    fn drop_operation_returns_plain_execution_result() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let drop_module = source
+            .split("pub mod drop_task")
+            .nth(1)
+            .and_then(|source| source.split("pub mod sweep_cleanup").next())
+            .unwrap();
+
+        assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
     }
 
     #[test]
@@ -1335,41 +1375,88 @@ mod tests {
         assert_eq!(task.intent(), operation.intent);
         assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.metadata.get("start_failed_step").map(String::as_str),
+            Some("worktree_created")
+        );
+        assert_eq!(
+            task.metadata
+                .get("operator_recommendation")
+                .map(String::as_str),
+            Some("retry ajax start after checking the failed provisioning step")
+        );
         assert_eq!(runner.commands.len(), 1);
     }
 
     #[test]
-    fn task_command_operation_plans_single_task_commands_with_intent_and_reducers() {
+    fn start_operation_records_receipts_for_successful_provisioning_steps() {
+        let mut context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let mut runner = RecordingQueuedRunner::default();
+
+        execute_start_task_operation(
+            &mut context,
+            &mut runner,
+            &request,
+            &operation,
+            true,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&operation.intent.id);
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Start,
+                    "worktree_created",
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (
+                    TaskOperationKind::Start,
+                    "task_session_created",
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Start,
+                    "agent_command_sent",
+                    "ajax-web-fix-login:worktrunk",
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn task_command_operation_plans_single_task_commands_without_derived_policy_fields() {
         let context = context_with_reviewable_task();
 
         let cases = [
-            (
-                TaskCommandKind::Resume,
-                "open task: web/fix-login",
-                TaskCommandRefreshPolicy::RefreshGitSubstrateBeforePlanning,
-                TaskCommandPostExecution::MarkOpened,
-            ),
-            (
-                TaskCommandKind::Review,
-                "diff task: web/fix-login",
-                TaskCommandRefreshPolicy::RefreshGitSubstrateBeforePlanning,
-                TaskCommandPostExecution::NoStateChange,
-            ),
-            (
-                TaskCommandKind::Repair,
-                "repair task: web/fix-login",
-                TaskCommandRefreshPolicy::RefreshGitSubstrateBeforePlanning,
-                TaskCommandPostExecution::MarkRepairAndCheckSucceeded,
-            ),
-            (
-                TaskCommandKind::Ship,
-                "merge task: web/fix-login",
-                TaskCommandRefreshPolicy::NoPrePlanRefresh,
-                TaskCommandPostExecution::MarkMerged,
-            ),
+            (TaskCommandKind::Resume, "open task: web/fix-login"),
+            (TaskCommandKind::Review, "diff task: web/fix-login"),
+            (TaskCommandKind::Repair, "repair task: web/fix-login"),
+            (TaskCommandKind::Ship, "merge task: web/fix-login"),
         ];
 
-        for (kind, title, refresh_policy, post_execution) in cases {
+        for (kind, title) in cases {
             let operation =
                 plan_task_command_operation(&context, kind, "web/fix-login", OpenMode::Attach)
                     .unwrap();
@@ -1379,13 +1466,21 @@ mod tests {
             assert_eq!(operation.intent.repo, "web");
             assert_eq!(operation.intent.handle, "fix-login");
             assert_eq!(operation.plan.title, title);
-            assert_eq!(operation.refresh_policy, refresh_policy);
-            assert_eq!(operation.post_execution, post_execution);
             assert!(
                 !operation.plan.commands.is_empty(),
                 "{kind:?} should carry executable commands"
             );
         }
+
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let refresh_policy = ["TaskCommand", "RefreshPolicy"].concat();
+        let post_execution = ["TaskCommand", "PostExecution"].concat();
+
+        assert!(!source.contains(&refresh_policy));
+        assert!(!source.contains(&post_execution));
     }
 
     #[test]
@@ -1411,13 +1506,13 @@ mod tests {
             },
         ]);
 
-        let resume_execution =
+        let (resume_outputs, resume_state_changed) =
             execute_task_command_operation(&mut context, &resume, true, &mut resume_runner)
                 .unwrap();
 
         assert_eq!(resume_runner.commands.len(), 2);
-        assert_eq!(resume_execution.outputs.len(), 2);
-        assert!(resume_execution.state_changed);
+        assert_eq!(resume_outputs.len(), 2);
+        assert!(resume_state_changed);
 
         let review = plan_task_command_operation(
             &context,
@@ -1432,13 +1527,13 @@ mod tests {
             stderr: String::new(),
         }]);
 
-        let review_execution =
+        let (review_outputs, review_state_changed) =
             execute_task_command_operation(&mut context, &review, true, &mut review_runner)
                 .unwrap();
 
         assert_eq!(review_runner.commands.len(), 1);
-        assert_eq!(review_execution.outputs[0].stdout, "diff stat");
-        assert!(!review_execution.state_changed);
+        assert_eq!(review_outputs[0].stdout, "diff stat");
+        assert!(!review_state_changed);
     }
 
     #[test]
@@ -1464,11 +1559,11 @@ mod tests {
             },
         ]);
 
-        let execution =
+        let (outputs, state_changed) =
             execute_task_command_operation(&mut context, &ship, true, &mut runner).unwrap();
 
-        assert_eq!(execution.outputs.len(), 2);
-        assert!(execution.state_changed);
+        assert_eq!(outputs.len(), 2);
+        assert!(state_changed);
         assert_eq!(
             context
                 .registry
@@ -1499,11 +1594,11 @@ mod tests {
             },
         ]);
 
-        let error =
+        let (error, _state_changed) =
             execute_task_command_operation(&mut context, &ship, true, &mut runner).unwrap_err();
 
         assert!(matches!(
-            error.error,
+            error,
             CommandError::CommandRun(crate::adapters::CommandRunError::NonZeroExit {
                 status_code: 1,
                 ..
@@ -1551,11 +1646,11 @@ mod tests {
                 .collect(),
         );
 
-        let execution =
+        let (outputs, state_changed) =
             execute_task_command_operation(&mut context, &repair, true, &mut runner).unwrap();
 
-        assert_eq!(execution.outputs.len(), repair.plan.commands.len());
-        assert!(execution.state_changed);
+        assert_eq!(outputs.len(), repair.plan.commands.len());
+        assert!(state_changed);
         let task = context
             .registry
             .get_task(&TaskId::new("web/fix-login"))
@@ -1583,11 +1678,11 @@ mod tests {
             stderr: "tests failed".to_string(),
         }]);
 
-        let error =
+        let (error, _state_changed) =
             execute_task_command_operation(&mut context, &repair, true, &mut runner).unwrap_err();
 
         assert!(matches!(
-            error.error,
+            error,
             CommandError::CommandRun(crate::adapters::CommandRunError::NonZeroExit {
                 status_code: 42,
                 ..
@@ -1756,7 +1851,7 @@ mod tests {
         let operation =
             plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        let execution = execute_drop_task_operation(
+        let (outputs, completion) = execute_drop_task_operation(
             &mut context,
             "web/fix-login",
             operation,
@@ -1765,8 +1860,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(execution.outputs.len(), 3);
-        assert_eq!(execution.completion, DropTaskCompletion::Removed);
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(completion, DropTaskCompletion::Removed);
         assert_eq!(
             context
                 .registry
@@ -1784,6 +1879,126 @@ mod tests {
         assert!(runner.commands.iter().any(|command| {
             command.program == "git" && command.args.iter().any(|arg| arg == "branch")
         }));
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&TaskId::new("web/fix-login"));
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Drop,
+                    "tmux_session_absent",
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "worktree_absent",
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (TaskOperationKind::Drop, "branch_absent", "ajax/fix-login",),
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_operation_records_skipped_receipts_for_already_missing_resources() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = absent_drop_observation_outputs();
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&TaskId::new("web/fix-login"));
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.status,
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Drop,
+                    "tmux_session_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "worktree_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "branch_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "ajax/fix-login",
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_operation_treats_invalid_branch_delete_error_as_already_absent() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([
+            output(0, "", ""),
+            output(0, "", ""),
+            output(
+                128,
+                "",
+                "fatal: 'ajax/fix-login' is not a valid branch name",
+            ),
+        ]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(outputs.len(), 3);
+        assert_eq!(completion, DropTaskCompletion::Removed);
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .unwrap()
+                .lifecycle_status,
+            LifecycleStatus::Removed
+        );
     }
 
     #[test]
@@ -1799,11 +2014,11 @@ mod tests {
                 .collect(),
         );
 
-        let execution =
+        let (outputs, state_changed) =
             execute_sweep_cleanup_operation(&mut context, &operation, true, &mut runner).unwrap();
 
-        assert_eq!(execution.outputs.len(), operation.plan.commands.len());
-        assert!(execution.state_changed);
+        assert_eq!(outputs.len(), operation.plan.commands.len());
+        assert!(state_changed);
         assert_eq!(
             context
                 .registry
@@ -1834,12 +2049,13 @@ mod tests {
         outputs.push(output(2, "", "branch delete failed"));
         let mut runner = RecordingQueuedRunner::new(outputs);
 
-        let error = execute_sweep_cleanup_operation(&mut context, &operation, true, &mut runner)
-            .unwrap_err();
+        let (error, state_changed) =
+            execute_sweep_cleanup_operation(&mut context, &operation, true, &mut runner)
+                .unwrap_err();
 
-        assert!(error.state_changed);
+        assert!(state_changed);
         assert!(matches!(
-            error.error,
+            error,
             CommandError::CommandRun(crate::adapters::CommandRunError::NonZeroExit {
                 status_code: 2,
                 ..
