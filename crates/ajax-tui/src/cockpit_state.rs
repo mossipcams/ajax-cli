@@ -175,7 +175,11 @@ fn build_selectables(
             out.push(SelectableKind::NewTask { repo: repo.clone() });
             for card in cards
                 .iter()
-                .filter(|card| card_repo(card) == Some(repo.as_str()))
+                .filter(|card| {
+                    card.qualified_handle
+                        .split_once('/')
+                        .is_some_and(|(card_repo, _)| card_repo == repo)
+                })
                 .filter(|card| !matches!(card.ui_state, UiState::Archived))
             {
                 push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card, None);
@@ -207,9 +211,6 @@ pub struct App {
     /// or inbox row. `None` keeps the list dense.
     pub(crate) expanded_task: Option<TaskId>,
 }
-
-#[cfg(test)]
-pub(crate) const FLASH_TICKS: u8 = NOTICE_TICKS_SUCCESS;
 
 impl App {
     pub fn new(repos: ReposResponse, cards: Vec<TaskCard>, inbox: InboxResponse) -> Self {
@@ -759,12 +760,4 @@ pub struct CockpitSnapshot {
     pub repos: ReposResponse,
     pub cards: Vec<TaskCard>,
     pub inbox: InboxResponse,
-}
-
-pub(crate) fn task_handle_repo(handle: &str) -> Option<&str> {
-    handle.split_once('/').map(|(repo, _)| repo)
-}
-
-pub(crate) fn card_repo(card: &TaskCard) -> Option<&str> {
-    task_handle_repo(&card.qualified_handle)
 }

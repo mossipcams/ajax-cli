@@ -61,40 +61,28 @@ pub mod start {
         task_operations::kernel::execute_external_plan_with_success,
     };
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct StartTaskOperationPlan {
-        pub intent: TaskIntent,
-        pub plan: CommandPlan,
-    }
-
     pub fn plan_start_task_operation<R: Registry>(
         context: &CommandContext<R>,
         request: NewTaskRequest,
-    ) -> Result<StartTaskOperationPlan, CommandError> {
+    ) -> Result<(TaskIntent, CommandPlan), CommandError> {
         let task = commands::task_from_new_request(context, &request)?;
         let plan = commands::new_task_plan(context, request)?;
 
-        Ok(StartTaskOperationPlan {
-            intent: task.intent(),
-            plan,
-        })
+        Ok((task.intent(), plan))
     }
 
     pub fn execute_start_task_operation<R: Registry>(
         context: &mut CommandContext<R>,
         runner: &mut impl CommandRunner,
         request: &NewTaskRequest,
-        operation: &StartTaskOperationPlan,
+        plan: &CommandPlan,
         confirmed: bool,
         open_mode: OpenMode,
     ) -> Result<(Vec<CommandOutput>, Task), CommandError> {
         let task = commands::record_new_task(context, request)?;
-        let external_outputs = match execute_external_plan_with_success(
-            &operation.plan,
-            confirmed,
-            runner,
-            |index, _, _| {
-                if let Some(step) = start_step_for_command_index(&operation.plan, index) {
+        let external_outputs =
+            match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
+                if let Some(step) = start_step_for_command_index(plan, index) {
                     commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
                     context
                         .registry
@@ -102,17 +90,15 @@ pub mod start {
                         .map_err(CommandError::Registry)?;
                 }
                 Ok(())
-            },
-        ) {
-            Ok(execution) => execution,
-            Err(error @ CommandError::CommandRun(_)) => {
-                let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-                return Err(error);
-            }
-            Err(error) => return Err(error),
-        };
-        let mut outputs = operation
-            .plan
+            }) {
+                Ok(execution) => execution,
+                Err(error @ CommandError::CommandRun(_)) => {
+                    let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
+        let mut outputs = plan
             .commands
             .iter()
             .zip(external_outputs)
@@ -351,7 +337,9 @@ pub mod drop_task {
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
-        models::{SideFlag, StepReceipt, StepReceiptStatus, Task, TaskOperationKind},
+        models::{
+            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskOperationKind,
+        },
         registry::{Registry, RegistryEventKind},
     };
 
@@ -372,7 +360,7 @@ pub mod drop_task {
         qualified_handle: &str,
         runner: &mut impl crate::adapters::CommandRunner,
     ) -> Result<DropTaskOperationPlan, CommandError> {
-        let confirmation_plan = plan_drop_task_confirmation(context, qualified_handle)?;
+        let confirmation_plan = plan_drop_confirmation(context, qualified_handle)?;
         let task = context
             .registry
             .list_tasks()
@@ -395,7 +383,7 @@ pub mod drop_task {
         })
     }
 
-    pub fn plan_drop_task_confirmation<R: Registry>(
+    pub fn plan_drop_confirmation<R: Registry>(
         context: &CommandContext<R>,
         qualified_handle: &str,
     ) -> Result<CommandPlan, CommandError> {
@@ -446,8 +434,14 @@ pub mod drop_task {
             return Err(CommandError::ConfirmationRequired);
         }
 
+        let cleanup_lifecycle = task_is_in_cleanup_lifecycle(context, qualified_handle)?;
         commands::mark_task_removing(context, qualified_handle)?;
-        let force = drop_needs_force(context, qualified_handle, &operation.confirmation_plan)?;
+        let force = drop_needs_force(
+            context,
+            qualified_handle,
+            &operation.confirmation_plan,
+            cleanup_lifecycle,
+        )?;
         record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
@@ -518,6 +512,16 @@ pub mod drop_task {
         }
     }
 
+    fn task_is_in_cleanup_lifecycle<R: Registry>(
+        context: &CommandContext<R>,
+        qualified_handle: &str,
+    ) -> Result<bool, CommandError> {
+        Ok(matches!(
+            task(context, qualified_handle)?.lifecycle_status,
+            LifecycleStatus::Merged | LifecycleStatus::Cleanable
+        ))
+    }
+
     fn task<'a, R: Registry>(
         context: &'a CommandContext<R>,
         qualified_handle: &str,
@@ -571,15 +575,28 @@ pub mod drop_task {
         context: &CommandContext<R>,
         qualified_handle: &str,
         confirmation_plan: &CommandPlan,
+        cleanup_lifecycle: bool,
     ) -> Result<bool, CommandError> {
         if confirmation_plan.title.starts_with("remove task:") {
             return Ok(true);
         }
         let task = task(context, qualified_handle)?;
+        if cleanup_lifecycle {
+            return Ok(task.has_side_flag(SideFlag::Dirty)
+                || task.has_side_flag(SideFlag::Conflicted)
+                || task.git_status.as_ref().is_some_and(|status| {
+                    status.dirty || status.untracked_files > 0 || status.conflicted
+                }));
+        }
         Ok(task.has_side_flag(SideFlag::Dirty)
             || task.has_side_flag(SideFlag::Conflicted)
+            || task.has_side_flag(SideFlag::Unpushed)
             || task.git_status.as_ref().is_some_and(|status| {
-                status.dirty || status.untracked_files > 0 || status.conflicted
+                status.dirty
+                    || status.untracked_files > 0
+                    || status.conflicted
+                    || status.unpushed_commits > 0
+                    || !status.merged
             }))
     }
 
@@ -737,20 +754,16 @@ pub mod sweep_cleanup {
         registry::Registry,
     };
 
-    pub fn plan_sweep_cleanup_operation<R: Registry>(context: &CommandContext<R>) -> Vec<String> {
-        commands::sweep_cleanup_candidates(context)
-    }
-
     pub fn execute_sweep_cleanup_operation<R: Registry>(
         context: &mut CommandContext<R>,
-        candidates: &[String],
         confirmed: bool,
         runner: &mut impl CommandRunner,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         let mut outputs = Vec::new();
         let mut state_changed = false;
+        let candidates = commands::sweep_cleanup_candidates(context);
 
-        for candidate in candidates {
+        for candidate in &candidates {
             let plan = commands::clean_task_plan(context, candidate)
                 .map_err(|error| (error, state_changed))?;
             if !plan.blocked_reasons.is_empty() {
@@ -801,10 +814,8 @@ mod tests {
         DropTaskCompletion,
     };
     use super::kernel::execute_external_plan;
-    use super::start::{
-        execute_start_task_operation, plan_start_task_operation, StartTaskOperationPlan,
-    };
-    use super::sweep_cleanup::{execute_sweep_cleanup_operation, plan_sweep_cleanup_operation};
+    use super::start::{execute_start_task_operation, plan_start_task_operation};
+    use super::sweep_cleanup::execute_sweep_cleanup_operation;
     use super::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     };
@@ -1154,6 +1165,7 @@ mod tests {
             .unwrap();
 
         assert!(start_module.contains("execute_external_plan_with_success"));
+        assert!(!start_module.contains("pub struct StartTaskOperationPlan"));
         assert!(!start_module.contains("operation.plan.requires_confirmation"));
         assert!(!start_module.contains("operation.plan.blocked_reasons"));
     }
@@ -1192,6 +1204,7 @@ mod tests {
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationExecution"));
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationError"));
         assert!(!sweep_cleanup_module.contains("fn operation_error"));
+        assert!(!sweep_cleanup_module.contains("plan_sweep_cleanup_operation"));
     }
 
     #[test]
@@ -1231,6 +1244,27 @@ mod tests {
     }
 
     #[test]
+    fn operation_errors_use_plain_tuples_without_constructor_helpers() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let task_command_module = source
+            .split("pub mod task_command")
+            .nth(1)
+            .and_then(|source| source.split("pub mod drop_task").next())
+            .unwrap();
+        let sweep_cleanup_module = source
+            .split("pub mod sweep_cleanup")
+            .nth(1)
+            .and_then(|source| source.split("#[cfg(test)]").next())
+            .unwrap();
+
+        assert!(!task_command_module.contains("fn operation_error"));
+        assert!(!sweep_cleanup_module.contains("fn operation_error"));
+    }
+
+    #[test]
     fn start_operation_plan_returns_task_intent_and_commands_without_mutating_registry() {
         let context = context();
         let request = NewTaskRequest {
@@ -1239,8 +1273,7 @@ mod tests {
             agent: "codex".to_string(),
         };
 
-        let StartTaskOperationPlan { intent, plan } =
-            plan_start_task_operation(&context, request).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request).unwrap();
 
         assert_eq!(context.registry.list_tasks().len(), 0);
         assert_eq!(context.registry.list_events().len(), 0);
@@ -1272,14 +1305,14 @@ mod tests {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
         };
-        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = FirstCommandFailsRunner::default();
 
         let error = execute_start_task_operation(
             &mut context,
             &mut runner,
             &request,
-            &operation,
+            &plan,
             true,
             OpenMode::Attach,
         )
@@ -1292,8 +1325,8 @@ mod tests {
                 ..
             })
         ));
-        let task = context.registry.get_task(&operation.intent.id).unwrap();
-        assert_eq!(task.intent(), operation.intent);
+        let task = context.registry.get_task(&intent.id).unwrap();
+        assert_eq!(task.intent(), intent);
         assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
         assert_eq!(
@@ -1317,22 +1350,20 @@ mod tests {
             title: "Fix login".to_string(),
             agent: "codex".to_string(),
         };
-        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let (intent, plan) = plan_start_task_operation(&context, request.clone()).unwrap();
         let mut runner = RecordingQueuedRunner::default();
 
         execute_start_task_operation(
             &mut context,
             &mut runner,
             &request,
-            &operation,
+            &plan,
             true,
             OpenMode::Attach,
         )
         .unwrap();
 
-        let receipts = context
-            .registry
-            .step_receipts_for_task(&operation.intent.id);
+        let receipts = context.registry.step_receipts_for_task(&intent.id);
         let keys = receipts
             .iter()
             .map(|receipt| {
@@ -1393,11 +1424,12 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
         )
         .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
         let refresh_policy = ["TaskCommand", "RefreshPolicy"].concat();
         let post_execution = ["TaskCommand", "PostExecution"].concat();
         let task_command_plan = ["pub struct ", "TaskCommandOperationPlan"].concat();
 
-        assert!(!source.contains(&task_command_plan));
+        assert!(!production_source.contains(&task_command_plan));
         assert!(!source.contains(&refresh_policy));
         assert!(!source.contains(&post_execution));
     }
@@ -1987,15 +2019,14 @@ mod tests {
     #[test]
     fn sweep_cleanup_operation_executes_candidates_and_reports_partial_failure_state() {
         let mut context = context_with_two_cleanable_tasks();
-        let candidates = plan_sweep_cleanup_operation(&context);
-        let command_count = sweep_cleanup_command_count(&context, &candidates);
+        let plan = crate::commands::sweep_cleanup_plan(&context);
         let mut runner =
-            RecordingQueuedRunner::new((0..command_count).map(|_| output(0, "", "")).collect());
+            RecordingQueuedRunner::new(plan.commands.iter().map(|_| output(0, "", "")).collect());
 
         let (outputs, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, &candidates, true, &mut runner).unwrap();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), command_count);
+        assert_eq!(outputs.len(), plan.commands.len());
         assert!(state_changed);
         assert_eq!(
             context
@@ -2015,7 +2046,7 @@ mod tests {
         );
 
         let mut context = context_with_two_cleanable_tasks();
-        let candidates = plan_sweep_cleanup_operation(&context);
+        let candidates = crate::commands::sweep_cleanup_candidates(&context);
         let first_candidate_command_count =
             crate::commands::clean_task_plan(&context, &candidates[0])
                 .unwrap()
@@ -2028,8 +2059,7 @@ mod tests {
         let mut runner = RecordingQueuedRunner::new(outputs);
 
         let (error, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, &candidates, true, &mut runner)
-                .unwrap_err();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap_err();
 
         assert!(state_changed);
         assert!(matches!(
@@ -2055,20 +2085,5 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
-    }
-
-    fn sweep_cleanup_command_count(
-        context: &CommandContext<InMemoryRegistry>,
-        candidates: &[String],
-    ) -> usize {
-        candidates
-            .iter()
-            .map(|candidate| {
-                crate::commands::clean_task_plan(context, candidate)
-                    .unwrap()
-                    .commands
-                    .len()
-            })
-            .sum()
     }
 }

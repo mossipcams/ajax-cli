@@ -6,34 +6,23 @@ use crate::palette::{accent_danger, accent_primary, accent_warning, text_chrome,
 #[derive(Clone, Copy)]
 pub(crate) struct ActionChrome {
     pub(crate) glyph: &'static str,
-    pub(crate) glyph_color: Color,
-    pub(crate) label_color: Color,
-    pub(crate) bold: bool,
+    pub(crate) glyph_style: Style,
+    pub(crate) label_style: Style,
 }
 
 impl ActionChrome {
-    const fn new(glyph: &'static str, glyph_color: Color, label_color: Color, bold: bool) -> Self {
+    fn new(glyph: &'static str, glyph_color: Color, label_color: Color, bold: bool) -> Self {
+        let mut glyph_style = Style::default().fg(glyph_color);
+        let mut label_style = Style::default().fg(label_color);
+        if bold {
+            glyph_style = glyph_style.add_modifier(Modifier::BOLD);
+            label_style = label_style.add_modifier(Modifier::BOLD);
+        }
         Self {
             glyph,
-            glyph_color,
-            label_color,
-            bold,
+            glyph_style,
+            label_style,
         }
-    }
-
-    pub(crate) fn glyph_style(self) -> Style {
-        self.apply_weight(Style::default().fg(self.glyph_color))
-    }
-
-    pub(crate) fn label_style(self) -> Style {
-        self.apply_weight(Style::default().fg(self.label_color))
-    }
-
-    fn apply_weight(self, mut style: Style) -> Style {
-        if self.bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        style
     }
 }
 
@@ -73,6 +62,7 @@ pub(crate) fn operator_action_chrome(action: OperatorAction) -> ActionChrome {
 mod tests {
     use super::{action_chrome, annotation_chrome};
     use ajax_core::models::AnnotationKind;
+    use ratatui::style::Modifier;
 
     #[test]
     fn action_chrome_uses_operator_verbs() {
@@ -86,7 +76,7 @@ mod tests {
             let chrome = action_chrome(label);
 
             assert_eq!(chrome.glyph, glyph, "{label}");
-            assert!(chrome.bold, "{label}");
+            assert!(chrome.glyph_style.add_modifier.contains(Modifier::BOLD));
         }
         assert_eq!(action_chrome("open task").glyph, ".");
     }
@@ -103,6 +93,22 @@ mod tests {
 
             assert_eq!(chrome.glyph, glyph, "{kind:?}");
             assert_eq!(chrome.glyph.chars().next(), Some(kind.glyph()));
+        }
+    }
+
+    #[test]
+    fn action_chrome_stores_finished_styles_without_style_builder_methods() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actions.rs"),
+        )
+        .unwrap();
+
+        for builder in [
+            ["glyph", "_style(self)"].concat(),
+            ["label", "_style(self)"].concat(),
+            ["apply", "_weight"].concat(),
+        ] {
+            assert!(!source.contains(&builder), "{builder}");
         }
     }
 }

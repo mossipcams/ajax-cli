@@ -1,10 +1,9 @@
 #[cfg(any(test, feature = "interactive"))]
 use ajax_core::adapters::CommandOutput;
 use ajax_core::adapters::CommandRunner;
-use ajax_core::commands;
-use ajax_core::commands::CommandContext;
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
+use ajax_core::commands::{self, CommandContext};
 #[cfg(feature = "supervisor")]
 use ajax_core::events::apply_monitor_event_to_registry;
 #[cfg(feature = "interactive")]
@@ -19,9 +18,7 @@ use ajax_core::{
 use ajax_core::{
     registry::InMemoryRegistry,
     task_operations::start::{execute_start_task_operation, plan_start_task_operation},
-    task_operations::sweep_cleanup::{
-        execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
-    },
+    task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
     task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
@@ -57,12 +54,12 @@ pub(crate) fn render_matches_mut(
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
-            let operation =
+            let (_intent, plan) =
                 plan_start_task_operation(context, request.clone()).map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+                    output: render_plan(plan, subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
@@ -71,7 +68,7 @@ pub(crate) fn render_matches_mut(
                 context,
                 runner,
                 &request,
-                &operation,
+                &plan,
                 subcommand.get_flag("yes"),
                 current_open_mode(),
             )
@@ -102,21 +99,16 @@ pub(crate) fn render_matches_mut(
                     state_changed: false,
                 });
             }
-            let candidates = plan_sweep_cleanup_operation(context);
-            let (outputs, state_changed) = execute_sweep_cleanup_operation(
-                context,
-                &candidates,
-                subcommand.get_flag("yes"),
-                runner,
-            )
-            .map_err(|(error, error_state_changed)| {
-                let cli_error = command_error(error);
-                if error_state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
+            let (outputs, state_changed) =
+                execute_sweep_cleanup_operation(context, subcommand.get_flag("yes"), runner)
+                    .map_err(|(error, error_state_changed)| {
+                        let cli_error = command_error(error);
+                        if error_state_changed {
+                            cli_error.after_state_change()
+                        } else {
+                            cli_error
+                        }
+                    })?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, None),
                 state_changed,
@@ -379,12 +371,15 @@ mod tests {
             .unwrap();
         let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
         let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
+        let direct_plan = ["commands::sweep", "_cleanup_plan"].concat();
         let local_helper = ["fn execute_sweep", "_cleanup"].concat();
         let wrapper_plan_render = ["operation", ".plan"].concat();
 
-        assert!(tidy_dispatch.contains(&plan_operation));
+        assert!(source.contains(&direct_plan));
+        assert!(source.contains(&execute_operation));
         assert!(tidy_dispatch.contains(&execute_operation));
-        assert!(!tidy_dispatch.contains(&wrapper_plan_render));
+        assert!(!source.contains(&plan_operation));
         assert!(!source.contains(&local_helper));
+        assert!(!tidy_dispatch.contains(&wrapper_plan_render));
     }
 }

@@ -5,11 +5,6 @@ use crate::{
     App,
 };
 
-#[cfg(test)]
-pub(crate) fn selectable_row_ranges(rows: impl IntoIterator<Item = usize>) -> Vec<Range<usize>> {
-    rows.into_iter().map(|row| row..row + 1).collect()
-}
-
 /// Compute the row range each selectable occupies in the feed,
 /// in the same order as `app.selectables`.
 pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
@@ -81,13 +76,9 @@ pub(crate) fn feed_top_row(_app: &App) -> usize {
     1 // breadcrumb only; counts moved into the header
 }
 
-pub(crate) fn visible_feed_height(app: &App, terminal_height: usize) -> usize {
-    feed_screen_rows(app, terminal_height).len()
-}
-
 pub(crate) fn feed_screen_rows(app: &App, terminal_height: usize) -> Range<usize> {
     let top = feed_top_row(app);
-    let notice_rows = usize::from(crate::show_notice_row(app));
+    let notice_rows = usize::from(app.current_notice().is_some());
     let bottom = terminal_height.saturating_sub(notice_rows + 1);
     top..bottom.max(top)
 }

@@ -3197,7 +3197,7 @@ mod tests {
             vec![
                 DropOp::EnsureAgentStopped,
                 DropOp::EnsureWorktreeAbsent,
-                DropOp::EnsureBranchAbsent
+                DropOp::EnsureBranchAbsent,
             ]
         );
     }
@@ -3293,6 +3293,16 @@ mod tests {
         assert!(remove.commands.iter().any(|command| {
             command.program == "git" && command.args.iter().any(|arg| arg == "-D")
         }));
+    }
+
+    #[test]
+    fn teardown_commands_use_force_flag_without_mode_enum() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/teardown.rs"),
+        )
+        .unwrap();
+
+        assert!(!source.contains("TeardownMode"));
     }
 
     #[test]

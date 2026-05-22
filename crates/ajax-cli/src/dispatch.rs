@@ -4,7 +4,7 @@ use ajax_core::{
     models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
     task_operations::drop_task::{
-        execute_drop_task_operation, plan_drop_task_confirmation, plan_drop_task_operation,
+        execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
         DropTaskCompletion,
     },
     task_operations::task_command::{
@@ -99,7 +99,7 @@ pub(crate) fn render_drop_command<R: CommandRunner>(
             }
         }
     }
-    let plan = plan_drop_task_confirmation(context, task).map_err(command_error)?;
+    let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
     Ok(RenderedCommand {
         output: render_plan(plan, subcommand.get_flag("json"))?,
         state_changed,
@@ -129,8 +129,7 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     confirmed: bool,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let confirmation_plan =
-        plan_drop_task_confirmation(context, task_handle).map_err(command_error)?;
+    let confirmation_plan = plan_drop_confirmation(context, task_handle).map_err(command_error)?;
     if !confirmation_plan.blocked_reasons.is_empty() {
         return Err(command_error(CommandError::PlanBlocked(
             confirmation_plan.blocked_reasons,
@@ -219,15 +218,17 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
         )
         .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
         let local_completion_helper = ["drop_observation", "_all_absent"].concat();
         let local_execution_loop = ["for op in operation.", "ops"].concat();
         let local_drop_plan = ["fn drop_", "task_plan"].concat();
 
         assert!(source.contains("plan_drop_task_operation"));
         assert!(source.contains("execute_drop_task_operation"));
+        assert!(!production_source.contains("pub(crate) fn drop_task_plan"));
         assert!(!source.contains(&local_completion_helper));
         assert!(!source.contains(&local_execution_loop));
-        assert!(!source.contains(&local_drop_plan));
+        assert!(!production_source.contains(&local_drop_plan));
     }
 
     #[test]

@@ -256,7 +256,6 @@ or test-command operation.
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux
   bindings, and resumes Cockpit when the task attach client detaches.
-- `classifiers` owns small operator-facing command-output heuristics.
 
 ## Cockpit Architecture
 

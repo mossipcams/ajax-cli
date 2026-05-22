@@ -301,20 +301,14 @@ fn native_cleanup_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
 ) -> Result<Vec<CommandSpec>, CommandError> {
-    native_teardown_commands(context, task, TeardownMode::Policy)
+    native_teardown_commands(context, task, false)
 }
 
 fn native_remove_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
 ) -> Result<Vec<CommandSpec>, CommandError> {
-    native_teardown_commands(context, task, TeardownMode::Force)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TeardownMode {
-    Policy,
-    Force,
+    native_teardown_commands(context, task, true)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -436,7 +430,7 @@ pub fn observe_drop_resources<R: Registry>(
 fn native_teardown_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
-    mode: TeardownMode,
+    force: bool,
 ) -> Result<Vec<CommandSpec>, CommandError> {
     let repo_path = task_repo_path(context, task)
         .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
@@ -450,7 +444,7 @@ fn native_teardown_commands<R: Registry>(
         .is_none_or(|status| status.worktree_exists)
     {
         let worktree_path = task.worktree_path.display().to_string();
-        let needs_force = mode == TeardownMode::Force
+        let needs_force = force
             || task.git_status.as_ref().is_some_and(|status| {
                 status.dirty
                     || status.untracked_files > 0
@@ -470,7 +464,7 @@ fn native_teardown_commands<R: Registry>(
         .as_ref()
         .is_none_or(|status| status.branch_exists)
     {
-        let needs_force = mode == TeardownMode::Force
+        let needs_force = force
             || task
                 .git_status
                 .as_ref()

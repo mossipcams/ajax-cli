@@ -1,5 +1,3 @@
-#[cfg(test)]
-use ajax_core::runtime_refresh::AgentStatusCache;
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
@@ -160,34 +158,12 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn refresh_live_context_with_agent_status_cache<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    agent_status_cache: &impl AgentStatusCache,
-) -> Result<bool, CliError> {
-    refresh_runtime_context_with_agent_status_cache(context, runner, agent_status_cache)
-        .map_err(crate::command_error)
-}
-
 pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
 ) -> Result<CockpitSnapshot, CliError> {
     *state_changed |= refresh_live_context(context, runner)?;
-    Ok(build_cockpit_snapshot(context))
-}
-
-#[cfg(test)]
-pub(crate) fn refresh_cockpit_snapshot_with_agent_status_cache<R: CommandRunner>(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    agent_status_cache: &impl AgentStatusCache,
-    state_changed: &mut bool,
-) -> Result<CockpitSnapshot, CliError> {
-    *state_changed |=
-        refresh_live_context_with_agent_status_cache(context, runner, agent_status_cache)?;
     Ok(build_cockpit_snapshot(context))
 }
 
@@ -252,7 +228,7 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
 
 #[cfg(test)]
 mod tests {
-    use super::refresh_cockpit_snapshot;
+    use super::{build_cockpit_snapshot, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -263,7 +239,7 @@ mod tests {
             Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
-        runtime_refresh::AgentStatusCache,
+        runtime_refresh::{refresh_runtime_context_with_agent_status_cache, AgentStatusCache},
     };
 
     #[derive(Default)]
@@ -379,6 +355,22 @@ mod tests {
         assert!(!build_cockpit_snapshot.contains(&implicit_view_read));
     }
 
+    #[test]
+    fn cockpit_backend_does_not_keep_test_only_agent_status_refresh_wrappers() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+
+        for wrapper in [
+            "refresh_live_context_with_agent_status_cache",
+            "refresh_cockpit_snapshot_with_agent_status_cache",
+        ] {
+            let function_name = ["fn ", wrapper].concat();
+            assert!(!source.contains(&function_name), "{wrapper}");
+        }
+    }
+
     #[derive(Default)]
     struct EmptyTmuxRunner;
 
@@ -481,13 +473,10 @@ mod tests {
         };
         let mut state_changed = false;
 
-        let snapshot = super::refresh_cockpit_snapshot_with_agent_status_cache(
-            &mut context,
-            &mut runner,
-            &cache,
-            &mut state_changed,
-        )
-        .unwrap();
+        state_changed |=
+            refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache)
+                .unwrap();
+        let snapshot = build_cockpit_snapshot(&context);
 
         assert!(state_changed);
         let card = snapshot
