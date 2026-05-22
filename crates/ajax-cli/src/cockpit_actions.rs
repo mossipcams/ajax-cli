@@ -5,6 +5,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    task_operations::drop_task::plan_drop_confirmation,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
@@ -15,7 +16,7 @@ use crate::render::render_execution_outputs;
 use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
-    dispatch::{drop_task_plan, execute_observed_drop},
+    dispatch::execute_observed_drop,
     execution_dispatch::execute_new_task_plan_with_task_session,
     task_session::{execute_task_entry_plan, TaskSessionRunner},
     CliError,
@@ -71,7 +72,7 @@ fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
 
     match action {
         Some(OperatorAction::Drop) => {
-            let plan = drop_task_plan(context, handle).map_err(command_error_as_io)?;
+            let plan = plan_drop_confirmation(context, handle).map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
                 return Ok(ajax_tui::ActionOutcome::Confirm(format!(
                     "press enter again to confirm {}",
