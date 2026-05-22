@@ -317,9 +317,16 @@ fn render_cockpit_entry_command<R: CommandRunner>(
         context,
         subcommand,
         runner,
-        mobile_web_port_for_command(name),
+        mobile_web_port_for_cockpit_entry(name, paths),
         paths,
     )
+}
+
+#[cfg(feature = "interactive")]
+fn mobile_web_port_for_cockpit_entry(name: &str, paths: Option<&CliContextPaths>) -> u16 {
+    paths
+        .map(|paths| mobile_web_port_for_command(&paths.runtime_paths.profile))
+        .unwrap_or_else(|| mobile_web_port_for_command(name))
 }
 
 #[cfg(feature = "interactive")]
@@ -373,6 +380,27 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
         .unwrap_or(task);
 
     Ok((outputs, task))
+}
+
+#[cfg(all(test, feature = "interactive"))]
+mod cockpit_entry_tests {
+    use super::mobile_web_port_for_cockpit_entry;
+    use crate::CliContextPaths;
+    use ajax_core::config::RuntimePathRequest;
+
+    #[test]
+    fn cockpit_entry_mobile_web_port_uses_runtime_profile_over_command_name() {
+        let paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new("/Users/matt")
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+
+        assert_eq!(
+            mobile_web_port_for_cockpit_entry("cockpit", Some(&paths)),
+            8788
+        );
+    }
 }
 
 #[cfg(feature = "interactive")]

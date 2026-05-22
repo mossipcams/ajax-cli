@@ -12,13 +12,13 @@ trap cleanup EXIT
 
 if [[ -z "${AJAX_BIN:-}" ]]; then
   cargo build --release -p ajax-cli --manifest-path "$ROOT/Cargo.toml"
-  BIN="$ROOT/target/release/ajax"
+  BIN="$ROOT/target/release/ajax-cli"
 else
   BIN="$AJAX_BIN"
 fi
 
 if [[ ! -x "$BIN" ]]; then
-  echo "ajax binary is not executable: $BIN" >&2
+  echo "ajax-cli binary is not executable: $BIN" >&2
   exit 2
 fi
 
@@ -216,11 +216,11 @@ ajax() {
 run_happy_path_journey() {
   configure_journey "happy"
 
-  echo "+ ajax doctor"
+  echo "+ ajax-cli doctor"
   ajax doctor >/dev/null
-  echo "+ ajax repos"
+  echo "+ ajax-cli repos"
   ajax repos >/dev/null
-  echo "+ ajax tasks"
+  echo "+ ajax-cli tasks"
   local tasks
   tasks="$(ajax tasks --json)"
   assert_json_contains "$tasks" '"tasks": []' "initial tasks"
@@ -255,7 +255,7 @@ run_happy_path_journey() {
   assert_log_contains "git -C $REPO worktree remove $WORKTREE"
   assert_log_contains "git -C $REPO branch -d ajax/fix-login"
 
-  echo "+ ajax cockpit"
+  echo "+ ajax-cli cockpit"
   local cockpit
   cockpit="$(ajax cockpit --json)"
   assert_json_contains "$cockpit" '"tasks": []' "cockpit after clean"

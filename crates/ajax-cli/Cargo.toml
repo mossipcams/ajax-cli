@@ -15,7 +15,7 @@ interactive = ["dep:ajax-tui", "dep:nix"]
 supervisor = ["dep:ajax-supervisor"]
 
 [[bin]]
-name = "ajax"
+name = "ajax-cli"
 path = "src/main.rs"
 
 [dependencies]
