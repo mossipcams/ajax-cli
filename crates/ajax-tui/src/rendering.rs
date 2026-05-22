@@ -273,27 +273,6 @@ pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
     )
 }
 
-pub(crate) fn project_glyph(repo: &RepoSummary) -> Span<'static> {
-    if repo.active_tasks > 0 {
-        Span::styled(
-            "*",
-            Style::default()
-                .fg(primary_accent())
-                .add_modifier(Modifier::BOLD),
-        )
-    } else {
-        Span::raw(" ")
-    }
-}
-
-pub(crate) fn project_name_color(repo: &RepoSummary) -> Color {
-    if repo.active_tasks > 0 {
-        primary_accent()
-    } else {
-        muted_text()
-    }
-}
-
 pub(crate) fn inbox_glyph(color: Color) -> Span<'static> {
     Span::styled("!", Style::default().fg(color).add_modifier(Modifier::BOLD))
 }
@@ -419,20 +398,33 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                 ],
             )
         }
-        SelectableKind::Project(repo) => render_row(
-            is_selected,
-            project_glyph(repo),
-            vec![
-                Span::styled(
-                    repo.name.clone(),
-                    Style::default()
-                        .fg(project_name_color(repo))
-                        .add_modifier(bold),
-                ),
-                column_separator(),
-                Span::styled(project_subtitle(repo), dim),
-            ],
-        ),
+        SelectableKind::Project(repo) => {
+            let (glyph, name_color) = if repo.active_tasks > 0 {
+                (
+                    Span::styled(
+                        "*",
+                        Style::default()
+                            .fg(primary_accent())
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    primary_accent(),
+                )
+            } else {
+                (Span::raw(" "), muted_text())
+            };
+            render_row(
+                is_selected,
+                glyph,
+                vec![
+                    Span::styled(
+                        repo.name.clone(),
+                        Style::default().fg(name_color).add_modifier(bold),
+                    ),
+                    column_separator(),
+                    Span::styled(project_subtitle(repo), dim),
+                ],
+            )
+        }
         SelectableKind::NewTask { .. } => render_row(
             is_selected,
             action_glyph("start"),
@@ -621,6 +613,8 @@ mod tests {
             "action_label_style",
             "card_bucket",
             "inbox_item_accent",
+            "project_glyph",
+            "project_name_color",
             "task_handle_color",
             "task_status_label",
             "task_row_label",

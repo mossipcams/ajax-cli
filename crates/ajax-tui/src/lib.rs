@@ -21,8 +21,8 @@ use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
 #[cfg(test)]
 use rendering::{
-    action_glyph, bucket_color, bucket_glyph, inbox_glyph, priority_accent, project_glyph,
-    project_name_color, project_subtitle, render_ui, task_glyph, ui_state_bucket, StatusBucket,
+    action_glyph, bucket_color, bucket_glyph, inbox_glyph, priority_accent, project_subtitle,
+    render_ui, task_glyph, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -150,10 +150,9 @@ mod tests {
 
     use super::{
         action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event, inbox_glyph,
-        priority_accent, project_glyph, project_name_color, project_subtitle, render_cockpit,
-        render_ui, selectable_row_layout, task_glyph, ui_state_bucket, ActionOutcome, App, AppView,
-        CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind,
-        StatusBucket,
+        priority_accent, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
+        task_glyph, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
+        CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -453,18 +452,6 @@ mod tests {
 
     #[test]
     fn row_chrome_helpers_preserve_visible_glyphs_and_styles() {
-        let active_repo = RepoSummary {
-            name: "web".to_string(),
-            path: "/repo".to_string(),
-            active_tasks: 1,
-            attention_items: 0,
-            reviewable_tasks: 0,
-            cleanable_tasks: 0,
-        };
-        let idle_repo = RepoSummary {
-            active_tasks: 0,
-            ..active_repo.clone()
-        };
         let urgent_item = AnnotationItem {
             task_id: TaskId::new("task-1"),
             task_handle: "web/fix".to_string(),
@@ -473,10 +460,6 @@ mod tests {
             action: OperatorAction::Resume,
         };
 
-        assert_eq!(project_glyph(&active_repo).content.as_ref(), "*");
-        assert_eq!(project_glyph(&idle_repo).content.as_ref(), " ");
-        assert_eq!(project_name_color(&active_repo), primary_accent());
-        assert_eq!(project_name_color(&idle_repo), muted_text());
         assert_eq!(inbox_glyph(danger_accent()).content.as_ref(), "!");
         assert_eq!(priority_accent(urgent_item.severity), secondary_accent());
         assert_eq!(action_glyph("help").content.as_ref(), "?");
@@ -1040,19 +1023,6 @@ mod tests {
             subtitle.contains(expected),
             "subtitle {subtitle:?} should contain {expected:?}"
         );
-    }
-
-    #[test]
-    fn project_glyph_blank_for_idle_repo() {
-        let idle = RepoSummary {
-            name: "web".to_string(),
-            path: "/repo".to_string(),
-            active_tasks: 0,
-            attention_items: 0,
-            reviewable_tasks: 0,
-            cleanable_tasks: 0,
-        };
-        assert_eq!(project_glyph(&idle).content.as_ref(), " ");
     }
 
     #[test]
