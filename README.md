@@ -1,14 +1,61 @@
 # Ajax
 
-Ajax is a native operator cockpit for isolated AI coding tasks. It is not a
-replacement for tmux, git, Claude, Codex, or future agent runtimes. Ajax sits
-above those tools and tracks what tasks exist, what state they are in, what
-needs attention, and which actions are safe to take.
+Ajax is a native Rust cockpit for running many isolated AI coding tasks without
+losing track of the work. It gives an operator one place to see what is active,
+what needs attention, what is ready to review, and which action is safe to take
+next.
 
-The installed binary is `ajax`. The Rust orchestration library is `ajax-core`.
-Cockpit is the primary operator experience; `ajax-core`, the CLI command
-surface, and the JSON contracts exist to make that experience deterministic,
-testable, and scriptable.
+Use Ajax when you want agents such as Codex to work in separate Git worktrees,
+inside durable tmux sessions, while Ajax keeps the task list, live status, and
+cleanup path organized. Ajax does not replace Git, tmux, or agent CLIs. It sits
+above them as the operator layer.
+
+The installed binary is `ajax`. The primary experience is Cockpit:
+
+```sh
+ajax cockpit
+```
+
+## What Ajax Does
+
+- Creates isolated task worktrees from configured repos.
+- Starts agent CLIs such as `codex` inside per-task tmux sessions.
+- Shows a cross-repo inbox for work that needs operator attention.
+- Tracks which tasks are active, review-ready, merged, errored, or safe to
+  clean up.
+- Lets you resume, repair, review, ship, drop, and tidy tasks from one cockpit.
+- Keeps the same state available through stable CLI commands and JSON output
+  for scripts, tests, and future UIs.
+- Records enough local task history to recover from interrupted provisioning or
+  cleanup without treating cached state as more authoritative than Git or tmux.
+
+## Daily Loop
+
+Ajax is built around a project-first workflow: choose a project, choose what you
+want to do, then choose a task when the action needs one.
+
+Typical flow:
+
+```sh
+ajax cockpit
+```
+
+From Cockpit you can start a task, jump back into an active task, inspect work
+that needs attention, review completed work, ship it, or drop stale task
+environments.
+
+The same loop is available from the CLI:
+
+```sh
+ajax start --repo web --title "fix login" --agent codex --execute
+ajax inbox
+ajax resume web/fix-login
+ajax repair web/fix-login
+ajax review web/fix-login
+ajax ship web/fix-login
+ajax drop web/fix-login
+ajax tidy
+```
 
 ## Install
 
@@ -66,7 +113,7 @@ the selected agent CLI are launched.
 
 ## First Run
 
-After installing and writing a config file, start with:
+After installing and writing a config file, check the environment:
 
 ```sh
 ajax doctor
@@ -74,7 +121,13 @@ ajax repos
 ajax tasks
 ```
 
-Create a task plan before executing it:
+Open the cockpit:
+
+```sh
+ajax cockpit
+```
+
+Start a task from Cockpit, or create a CLI plan before executing it:
 
 ```sh
 ajax start --repo web --title "fix login" --agent codex
@@ -84,6 +137,14 @@ When the plan looks right, execute it:
 
 ```sh
 ajax start --repo web --title "fix login" --agent codex --execute
+```
+
+Come back later through Cockpit or the attention queues:
+
+```sh
+ajax inbox
+ajax ready
+ajax status
 ```
 
 Before changing machines or testing a state migration, export a backup:
@@ -102,35 +163,30 @@ The smoke workflow uses strict fake `git`, `tmux`, and agent tools to validate
 the full happy-path journey, state export behavior, and a partial-failure
 recovery path where Ajax keeps the task visible with attention.
 
-## Architecture
+## Native Rust Cockpit
 
-Ajax owns task lifecycle planning, orchestration, state, policy, annotations,
-safety, workflow, and the operator experience. Existing tools keep owning the
-durable primitives:
+Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
+it through the `ajax` command:
 
-- `git` owns repository, branch, merge, and worktree reality.
-- `tmux` owns durable interactive runtime.
-- Ajax treats a task's tmux window as the stable home window inside that task
-  session.
-- Claude, Codex, and other agent CLIs are opaque workers running inside task
-  environments.
-
-SQLite is Ajax's fast current-state read model. It stores the expected task
-runtime, last observed Git/tmux evidence, derived runtime health, and task
-events. Git and tmux remain the live substrates; Ajax reconciles their observed
-state into SQLite so Cockpit and command planning do not repeat those checks on
-every render.
-
-The preferred flow is:
-
-```text
-SSH or dev command -> ajax cockpit/CLI -> ajax-core -> git/tmux/agents
+```sh
+ajax cockpit
 ```
 
-Rust owns the orchestration core because safety policy, live status projection,
-command dispatch, and task state benefit from explicit types and testable
-decisions.
-Cockpit owns the operator workflow over those typed decisions.
+Cockpit uses the project-first workflow: choose a project, choose an action, and
+then choose the task when that action needs one. It surfaces the cross-repo
+inbox first so work that needs the operator does not disappear inside one repo.
+
+When Cockpit opens a task, Ajax runs a foreground bridge to the task's tmux
+session. Normal input is forwarded to tmux. Press `Ctrl+Q` from that bridge to
+detach the foreground task client and return to Cockpit. Ajax does not install a
+global tmux key binding for this; outside the Cockpit task bridge, tmux keeps
+its normal key handling.
+
+Use watch mode when you want repeated cockpit frames:
+
+```sh
+ajax cockpit --watch
+```
 
 ## Command Surface
 
@@ -158,7 +214,7 @@ ajax cockpit
 ajax cockpit --watch
 ```
 
-Commands that feed a UI should support JSON output:
+Commands that feed a UI support JSON output:
 
 ```sh
 ajax repos --json
@@ -172,36 +228,24 @@ ajax doctor --json
 ajax cockpit --json
 ```
 
-## Native Rust Cockpit
+## How It Works
 
-Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
-it through the `ajax` command:
+Ajax coordinates existing local tools:
 
-```sh
-ajax cockpit
-```
+- Git owns repository, branch, merge, and worktree reality.
+- tmux owns durable interactive sessions.
+- Agent CLIs are opaque workers running inside task environments.
+- SQLite stores Ajax-owned task intent, task events, runtime evidence, and named
+  step receipts.
 
-Cockpit is the place to decide what needs attention, what is safe to do next,
-and which command plan should run. It uses a project-first workflow modeled
-after the earlier gum flow: choose a project, choose an action, then choose the
-task when that action needs one. Project actions include starting a task,
-resuming or reviewing a task, shipping, dropping, and showing project status.
+Ajax observes Git and tmux before deciding what to show or what to do next. The
+SQLite database is a fast local record of Ajax task state, not a replacement for
+the live substrates. When provisioning, retrying, or cleaning up a task, Ajax
+uses fresh substrate observations plus recorded step receipts to avoid repeating
+work that already succeeded while still recovering safely from partial failures.
 
-The cockpit remains a Rust operator surface over `ajax-core` command and JSON
-contracts. Orchestration logic stays in the core so Cockpit can be tested,
-scripted, and recovered without becoming the source of truth.
-
-When Cockpit opens a task, Ajax runs a foreground bridge to the task's tmux
-session. Normal input is forwarded to tmux. Press `Ctrl+Q` from that bridge to
-detach the foreground task client and return to Cockpit. Ajax does not install a
-global tmux key binding for this; outside the Cockpit task bridge, tmux keeps
-its normal key handling.
-
-Use watch mode when you want repeated cockpit frames:
-
-```sh
-ajax cockpit --watch
-```
+For implementation boundaries, crate ownership, and runtime reconciliation
+details, see `architecture.md`.
 
 ## Source And Runtime Layout
 
@@ -220,39 +264,6 @@ worktrees separate:
 The `ajax-cli` source repo should not be included in the default managed repo
 list at first.
 
-## Repository Structure
-
-```text
-ajax-cli/
-  Cargo.toml
-  crates/
-    ajax-core/
-    ajax-cli/
-    ajax-supervisor/
-    ajax-tui/
-```
-
-Core modules:
-
-- `config`
-- `registry`
-- `models`
-- `policy`
-- `live`
-- `attention`
-- `commands`
-- `adapters`
-- `output`
-
-Additional crates keep the boundaries described in `architecture.md`:
-
-- `ajax-cli` owns CLI parsing, command dispatch, context loading, process
-  execution wiring, and human/JSON rendering.
-- `ajax-core` owns models, registry state, policy, lifecycle decisions, live
-  status projection, attention, command plans, and output contracts.
-- `ajax-supervisor` owns supervised agent execution and live process status.
-- `ajax-tui` owns the Cockpit screen state, input, layout, and rendering.
-
 ## Validation
 
 Before release-sensitive changes, run the strongest applicable local checks:
@@ -261,7 +272,8 @@ Before release-sensitive changes, run the strongest applicable local checks:
 cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
-cargo nextest run --all-features
+cargo nextest run --all-features --test-threads=1
+cargo test --doc
 npm run lint:duplication
 ```
 
