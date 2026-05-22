@@ -317,6 +317,5 @@ npm run lint:duplication
 
 Use `scripts/smoke.sh` for the deterministic end-to-end smoke workflow.
 
-Releases are managed by Release Please. The repository needs a
-`RELEASE_PLEASE_TOKEN` secret so Release Please PRs trigger the real GitHub CI
-workflow before they are merged.
+Releases are managed by Release Please. If set, `RELEASE_PLEASE_TOKEN` is used;
+otherwise the workflow falls back to `github.token` so releases still run.

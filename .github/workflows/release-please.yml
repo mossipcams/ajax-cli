@@ -17,22 +17,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Check release token
+      - name: Resolve release token
         id: token
         env:
           RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
-            echo "::warning title=Missing RELEASE_PLEASE_TOKEN::Skipping Release Please. Configure a PAT or GitHub App token so Release Please PRs trigger CI."
-            echo "present=false" >> "$GITHUB_OUTPUT"
+          if [ -n "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "token=${RELEASE_PLEASE_TOKEN}" >> "$GITHUB_OUTPUT"
           else
-            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "token=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Missing RELEASE_PLEASE_TOKEN::Falling back to github.token. Release Please PRs created with this token may not trigger downstream CI in the same way as PAT/App tokens."
           fi
 
       - name: Run Release Please
-        if: steps.token.outputs.present == 'true'
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          token: ${{ steps.token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
