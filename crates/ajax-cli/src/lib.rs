@@ -1,14 +1,19 @@
+#[cfg(feature = "interactive")]
 mod agent_status_cache;
 mod classifiers;
 mod cli;
+#[cfg(feature = "interactive")]
 mod cockpit_actions;
+#[cfg(feature = "interactive")]
 mod cockpit_backend;
 mod context;
 mod dispatch;
 mod execution_dispatch;
 mod render;
 mod snapshot_dispatch;
+#[cfg(feature = "supervisor")]
 mod supervise;
+#[cfg(feature = "interactive")]
 mod task_session;
 
 use ajax_core::{
@@ -20,15 +25,17 @@ use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
 #[cfg(test)]
+#[cfg(feature = "interactive")]
 use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
     handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
     PendingCockpitOutcome,
 };
 #[cfg(test)]
+#[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{default_context_paths, load_context, save_context};
+use context::{default_context_paths, load_context, load_context_with_events, save_context};
 #[cfg(test)]
 use dispatch::{render_task_command, TaskCommandOperation};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
@@ -37,6 +44,7 @@ use snapshot_dispatch::parent_directory_available;
 use snapshot_dispatch::render_matches_with_paths;
 use std::ffi::OsStr;
 #[cfg(test)]
+#[cfg(feature = "supervisor")]
 use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -99,7 +107,7 @@ pub fn run_with_args(
     };
 
     let paths = default_context_paths()?;
-    let mut context = load_context(&paths)?;
+    let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
     let rendered =
         match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
@@ -151,7 +159,7 @@ pub fn run_with_context_paths(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
-    let context = load_context(paths)?;
+    let context = load_context_for_matches(paths, &matches)?;
 
     render_matches_with_paths(&matches, &context, Some(paths))
 }
@@ -165,7 +173,7 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
-    let mut context = load_context(paths)?;
+    let mut context = load_context_for_matches(paths, &matches)?;
     let rendered = match render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))
     {
         Ok(rendered) => rendered,
@@ -197,6 +205,19 @@ fn render_snapshot_matches(
 }
 
 // The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
+
+fn load_context_for_matches(
+    paths: &CliContextPaths,
+    matches: &ArgMatches,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    if matches.subcommand().is_some_and(|(name, subcommand)| {
+        name == "state" && matches!(subcommand.subcommand(), Some(("export", _)))
+    }) {
+        load_context_with_events(paths)
+    } else {
+        load_context(paths)
+    }
+}
 
 pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
     let repo = matches
@@ -259,7 +280,8 @@ mod tests {
         config::{Config, ManagedRepo},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource,
+            RuntimeProjection, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
@@ -304,6 +326,28 @@ mod tests {
 
         assert!(output.contains("\"tasks\""));
         assert!(output.contains("web/fix-login"));
+    }
+
+    #[test]
+    fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
+        let manifest = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
+        )
+        .unwrap();
+
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
+            let line = manifest
+                .lines()
+                .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
+                .unwrap_or_else(|| panic!("{dependency} dependency should be declared"));
+            assert!(
+                line.contains("optional = true"),
+                "{dependency} must be optional so lightweight builds can exclude it: {line}"
+            );
+        }
+
+        assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
     }
 
     #[test]
@@ -996,6 +1040,48 @@ mod tests {
             assert!(!output.is_empty(), "{args:?} should render a response");
             assert_eq!(runner.commands, tmux_live_commands(), "{args:?}");
         }
+    }
+
+    #[test]
+    fn read_command_skips_live_pane_probe_when_cached_runtime_is_fresh() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+        task.worktrunk_status = Some(WorktrunkStatus::present(
+            "worktrunk",
+            "/tmp/worktrees/web-fix-login",
+        ));
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::now(),
+            RuntimeObservationSource::TmuxProbe,
+        );
+        let mut runner = QueuedRunner::default();
+
+        let output =
+            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
+                .unwrap();
+
+        assert!(output.contains("web/fix-login"));
+        assert!(runner.commands.is_empty());
     }
 
     #[test]

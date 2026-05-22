@@ -43,6 +43,25 @@ pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
 pub(crate) fn load_context(
     paths: &CliContextPaths,
 ) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    load_context_with_event_mode(paths, EventLoadMode::TasksOnly)
+}
+
+pub(crate) fn load_context_with_events(
+    paths: &CliContextPaths,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
+    load_context_with_event_mode(paths, EventLoadMode::Full)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EventLoadMode {
+    TasksOnly,
+    Full,
+}
+
+fn load_context_with_event_mode(
+    paths: &CliContextPaths,
+    event_load_mode: EventLoadMode,
+) -> Result<CommandContext<InMemoryRegistry>, CliError> {
     let config = if paths.config_file.exists() {
         let contents = std::fs::read_to_string(&paths.config_file)
             .map_err(|error| CliError::ContextLoad(error.to_string()))?;
@@ -54,9 +73,11 @@ pub(crate) fn load_context(
     let store = SqliteRegistryStore::new(&paths.state_file);
     let registry = if paths.state_file.exists() {
         reject_legacy_json_state(&paths.state_file)?;
-        store
-            .load()
-            .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
+        match event_load_mode {
+            EventLoadMode::TasksOnly => store.load_tasks_only(),
+            EventLoadMode::Full => store.load(),
+        }
+        .map_err(|error| CliError::ContextLoad(format!("state load failed: {error}")))?
     } else {
         InMemoryRegistry::default()
     };
@@ -95,4 +116,49 @@ pub(crate) fn save_context(
     SqliteRegistryStore::new(&paths.state_file)
         .save(&context.registry)
         .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_context, CliContextPaths};
+    use ajax_core::{
+        models::{AgentClient, Task, TaskId},
+        registry::{
+            InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
+        },
+    };
+
+    #[test]
+    fn ordinary_context_load_skips_registry_event_history() {
+        let root = std::env::temp_dir().join(format!("ajax-context-events-{}", std::process::id()));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(Task::new(
+                TaskId::new("task-1"),
+                "web",
+                "fix-login",
+                "Fix login",
+                "ajax/fix-login",
+                "main",
+                "/tmp/worktrees/web-fix-login",
+                "ajax-web-fix-login",
+                "worktrunk",
+                AgentClient::Codex,
+            ))
+            .unwrap();
+        registry
+            .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&registry)
+            .unwrap();
+
+        let context = load_context(&paths).unwrap();
+
+        assert_eq!(context.registry.list_tasks().len(), 1);
+        assert!(context.registry.list_events().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
