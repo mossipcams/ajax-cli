@@ -134,6 +134,14 @@ fn is_gone(error: &web_push::WebPushError) -> bool {
     matches!(
         error,
         web_push::WebPushError::EndpointNotValid(_) | web_push::WebPushError::EndpointNotFound(_)
+    ) || is_bad_jwt_token(error)
+}
+
+fn is_bad_jwt_token(error: &web_push::WebPushError) -> bool {
+    matches!(
+        error,
+        web_push::WebPushError::Other(info)
+            if info.code == 403 && info.message.contains(r#""reason":"BadJwtToken""#)
     )
 }
 
@@ -188,17 +196,15 @@ pub(crate) fn send_to_all(dir: &Path, notification: &PushNotification) -> Result
         let mut delivered = 0_usize;
         let mut gone: Vec<String> = Vec::new();
         for subscription in &subscriptions {
-            match build_push_message(&keys.private_pem, subscription, &payload) {
-                Ok(message) => match client.send(message).await {
+            if let Ok(message) = build_push_message(&keys.private_pem, subscription, &payload) {
+                match client.send(message).await {
                     Ok(()) => delivered += 1,
                     Err(error) => {
                         if is_gone(&error) {
                             gone.push(subscription.endpoint.clone());
                         }
-                        eprintln!("Ajax web push delivery failed: {error}");
                     }
-                },
-                Err(error) => eprintln!("Ajax web push message failed: {error}"),
+                }
             }
         }
         (delivered, gone)
@@ -292,6 +298,17 @@ mod tests {
     }
 
     #[test]
+    fn bad_jwt_token_errors_are_classified_as_gone() {
+        let error = web_push::request_builder::parse_response(
+            403.try_into().unwrap(),
+            br#"{"reason":"BadJwtToken"}"#.to_vec(),
+        )
+        .unwrap_err();
+
+        assert!(is_gone(&error));
+    }
+
+    #[test]
     fn notification_payload_is_json_with_title_and_body() {
         let payload = notification_payload(&PushNotification {
             title: "Task needs review".to_string(),
@@ -336,5 +353,16 @@ mod tests {
         assert_eq!(delivered, 0);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn web_push_does_not_write_delivery_failures_to_terminal() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_push.rs"),
+        )
+        .unwrap();
+        let terminal_write = ["e", "println!"].concat();
+
+        assert!(!source.contains(&terminal_write));
     }
 }
