@@ -209,15 +209,6 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn empty_state(text: &str) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![Span::styled(
-        format!("   {text}"),
-        Style::default()
-            .fg(subtle_text())
-            .add_modifier(Modifier::ITALIC),
-    )]))
-}
-
 fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
     let label = match group {
         "hot" => "inbox",
@@ -497,7 +488,12 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             AppView::NewTaskInput { .. } => "enter a task name",
             AppView::Help { .. } => "keyboard shortcuts",
         };
-        rows.push(empty_state(msg));
+        rows.push(ListItem::new(Line::from(vec![Span::styled(
+            format!("   {msg}"),
+            Style::default()
+                .fg(subtle_text())
+                .add_modifier(Modifier::ITALIC),
+        )])));
         return (rows, sel_to_row);
     }
 
@@ -592,6 +588,7 @@ mod tests {
             "muted_text",
             "subtle_text",
             "selected_highlight",
+            "empty_state",
             "action_chrome",
             "action_label_style",
             "card_bucket",
