@@ -18,9 +18,7 @@ pub use cockpit_state::{App, CockpitSnapshot};
 use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
 use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
-pub(crate) use layout::{
-    feed_screen_rows, feed_top_row, selectable_row_layout, visible_feed_height,
-};
+pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
 #[cfg(test)]
 use rendering::{
     action_glyph, bucket_color, bucket_glyph, card_bucket, inbox_glyph, priority_accent,
@@ -240,16 +238,15 @@ mod tests {
         let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
         let layout = std::fs::read_to_string(manifest_dir.join("src/layout.rs")).unwrap();
 
-        for helper_name in [
-            "feed_top_row",
-            "visible_feed_height",
-            "feed_screen_rows",
-            "selectable_row_layout",
-        ] {
+        for helper_name in ["feed_top_row", "feed_screen_rows", "selectable_row_layout"] {
             let helper = format!("fn {helper_name}(");
             assert!(layout.contains(&helper), "layout.rs should own {helper}");
             assert!(!lib.contains(&helper), "lib.rs should not define {helper}");
         }
+
+        let visible_feed_height = ["fn ", "visible_feed_height"].concat();
+        assert!(!layout.contains(&visible_feed_height));
+        assert!(!lib.contains(&visible_feed_height));
     }
 
     #[test]
