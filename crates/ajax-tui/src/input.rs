@@ -67,7 +67,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
             }
         }
         code if app.is_collecting_input() && navigation::is_input_delete_key(code, modifiers) => {
-            handle_back_key(app);
+            app.go_back();
         }
         KeyCode::Char(character) if app.is_collecting_input() => {
             app.push_input_char(character);
@@ -77,7 +77,7 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
         }
         KeyCode::Char('q') if modifiers.is_empty() => return Ok(EventLoopAction::Quit),
         code if navigation::is_back_key_event(code, modifiers) => {
-            handle_back_key(app);
+            app.go_back();
         }
         KeyCode::Up | KeyCode::Char('k') => app.select_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.select_next(),
@@ -178,11 +178,6 @@ pub(crate) fn handle_action_result(
             Ok(None)
         }
     }
-}
-
-pub(crate) fn handle_back_key(app: &mut App) -> bool {
-    app.go_back();
-    false
 }
 
 #[cfg(test)]

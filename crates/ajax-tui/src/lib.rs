@@ -17,7 +17,7 @@ pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
-use input::{handle_action_result, handle_back_key, handle_cockpit_event, EventLoopAction};
+use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{
     feed_screen_rows, feed_top_row, selectable_row_layout, visible_feed_height,
 };
@@ -213,6 +213,13 @@ mod tests {
         }
         let legacy_flash_alias = ["FLASH", "_TICKS"].concat();
         assert!(!lib.contains(&legacy_flash_alias));
+
+        let input = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/input.rs"),
+        )
+        .unwrap();
+        let back_key_wrapper = ["fn ", "handle_back_key"].concat();
+        assert!(!input.contains(&back_key_wrapper));
     }
 
     #[test]
@@ -2087,7 +2094,7 @@ mod tests {
     fn top_level_back_stays_in_cockpit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
-        assert!(!super::handle_back_key(&mut app));
+        assert!(!app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
@@ -2101,7 +2108,7 @@ mod tests {
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(!app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(content.contains("Ajax"));
         assert!(content.contains("web"));
@@ -2118,7 +2125,7 @@ mod tests {
             let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
             assert!(crate::navigation::is_back_key_event(code, modifiers));
-            assert!(!super::handle_back_key(&mut app));
+            assert!(!app.go_back());
             let content = render_to_string(80, 30, &app);
             assert!(content.contains("Ajax"));
             assert!(content.contains("web"));
@@ -2146,7 +2153,7 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(!content.contains("> web"));
     }
@@ -2161,7 +2168,7 @@ mod tests {
             KeyCode::Backspace,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         let content = render_to_string(80, 30, &app);
         assert!(!content.contains("> web"));
     }
@@ -2283,7 +2290,7 @@ mod tests {
             KeyCode::Delete,
             KeyModifiers::NONE
         ));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(
             matches!(
                 &app.view,
@@ -2356,7 +2363,7 @@ mod tests {
 
         app.open_help();
         assert!(matches!(app.view, AppView::Help { .. }));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
 
         let content = render_to_string(80, 30, &app);
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
@@ -2495,7 +2502,7 @@ mod tests {
         app.activate_selected();
         assert!(app.expanded_task.is_some());
 
-        super::handle_back_key(&mut app);
+        assert!(app.go_back());
         assert!(app.expanded_task.is_none());
         assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
     }
@@ -2962,7 +2969,7 @@ mod tests {
         app.activate_selected();
 
         app.push_input_char('x');
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(
             matches!(
                 &app.view,
@@ -2971,7 +2978,7 @@ mod tests {
             "first backspace should edit the task title without leaving input"
         );
         assert!(render_to_string(80, 30, &app).contains("Task name"));
-        assert!(!super::handle_back_key(&mut app));
+        assert!(app.go_back());
         assert!(matches!(app.view, AppView::Projects));
         assert_eq!(app.selected, 0);
 
