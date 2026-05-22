@@ -446,8 +446,8 @@ mod tests {
         live::{LiveObservation, LiveStatusKind},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, RuntimeHealth,
-            RuntimeObservationSource, RuntimeProjection, SideFlag, Task, TaskId, TmuxStatus,
-            WorktrunkStatus,
+            RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt, Task, TaskId,
+            TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
     };
@@ -682,6 +682,14 @@ mod tests {
 
         fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent> {
             self.inner.events_for_task(task_id)
+        }
+
+        fn record_step_receipt(&mut self, receipt: StepReceipt) -> Result<(), RegistryError> {
+            self.inner.record_step_receipt(receipt)
+        }
+
+        fn step_receipts_for_task(&self, task_id: &TaskId) -> Vec<&StepReceipt> {
+            self.inner.step_receipts_for_task(task_id)
         }
     }
 
