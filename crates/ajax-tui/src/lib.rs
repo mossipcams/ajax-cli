@@ -2716,6 +2716,19 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_state_does_not_keep_project_repo_forwarders() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_state.rs"),
+        )
+        .unwrap();
+
+        for helper in ["task_handle_repo", "card_repo"] {
+            let helper_name = ["fn ", helper].concat();
+            assert!(!source.contains(&helper_name), "{helper}");
+        }
+    }
+
+    #[test]
     fn rendering_module_exposes_status_palette() {
         assert_eq!(
             crate::rendering::bucket_color(crate::rendering::StatusBucket::Active),
