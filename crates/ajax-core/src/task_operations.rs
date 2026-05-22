@@ -364,7 +364,6 @@ pub mod drop_task {
     pub struct DropTaskOperationPlan {
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
-        pub ops: Vec<DropOp>,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -390,17 +389,14 @@ pub mod drop_task {
             return Ok(DropTaskOperationPlan {
                 confirmation_plan,
                 observation: unknown_observation(),
-                ops: Vec::new(),
             });
         }
 
         let observation = commands::observe_drop_resources(context, &task, runner)?;
-        let ops = commands::plan_drop_from_observation(&observation);
 
         Ok(DropTaskOperationPlan {
             confirmation_plan,
             observation,
-            ops,
         })
     }
 
@@ -460,7 +456,7 @@ pub mod drop_task {
         record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
-        for op in operation.ops {
+        for op in commands::plan_drop_from_observation(&operation.observation) {
             match op {
                 DropOp::EnsureAgentStopped => {
                     commands::mark_drop_agent_stopped(context, qualified_handle)?;
@@ -821,7 +817,7 @@ mod tests {
 
     use super::drop_task::{
         complete_drop_task_operation, execute_drop_task_operation, plan_drop_task_operation,
-        DropTaskCompletion, DropTaskOperationPlan,
+        DropTaskCompletion,
     };
     use super::kernel::execute_external_plan;
     use super::start::{
@@ -834,8 +830,7 @@ mod tests {
     use crate::{
         adapters::{CommandOutput, CommandRunner, CommandSpec},
         commands::{
-            CommandContext, CommandError, CommandPlan, DropOp, NewTaskRequest, OpenMode,
-            ResourceState,
+            CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode, ResourceState,
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{
@@ -1247,6 +1242,7 @@ mod tests {
         assert!(!plan_fields.contains("pub blocked_reasons"));
         assert!(!plan_fields.contains("pub cleanup_lifecycle"));
         assert!(!plan_fields.contains("pub intent"));
+        assert!(!plan_fields.contains("pub ops"));
     }
 
     #[test]
@@ -1700,14 +1696,12 @@ mod tests {
             },
         ]);
 
-        let DropTaskOperationPlan {
-            observation, ops, ..
-        } = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        assert_eq!(observation.tmux_session, ResourceState::Absent);
-        assert_eq!(observation.worktree, ResourceState::Absent);
-        assert_eq!(observation.branch, ResourceState::Absent);
-        assert_eq!(ops, Vec::<DropOp>::new());
+        assert_eq!(operation.observation.tmux_session, ResourceState::Absent);
+        assert_eq!(operation.observation.worktree, ResourceState::Absent);
+        assert_eq!(operation.observation.branch, ResourceState::Absent);
     }
 
     #[test]
