@@ -22,22 +22,15 @@ use crate::{
     CliError,
 };
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum PendingCockpitOutcome {
-    #[cfg(test)]
-    Exit(String),
-    ReturnToCockpit,
-}
-
 pub(crate) fn handle_pending_cockpit_result(
-    result: Result<PendingCockpitOutcome, CliError>,
+    result: Result<(), CliError>,
     cockpit_flash: &mut Option<String>,
-) -> Option<PendingCockpitOutcome> {
+) -> bool {
     match result {
-        Ok(outcome) => Some(outcome),
+        Ok(()) => true,
         Err(error) => {
             *cockpit_flash = Some(error.to_string());
-            None
+            false
         }
     }
 }
@@ -154,7 +147,7 @@ pub(crate) fn execute_pending_cockpit_action<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<Option<String>, CliError> {
     execute_pending_cockpit_action_with_open_mode(
         pending,
         context,
@@ -171,7 +164,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     runner: &mut R,
     state_changed: &mut bool,
     open_mode: commands::OpenMode,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<Option<String>, CliError> {
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
             CliError::CommandFailed(
@@ -194,7 +187,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
                     }
                 })?;
         *state_changed = true;
-        return Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
+        return Ok(Some(render_execution_outputs(
             &outputs,
             Some(&task.qualified_handle()),
         )));
@@ -210,7 +203,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(None);
     }
 
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
@@ -230,11 +223,9 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     .map_err(|error| task_command_cli_error(error, state_changed))?;
     *state_changed |= operation_state_changed;
     if kind != TaskCommandKind::Resume {
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(None);
     }
-    Ok(PendingCockpitOutcome::Exit(render_execution_outputs(
-        &outputs, None,
-    )))
+    Ok(Some(render_execution_outputs(&outputs, None)))
 }
 
 pub(crate) fn execute_pending_cockpit_action_with_task_session<
@@ -246,7 +237,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
-) -> Result<PendingCockpitOutcome, CliError> {
+) -> Result<(), CliError> {
     let task_entry_open_mode = commands::OpenMode::Attach;
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
@@ -275,7 +266,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             }
         })?;
         *state_changed = true;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(());
     }
 
     let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
@@ -288,7 +279,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(());
     }
 
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
@@ -310,13 +301,13 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         )
         .map_err(|error| task_command_cli_error(error, state_changed))?;
         *state_changed |= operation_state_changed;
-        return Ok(PendingCockpitOutcome::ReturnToCockpit);
+        return Ok(());
     }
 
     execute_task_entry_plan(&plan, runner, task_session)?;
     commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
     *state_changed = true;
-    Ok(PendingCockpitOutcome::ReturnToCockpit)
+    Ok(())
 }
 
 fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {
@@ -359,6 +350,7 @@ mod tests {
         let legacy_plan = ["plan_with", "_open_mode"].concat();
         let local_operation_mapping = ["operation_from", "_operator_action"].concat();
         let outcome_impl = ["impl Pending", "CockpitOutcome"].concat();
+        let pending_outcome = ["enum Pending", "CockpitOutcome"].concat();
         let return_helper = ["task_command", "_returns_to_cockpit"].concat();
 
         assert!(source.contains(&plan_operation));
@@ -367,6 +359,7 @@ mod tests {
         assert!(!source.contains(&legacy_plan));
         assert!(!source.contains(&local_operation_mapping));
         assert!(!source.contains(&outcome_impl));
+        assert!(!source.contains(&pending_outcome));
         assert!(!source.contains(&return_helper));
     }
 }

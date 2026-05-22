@@ -14,7 +14,7 @@ use crate::{
     agent_status_cache::TmuxAgentStatusCache,
     cockpit_actions::{
         execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
-        tui_cockpit_action, tui_cockpit_confirmed_action, PendingCockpitOutcome,
+        tui_cockpit_action, tui_cockpit_confirmed_action,
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
@@ -99,7 +99,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             });
         };
 
-        let Some(outcome) = handle_pending_cockpit_result(
+        if !handle_pending_cockpit_result(
             execute_pending_cockpit_action_with_task_session(
                 &pending,
                 context,
@@ -108,19 +108,8 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 &mut task_session,
             ),
             &mut cockpit_flash,
-        ) else {
+        ) {
             continue;
-        };
-
-        match outcome {
-            #[cfg(test)]
-            PendingCockpitOutcome::Exit(output) => {
-                return Ok(RenderedCommand {
-                    output,
-                    state_changed,
-                });
-            }
-            PendingCockpitOutcome::ReturnToCockpit => {}
         }
     }
 }

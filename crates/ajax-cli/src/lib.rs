@@ -31,7 +31,6 @@ use cli::{parse_args, ParsedArgs};
 use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
     handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
-    PendingCockpitOutcome,
 };
 #[cfg(test)]
 #[cfg(feature = "interactive")]
@@ -5763,11 +5762,9 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(
-            outcome,
-            super::PendingCockpitOutcome::Exit(output)
-                if output.contains("recorded task: api/fix-login")
-        ));
+        assert!(outcome
+            .as_deref()
+            .is_some_and(|output| output.contains("recorded task: api/fix-login")));
         assert_eq!(
             runner.commands(),
             &[
@@ -6246,7 +6243,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(outcome, None);
         assert_eq!(
             merge_context
                 .registry
@@ -6525,7 +6522,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(outcome, None);
         assert_eq!(runner.commands, missing_drop_observation_commands());
         assert_eq!(
             context
@@ -6571,7 +6568,7 @@ mod tests {
         let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::execute_pending_cockpit_action_with_task_session(
+        super::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6580,7 +6577,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(runner.commands, missing_drop_observation_commands());
         assert!(task_session.commands.is_empty());
         assert_eq!(
@@ -6637,7 +6633,7 @@ mod tests {
             task_title: None,
         };
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6646,7 +6642,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             runner.commands(),
             &[CommandSpec::new(
@@ -6678,7 +6673,7 @@ mod tests {
         let mut task_session = RecordingTaskSessionRunner::default();
         let mut state_changed = false;
 
-        let outcome = super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
             &pending,
             &mut context,
             &mut runner,
@@ -6687,7 +6682,6 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(outcome, super::PendingCockpitOutcome::ReturnToCockpit);
         assert_eq!(
             task_session.commands,
             vec![
@@ -6851,10 +6845,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(matches!(
-            outcome,
-            super::PendingCockpitOutcome::ReturnToCockpit
-        ));
+        assert_eq!(outcome, None);
         assert_eq!(
             runner.commands(),
             &[
@@ -7083,7 +7074,7 @@ mod tests {
             &mut cockpit_flash,
         );
 
-        assert!(outcome.is_none());
+        assert!(!outcome);
         assert_eq!(cockpit_flash.as_deref(), Some("git exited with status 42"));
     }
 
@@ -7228,7 +7219,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(output, super::PendingCockpitOutcome::ReturnToCockpit);
+        assert_eq!(output, None);
         assert_eq!(runner.commands, present_cleanable_drop_commands());
         assert_eq!(
             context
@@ -7296,7 +7287,7 @@ mod tests {
         let handled = super::handle_pending_cockpit_result(Err(error), &mut flash);
         let restored = crate::cockpit_backend::build_cockpit_snapshot(&context);
 
-        assert!(handled.is_none());
+        assert!(!handled);
         assert!(flash
             .as_deref()
             .is_some_and(|message| message.contains("branch delete failed")));
