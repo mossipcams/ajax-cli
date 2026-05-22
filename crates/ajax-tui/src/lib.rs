@@ -26,10 +26,9 @@ pub(crate) use layout::{
 use rendering::task_status_label;
 #[cfg(test)]
 use rendering::{
-    action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-    inbox_glyph, inbox_item_accent, priority_accent, project_glyph, project_name_color,
-    project_subtitle, render_ui, selectable_feed_rows, task_glyph, task_handle_color,
-    ui_state_bucket, StatusBucket,
+    action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, inbox_glyph,
+    inbox_item_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
+    render_ui, selectable_feed_rows, task_glyph, task_handle_color, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -164,12 +163,12 @@ mod tests {
     };
 
     use super::{
-        action_chrome, action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket,
-        feed_top_row, handle_cockpit_event, inbox_glyph, inbox_item_accent, priority_accent,
-        project_glyph, project_name_color, project_subtitle, render_cockpit, render_ui,
-        selectable_feed_rows, selectable_row_layout, task_glyph, task_handle_color,
-        ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
-        EventLoopAction, PendingAction, SelectableKind, StatusBucket, FLASH_TICKS,
+        action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, feed_top_row,
+        handle_cockpit_event, inbox_glyph, inbox_item_accent, priority_accent, project_glyph,
+        project_name_color, project_subtitle, render_cockpit, render_ui, selectable_feed_rows,
+        selectable_row_layout, task_glyph, task_handle_color, ui_state_bucket, ActionOutcome, App,
+        AppView, CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction,
+        SelectableKind, StatusBucket, FLASH_TICKS,
     };
     use ajax_core::{
         models::{
@@ -2625,16 +2624,16 @@ mod tests {
             OperatorAction::Ship,
             OperatorAction::Drop,
         ] {
-            let chrome = action_chrome(action.as_str());
+            let chrome = crate::actions::action_chrome(action.as_str());
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }
 
-        let open = action_chrome(OperatorAction::Resume.as_str());
+        let open = crate::actions::action_chrome(OperatorAction::Resume.as_str());
         assert_eq!(open.glyph_color, primary_accent());
         assert_eq!(open.label_color, primary_accent());
 
         let action = OperatorAction::Ship;
-        let chrome = action_chrome(action.as_str());
+        let chrome = crate::actions::action_chrome(action.as_str());
         assert_eq!(chrome.glyph_color, secondary_accent(), "{action:?}");
         assert_eq!(chrome.label_color, secondary_accent(), "{action:?}");
     }
@@ -2642,7 +2641,7 @@ mod tests {
     #[test]
     fn current_core_actions_have_dedicated_render_metadata() {
         for action in OperatorAction::all() {
-            let chrome = action_chrome(action.as_str());
+            let chrome = crate::actions::action_chrome(action.as_str());
 
             assert_ne!(chrome.glyph, ".", "{action:?}");
         }

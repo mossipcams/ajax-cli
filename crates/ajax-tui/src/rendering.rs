@@ -324,17 +324,13 @@ pub(crate) fn priority_accent(priority: u32) -> Color {
     }
 }
 
-pub(crate) fn action_chrome(action: &str) -> actions::ActionChrome {
-    actions::action_chrome(action)
-}
-
 pub(crate) fn action_glyph(action: &str) -> Span<'static> {
-    let chrome = action_chrome(action);
+    let chrome = actions::action_chrome(action);
     Span::styled(chrome.glyph, chrome.glyph_style())
 }
 
 pub(crate) fn action_label_style(action: &str) -> Style {
-    action_chrome(action).label_style()
+    actions::action_chrome(action).label_style()
 }
 
 pub(crate) fn project_subtitle(repo: &RepoSummary) -> String {
@@ -363,17 +359,12 @@ pub(crate) fn project_subtitle(repo: &RepoSummary) -> String {
     }
 }
 
-fn task_row_label(card: &TaskCard) -> String {
-    card.status_label.clone()
-}
-
 fn column_separator() -> Span<'static> {
     Span::styled("|", Style::default().fg(subtle_text()))
 }
 
 fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
     let bold = Modifier::BOLD;
-    let label = task_row_label(t);
     let action_label = title_case(t.primary_action.as_str());
     let chrome = crate::actions::operator_action_chrome(t.primary_action);
     vec![
@@ -382,7 +373,7 @@ fn task_row_spans(t: &TaskCard) -> Vec<Span<'static>> {
             Style::default().fg(task_handle_color(t)).add_modifier(bold),
         ),
         column_separator(),
-        Span::styled(label, Style::default().fg(muted_text())),
+        Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
         column_separator(),
         Span::styled(action_label, chrome.label_style()),
         Span::raw(" "),
@@ -634,7 +625,7 @@ pub(crate) fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn rendering_does_not_keep_palette_forwarders() {
+    fn rendering_does_not_keep_trivial_forwarders() {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rendering.rs"),
         )
@@ -647,6 +638,8 @@ mod tests {
             "muted_text",
             "subtle_text",
             "selected_highlight",
+            "action_chrome",
+            "task_row_label",
         ] {
             let function_name = ["fn ", forwarder].concat();
             assert!(!source.contains(&function_name), "{forwarder}");
