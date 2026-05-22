@@ -218,10 +218,6 @@ fn empty_state(text: &str) -> ListItem<'static> {
     )]))
 }
 
-fn blank_row() -> ListItem<'static> {
-    ListItem::new(Line::from(""))
-}
-
 fn group_of(kind: &SelectableKind) -> &'static str {
     match kind {
         SelectableKind::NewTask { .. } => "create",
@@ -232,19 +228,15 @@ fn group_of(kind: &SelectableKind) -> &'static str {
     }
 }
 
-fn section_header_label(group: &str) -> &'static str {
-    match group {
+fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
+    let label = match group {
         "hot" => "inbox",
         "create" => "start",
         "projects" => "projects",
         "tasks" => "tasks",
         "task-actions" => "actions",
         _ => "",
-    }
-}
-
-fn section_header_row(group: &str, app: &App) -> ListItem<'static> {
-    let label = section_header_label(group);
+    };
     let count_suffix = if group == "hot" {
         format!(" ({})", app.inbox.items.len())
     } else {
@@ -448,7 +440,7 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
     let mut rows: Vec<ListItem<'static>> = Vec::new();
     let mut sel_to_row: Vec<usize> = Vec::new();
 
-    rows.push(blank_row());
+    rows.push(ListItem::new(Line::from("")));
 
     if let AppView::NewTaskInput { title, .. } = &app.view {
         let display_title = if title.is_empty() {
@@ -619,6 +611,8 @@ mod tests {
             "task_status_label",
             "task_row_label",
             "selectable_feed_rows",
+            "blank_row",
+            "section_header_label",
         ] {
             let function_name = ["fn ", forwarder].concat();
             assert!(!source.contains(&function_name), "{forwarder}");
