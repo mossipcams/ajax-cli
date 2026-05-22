@@ -1,4 +1,4 @@
-use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent};
+use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent, ProcessEvent};
 use clap::ArgMatches;
 
 use crate::CliError;
@@ -62,20 +62,20 @@ pub(crate) fn supervise_command_output_and_events(
 
 fn retain_supervisor_event(events: &mut Vec<MonitorEvent>, event: MonitorEvent) {
     if events.len() >= MAX_RETAINED_SUPERVISOR_EVENTS {
-        let drop_index = events.iter().position(is_noisy_process_output).unwrap_or(0);
+        let drop_index = events
+            .iter()
+            .position(|event| {
+                matches!(
+                    event,
+                    MonitorEvent::Process(
+                        ProcessEvent::Stdout { .. } | ProcessEvent::Stderr { .. }
+                    )
+                )
+            })
+            .unwrap_or(0);
         events.remove(drop_index);
     }
     events.push(event);
-}
-
-fn is_noisy_process_output(event: &MonitorEvent) -> bool {
-    matches!(
-        event,
-        MonitorEvent::Process(
-            ajax_supervisor::ProcessEvent::Stdout { .. }
-                | ajax_supervisor::ProcessEvent::Stderr { .. }
-        )
-    )
 }
 
 fn supervisor_failure_message(message: String, events: &[ajax_supervisor::MonitorEvent]) -> String {
@@ -120,5 +120,16 @@ mod tests {
                 line: "line 299".to_string()
             }))
         );
+    }
+
+    #[test]
+    fn supervise_module_does_not_keep_single_use_event_predicate() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/supervise.rs"),
+        )
+        .unwrap();
+        let helper = ["fn ", "is_noisy_process_output"].concat();
+
+        assert!(!source.contains(&helper));
     }
 }
