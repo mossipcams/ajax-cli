@@ -13,8 +13,6 @@ use ajax_core::{
     models::CockpitActionItem,
     output::{InboxResponse, ReposResponse, TaskCard},
 };
-#[cfg(test)]
-pub(crate) use cockpit_state::FLASH_TICKS;
 pub use cockpit_state::{App, CockpitSnapshot};
 #[cfg(test)]
 use cockpit_state::{AppView, SelectableKind, Severity};
@@ -168,7 +166,7 @@ mod tests {
         project_name_color, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
         task_glyph, task_handle_color, ui_state_bucket, ActionOutcome, App, AppView,
         CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind,
-        StatusBucket, FLASH_TICKS,
+        StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -213,6 +211,8 @@ mod tests {
             let legacy_export = ["pub mod ", legacy_module, ";"].concat();
             assert!(!lib.contains(&legacy_export));
         }
+        let legacy_flash_alias = ["FLASH", "_TICKS"].concat();
+        assert!(!lib.contains(&legacy_flash_alias));
     }
 
     #[test]
@@ -1401,8 +1401,6 @@ mod tests {
             app.current_notice().map(|n| n.ticks_remaining),
             expected_remaining
         );
-        // FLASH_TICKS still exported for back-compat reference.
-        assert_ne!(FLASH_TICKS, 0);
     }
 
     #[test]

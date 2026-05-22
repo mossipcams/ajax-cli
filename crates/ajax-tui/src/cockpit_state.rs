@@ -208,9 +208,6 @@ pub struct App {
     pub(crate) expanded_task: Option<TaskId>,
 }
 
-#[cfg(test)]
-pub(crate) const FLASH_TICKS: u8 = NOTICE_TICKS_SUCCESS;
-
 impl App {
     pub fn new(repos: ReposResponse, cards: Vec<TaskCard>, inbox: InboxResponse) -> Self {
         let view = AppView::Projects;
