@@ -4,7 +4,8 @@ use ajax_core::{
     models::{LifecycleStatus, Task},
     registry::{InMemoryRegistry, Registry},
     task_operations::drop_task::{
-        execute_drop_task_operation, plan_drop_task_operation, DropTaskCompletion,
+        execute_drop_task_operation, plan_drop_task_confirmation, plan_drop_task_operation,
+        DropTaskCompletion,
     },
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
@@ -17,18 +18,6 @@ use crate::{
     render::{render_execution_outputs, render_plan},
     task_arg, CliError, RenderedCommand,
 };
-
-pub(crate) fn drop_task_plan<R: Registry>(
-    context: &CommandContext<R>,
-    task: &str,
-) -> Result<commands::CommandPlan, CommandError> {
-    let clean_plan = commands::clean_task_plan(context, task)?;
-    if clean_plan.blocked_reasons.is_empty() {
-        Ok(clean_plan)
-    } else {
-        commands::remove_task_plan(context, task)
-    }
-}
 
 pub(crate) fn render_task_command<R: CommandRunner>(
     kind: TaskCommandKind,
@@ -105,7 +94,7 @@ pub(crate) fn render_drop_command<R: CommandRunner>(
             }
         }
     }
-    let plan = drop_task_plan(context, task).map_err(command_error)?;
+    let plan = plan_drop_task_confirmation(context, task).map_err(command_error)?;
     Ok(RenderedCommand {
         output: render_plan(plan, subcommand.get_flag("json"))?,
         state_changed,
@@ -158,7 +147,8 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     confirmed: bool,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let confirmation_plan = drop_task_plan(context, task_handle).map_err(command_error)?;
+    let confirmation_plan =
+        plan_drop_task_confirmation(context, task_handle).map_err(command_error)?;
     if !confirmation_plan.blocked_reasons.is_empty() {
         return Err(command_error(CommandError::PlanBlocked(
             confirmation_plan.blocked_reasons,
@@ -249,11 +239,13 @@ mod tests {
         .unwrap();
         let local_completion_helper = ["drop_observation", "_all_absent"].concat();
         let local_execution_loop = ["for op in operation.", "ops"].concat();
+        let local_drop_plan = ["fn drop_", "task_plan"].concat();
 
         assert!(source.contains("plan_drop_task_operation"));
         assert!(source.contains("execute_drop_task_operation"));
         assert!(!source.contains(&local_completion_helper));
         assert!(!source.contains(&local_execution_loop));
+        assert!(!source.contains(&local_drop_plan));
     }
 
     #[test]

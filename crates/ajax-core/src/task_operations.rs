@@ -372,7 +372,7 @@ pub mod drop_task {
         qualified_handle: &str,
         runner: &mut impl crate::adapters::CommandRunner,
     ) -> Result<DropTaskOperationPlan, CommandError> {
-        let confirmation_plan = drop_confirmation_plan(context, qualified_handle)?;
+        let confirmation_plan = plan_drop_task_confirmation(context, qualified_handle)?;
         let task = context
             .registry
             .list_tasks()
@@ -395,7 +395,7 @@ pub mod drop_task {
         })
     }
 
-    fn drop_confirmation_plan<R: Registry>(
+    pub fn plan_drop_task_confirmation<R: Registry>(
         context: &CommandContext<R>,
         qualified_handle: &str,
     ) -> Result<CommandPlan, CommandError> {
