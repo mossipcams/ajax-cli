@@ -302,6 +302,18 @@ mod tests {
         assert!(!supervise_source.contains(&supervise_wrapper));
     }
 
+    #[test]
+    fn cli_builder_does_not_keep_trivial_command_forwarders() {
+        let cli_source =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs"))
+                .unwrap();
+
+        for wrapper in ["repos_command", "executable_task_command"] {
+            let function_name = ["fn ", wrapper].concat();
+            assert!(!cli_source.contains(&function_name), "{wrapper}");
+        }
+    }
+
     fn sample_context() -> CommandContext<InMemoryRegistry> {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
