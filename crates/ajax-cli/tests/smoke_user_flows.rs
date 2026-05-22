@@ -21,7 +21,7 @@ use nix::{
 static NEXT_SANDBOX_ID: AtomicUsize = AtomicUsize::new(0);
 
 fn ajax_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_ajax"))
+    PathBuf::from(env!("CARGO_BIN_EXE_ajax-cli"))
 }
 
 struct SmokeSandbox {

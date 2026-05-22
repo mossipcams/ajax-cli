@@ -7,11 +7,56 @@ use serde::{Deserialize, Serialize};
 pub struct CommandContext<R> {
     pub config: crate::config::Config,
     pub registry: R,
+    pub runtime_paths: crate::config::RuntimePaths,
 }
 
 impl<R> CommandContext<R> {
     pub fn new(config: crate::config::Config, registry: R) -> Self {
-        Self { config, registry }
+        Self {
+            config,
+            registry,
+            runtime_paths: crate::config::RuntimePathRequest::new("").resolve(),
+        }
+    }
+
+    pub fn with_runtime_paths(
+        config: crate::config::Config,
+        registry: R,
+        runtime_paths: crate::config::RuntimePaths,
+    ) -> Self {
+        Self {
+            config,
+            registry,
+            runtime_paths,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CommandContext;
+    use crate::{
+        config::{Config, RuntimePathRequest, WorktreePlacement},
+        registry::InMemoryRegistry,
+    };
+    use std::path::Path;
+
+    #[test]
+    fn command_context_carries_runtime_paths_for_task_planning() {
+        let runtime_paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .resolve();
+        let context = CommandContext::with_runtime_paths(
+            Config::default(),
+            InMemoryRegistry::default(),
+            runtime_paths,
+        );
+
+        assert_eq!(context.runtime_paths.profile, "dev");
+        assert_eq!(
+            context.runtime_paths.worktree_placement,
+            WorktreePlacement::Root(Path::new("/Users/matt/.ajax-dev/worktrees").to_path_buf())
+        );
     }
 }
 

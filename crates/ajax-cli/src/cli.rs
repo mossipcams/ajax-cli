@@ -10,8 +10,17 @@ pub enum ParsedArgs {
 }
 
 pub fn build_cli() -> Command {
-    Command::new("ajax")
+    Command::new("ajax-cli")
         .about("Semi-agentic operator console for isolated AI coding tasks")
+        .arg(Arg::new("profile").long("profile").value_name("NAME"))
+        .arg(Arg::new("home").long("home").value_name("PATH"))
+        .arg(Arg::new("config").long("config").value_name("PATH"))
+        .arg(Arg::new("state").long("state").value_name("PATH"))
+        .arg(
+            Arg::new("worktree-root")
+                .long("worktree-root")
+                .value_name("PATH"),
+        )
         .subcommand(json_command("repos").about("List configured repos"))
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
@@ -34,6 +43,7 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("inbox").about("Show global attention inbox"))
         .subcommand(json_command("ready").about("Show tasks ready for review"))
         .subcommand(json_command("status").about("Show Ajax status"))
+        .subcommand(json_command("runtime").about("Show Ajax runtime paths"))
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
@@ -189,6 +199,70 @@ fn json_command(name: &'static str) -> Command {
 #[cfg(test)]
 mod tests {
     use super::{parse_args, ParsedArgs};
+
+    #[test]
+    fn global_profile_is_accepted_before_runtime_subcommand() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax-cli", "--profile", "dev", "runtime"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(matches.get_one::<String>("profile").unwrap(), "dev");
+        assert_eq!(matches.subcommand_name(), Some("runtime"));
+    }
+
+    #[test]
+    fn global_home_is_accepted_before_subcommands() {
+        let ParsedArgs::Matches(matches) =
+            parse_args(["ajax-cli", "--home", "/tmp/ajax-dev", "status"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(matches.get_one::<String>("home").unwrap(), "/tmp/ajax-dev");
+        assert_eq!(matches.subcommand_name(), Some("status"));
+    }
+
+    #[test]
+    fn global_direct_path_overrides_are_accepted() {
+        let ParsedArgs::Matches(matches) = parse_args([
+            "ajax-cli",
+            "--config",
+            "/tmp/config.toml",
+            "--state",
+            "/tmp/ajax.db",
+            "--worktree-root",
+            "/tmp/worktrees",
+            "runtime",
+        ])
+        .unwrap() else {
+            panic!("expected parsed matches");
+        };
+
+        assert_eq!(
+            matches.get_one::<String>("config").unwrap(),
+            "/tmp/config.toml"
+        );
+        assert_eq!(matches.get_one::<String>("state").unwrap(), "/tmp/ajax.db");
+        assert_eq!(
+            matches.get_one::<String>("worktree-root").unwrap(),
+            "/tmp/worktrees"
+        );
+    }
+
+    #[test]
+    fn runtime_command_accepts_json_flag() {
+        let ParsedArgs::Matches(matches) = parse_args(["ajax-cli", "runtime", "--json"]).unwrap()
+        else {
+            panic!("expected parsed matches");
+        };
+        let Some((_, subcommand)) = matches.subcommand() else {
+            panic!("expected runtime subcommand");
+        };
+
+        assert!(subcommand.get_flag("json"));
+    }
 
     #[test]
     fn web_command_accepts_mobile_bind_options() {
