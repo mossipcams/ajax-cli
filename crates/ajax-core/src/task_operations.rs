@@ -634,20 +634,13 @@ pub mod drop_task {
         status: StepReceiptStatus,
     ) -> Result<(), CommandError> {
         let task = task(context, qualified_handle)?.clone();
-        let Some(receipt) = drop_step_receipt(&task, op, status) else {
-            return Ok(());
-        };
         context
             .registry
-            .record_step_receipt(receipt)
+            .record_step_receipt(drop_step_receipt(&task, op, status))
             .map_err(CommandError::Registry)
     }
 
-    fn drop_step_receipt(
-        task: &Task,
-        op: DropOp,
-        status: StepReceiptStatus,
-    ) -> Option<StepReceipt> {
+    fn drop_step_receipt(task: &Task, op: DropOp, status: StepReceiptStatus) -> StepReceipt {
         let (step_key, target) = match op {
             DropOp::EnsureAgentStopped => ("agent_stopped", task.tmux_session.clone()),
             DropOp::EnsureTmuxSessionAbsent => ("tmux_session_absent", task.tmux_session.clone()),
@@ -657,7 +650,7 @@ pub mod drop_task {
             DropOp::EnsureBranchAbsent => ("branch_absent", task.branch.clone()),
         };
 
-        Some(StepReceipt::new(
+        StepReceipt::new(
             task.id.clone(),
             TaskOperationKind::Drop,
             step_key,
@@ -668,7 +661,7 @@ pub mod drop_task {
                 "step": step_key,
             })
             .to_string(),
-        ))
+        )
     }
 
     fn mark_observed_drop_failure<R: Registry>(
@@ -1224,6 +1217,8 @@ mod tests {
             .unwrap();
 
         assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
+        assert!(!drop_module.contains("-> Option<StepReceipt>"));
+        assert!(!drop_module.contains("let Some(receipt)"));
     }
 
     #[test]
