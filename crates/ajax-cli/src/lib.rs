@@ -44,9 +44,6 @@ use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 use snapshot_dispatch::parent_directory_available;
 use snapshot_dispatch::render_matches_with_paths;
 use std::ffi::OsStr;
-#[cfg(test)]
-#[cfg(feature = "supervisor")]
-use supervise::render_supervise_command;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -295,10 +292,14 @@ mod tests {
     fn cli_does_not_keep_duplicate_conflict_classifier_module() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let supervise_source =
+            std::fs::read_to_string(manifest_dir.join("src/supervise.rs")).unwrap();
         let duplicate_module_decl = ["mod ", "classifiers;"].concat();
+        let supervise_wrapper = ["fn ", "render_supervise_command"].concat();
 
         assert!(!lib_source.contains(&duplicate_module_decl));
         assert!(!manifest_dir.join("src/classifiers.rs").exists());
+        assert!(!supervise_source.contains(&supervise_wrapper));
     }
 
     fn sample_context() -> CommandContext<InMemoryRegistry> {
@@ -1766,7 +1767,8 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let output = super::render_supervise_command(subcommand).unwrap();
+        let (output, _) =
+            crate::supervise::supervise_command_output_and_events(subcommand).unwrap();
 
         assert!(output.contains("process started"));
         assert!(output.contains("agent started: codex"));
@@ -1802,7 +1804,7 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = super::render_supervise_command(subcommand).unwrap_err();
+        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(matches!(error, CliError::CommandFailed(message)
@@ -1833,7 +1835,7 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = super::render_supervise_command(subcommand).unwrap_err();
+        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(error.to_string().contains("codex exited with status 42"));

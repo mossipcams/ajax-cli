@@ -5,12 +5,6 @@ use crate::CliError;
 
 const MAX_RETAINED_SUPERVISOR_EVENTS: usize = 256;
 
-#[cfg(test)]
-pub(crate) fn render_supervise_command(matches: &ArgMatches) -> Result<String, CliError> {
-    let (output, _) = supervise_command_output_and_events(matches)?;
-    Ok(output)
-}
-
 pub(crate) fn supervise_command_output_and_events(
     matches: &ArgMatches,
 ) -> Result<(String, Vec<MonitorEvent>), CliError> {
