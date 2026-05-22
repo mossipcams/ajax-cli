@@ -144,12 +144,6 @@ impl App {
     }
 }
 
-// ── Layout-coupled rendering geometry ──────────────────────────────────────────
-
-pub(crate) fn show_notice_row(app: &App) -> bool {
-    app.current_notice().is_some()
-}
-
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -259,6 +253,17 @@ mod tests {
             assert!(layout.contains(&helper), "layout.rs should own {helper}");
             assert!(!lib.contains(&helper), "lib.rs should not define {helper}");
         }
+    }
+
+    #[test]
+    fn tui_root_does_not_keep_notice_row_forwarder() {
+        let lib = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+        let helper_name = ["fn ", "show_notice_row"].concat();
+
+        assert!(!lib.contains(&helper_name));
     }
 
     #[test]

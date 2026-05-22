@@ -82,7 +82,7 @@ pub(crate) fn visible_feed_height(app: &App, terminal_height: usize) -> usize {
 
 pub(crate) fn feed_screen_rows(app: &App, terminal_height: usize) -> Range<usize> {
     let top = feed_top_row(app);
-    let notice_rows = usize::from(crate::show_notice_row(app));
+    let notice_rows = usize::from(app.current_notice().is_some());
     let bottom = terminal_height.saturating_sub(notice_rows + 1);
     top..bottom.max(top)
 }

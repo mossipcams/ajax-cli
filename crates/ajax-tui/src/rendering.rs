@@ -52,7 +52,7 @@ pub(crate) fn bucket_glyph(bucket: StatusBucket) -> &'static str {
 }
 
 pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
-    let show_notice = crate::show_notice_row(app);
+    let show_notice = app.current_notice().is_some();
     let mut constraints: Vec<Constraint> = vec![Constraint::Length(1)];
     constraints.push(Constraint::Min(0));
     if show_notice {
