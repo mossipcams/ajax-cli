@@ -21,7 +21,6 @@ use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{
     feed_screen_rows, feed_top_row, selectable_row_layout, visible_feed_height,
 };
-use rendering::task_status_label;
 #[cfg(test)]
 use rendering::{
     action_glyph, bucket_color, bucket_glyph, card_bucket, inbox_glyph, priority_accent,
@@ -49,9 +48,7 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
         lines.extend(cards.iter().map(|card| {
             format!(
                 "{}\t{}\t{}",
-                card.qualified_handle,
-                task_status_label(card),
-                card.title
+                card.qualified_handle, card.status_label, card.title
             )
         }));
     }

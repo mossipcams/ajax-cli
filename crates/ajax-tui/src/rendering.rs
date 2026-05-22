@@ -281,10 +281,6 @@ pub(crate) fn task_handle_color(card: &TaskCard) -> Color {
     bucket_color(card_bucket(card))
 }
 
-pub(crate) fn task_status_label(card: &TaskCard) -> String {
-    card.status_label.clone()
-}
-
 pub(crate) fn project_glyph(repo: &RepoSummary) -> Span<'static> {
     if repo.active_tasks > 0 {
         Span::styled(
@@ -630,6 +626,7 @@ mod tests {
             "action_chrome",
             "action_label_style",
             "inbox_item_accent",
+            "task_status_label",
             "task_row_label",
             "selectable_feed_rows",
         ] {
