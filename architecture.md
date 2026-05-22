@@ -250,6 +250,11 @@ or test-command operation.
 - `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
   It calls core runtime refresh and explicit cockpit projection rebuilds rather
   than owning substrate refresh logic.
+- `web_backend` owns the mobile web presentation shell, HTTP request routing,
+  mobile Cockpit JSON serialization, and mobile-safe action dispatch. It serves
+  the same core Cockpit projection used by native Cockpit and delegates
+  non-interactive task actions to core task operations. It does not own task
+  truth, substrate refresh algorithms, or Git/tmux interpretation.
 - `agent_status_cache` owns filesystem reads for hook-backed agent status caches
   such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
@@ -262,6 +267,21 @@ or test-command operation.
 Cockpit is the primary operator surface over the JSON-backed command boundary.
 
 `ajax-tui` owns native terminal interaction and rendering.
+
+`ajax-cli::web_backend` owns the mobile browser presentation for Cockpit. The
+web layer is intentionally an adapter: it renders a mobile-first HTML shell,
+serves a serialized Cockpit view at `/api/cockpit`, and accepts mobile-safe
+operator actions at `/api/actions`. Actions that require an attached terminal
+session, such as `resume`, remain native-Cockpit only. Git, tmux, SQLite, task
+lifecycle, action policy, and projection rebuilding remain owned by the same
+core and CLI boundaries used by the terminal Cockpit. Native Cockpit starts the
+mobile web layer as a companion `ajax web` process by default and keeps it alive
+for the Cockpit session. `ajax stable` starts the companion on port `8787` with
+the stable state database, while `ajax dev` starts it on port `8788` with the
+development state database. `--no-web` disables the companion. The companion is
+started with explicit `AJAX_CONFIG` and `AJAX_STATE` values from the selected
+Ajax context so stable and dev browser sessions stay on their own SQLite
+databases.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

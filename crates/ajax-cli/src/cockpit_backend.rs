@@ -6,7 +6,12 @@ use ajax_core::{
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
-use std::time::Duration;
+use std::{
+    io::ErrorKind,
+    net::TcpListener,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
 use crate::{
     agent_status_cache::TmuxAgentStatusCache,
@@ -16,7 +21,7 @@ use crate::{
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
-    CliError, RenderedCommand,
+    CliContextPaths, CliError, RenderedCommand,
 };
 
 pub(crate) fn render_cockpit_command(
@@ -57,7 +62,14 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     subcommand: &ArgMatches,
     runner: &mut R,
+    mobile_web_port: u16,
+    paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    let _mobile_web_companion = if subcommand.get_flag("no-web") {
+        None
+    } else {
+        start_mobile_web_companion(mobile_web_port, paths)
+    };
     let mut state_changed = false;
     let mut cockpit_flash = None;
     state_changed |= refresh_live_context(context, runner)?;
@@ -97,6 +109,79 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
         ) {
             continue;
         }
+    }
+}
+
+const MOBILE_WEB_HOST: &str = "0.0.0.0";
+const STABLE_MOBILE_WEB_PORT: u16 = 8787;
+const DEV_MOBILE_WEB_PORT: u16 = 8788;
+
+pub(crate) fn mobile_web_port_for_command(command: &str) -> u16 {
+    match command {
+        "dev" => DEV_MOBILE_WEB_PORT,
+        "stable" | "cockpit" => STABLE_MOBILE_WEB_PORT,
+        _ => STABLE_MOBILE_WEB_PORT,
+    }
+}
+
+struct MobileWebCompanion {
+    child: Child,
+}
+
+impl Drop for MobileWebCompanion {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn start_mobile_web_companion(
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Option<MobileWebCompanion> {
+    match TcpListener::bind((MOBILE_WEB_HOST, port)) {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => return None,
+        Err(error) => {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+            return None;
+        }
+    }
+
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+            return None;
+        }
+    };
+    let mut command = Command::new(executable);
+    let port = port.to_string();
+    command
+        .args(["web", "--host", MOBILE_WEB_HOST, "--port", port.as_str()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(paths) = paths {
+        command.env("AJAX_CONFIG", &paths.config_file);
+        command.env("AJAX_STATE", &paths.state_file);
+    } else {
+        preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
+        preserve_ajax_context_env(&mut command, "AJAX_STATE");
+    }
+
+    command
+        .spawn()
+        .map(|child| MobileWebCompanion { child })
+        .map_err(|error| {
+            eprintln!("Ajax mobile web companion unavailable: {error}");
+        })
+        .ok()
+}
+
+fn preserve_ajax_context_env(command: &mut Command, name: &str) {
+    if let Some(value) = std::env::var_os(name) {
+        command.env(name, value);
     }
 }
 
@@ -216,7 +301,7 @@ fn parse_u64_arg(matches: &ArgMatches, name: &str, default: u64) -> Result<u64, 
 
 #[cfg(test)]
 mod tests {
-    use super::{build_cockpit_snapshot, refresh_cockpit_snapshot};
+    use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -368,6 +453,59 @@ mod tests {
         let wrapper = ["fn ", "render_cockpit_frames"].concat();
 
         assert!(!source.contains(&wrapper));
+    }
+
+    #[test]
+    fn interactive_cockpit_auto_starts_mobile_web_companion() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let interactive = source
+            .split("pub(crate) fn render_interactive_cockpit_command")
+            .nth(1)
+            .and_then(|source| {
+                source
+                    .split("pub(crate) fn render_live_cockpit_command")
+                    .next()
+            })
+            .unwrap();
+
+        assert!(interactive.contains("start_mobile_web_companion"));
+        assert!(interactive.contains("no-web"));
+    }
+
+    #[test]
+    fn mobile_web_ports_are_separate_for_stable_and_dev() {
+        assert_eq!(mobile_web_port_for_command("stable"), 8787);
+        assert_eq!(mobile_web_port_for_command("cockpit"), 8787);
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
+    fn mobile_web_companion_uses_child_process_and_guard() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("struct MobileWebCompanion"));
+        assert!(source.contains("impl Drop for MobileWebCompanion"));
+        assert!(source.contains("std::env::current_exe"));
+        assert!(source.contains("\"web\", \"--host\", MOBILE_WEB_HOST, \"--port\""));
+        assert!(source.contains("port.to_string"));
+    }
+
+    #[test]
+    fn mobile_web_companion_preserves_parent_ajax_context_environment() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("AJAX_CONFIG"));
+        assert!(production_source.contains("AJAX_STATE"));
     }
 
     #[derive(Default)]
