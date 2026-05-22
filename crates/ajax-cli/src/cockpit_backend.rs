@@ -9,6 +9,7 @@ use clap::ArgMatches;
 use std::{
     io::ErrorKind,
     net::TcpListener,
+    path::Path,
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -68,7 +69,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     let _mobile_web_companion = if subcommand.get_flag("no-web") {
         None
     } else {
-        start_mobile_web_companion(mobile_web_port, paths)
+        start_mobile_web_companion(mobile_web_port, paths)?
     };
     let mut state_changed = false;
     let mut cockpit_flash = None;
@@ -138,50 +139,116 @@ impl Drop for MobileWebCompanion {
 fn start_mobile_web_companion(
     port: u16,
     paths: Option<&CliContextPaths>,
-) -> Option<MobileWebCompanion> {
+) -> Result<Option<MobileWebCompanion>, CliError> {
     match TcpListener::bind((MOBILE_WEB_HOST, port)) {
         Ok(listener) => drop(listener),
-        Err(error) if error.kind() == ErrorKind::AddrInUse => return None,
+        Err(error) if error.kind() == ErrorKind::AddrInUse => return Ok(None),
         Err(error) => {
-            eprintln!("Ajax mobile web companion unavailable: {error}");
-            return None;
+            return Err(CliError::CommandFailed(format!(
+                "Ajax mobile web companion unavailable: {error}"
+            )));
         }
     }
 
     let executable = match std::env::current_exe() {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("Ajax mobile web companion unavailable: {error}");
-            return None;
+            return Err(CliError::CommandFailed(format!(
+                "Ajax mobile web companion unavailable: {error}"
+            )));
         }
     };
+    let mut command = mobile_web_companion_command(&executable, port, paths);
+
+    command
+        .spawn()
+        .map(|child| Some(MobileWebCompanion { child }))
+        .map_err(|error| {
+            CliError::CommandFailed(format!("Ajax mobile web companion unavailable: {error}"))
+        })
+}
+
+fn mobile_web_companion_command(
+    executable: &Path,
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Command {
     let mut command = Command::new(executable);
     let port = port.to_string();
     command
         .args(["web", "--host", MOBILE_WEB_HOST, "--port", port.as_str()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
     if let Some(paths) = paths {
+        command.env_remove("AJAX_HOME");
+        command.env_remove("AJAX_WORKTREE_ROOT");
+        command.env("AJAX_PROFILE", &paths.runtime_paths.profile);
         command.env("AJAX_CONFIG", &paths.config_file);
         command.env("AJAX_STATE", &paths.state_file);
+        if let ajax_core::config::WorktreePlacement::Root(root) =
+            &paths.runtime_paths.worktree_placement
+        {
+            command.env("AJAX_WORKTREE_ROOT", root);
+        }
     } else {
         preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
         preserve_ajax_context_env(&mut command, "AJAX_STATE");
     }
 
     command
-        .spawn()
-        .map(|child| MobileWebCompanion { child })
-        .map_err(|error| {
-            eprintln!("Ajax mobile web companion unavailable: {error}");
-        })
-        .ok()
 }
 
 fn preserve_ajax_context_env(command: &mut Command, name: &str) {
     if let Some(value) = std::env::var_os(name) {
         command.env(name, value);
+    }
+}
+
+#[cfg(test)]
+mod mobile_web_companion_tests {
+    use super::{mobile_web_companion_command, mobile_web_port_for_command};
+    use crate::CliContextPaths;
+    use ajax_core::config::RuntimePathRequest;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn dev_mobile_web_companion_uses_dev_port() {
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
+    fn mobile_web_companion_preserves_full_dev_runtime_context() {
+        let paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new("/Users/matt")
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+        let command = mobile_web_companion_command(
+            std::path::Path::new("/tmp/ajax-cli"),
+            mobile_web_port_for_command("dev"),
+            Some(&paths),
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let envs = command.get_envs().collect::<Vec<_>>();
+
+        assert_eq!(args, ["web", "--host", "0.0.0.0", "--port", "8788"]);
+        assert!(envs.contains(&(
+            OsStr::new("AJAX_PROFILE"),
+            Some(OsStr::new(paths.runtime_paths.profile.as_str()))
+        )));
+        assert!(envs.contains(&(
+            OsStr::new("AJAX_CONFIG"),
+            Some(paths.config_file.as_os_str())
+        )));
+        assert!(envs.contains(&(OsStr::new("AJAX_STATE"), Some(paths.state_file.as_os_str()))));
+        assert!(envs.iter().any(|(name, value)| {
+            *name == OsStr::new("AJAX_WORKTREE_ROOT")
+                && value.is_some_and(|value| value == "/Users/matt/.ajax-dev/worktrees")
+        }));
     }
 }
 
