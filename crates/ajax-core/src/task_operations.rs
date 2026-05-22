@@ -808,7 +808,9 @@ pub mod drop_task {
     }
 
     fn git_error_says_branch_missing(stderr: &str) -> bool {
-        stderr.contains("not found") || stderr.contains("not a branch")
+        stderr.contains("not found")
+            || stderr.contains("not a branch")
+            || stderr.contains("no such branch")
     }
 }
 
