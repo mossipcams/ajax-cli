@@ -218,9 +218,14 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     let operation = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
         .map_err(command_error)?;
     let confirmed = !operation.plan.requires_confirmation;
-    let (outputs, operation_state_changed) =
-        execute_task_command_operation(context, &operation, confirmed, runner)
-            .map_err(|error| task_command_cli_error(error, state_changed))?;
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context,
+        &pending.task_handle,
+        &operation,
+        confirmed,
+        runner,
+    )
+    .map_err(|error| task_command_cli_error(error, state_changed))?;
     *state_changed |= operation_state_changed;
     if kind != TaskCommandKind::Resume {
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
@@ -293,9 +298,14 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
 
     if kind != TaskCommandKind::Resume {
         let confirmed = !operation.plan.requires_confirmation;
-        let (_outputs, operation_state_changed) =
-            execute_task_command_operation(context, &operation, confirmed, runner)
-                .map_err(|error| task_command_cli_error(error, state_changed))?;
+        let (_outputs, operation_state_changed) = execute_task_command_operation(
+            context,
+            &pending.task_handle,
+            &operation,
+            confirmed,
+            runner,
+        )
+        .map_err(|error| task_command_cli_error(error, state_changed))?;
         *state_changed |= operation_state_changed;
         return Ok(PendingCockpitOutcome::ReturnToCockpit);
     }

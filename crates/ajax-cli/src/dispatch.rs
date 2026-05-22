@@ -107,7 +107,7 @@ fn render_core_task_command<R: CommandRunner>(
     }
 
     let (outputs, operation_state_changed) = execute_task_command_operation(
-        context, &operation, confirmed, runner,
+        context, task, &operation, confirmed, runner,
     )
     .map_err(|(error, error_state_changed)| {
         let cli_error = command_error(error);
