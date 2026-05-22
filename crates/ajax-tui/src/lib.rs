@@ -2701,9 +2701,11 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
         )
         .unwrap();
-        let helper_name = ["fn ", "selectable_row_ranges"].concat();
 
-        assert!(!source.contains(&helper_name));
+        for helper_name in ["selectable_row_ranges", "selectable_group"] {
+            let function_name = ["fn ", helper_name].concat();
+            assert!(!source.contains(&function_name), "{helper_name}");
+        }
     }
 
     #[test]
