@@ -56,7 +56,7 @@ pub mod start {
             self, CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode,
             StartProvisioningStep,
         },
-        models::{Task, TaskIntent},
+        models::{StepReceipt, Task, TaskIntent, TaskOperationKind},
         registry::Registry,
         task_operations::kernel::execute_external_plan_with_success,
     };
@@ -96,6 +96,10 @@ pub mod start {
             |index, _, _| {
                 if let Some(step) = start_step_for_command_index(&operation.plan, index) {
                     commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
+                    context
+                        .registry
+                        .record_step_receipt(start_step_receipt(&task, step))
+                        .map_err(CommandError::Registry)?;
                 }
                 Ok(())
             },
@@ -139,6 +143,33 @@ pub mod start {
         } else {
             None
         }
+    }
+
+    fn start_step_receipt(task: &Task, step: StartProvisioningStep) -> StepReceipt {
+        let (step_key, target) = match step {
+            StartProvisioningStep::WorktreeCreated => {
+                ("worktree_created", task.worktree_path.display().to_string())
+            }
+            StartProvisioningStep::TaskSessionCreated => {
+                ("task_session_created", task.tmux_session.clone())
+            }
+            StartProvisioningStep::AgentCommandSent => (
+                "agent_command_sent",
+                format!("{}:{}", task.tmux_session, task.worktrunk_window),
+            ),
+        };
+
+        StepReceipt::succeeded(
+            task.id.clone(),
+            TaskOperationKind::Start,
+            step_key,
+            target,
+            serde_json::json!({
+                "source": "command_result",
+                "step": step_key,
+            })
+            .to_string(),
+        )
     }
 }
 
@@ -348,7 +379,10 @@ pub mod drop_task {
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
-        models::{LifecycleStatus, SideFlag, Task, TaskIntent},
+        models::{
+            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent,
+            TaskOperationKind,
+        },
         registry::{Registry, RegistryEventKind},
     };
 
@@ -472,6 +506,7 @@ pub mod drop_task {
             &operation.confirmation_plan,
             operation.cleanup_lifecycle,
         )?;
+        record_observed_absent_drop_receipts(context, qualified_handle, &operation.observation)?;
         let mut outputs = Vec::new();
 
         for op in operation.ops {
@@ -479,15 +514,21 @@ pub mod drop_task {
                 DropOp::EnsureAgentStopped => {
                     commands::mark_drop_agent_stopped(context, qualified_handle)?;
                     record_drop_step_event(context, qualified_handle, op)?;
+                    record_drop_step_receipt(
+                        context,
+                        qualified_handle,
+                        op,
+                        StepReceiptStatus::Succeeded,
+                    )?;
                 }
                 DropOp::EnsureTmuxSessionAbsent
                 | DropOp::EnsureWorktreeAbsent
                 | DropOp::EnsureBranchAbsent => {
                     let command = drop_op_command(context, qualified_handle, op, force)?;
                     let output = runner.run(&command).map_err(CommandError::CommandRun)?;
-                    if output.status_code != 0
-                        && !drop_cleanup_resource_is_already_missing(&command, &output)
-                    {
+                    let already_missing = output.status_code != 0
+                        && drop_cleanup_resource_is_already_missing(&command, &output);
+                    if output.status_code != 0 && !already_missing {
                         let drop_error = CommandError::CommandRun(CommandRunError::NonZeroExit {
                             program: command.program.clone(),
                             status_code: output.status_code,
@@ -504,6 +545,16 @@ pub mod drop_task {
                         &command,
                     )?;
                     record_drop_step_event(context, qualified_handle, op)?;
+                    record_drop_step_receipt(
+                        context,
+                        qualified_handle,
+                        op,
+                        if already_missing {
+                            StepReceiptStatus::SkippedObserved
+                        } else {
+                            StepReceiptStatus::Succeeded
+                        },
+                    )?;
                 }
                 DropOp::MarkRegistryRemoved => {}
             }
@@ -632,6 +683,74 @@ pub mod drop_task {
                 format!("drop step completed: {op:?}"),
             )
             .map_err(CommandError::Registry)
+    }
+
+    fn record_observed_absent_drop_receipts<R: Registry>(
+        context: &mut CommandContext<R>,
+        qualified_handle: &str,
+        observation: &DropObservation,
+    ) -> Result<(), CommandError> {
+        for (op, state) in [
+            (DropOp::EnsureTmuxSessionAbsent, observation.tmux_session),
+            (DropOp::EnsureWorktreeAbsent, observation.worktree),
+            (DropOp::EnsureBranchAbsent, observation.branch),
+        ] {
+            if state == ResourceState::Absent {
+                record_drop_step_receipt(
+                    context,
+                    qualified_handle,
+                    op,
+                    StepReceiptStatus::SkippedObserved,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn record_drop_step_receipt<R: Registry>(
+        context: &mut CommandContext<R>,
+        qualified_handle: &str,
+        op: DropOp,
+        status: StepReceiptStatus,
+    ) -> Result<(), CommandError> {
+        let task = task(context, qualified_handle)?.clone();
+        let Some(receipt) = drop_step_receipt(&task, op, status) else {
+            return Ok(());
+        };
+        context
+            .registry
+            .record_step_receipt(receipt)
+            .map_err(CommandError::Registry)
+    }
+
+    fn drop_step_receipt(
+        task: &Task,
+        op: DropOp,
+        status: StepReceiptStatus,
+    ) -> Option<StepReceipt> {
+        let (step_key, target) = match op {
+            DropOp::EnsureAgentStopped => ("agent_stopped", task.tmux_session.clone()),
+            DropOp::EnsureTmuxSessionAbsent => ("tmux_session_absent", task.tmux_session.clone()),
+            DropOp::EnsureWorktreeAbsent => {
+                ("worktree_absent", task.worktree_path.display().to_string())
+            }
+            DropOp::EnsureBranchAbsent => ("branch_absent", task.branch.clone()),
+            DropOp::MarkRegistryRemoved => return None,
+        };
+
+        Some(StepReceipt::new(
+            task.id.clone(),
+            TaskOperationKind::Drop,
+            step_key,
+            target,
+            status,
+            serde_json::json!({
+                "source": "command_result",
+                "step": step_key,
+            })
+            .to_string(),
+        ))
     }
 
     fn mark_observed_drop_failure<R: Registry>(
@@ -809,8 +928,8 @@ mod tests {
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskId,
-            TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, StepReceiptStatus,
+            Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -1250,7 +1369,74 @@ mod tests {
         assert_eq!(task.intent(), operation.intent);
         assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.metadata.get("start_failed_step").map(String::as_str),
+            Some("worktree_created")
+        );
+        assert_eq!(
+            task.metadata
+                .get("operator_recommendation")
+                .map(String::as_str),
+            Some("retry ajax start after checking the failed provisioning step")
+        );
         assert_eq!(runner.commands.len(), 1);
+    }
+
+    #[test]
+    fn start_operation_records_receipts_for_successful_provisioning_steps() {
+        let mut context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let operation = plan_start_task_operation(&context, request.clone()).unwrap();
+        let mut runner = RecordingQueuedRunner::default();
+
+        execute_start_task_operation(
+            &mut context,
+            &mut runner,
+            &request,
+            &operation,
+            true,
+            OpenMode::Attach,
+        )
+        .unwrap();
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&operation.intent.id);
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Start,
+                    "worktree_created",
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (
+                    TaskOperationKind::Start,
+                    "task_session_created",
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Start,
+                    "agent_command_sent",
+                    "ajax-web-fix-login:worktrunk",
+                ),
+            ]
+        );
     }
 
     #[test]
@@ -1641,6 +1827,87 @@ mod tests {
         assert!(runner.commands.iter().any(|command| {
             command.program == "git" && command.args.iter().any(|arg| arg == "branch")
         }));
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&TaskId::new("web/fix-login"));
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Drop,
+                    "tmux_session_absent",
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "worktree_absent",
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (TaskOperationKind::Drop, "branch_absent", "ajax/fix-login",),
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_operation_records_skipped_receipts_for_already_missing_resources() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = absent_drop_observation_outputs();
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap();
+
+        let receipts = context
+            .registry
+            .step_receipts_for_task(&TaskId::new("web/fix-login"));
+        let keys = receipts
+            .iter()
+            .map(|receipt| {
+                (
+                    receipt.operation,
+                    receipt.step_key.as_str(),
+                    receipt.status,
+                    receipt.target.as_str(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            keys,
+            vec![
+                (
+                    TaskOperationKind::Drop,
+                    "tmux_session_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "ajax-web-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "worktree_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "/repo/web__worktrees/ajax-fix-login",
+                ),
+                (
+                    TaskOperationKind::Drop,
+                    "branch_absent",
+                    StepReceiptStatus::SkippedObserved,
+                    "ajax/fix-login",
+                ),
+            ]
+        );
     }
 
     #[test]
