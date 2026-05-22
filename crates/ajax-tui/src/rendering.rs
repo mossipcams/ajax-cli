@@ -598,12 +598,6 @@ fn render_annotation_line(annotation: &Annotation) -> ListItem<'static> {
     ListItem::new(Line::from(vec![prefix, connector, glyph, label]))
 }
 
-#[cfg(test)]
-pub(crate) fn selectable_feed_rows(app: &App) -> Vec<usize> {
-    let (_, selectable_rows) = build_feed(app, 0);
-    selectable_rows
-}
-
 pub(crate) fn render_feed(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize;
     let (items, sel_to_row) = build_feed(app, width);
@@ -640,6 +634,7 @@ mod tests {
             "selected_highlight",
             "action_chrome",
             "task_row_label",
+            "selectable_feed_rows",
         ] {
             let function_name = ["fn ", forwarder].concat();
             assert!(!source.contains(&function_name), "{forwarder}");

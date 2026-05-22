@@ -28,7 +28,7 @@ use rendering::task_status_label;
 use rendering::{
     action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, inbox_glyph,
     inbox_item_accent, priority_accent, project_glyph, project_name_color, project_subtitle,
-    render_ui, selectable_feed_rows, task_glyph, task_handle_color, ui_state_bucket, StatusBucket,
+    render_ui, task_glyph, task_handle_color, ui_state_bucket, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -165,10 +165,10 @@ mod tests {
     use super::{
         action_glyph, action_label_style, bucket_color, bucket_glyph, card_bucket, feed_top_row,
         handle_cockpit_event, inbox_glyph, inbox_item_accent, priority_accent, project_glyph,
-        project_name_color, project_subtitle, render_cockpit, render_ui, selectable_feed_rows,
-        selectable_row_layout, task_glyph, task_handle_color, ui_state_bucket, ActionOutcome, App,
-        AppView, CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction,
-        SelectableKind, StatusBucket, FLASH_TICKS,
+        project_name_color, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
+        task_glyph, task_handle_color, ui_state_bucket, ActionOutcome, App, AppView,
+        CockpitEventHandler, CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind,
+        StatusBucket, FLASH_TICKS,
     };
     use ajax_core::{
         models::{
@@ -3060,7 +3060,8 @@ mod tests {
         app.select_next();
         app.activate_selected();
 
-        let expected = selectable_feed_rows(&app)
+        let (_, selectable_feed_rows) = crate::rendering::build_feed(&app, 0);
+        let expected = selectable_feed_rows
             .into_iter()
             .map(|row| row..row + 1)
             .collect::<Vec<_>>();
