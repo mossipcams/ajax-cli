@@ -38,8 +38,6 @@ use rendering::{
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
 };
-#[cfg(test)]
-use runtime::{terminal_entry_commands, terminal_exit_commands, TerminalModeCommand};
 use std::io;
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────
@@ -170,8 +168,7 @@ mod tests {
         project_subtitle, render_cockpit, render_ui, secondary_accent, selectable_feed_rows,
         selectable_row_layout, selected_highlight, subtle_text, task_glyph, task_handle_color,
         ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
-        EventLoopAction, PendingAction, SelectableKind, StatusBucket, TerminalModeCommand,
-        FLASH_TICKS,
+        EventLoopAction, PendingAction, SelectableKind, StatusBucket, FLASH_TICKS,
     };
     use ajax_core::{
         models::{
@@ -2148,37 +2145,18 @@ mod tests {
     }
 
     #[test]
-    fn terminal_entry_uses_only_unambiguous_tui_modes() {
-        assert_eq!(
-            super::terminal_entry_commands(),
-            &[
-                TerminalModeCommand::EnterAlternateScreen,
-                TerminalModeCommand::EnableMouseCapture
-            ]
-        );
-    }
+    fn lib_does_not_import_terminal_mode_command_mirror() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
+        )
+        .unwrap();
+        let command_mirror = ["Terminal", "ModeCommand"].concat();
+        let entry_helper = ["terminal", "_entry_commands"].concat();
+        let exit_helper = ["terminal", "_exit_commands"].concat();
 
-    #[test]
-    fn terminal_exit_restores_tui_modes() {
-        assert_eq!(
-            super::terminal_exit_commands(),
-            &[
-                TerminalModeCommand::LeaveAlternateScreen,
-                TerminalModeCommand::DisableMouseCapture
-            ]
-        );
-    }
-
-    #[test]
-    fn runtime_module_exposes_terminal_mode_commands() {
-        assert_eq!(
-            crate::runtime::terminal_entry_commands(),
-            super::terminal_entry_commands()
-        );
-        assert_eq!(
-            crate::runtime::terminal_exit_commands(),
-            super::terminal_exit_commands()
-        );
+        assert!(!source.contains(&command_mirror));
+        assert!(!source.contains(&entry_helper));
+        assert!(!source.contains(&exit_helper));
     }
 
     #[test]
