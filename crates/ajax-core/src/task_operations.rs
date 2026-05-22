@@ -177,7 +177,6 @@ pub mod task_command {
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner},
         commands::{self, CommandContext, CommandError, CommandPlan, OpenMode},
-        models::TaskIntent,
         registry::Registry,
         task_operations::kernel::execute_external_plan,
     };
@@ -190,26 +189,13 @@ pub mod task_command {
         Ship,
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct TaskCommandOperationPlan {
-        pub kind: TaskCommandKind,
-        pub intent: TaskIntent,
-        pub plan: CommandPlan,
-    }
-
     pub fn plan_task_command_operation<R: Registry>(
         context: &CommandContext<R>,
         kind: TaskCommandKind,
         qualified_handle: &str,
         open_mode: OpenMode,
-    ) -> Result<TaskCommandOperationPlan, CommandError> {
-        let task = context
-            .registry
-            .list_tasks()
-            .into_iter()
-            .find(|task| task.qualified_handle() == qualified_handle)
-            .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-        let plan = match kind {
+    ) -> Result<CommandPlan, CommandError> {
+        Ok(match kind {
             TaskCommandKind::Resume => {
                 commands::open_task_plan(context, qualified_handle, open_mode)?
             }
@@ -218,60 +204,55 @@ pub mod task_command {
             }
             TaskCommandKind::Repair => repair_task_plan(context, qualified_handle, open_mode)?,
             TaskCommandKind::Ship => commands::merge_task_plan(context, qualified_handle)?,
-        };
-
-        Ok(TaskCommandOperationPlan {
-            kind,
-            intent: task.intent(),
-            plan,
         })
     }
 
     pub fn execute_task_command_operation<R: Registry>(
         context: &mut CommandContext<R>,
-        operation: &TaskCommandOperationPlan,
+        kind: TaskCommandKind,
+        qualified_handle: &str,
+        plan: &CommandPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
-        let qualified_handle = qualified_handle(&operation.intent);
-        if operation.kind == TaskCommandKind::Ship {
+        if kind == TaskCommandKind::Ship {
             return execute_ship_task_command_operation(
                 context,
-                operation,
+                plan,
                 confirmed,
                 runner,
-                &qualified_handle,
+                qualified_handle,
             );
         }
-        if operation.kind == TaskCommandKind::Repair {
-            commands::mark_task_check_started(context, &qualified_handle)
+        if kind == TaskCommandKind::Repair {
+            commands::mark_task_check_started(context, qualified_handle)
                 .map_err(|error| operation_error(error, false))?;
         }
-        let outputs = match execute_external_plan(&operation.plan, confirmed, runner) {
+        let outputs = match execute_external_plan(plan, confirmed, runner) {
             Ok(execution) => execution,
-            Err(error) if operation.kind == TaskCommandKind::Repair => {
-                commands::mark_task_check_failed(context, &qualified_handle)
+            Err(error) if kind == TaskCommandKind::Repair => {
+                commands::mark_task_check_failed(context, qualified_handle)
                     .map_err(|mark_error| operation_error(mark_error, true))?;
                 return Err(operation_error(error, true));
             }
             Err(error) => return Err(operation_error(error, false)),
         };
-        let state_changed = match operation.kind {
+        let state_changed = match kind {
             TaskCommandKind::Review => false,
             TaskCommandKind::Resume => {
-                commands::mark_task_opened(context, &qualified_handle)
+                commands::mark_task_opened(context, qualified_handle)
                     .map_err(|error| operation_error(error, false))?;
                 true
             }
             TaskCommandKind::Ship => {
-                commands::mark_task_merged(context, &qualified_handle)
+                commands::mark_task_merged(context, qualified_handle)
                     .map_err(|error| operation_error(error, false))?;
                 true
             }
             TaskCommandKind::Repair => {
-                commands::mark_task_trunk_repaired(context, &qualified_handle)
+                commands::mark_task_trunk_repaired(context, qualified_handle)
                     .map_err(|error| operation_error(error, true))?;
-                commands::mark_task_check_succeeded(context, &qualified_handle)
+                commands::mark_task_check_succeeded(context, qualified_handle)
                     .map_err(|error| operation_error(error, true))?;
                 true
             }
@@ -282,23 +263,23 @@ pub mod task_command {
 
     fn execute_ship_task_command_operation<R: Registry>(
         context: &mut CommandContext<R>,
-        operation: &TaskCommandOperationPlan,
+        plan: &CommandPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
         qualified_handle: &str,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
-        if !operation.plan.blocked_reasons.is_empty() {
+        if !plan.blocked_reasons.is_empty() {
             return Err(operation_error(
-                CommandError::PlanBlocked(operation.plan.blocked_reasons.clone()),
+                CommandError::PlanBlocked(plan.blocked_reasons.clone()),
                 false,
             ));
         }
-        if operation.plan.requires_confirmation && !confirmed {
+        if plan.requires_confirmation && !confirmed {
             return Err(operation_error(CommandError::ConfirmationRequired, false));
         }
 
         let mut outputs = Vec::new();
-        for (index, command) in operation.plan.commands.iter().enumerate() {
+        for (index, command) in plan.commands.iter().enumerate() {
             let output = runner
                 .run(command)
                 .map_err(|error| operation_error(CommandError::CommandRun(error), false))?;
@@ -328,10 +309,6 @@ pub mod task_command {
         commands::mark_task_merged(context, qualified_handle)
             .map_err(|error| operation_error(error, false))?;
         Ok((outputs, true))
-    }
-
-    fn qualified_handle(intent: &TaskIntent) -> String {
-        format!("{}/{}", intent.repo, intent.handle)
     }
 
     fn merge_error_looks_conflicted(error: &CommandError) -> bool {
@@ -1469,17 +1446,13 @@ mod tests {
         ];
 
         for (kind, title) in cases {
-            let operation =
+            let plan =
                 plan_task_command_operation(&context, kind, "web/fix-login", OpenMode::Attach)
                     .unwrap();
 
-            assert_eq!(operation.kind, kind);
-            assert_eq!(operation.intent.id, TaskId::new("web/fix-login"));
-            assert_eq!(operation.intent.repo, "web");
-            assert_eq!(operation.intent.handle, "fix-login");
-            assert_eq!(operation.plan.title, title);
+            assert_eq!(plan.title, title);
             assert!(
-                !operation.plan.commands.is_empty(),
+                !plan.commands.is_empty(),
                 "{kind:?} should carry executable commands"
             );
         }
@@ -1490,7 +1463,9 @@ mod tests {
         .unwrap();
         let refresh_policy = ["TaskCommand", "RefreshPolicy"].concat();
         let post_execution = ["TaskCommand", "PostExecution"].concat();
+        let task_command_plan = ["pub struct ", "TaskCommandOperationPlan"].concat();
 
+        assert!(!source.contains(&task_command_plan));
         assert!(!source.contains(&refresh_policy));
         assert!(!source.contains(&post_execution));
     }
@@ -1498,7 +1473,7 @@ mod tests {
     #[test]
     fn resume_and_review_task_operations_execute_in_core_with_reducers() {
         let mut context = context_with_reviewable_task();
-        let resume = plan_task_command_operation(
+        let resume_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Resume,
             "web/fix-login",
@@ -1518,15 +1493,21 @@ mod tests {
             },
         ]);
 
-        let (resume_outputs, resume_state_changed) =
-            execute_task_command_operation(&mut context, &resume, true, &mut resume_runner)
-                .unwrap();
+        let (resume_outputs, resume_state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Resume,
+            "web/fix-login",
+            &resume_plan,
+            true,
+            &mut resume_runner,
+        )
+        .unwrap();
 
         assert_eq!(resume_runner.commands.len(), 2);
         assert_eq!(resume_outputs.len(), 2);
         assert!(resume_state_changed);
 
-        let review = plan_task_command_operation(
+        let review_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Review,
             "web/fix-login",
@@ -1539,9 +1520,15 @@ mod tests {
             stderr: String::new(),
         }]);
 
-        let (review_outputs, review_state_changed) =
-            execute_task_command_operation(&mut context, &review, true, &mut review_runner)
-                .unwrap();
+        let (review_outputs, review_state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Review,
+            "web/fix-login",
+            &review_plan,
+            true,
+            &mut review_runner,
+        )
+        .unwrap();
 
         assert_eq!(review_runner.commands.len(), 1);
         assert_eq!(review_outputs[0].stdout, "diff stat");
@@ -1551,7 +1538,7 @@ mod tests {
     #[test]
     fn ship_task_operation_marks_merged_or_records_merge_failure() {
         let mut context = context_with_reviewable_task();
-        let ship = plan_task_command_operation(
+        let ship_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Ship,
             "web/fix-login",
@@ -1571,8 +1558,15 @@ mod tests {
             },
         ]);
 
-        let (outputs, state_changed) =
-            execute_task_command_operation(&mut context, &ship, true, &mut runner).unwrap();
+        let (outputs, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Ship,
+            "web/fix-login",
+            &ship_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap();
 
         assert_eq!(outputs.len(), 2);
         assert!(state_changed);
@@ -1586,7 +1580,7 @@ mod tests {
         );
 
         let mut context = context_with_reviewable_task();
-        let ship = plan_task_command_operation(
+        let ship_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Ship,
             "web/fix-login",
@@ -1606,8 +1600,15 @@ mod tests {
             },
         ]);
 
-        let (error, _state_changed) =
-            execute_task_command_operation(&mut context, &ship, true, &mut runner).unwrap_err();
+        let (error, _state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Ship,
+            "web/fix-login",
+            &ship_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,
@@ -1638,7 +1639,7 @@ mod tests {
             .unwrap();
         task.lifecycle_status = LifecycleStatus::Active;
         task.add_side_flag(SideFlag::TestsFailed);
-        let repair = plan_task_command_operation(
+        let repair_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Repair,
             "web/fix-login",
@@ -1646,8 +1647,7 @@ mod tests {
         )
         .unwrap();
         let mut runner = RecordingQueuedRunner::new(
-            repair
-                .plan
+            repair_plan
                 .commands
                 .iter()
                 .map(|_| CommandOutput {
@@ -1658,10 +1658,17 @@ mod tests {
                 .collect(),
         );
 
-        let (outputs, state_changed) =
-            execute_task_command_operation(&mut context, &repair, true, &mut runner).unwrap();
+        let (outputs, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            &repair_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap();
 
-        assert_eq!(outputs.len(), repair.plan.commands.len());
+        assert_eq!(outputs.len(), repair_plan.commands.len());
         assert!(state_changed);
         let task = context
             .registry
@@ -1677,7 +1684,7 @@ mod tests {
             .get_task_mut(&TaskId::new("web/fix-login"))
             .unwrap()
             .lifecycle_status = LifecycleStatus::Active;
-        let repair = plan_task_command_operation(
+        let repair_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Repair,
             "web/fix-login",
@@ -1690,8 +1697,15 @@ mod tests {
             stderr: "tests failed".to_string(),
         }]);
 
-        let (error, _state_changed) =
-            execute_task_command_operation(&mut context, &repair, true, &mut runner).unwrap_err();
+        let (error, _state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Repair,
+            "web/fix-login",
+            &repair_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap_err();
 
         assert!(matches!(
             error,

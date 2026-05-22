@@ -38,7 +38,50 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     open_mode: commands::OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     let task = task_arg(subcommand)?;
-    render_core_task_command(kind, subcommand, context, runner, open_mode, task)
+    let execute = subcommand.get_flag("execute");
+    let confirmed = subcommand.get_flag("yes");
+    let mut state_changed = false;
+    if matches!(
+        kind,
+        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
+    ) {
+        if let Ok(changed) = commands::refresh_git_substrate_evidence(context, runner) {
+            state_changed |= changed;
+        }
+    }
+    let mut plan =
+        plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
+    if !execute {
+        return Ok(RenderedCommand {
+            output: render_plan(plan, subcommand.get_flag("json"))?,
+            state_changed,
+        });
+    }
+    if kind == TaskCommandKind::Ship
+        && plan.blocked_reasons.is_empty()
+        && (!plan.requires_confirmation || confirmed)
+        && merge_task_has_cached_git_evidence(context, task)
+    {
+        refresh_merge_evidence_if_available(context, task, runner);
+        plan =
+            plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
+    }
+
+    let (outputs, operation_state_changed) = execute_task_command_operation(
+        context, kind, task, &plan, confirmed, runner,
+    )
+    .map_err(|(error, error_state_changed)| {
+        let cli_error = command_error(error);
+        if error_state_changed {
+            cli_error.after_state_change()
+        } else {
+            cli_error
+        }
+    })?;
+    Ok(RenderedCommand {
+        output: render_execution_outputs(&outputs, None),
+        state_changed: state_changed || operation_state_changed,
+    })
 }
 
 pub(crate) fn render_drop_command<R: CommandRunner>(
@@ -66,60 +109,6 @@ pub(crate) fn render_drop_command<R: CommandRunner>(
     Ok(RenderedCommand {
         output: render_plan(plan, subcommand.get_flag("json"))?,
         state_changed,
-    })
-}
-
-fn render_core_task_command<R: CommandRunner>(
-    kind: TaskCommandKind,
-    subcommand: &ArgMatches,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    open_mode: commands::OpenMode,
-    task: &str,
-) -> Result<RenderedCommand, CliError> {
-    let execute = subcommand.get_flag("execute");
-    let confirmed = subcommand.get_flag("yes");
-    let mut state_changed = false;
-    if matches!(
-        kind,
-        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
-    ) {
-        if let Ok(changed) = commands::refresh_git_substrate_evidence(context, runner) {
-            state_changed |= changed;
-        }
-    }
-    let mut operation =
-        plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
-    if !execute {
-        return Ok(RenderedCommand {
-            output: render_plan(operation.plan, subcommand.get_flag("json"))?,
-            state_changed,
-        });
-    }
-    if kind == TaskCommandKind::Ship
-        && operation.plan.blocked_reasons.is_empty()
-        && (!operation.plan.requires_confirmation || confirmed)
-        && merge_task_has_cached_git_evidence(context, task)
-    {
-        refresh_merge_evidence_if_available(context, task, runner);
-        operation =
-            plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
-    }
-
-    let (outputs, operation_state_changed) = execute_task_command_operation(
-        context, &operation, confirmed, runner,
-    )
-    .map_err(|(error, error_state_changed)| {
-        let cli_error = command_error(error);
-        if error_state_changed {
-            cli_error.after_state_change()
-        } else {
-            cli_error
-        }
-    })?;
-    Ok(RenderedCommand {
-        output: render_execution_outputs(&outputs, None),
-        state_changed: state_changed || operation_state_changed,
     })
 }
 
@@ -273,12 +262,14 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/dispatch.rs"),
         )
         .unwrap();
+        let render_core_task_command = ["fn render_", "core_task_command"].concat();
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
             .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
             .unwrap();
 
+        assert!(!source.contains(&render_core_task_command));
         assert!(render_task_command.contains("plan_task_command_operation"));
         assert!(render_task_command.contains("execute_task_command_operation"));
     }
@@ -314,7 +305,7 @@ mod tests {
         let render_task_command = source
             .split("pub(crate) fn render_task_command")
             .nth(1)
-            .and_then(|source| source.split("fn render_core_task_command").next())
+            .and_then(|source| source.split("fn merge_task_has_cached_git_evidence").next())
             .unwrap();
         let execute_plan = ["commands::execute", "_plan(&plan"].concat();
         let apply_after_execute = ["apply_after", "_execute"].concat();
