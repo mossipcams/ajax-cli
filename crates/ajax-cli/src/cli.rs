@@ -12,15 +12,15 @@ pub enum ParsedArgs {
 pub fn build_cli() -> Command {
     Command::new("ajax")
         .about("Semi-agentic operator console for isolated AI coding tasks")
-        .subcommand(repos_command())
+        .subcommand(json_command("repos").about("List configured repos"))
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
         .subcommand(executable_new_command("start"))
-        .subcommand(executable_task_command("resume"))
-        .subcommand(executable_task_command("repair"))
-        .subcommand(executable_task_command("review"))
-        .subcommand(executable_task_command("ship"))
-        .subcommand(executable_task_command("drop"))
+        .subcommand(executable_command(task_command("resume")))
+        .subcommand(executable_command(task_command("repair")))
+        .subcommand(executable_command(task_command("review")))
+        .subcommand(executable_command(task_command("ship")))
+        .subcommand(executable_command(task_command("drop")))
         .subcommand(executable_command(
             json_command("tidy").about("Clean safe task environments across repos"),
         ))
@@ -53,10 +53,6 @@ where
     }
 }
 
-fn repos_command() -> Command {
-    json_command("repos").about("List configured repos")
-}
-
 fn tasks_command() -> Command {
     json_command("tasks")
         .about("List task environments")
@@ -75,10 +71,6 @@ fn task_command(name: &'static str) -> Command {
     json_command(name)
         .about("Operate on a task")
         .arg(Arg::new("task").value_name("REPO/HANDLE").required(true))
-}
-
-fn executable_task_command(name: &'static str) -> Command {
-    executable_command(task_command(name))
 }
 
 fn executable_command(command: Command) -> Command {
