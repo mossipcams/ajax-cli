@@ -375,15 +375,13 @@ pub mod drop_task {
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
         },
         models::{
-            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskIntent,
-            TaskOperationKind,
+            LifecycleStatus, SideFlag, StepReceipt, StepReceiptStatus, Task, TaskOperationKind,
         },
         registry::{Registry, RegistryEventKind},
     };
 
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct DropTaskOperationPlan {
-        pub intent: TaskIntent,
         pub confirmation_plan: CommandPlan,
         pub observation: DropObservation,
         pub ops: Vec<DropOp>,
@@ -415,7 +413,6 @@ pub mod drop_task {
         );
         if !confirmation_plan.blocked_reasons.is_empty() {
             return Ok(DropTaskOperationPlan {
-                intent: task.intent(),
                 confirmation_plan,
                 observation: unknown_observation(),
                 ops: Vec::new(),
@@ -427,7 +424,6 @@ pub mod drop_task {
         let ops = commands::plan_drop_from_observation(&observation);
 
         Ok(DropTaskOperationPlan {
-            intent: task.intent(),
             confirmation_plan,
             observation,
             ops,
@@ -1307,6 +1303,21 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_plan_does_not_carry_unused_intent() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
+        )
+        .unwrap();
+        let plan_fields = source
+            .split("pub struct DropTaskOperationPlan")
+            .nth(1)
+            .and_then(|source| source.split("pub enum DropTaskCompletion").next())
+            .unwrap();
+
+        assert!(!plan_fields.contains("pub intent"));
+    }
+
+    #[test]
     fn operation_errors_use_plain_tuples_without_constructor_helpers() {
         let source = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
@@ -1742,13 +1753,9 @@ mod tests {
         ]);
 
         let DropTaskOperationPlan {
-            intent,
-            observation,
-            ops,
-            ..
+            observation, ops, ..
         } = plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
 
-        assert_eq!(intent.id, TaskId::new("web/fix-login"));
         assert_eq!(observation.tmux_session, ResourceState::Absent);
         assert_eq!(observation.worktree, ResourceState::Absent);
         assert_eq!(observation.branch, ResourceState::Absent);
