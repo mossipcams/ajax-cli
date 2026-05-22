@@ -138,32 +138,18 @@ pub(crate) fn render_header(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(Line::from(parts)), area);
 }
 
-fn notice_glyph(severity: Severity) -> &'static str {
-    match severity {
-        Severity::Confirm => ">",
-        Severity::Error => "!",
-        Severity::Success => ".",
-        Severity::Hint => "-",
-    }
-}
-
-fn notice_color(severity: Severity) -> Color {
-    match severity {
-        Severity::Confirm => primary_accent(),
-        Severity::Error => danger_accent(),
-        Severity::Success => secondary_accent(),
-        Severity::Hint => subtle_text(),
-    }
-}
-
 fn render_notice_row(frame: &mut Frame, app: &App, area: Rect) {
     let Some(notice) = app.current_notice() else {
         return;
     };
-    let style = Style::default()
-        .fg(notice_color(notice.severity))
-        .add_modifier(Modifier::BOLD);
-    let text = format!(" {} {}", notice_glyph(notice.severity), notice.msg);
+    let (glyph, color) = match notice.severity {
+        Severity::Confirm => (">", primary_accent()),
+        Severity::Error => ("!", danger_accent()),
+        Severity::Success => (".", secondary_accent()),
+        Severity::Hint => ("-", subtle_text()),
+    };
+    let style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let text = format!(" {glyph} {}", notice.msg);
     frame.render_widget(Paragraph::new(Line::from(Span::styled(text, style))), area);
 }
 
@@ -583,6 +569,8 @@ mod tests {
             "muted_text",
             "subtle_text",
             "selected_highlight",
+            "notice_glyph",
+            "notice_color",
             "empty_state",
             "action_chrome",
             "action_label_style",
