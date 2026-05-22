@@ -20,9 +20,7 @@ use ajax_core::{
 use ajax_core::{
     registry::InMemoryRegistry,
     task_operations::start::{execute_start_task_operation, plan_start_task_operation},
-    task_operations::sweep_cleanup::{
-        execute_sweep_cleanup_operation, plan_sweep_cleanup_operation,
-    },
+    task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
     task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
@@ -94,27 +92,25 @@ pub(crate) fn render_matches_mut(
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("tidy", subcommand)) => {
-            let operation = plan_sweep_cleanup_operation(context);
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(operation.plan, subcommand.get_flag("json"))?,
+                    output: render_plan(
+                        ajax_core::commands::sweep_cleanup_plan(context),
+                        subcommand.get_flag("json"),
+                    )?,
                     state_changed: false,
                 });
             }
-            let (outputs, state_changed) = execute_sweep_cleanup_operation(
-                context,
-                &operation,
-                subcommand.get_flag("yes"),
-                runner,
-            )
-            .map_err(|(error, error_state_changed)| {
-                let cli_error = command_error(error);
-                if error_state_changed {
-                    cli_error.after_state_change()
-                } else {
-                    cli_error
-                }
-            })?;
+            let (outputs, state_changed) =
+                execute_sweep_cleanup_operation(context, subcommand.get_flag("yes"), runner)
+                    .map_err(|(error, error_state_changed)| {
+                        let cli_error = command_error(error);
+                        if error_state_changed {
+                            cli_error.after_state_change()
+                        } else {
+                            cli_error
+                        }
+                    })?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, None),
                 state_changed,
@@ -372,10 +368,12 @@ mod tests {
         .unwrap();
         let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
         let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
+        let direct_plan = ["commands::sweep", "_cleanup_plan"].concat();
         let local_helper = ["fn execute_sweep", "_cleanup"].concat();
 
-        assert!(source.contains(&plan_operation));
+        assert!(source.contains(&direct_plan));
         assert!(source.contains(&execute_operation));
+        assert!(!source.contains(&plan_operation));
         assert!(!source.contains(&local_helper));
     }
 }

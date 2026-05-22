@@ -791,35 +791,20 @@ pub mod drop_task {
 pub mod sweep_cleanup {
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner},
-        commands::{self, CommandContext, CommandError, CommandPlan},
+        commands::{self, CommandContext, CommandError},
         registry::Registry,
     };
 
-    #[derive(Clone, Debug, Eq, PartialEq)]
-    pub struct SweepCleanupOperationPlan {
-        pub plan: CommandPlan,
-        pub candidates: Vec<String>,
-    }
-
-    pub fn plan_sweep_cleanup_operation<R: Registry>(
-        context: &CommandContext<R>,
-    ) -> SweepCleanupOperationPlan {
-        SweepCleanupOperationPlan {
-            plan: commands::sweep_cleanup_plan(context),
-            candidates: commands::sweep_cleanup_candidates(context),
-        }
-    }
-
     pub fn execute_sweep_cleanup_operation<R: Registry>(
         context: &mut CommandContext<R>,
-        operation: &SweepCleanupOperationPlan,
         confirmed: bool,
         runner: &mut impl CommandRunner,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         let mut outputs = Vec::new();
         let mut state_changed = false;
+        let candidates = commands::sweep_cleanup_candidates(context);
 
-        for candidate in &operation.candidates {
+        for candidate in &candidates {
             let plan = commands::clean_task_plan(context, candidate)
                 .map_err(|error| operation_error(error, state_changed))?;
             if !plan.blocked_reasons.is_empty() {
@@ -880,7 +865,7 @@ mod tests {
     use super::start::{
         execute_start_task_operation, plan_start_task_operation, StartTaskOperationPlan,
     };
-    use super::sweep_cleanup::{execute_sweep_cleanup_operation, plan_sweep_cleanup_operation};
+    use super::sweep_cleanup::execute_sweep_cleanup_operation;
     use super::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     };
@@ -1265,6 +1250,8 @@ mod tests {
 
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationExecution"));
         assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationError"));
+        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationPlan"));
+        assert!(!sweep_cleanup_module.contains("plan_sweep_cleanup_operation"));
     }
 
     #[test]
@@ -2030,20 +2017,14 @@ mod tests {
     #[test]
     fn sweep_cleanup_operation_executes_candidates_and_reports_partial_failure_state() {
         let mut context = context_with_two_cleanable_tasks();
-        let operation = plan_sweep_cleanup_operation(&context);
-        let mut runner = RecordingQueuedRunner::new(
-            operation
-                .plan
-                .commands
-                .iter()
-                .map(|_| output(0, "", ""))
-                .collect(),
-        );
+        let plan = crate::commands::sweep_cleanup_plan(&context);
+        let mut runner =
+            RecordingQueuedRunner::new(plan.commands.iter().map(|_| output(0, "", "")).collect());
 
         let (outputs, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, &operation, true, &mut runner).unwrap();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), operation.plan.commands.len());
+        assert_eq!(outputs.len(), plan.commands.len());
         assert!(state_changed);
         assert_eq!(
             context
@@ -2063,9 +2044,9 @@ mod tests {
         );
 
         let mut context = context_with_two_cleanable_tasks();
-        let operation = plan_sweep_cleanup_operation(&context);
+        let candidates = crate::commands::sweep_cleanup_candidates(&context);
         let first_candidate_command_count =
-            crate::commands::clean_task_plan(&context, &operation.candidates[0])
+            crate::commands::clean_task_plan(&context, &candidates[0])
                 .unwrap()
                 .commands
                 .len();
@@ -2076,8 +2057,7 @@ mod tests {
         let mut runner = RecordingQueuedRunner::new(outputs);
 
         let (error, state_changed) =
-            execute_sweep_cleanup_operation(&mut context, &operation, true, &mut runner)
-                .unwrap_err();
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap_err();
 
         assert!(state_changed);
         assert!(matches!(
