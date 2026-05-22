@@ -5273,12 +5273,7 @@ mod tests {
             priority: 0,
             action: "start".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
@@ -5288,9 +5283,7 @@ mod tests {
             _ => panic!("start task should remain inside Ajax cockpit"),
         }
 
-        assert!(runner.commands().is_empty());
         assert!(context.registry.list_tasks().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5304,12 +5297,7 @@ mod tests {
                 priority: 0,
                 action: action.to_string(),
             };
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match outcome {
                 ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5330,7 +5318,6 @@ mod tests {
                     panic!("{action} should defer for execution instead of confirming: {message}")
                 }
             }
-            assert!(!state_changed, "{action} should not mutate Ajax state");
         }
     }
 
@@ -5350,12 +5337,7 @@ mod tests {
                 priority: 0,
                 action: action.to_string(),
             };
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             if let ajax_tui::ActionOutcome::Message(message) = outcome {
                 assert!(!message.contains("try: ajax"), "{action}: {message}");
@@ -5365,12 +5347,7 @@ mod tests {
 
         let mut context = cleanable_context();
         let item = cockpit_item("web/fix-login", "drop");
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         if let ajax_tui::ActionOutcome::Message(message) = outcome {
             assert!(!message.contains("try: ajax"), "drop task: {message}");
@@ -5390,12 +5367,7 @@ mod tests {
             "review diff",
         ] {
             let item = cockpit_item("web/fix-login", action);
-            let mut runner = PanicRunner;
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match outcome {
                 ajax_tui::ActionOutcome::Message(message) => {
@@ -5404,7 +5376,6 @@ mod tests {
                 }
                 _ => panic!("{action} should be an unknown cockpit action"),
             }
-            assert!(!state_changed, "{action}");
         }
     }
 
@@ -5412,12 +5383,7 @@ mod tests {
     fn cockpit_unknown_action_does_not_suggest_shell_command() {
         let mut context = sample_context();
         let item = cockpit_item("web/fix-login", "mystery action");
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Message(message) => {
@@ -5427,7 +5393,6 @@ mod tests {
             }
             _ => panic!("unknown cockpit action should stay in cockpit"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5470,12 +5435,7 @@ mod tests {
                 sample_context()
             };
             let item = cockpit_item(handle, action);
-            let mut runner = RecordingCommandRunner::default();
-            let mut state_changed = false;
-
-            let outcome =
-                super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                    .unwrap();
+            let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
             match expected {
                 Expected::Defer => match outcome {
@@ -5483,11 +5443,6 @@ mod tests {
                         assert_eq!(pending.task_handle, handle, "{action}");
                         assert_eq!(pending.action, action);
                         assert!(pending.task_title.is_none(), "{action}");
-                        assert!(
-                            runner.commands().is_empty(),
-                            "{action} should not execute before pending handling"
-                        );
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Message(message) => {
                         panic!("{action} should defer, got message: {message}");
@@ -5507,11 +5462,6 @@ mod tests {
                         for part in parts {
                             assert!(message.contains(part), "{action}: missing {part:?}");
                         }
-                        assert!(
-                            runner.commands().is_empty(),
-                            "{action} should not execute commands"
-                        );
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
                         panic!("{action} should render in cockpit, got defer");
@@ -5533,8 +5483,6 @@ mod tests {
                         assert!(snapshot.inbox.items.is_empty(), "{action}");
                         assert_eq!(pending.task_handle, handle, "{action}");
                         assert_eq!(pending.action, action, "{action}");
-                        assert!(runner.commands().is_empty(), "{action}");
-                        assert!(!state_changed, "{action}");
                     }
                     ajax_tui::ActionOutcome::Defer(_) => {
                         panic!("{action} should refresh before deferring, got defer");
@@ -5563,12 +5511,7 @@ mod tests {
             priority: 0,
             action: "ship".to_string(),
         };
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5578,7 +5521,6 @@ mod tests {
             }
             _ => panic!("completed task action should defer for execution"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -5591,12 +5533,7 @@ mod tests {
             priority: 0,
             action: "resume".to_string(),
         };
-        let mut runner = PanicRunner;
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::Defer(pending) => {
@@ -5606,7 +5543,6 @@ mod tests {
             }
             _ => panic!("task action should defer for execution"),
         }
-        assert!(!state_changed);
     }
 
     #[test]
@@ -6265,17 +6201,10 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
             if message.contains("press enter again") && message.contains("drop")));
-        assert!(runner.commands().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -6306,16 +6235,7 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
 
         let ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) = outcome else {
             panic!("confirmed force drop should optimistically refresh and defer cleanup");
@@ -6324,7 +6244,6 @@ mod tests {
         assert!(snapshot.inbox.items.is_empty());
         assert_eq!(pending.task_handle, "web/fix-login");
         assert_eq!(pending.action, "drop");
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -6333,7 +6252,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Reviewable
         );
-        assert!(!state_changed);
     }
 
     fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
@@ -7242,15 +7160,8 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
         let mut state_changed = false;
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
         let ajax_tui::ActionOutcome::RefreshAndDefer(optimistic, pending) = outcome else {
             panic!("confirmed drop should optimistically refresh and defer cleanup");
         };
@@ -7315,17 +7226,10 @@ mod tests {
             priority: 0,
             action: "reconcile".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Message(message)
             if message == "cockpit action is not configured: reconcile"));
-        assert!(runner.commands().is_empty());
-        assert!(!state_changed);
     }
 
     #[test]
@@ -7343,16 +7247,10 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome =
-            super::tui_cockpit_action(&item, &mut context, &mut runner, &mut state_changed)
-                .unwrap();
+        let outcome = super::tui_cockpit_action(&item, &mut context).unwrap();
 
         assert!(matches!(outcome, ajax_tui::ActionOutcome::Confirm(message)
             if message.contains("press enter again") && message.contains("drop")));
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -7361,7 +7259,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
-        assert!(!state_changed);
     }
 
     #[test]
@@ -7374,16 +7271,7 @@ mod tests {
             priority: 0,
             action: "drop".to_string(),
         };
-        let mut runner = RecordingCommandRunner::default();
-        let mut state_changed = false;
-
-        let outcome = super::tui_cockpit_confirmed_action(
-            &item,
-            &mut context,
-            &mut runner,
-            &mut state_changed,
-        )
-        .unwrap();
+        let outcome = super::tui_cockpit_confirmed_action(&item, &mut context).unwrap();
 
         match outcome {
             ajax_tui::ActionOutcome::RefreshAndDefer(snapshot, pending) => {
@@ -7406,7 +7294,6 @@ mod tests {
                 panic!("confirmed drop task should run instead of confirming: {message}")
             }
         }
-        assert!(runner.commands().is_empty());
         assert_eq!(
             context
                 .registry
@@ -7415,7 +7302,6 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );
-        assert!(!state_changed);
     }
 
     #[test]

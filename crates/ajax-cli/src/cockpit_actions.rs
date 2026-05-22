@@ -35,29 +35,23 @@ pub(crate) fn handle_pending_cockpit_result(
     }
 }
 
-pub(crate) fn tui_cockpit_action<R: CommandRunner>(
+pub(crate) fn tui_cockpit_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, false)
+    tui_cockpit_action_with_confirmation(item, context, false)
 }
 
-pub(crate) fn tui_cockpit_confirmed_action<R: CommandRunner>(
+pub(crate) fn tui_cockpit_confirmed_action(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut R,
-    state_changed: &mut bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
-    tui_cockpit_action_with_confirmation(item, context, runner, state_changed, true)
+    tui_cockpit_action_with_confirmation(item, context, true)
 }
 
-fn tui_cockpit_action_with_confirmation<R: CommandRunner>(
+fn tui_cockpit_action_with_confirmation(
     item: &ajax_core::models::CockpitActionItem,
     context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut R,
-    _state_changed: &mut bool,
     confirmed: bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
@@ -345,12 +339,17 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_actions.rs"),
         )
         .unwrap();
+        let action_selection = source.split("fn optimistic_drop_snapshot").next().unwrap();
         let plan_operation = ["plan_task_command", "_operation"].concat();
         let execute_operation = ["execute_task_command", "_operation"].concat();
         let legacy_plan = ["plan_with", "_open_mode"].concat();
         let local_operation_mapping = ["operation_from", "_operator_action"].concat();
         let outcome_impl = ["impl Pending", "CockpitOutcome"].concat();
         let pending_outcome = ["enum Pending", "CockpitOutcome"].concat();
+        let action_runner_generic = ["tui_cockpit_action", "<R"].concat();
+        let confirmed_runner_generic = ["tui_cockpit_confirmed_action", "<R"].concat();
+        let unused_runner = ["_", "runner"].concat();
+        let unused_state = ["_", "state_changed"].concat();
         let return_helper = ["task_command", "_returns_to_cockpit"].concat();
 
         assert!(source.contains(&plan_operation));
@@ -360,6 +359,10 @@ mod tests {
         assert!(!source.contains(&local_operation_mapping));
         assert!(!source.contains(&outcome_impl));
         assert!(!source.contains(&pending_outcome));
+        assert!(!action_selection.contains(&action_runner_generic));
+        assert!(!action_selection.contains(&confirmed_runner_generic));
+        assert!(!action_selection.contains(&unused_runner));
+        assert!(!action_selection.contains(&unused_state));
         assert!(!source.contains(&return_helper));
     }
 }

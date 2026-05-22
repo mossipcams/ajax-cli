@@ -213,14 +213,14 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_action(item, self.context, self.runner, self.state_changed)
+        tui_cockpit_action(item, self.context)
     }
 
     fn on_confirmed_action(
         &mut self,
         item: &ajax_core::models::CockpitActionItem,
     ) -> std::io::Result<ajax_tui::ActionOutcome> {
-        tui_cockpit_confirmed_action(item, self.context, self.runner, self.state_changed)
+        tui_cockpit_confirmed_action(item, self.context)
     }
 
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
