@@ -15,7 +15,13 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("repos").about("List configured repos"))
         .subcommand(tasks_command())
         .subcommand(task_command("inspect"))
-        .subcommand(executable_new_command("start"))
+        .subcommand(
+            executable_command(json_command("start"))
+                .about("Create a new task environment")
+                .arg(Arg::new("repo").long("repo").value_name("REPO"))
+                .arg(Arg::new("title").long("title").value_name("TITLE"))
+                .arg(Arg::new("agent").long("agent").value_name("AGENT")),
+        )
         .subcommand(executable_command(task_command("resume")))
         .subcommand(executable_command(task_command("repair")))
         .subcommand(executable_command(task_command("review")))
@@ -57,14 +63,6 @@ fn tasks_command() -> Command {
     json_command("tasks")
         .about("List task environments")
         .arg(Arg::new("repo").long("repo").value_name("REPO"))
-}
-
-fn executable_new_command(name: &'static str) -> Command {
-    executable_command(json_command(name))
-        .about("Create a new task environment")
-        .arg(Arg::new("repo").long("repo").value_name("REPO"))
-        .arg(Arg::new("title").long("title").value_name("TITLE"))
-        .arg(Arg::new("agent").long("agent").value_name("AGENT"))
 }
 
 fn task_command(name: &'static str) -> Command {
