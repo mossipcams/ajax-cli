@@ -2685,6 +2685,17 @@ mod tests {
     }
 
     #[test]
+    fn navigation_module_does_not_keep_single_use_backspace_helper() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/navigation.rs"),
+        )
+        .unwrap();
+        let helper_name = ["fn ", "is_navigation_backspace_key"].concat();
+
+        assert!(!source.contains(&helper_name));
+    }
+
+    #[test]
     fn input_module_handles_navigation_events() {
         let mut app = App::new(
             sample_repos(),
