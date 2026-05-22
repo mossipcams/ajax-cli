@@ -2,8 +2,8 @@ use std::{collections::BTreeMap, error::Error, fmt, time::SystemTime};
 
 use crate::lifecycle::{transition_lifecycle, LifecycleTransitionError, LifecycleTransitionReason};
 use crate::models::{
-    GitStatus, LifecycleStatus, LiveObservation, SideFlag, Task, TaskId, TmuxStatus,
-    WorktrunkStatus,
+    GitStatus, LifecycleStatus, LiveObservation, SideFlag, StepReceipt, StepReceiptIdentity, Task,
+    TaskId, TmuxStatus, WorktrunkStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,12 +49,15 @@ pub trait Registry {
     ) -> Result<(), RegistryError>;
     fn list_events(&self) -> Vec<&RegistryEvent>;
     fn events_for_task(&self, task_id: &TaskId) -> Vec<&RegistryEvent>;
+    fn record_step_receipt(&mut self, receipt: StepReceipt) -> Result<(), RegistryError>;
+    fn step_receipts_for_task(&self, task_id: &TaskId) -> Vec<&StepReceipt>;
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct InMemoryRegistry {
     tasks: BTreeMap<TaskId, Task>,
     events: Vec<RegistryEvent>,
+    step_receipts: BTreeMap<StepReceiptIdentity, StepReceipt>,
 }
 
 impl Registry for InMemoryRegistry {
@@ -71,6 +74,8 @@ impl Registry for InMemoryRegistry {
         refresh_task_annotations(&mut task);
         self.tasks.insert(task_id.clone(), task);
         self.events.retain(|event| event.task_id != task_id);
+        self.step_receipts
+            .retain(|identity, _| identity.task_id != task_id);
         self.events.push(RegistryEvent::new(
             task_id,
             RegistryEventKind::TaskCreated,
@@ -226,6 +231,33 @@ impl Registry for InMemoryRegistry {
             .filter(|event| &event.task_id == task_id)
             .collect()
     }
+
+    fn record_step_receipt(&mut self, receipt: StepReceipt) -> Result<(), RegistryError> {
+        if !self.tasks.contains_key(&receipt.task_id) {
+            return Err(RegistryError::TaskNotFound(receipt.task_id));
+        }
+
+        self.step_receipts.insert(receipt.identity(), receipt);
+
+        Ok(())
+    }
+
+    fn step_receipts_for_task(&self, task_id: &TaskId) -> Vec<&StepReceipt> {
+        let mut receipts = self
+            .step_receipts
+            .values()
+            .filter(|receipt| &receipt.task_id == task_id)
+            .collect::<Vec<_>>();
+        receipts.sort_by_key(|receipt| {
+            (
+                receipt.created_at,
+                receipt.operation,
+                receipt.step_key.as_str(),
+                receipt.target.as_str(),
+            )
+        });
+        receipts
+    }
 }
 
 fn refresh_task_annotations(task: &mut Task) {
@@ -329,7 +361,7 @@ mod tests {
     };
     use crate::models::{
         AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, RuntimeHealth,
-        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        SideFlag, StepReceipt, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
     };
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
@@ -509,6 +541,28 @@ mod tests {
         assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
         assert_eq!(events[1].kind, RegistryEventKind::UserNote);
         assert_eq!(events[1].message, "ready for review");
+    }
+
+    #[test]
+    fn records_step_receipts_idempotently_by_logical_identity() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let receipt = StepReceipt::succeeded(
+            TaskId::new("task-1"),
+            TaskOperationKind::Start,
+            "worktree_created",
+            "/tmp/worktrees/web-fix-login",
+            r#"{"attempt":1}"#,
+        );
+
+        registry.record_step_receipt(receipt.clone()).unwrap();
+        registry.record_step_receipt(receipt).unwrap();
+
+        let receipts = registry.step_receipts_for_task(&TaskId::new("task-1"));
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].step_key, "worktree_created");
     }
 
     #[test]
