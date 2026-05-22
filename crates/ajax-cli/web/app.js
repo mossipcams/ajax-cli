@@ -8,9 +8,10 @@ const refreshButton = document.getElementById("refresh-button");
 const installButton = document.getElementById("install-button");
 const notifyButton = document.getElementById("notify-button");
 
-const REFRESH_INTERVAL_MS = 10000;
+const REFRESH_INTERVAL_MS = 1000;
 let installPrompt = null;
 let lastData = null;
+let refreshInFlight = false;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -114,6 +115,8 @@ function setOnline(online) {
 }
 
 async function loadCockpit() {
+  if (refreshInFlight || document.hidden) return;
+  refreshInFlight = true;
   statusLine.textContent = "Refreshing…";
   try {
     const response = await fetch("/api/cockpit", { cache: "no-store" });
@@ -125,6 +128,8 @@ async function loadCockpit() {
   } catch (error) {
     setOnline(false);
     statusLine.textContent = "Could not reach Ajax — showing last known state";
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -183,6 +188,7 @@ window.addEventListener("appinstalled", () => {
 
 window.addEventListener("online", () => loadCockpit());
 window.addEventListener("offline", () => setOnline(false));
+document.addEventListener("visibilitychange", () => loadCockpit());
 
 // Push notifications --------------------------------------------------------
 function pushSupported() {

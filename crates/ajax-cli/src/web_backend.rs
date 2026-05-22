@@ -4,6 +4,7 @@ use ajax_core::{
     models::OperatorAction,
     output::{CockpitView, InboxResponse, ReposResponse, TaskCard},
     registry::InMemoryRegistry,
+    runtime_refresh::refresh_runtime_context,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
@@ -19,8 +20,10 @@ use std::{
 };
 
 use crate::{
-    command_error, context::save_context, dispatch::execute_observed_drop, web_push, web_tls,
-    CliContextPaths, CliError,
+    command_error,
+    context::{load_context, save_context},
+    dispatch::execute_observed_drop,
+    web_push, web_tls, CliContextPaths, CliError,
 };
 
 pub(crate) struct HttpResponse {
@@ -152,6 +155,9 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
 ) -> Result<HttpResponse, CliError> {
     match (method, path) {
         ("POST", "/api/actions") => return handle_action_request(body, context, runner, paths),
+        ("GET", "/api/cockpit") => {
+            return handle_refreshed_cockpit_request(context, runner, paths);
+        }
         ("GET", "/api/push/config") => return handle_push_config(paths),
         ("POST", "/api/push/subscribe") => return handle_push_subscribe(body, paths),
         ("POST", "/api/push/unsubscribe") => return handle_push_unsubscribe(body, paths),
@@ -208,6 +214,27 @@ fn handle_push_unsubscribe(
     let dir = companion_state_dir(paths)?;
     web_push::remove_subscription(&dir, endpoint)?;
     json_response(200, serde_json::json!({ "ok": true }))
+}
+
+fn handle_refreshed_cockpit_request(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    paths: Option<&CliContextPaths>,
+) -> Result<HttpResponse, CliError> {
+    if let Some(paths) = paths {
+        *context = load_context(paths)?;
+    }
+    let state_changed = refresh_runtime_context(context, runner).map_err(command_error)?;
+    if state_changed {
+        if let Some(paths) = paths {
+            save_context(paths, context)?;
+        }
+    }
+    json_response(
+        200,
+        serde_json::to_value(mobile_cockpit_view(context))
+            .map_err(|error| CliError::JsonSerialization(error.to_string()))?,
+    )
 }
 
 fn handle_action_request(
@@ -430,7 +457,7 @@ fn write_http_response<S: Write>(mut stream: S, response: HttpResponse) -> Resul
         _ => "Internal Server Error",
     };
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         response.status_code,
         status_text,
         response.content_type,
@@ -565,7 +592,7 @@ mod tests {
         models::{
             AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
-        registry::{InMemoryRegistry, Registry},
+        registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
 
     #[test]
@@ -682,6 +709,9 @@ mod tests {
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let script = String::from_utf8_lossy(&app.body);
         assert!(script.contains("/api/cockpit"));
+        assert!(script.contains("cache: \"no-store\""));
+        assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
+        assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/actions"));
         assert!(script.contains("beforeinstallprompt"));
     }
@@ -770,6 +800,62 @@ mod tests {
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
         );
+    }
+
+    #[test]
+    fn cockpit_api_refreshes_live_task_status_before_rendering() {
+        let mut context = reviewable_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        let mut runner = LiveRefreshRunner;
+
+        let response = handle_http_request_with_runner_and_paths(
+            "GET",
+            "/api/cockpit",
+            "",
+            &mut context,
+            &mut runner,
+            None,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(body["cards"][0]["live_summary"], "agent running");
+    }
+
+    #[test]
+    fn cockpit_api_reloads_task_state_from_disk_before_rendering() {
+        let root = std::env::temp_dir().join(format!("ajax-web-reload-{}", std::process::id()));
+        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let saved_context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&saved_context.registry)
+            .unwrap();
+        let mut server_context =
+            CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = LiveRefreshRunner;
+
+        let response = handle_http_request_with_runner_and_paths(
+            "GET",
+            "/api/cockpit",
+            "",
+            &mut server_context,
+            &mut runner,
+            Some(&paths),
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(body["cards"][0]["live_summary"], "agent running");
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -868,6 +954,42 @@ mod tests {
             Ok(CommandOutput {
                 status_code: 0,
                 stdout: "diff stat".to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    struct LiveRefreshRunner;
+
+    impl CommandRunner for LiveRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
+                [_, repo, subcommand, action, flag]
+                    if repo == "/repo/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /repo/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/repo/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
+                [command, ..] if command == "list-windows" => {
+                    "ajax-web-fix-login\tworktrunk\t/repo/web__worktrees/ajax-fix-login\n"
+                }
+                [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => "",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
                 stderr: String::new(),
             })
         }
