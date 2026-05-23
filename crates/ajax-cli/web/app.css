@@ -21,6 +21,9 @@ html,
 body {
   margin: 0;
   background: var(--bg);
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body {
@@ -161,8 +164,9 @@ main {
 
 .card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -363,16 +367,43 @@ body.is-refreshing .refresh-glyph {
   color: var(--muted);
 }
 
-/* Narrow screens --------------------------------------------------------- */
-@media (max-width: 380px) {
-  h1 {
-    font-size: 1rem;
+/* Adaptive ---------------------------------------------------------------- */
+@media (max-width: 420px) {
+  main {
+    padding-left: calc(8px + env(safe-area-inset-left));
+    padding-right: calc(8px + env(safe-area-inset-right));
   }
-  .status-line {
+  .card {
+    padding: 10px;
+    border-radius: 9px;
+  }
+  .handle {
+    font-size: 0.88rem;
+  }
+  .summary {
     font-size: 0.78rem;
+  }
+  .badge {
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+  .card-head .action.primary {
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 0.74rem;
   }
   .ghost:not(.icon) {
     padding: 6px 10px;
-    font-size: 0.78rem;
+    font-size: 0.76rem;
+  }
+}
+
+/* Very narrow phones: drop the inline primary action to its own row so the
+   handle has the whole width. */
+@media (max-width: 340px) {
+  .card-head .action.primary {
+    order: 99;
+    flex: 1 1 100%;
+    margin-top: 2px;
   }
 }
