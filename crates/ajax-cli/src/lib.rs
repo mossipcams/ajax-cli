@@ -33,18 +33,23 @@ use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
     handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
 };
+#[cfg(feature = "interactive")]
+use cockpit_backend::stream_live_cockpit_command;
 #[cfg(test)]
 #[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
+use context::{
+    context_paths_from_matches, default_context_paths, load_context, load_context_with_events,
+    save_context,
+};
 #[cfg(test)]
 use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 #[cfg(test)]
 use snapshot_dispatch::parent_directory_available;
 use snapshot_dispatch::render_matches_with_paths;
-use std::ffi::OsStr;
+use std::{ffi::OsStr, io::Write};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {
@@ -132,6 +137,44 @@ pub fn run_with_args(
     Ok(rendered.output)
 }
 
+pub fn run_with_args_to_writer(
+    args: impl IntoIterator<Item = impl Into<std::ffi::OsString> + Clone>,
+    writer: &mut impl Write,
+) -> Result<(), CliError> {
+    let matches = match parse_args(args)? {
+        ParsedArgs::Matches(matches) => matches,
+        ParsedArgs::Message(message) => return write_command_output(writer, &message),
+    };
+
+    let paths = default_context_paths()?;
+    let mut context = load_context_for_matches(&paths, &matches)?;
+    let mut runner = ProcessCommandRunner;
+
+    if let Some(result) =
+        stream_command_to_writer(&matches, &mut context, &mut runner, writer, |context| {
+            save_context(&paths, context)
+        })
+    {
+        result?;
+        return Ok(());
+    }
+
+    let rendered =
+        match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                if error.state_changed() {
+                    save_context(&paths, &context)?;
+                }
+                return Err(error);
+            }
+        };
+    if rendered.state_changed {
+        save_context(&paths, &context)?;
+    }
+    write_command_output(writer, &rendered.output)
+}
+
 pub fn run_with_context(
     args: impl IntoIterator<Item = impl Into<std::ffi::OsString> + Clone>,
     context: &CommandContext<InMemoryRegistry>,
@@ -155,6 +198,31 @@ pub fn run_with_context_and_runner(
     };
 
     render_matches_mut(&matches, context, runner).map(|rendered| rendered.output)
+}
+
+pub fn run_with_context_and_runner_to_writer(
+    args: impl IntoIterator<Item = impl Into<std::ffi::OsString> + Clone>,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    writer: &mut impl Write,
+) -> Result<bool, CliError> {
+    let matches = match parse_args(args)? {
+        ParsedArgs::Matches(matches) => matches,
+        ParsedArgs::Message(message) => {
+            write_command_output(writer, &message)?;
+            return Ok(false);
+        }
+    };
+
+    if let Some(result) =
+        stream_command_to_writer(&matches, context, runner, writer, |_context| Ok(()))
+    {
+        return result;
+    }
+
+    let rendered = render_matches_mut(&matches, context, runner)?;
+    write_command_output(writer, &rendered.output)?;
+    Ok(rendered.state_changed)
 }
 
 pub fn run_with_context_paths(
@@ -218,6 +286,59 @@ fn load_context_for_matches(
     }
 }
 
+#[cfg(feature = "interactive")]
+fn stream_command_to_writer<R, W, P>(
+    matches: &ArgMatches,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    writer: &mut W,
+    persist: P,
+) -> Option<Result<bool, CliError>>
+where
+    R: CommandRunner,
+    W: Write,
+    P: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CliError>,
+{
+    if matches
+        .subcommand()
+        .is_some_and(|(name, subcommand)| name == "cockpit" && subcommand.get_flag("watch"))
+    {
+        return Some(stream_live_cockpit_command(
+            context,
+            matches.subcommand().unwrap().1,
+            runner,
+            writer,
+            persist,
+        ));
+    }
+
+    None
+}
+
+#[cfg(not(feature = "interactive"))]
+fn stream_command_to_writer<R, W, P>(
+    _matches: &ArgMatches,
+    _context: &mut CommandContext<InMemoryRegistry>,
+    _runner: &mut R,
+    _writer: &mut W,
+    _persist: P,
+) -> Option<Result<bool, CliError>>
+where
+    R: CommandRunner,
+    W: Write,
+    P: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CliError>,
+{
+    None
+}
+
+fn write_command_output(writer: &mut impl Write, output: &str) -> Result<(), CliError> {
+    match writeln!(writer, "{output}") {
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(CliError::CommandFailed(error.to_string())),
+        Ok(()) => Ok(()),
+    }
+}
+
 pub(crate) fn new_task_request(matches: &ArgMatches) -> Result<commands::NewTaskRequest, CliError> {
     let repo = matches
         .get_one::<String>("repo")
@@ -267,7 +388,8 @@ pub(crate) fn command_error(error: CommandError) -> CliError {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_cli, run_with_context, run_with_context_and_runner, run_with_context_paths,
+        build_cli, run_with_context, run_with_context_and_runner,
+        run_with_context_and_runner_to_writer, run_with_context_paths,
         run_with_context_paths_and_runner, CliContextPaths, CliError,
     };
     use ajax_core::{
@@ -617,6 +739,24 @@ mod tests {
             self.outputs
                 .pop_front()
                 .ok_or_else(|| CommandRunError::SpawnFailed("missing queued output".to_string()))
+        }
+    }
+
+    #[derive(Default)]
+    struct FlushingWriter {
+        output: String,
+        flushes: u32,
+    }
+
+    impl std::io::Write for FlushingWriter {
+        fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+            self.output.push_str(&String::from_utf8_lossy(buffer));
+            Ok(buffer.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            Ok(())
         }
     }
 
@@ -1138,6 +1278,142 @@ mod tests {
     }
 
     #[test]
+    fn cockpit_json_refreshes_live_status_even_when_projection_is_fresh() {
+        let mut context = sample_context();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.remove_side_flag(SideFlag::NeedsInput);
+            task.runtime_projection = RuntimeProjection::new(
+                RuntimeHealth::Healthy,
+                SystemTime::now(),
+                RuntimeObservationSource::TmuxProbe,
+            );
+        }
+        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+
+        let output =
+            run_with_context_and_runner(["ajax", "cockpit", "--json"], &mut context, &mut runner)
+                .unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(
+            parsed["tasks"]["tasks"][0]["live_status"]["summary"],
+            "agent running"
+        );
+    }
+
+    #[test]
+    fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
+        let second_refresh = tmux_live_outputs("codex is working\n");
+        let mut runner = QueuedRunner::new(vec![
+            first_refresh[0].clone(),
+            first_refresh[1].clone(),
+            first_refresh[2].clone(),
+            output(0, ""),
+            second_refresh[0].clone(),
+            second_refresh[1].clone(),
+            second_refresh[2].clone(),
+        ]);
+
+        let output = run_with_context_and_runner(
+            [
+                "ajax",
+                "cockpit",
+                "--json",
+                "--watch",
+                "--iterations",
+                "2",
+                "--interval-ms",
+                "0",
+            ],
+            &mut context,
+            &mut runner,
+        )
+        .unwrap();
+        let frames: Vec<_> = output.split("\n\n").collect();
+
+        assert_eq!(frames.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(frames[0]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(frames[1]).unwrap();
+        assert_eq!(
+            first["tasks"]["tasks"][0]["live_status"]["summary"],
+            "waiting for approval"
+        );
+        assert_eq!(
+            second["tasks"]["tasks"][0]["live_status"]["summary"],
+            "agent running"
+        );
+        assert!(runner.commands.len() >= 5);
+    }
+
+    #[test]
+    fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
+        let mut context = sample_context();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
+        let second_refresh = tmux_live_outputs("codex is working\n");
+        let mut runner = QueuedRunner::new(vec![
+            first_refresh[0].clone(),
+            first_refresh[1].clone(),
+            first_refresh[2].clone(),
+            output(0, ""),
+            second_refresh[0].clone(),
+            second_refresh[1].clone(),
+            second_refresh[2].clone(),
+        ]);
+        let mut writer = FlushingWriter::default();
+
+        let state_changed = run_with_context_and_runner_to_writer(
+            [
+                "ajax",
+                "cockpit",
+                "--json",
+                "--watch",
+                "--iterations",
+                "2",
+                "--interval-ms",
+                "0",
+            ],
+            &mut context,
+            &mut runner,
+            &mut writer,
+        )
+        .unwrap();
+
+        assert!(state_changed);
+        assert_eq!(writer.flushes, 2);
+        let frames: Vec<_> = writer.output.trim_end().split("\n\n").collect();
+        assert_eq!(frames.len(), 2);
+        let first: serde_json::Value = serde_json::from_str(frames[0]).unwrap();
+        let second: serde_json::Value = serde_json::from_str(frames[1]).unwrap();
+        assert_eq!(
+            first["tasks"]["tasks"][0]["live_status"]["summary"],
+            "waiting for approval"
+        );
+        assert_eq!(
+            second["tasks"]["tasks"][0]["live_status"]["summary"],
+            "agent running"
+        );
+    }
+
+    #[test]
     fn cockpit_watch_renders_refreshed_live_status_in_frame() {
         let mut context = sample_context();
         let task = context
@@ -1207,6 +1483,44 @@ mod tests {
     }
 
     #[test]
+    fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
+        for command in [
+            vec!["ajax", "tasks", "--json"],
+            vec!["ajax", "status", "--json"],
+            vec!["ajax", "cockpit", "--json"],
+        ] {
+            let mut context = sample_context();
+            {
+                let task = context
+                    .registry
+                    .get_task_mut(&TaskId::new("task-1"))
+                    .unwrap();
+                task.lifecycle_status = LifecycleStatus::Active;
+                task.remove_side_flag(SideFlag::NeedsInput);
+                task.runtime_projection = RuntimeProjection::new(
+                    RuntimeHealth::Healthy,
+                    SystemTime::now(),
+                    RuntimeObservationSource::TmuxProbe,
+                );
+            }
+
+            let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+            let output = run_with_context_and_runner(command.clone(), &mut context, &mut runner)
+                .unwrap_or_else(|error| panic!("{command:?} failed: {error}"));
+            let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+            let task_json = if command[1] == "cockpit" {
+                &parsed["tasks"]["tasks"]
+            } else {
+                &parsed["tasks"]
+            };
+
+            assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
+            assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
+            assert_eq!(runner.commands, tmux_live_commands(), "{command:?}");
+        }
+    }
+
+    #[test]
     fn read_commands_share_live_refresh_contract() {
         for args in [
             vec!["ajax", "repos", "--json"],
@@ -1269,8 +1583,7 @@ mod tests {
         let mut runner = QueuedRunner::default();
 
         let output =
-            run_with_context_and_runner(["ajax", "tasks", "--json"], &mut context, &mut runner)
-                .unwrap();
+            run_with_context_and_runner(["ajax", "tasks"], &mut context, &mut runner).unwrap();
 
         assert!(output.contains("web/fix-login"));
         assert!(runner.commands.is_empty());
