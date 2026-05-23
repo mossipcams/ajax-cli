@@ -1,8 +1,9 @@
 # Ajax Architecture
 
-Ajax is a native operator cockpit for isolated AI coding tasks. Cockpit is the
-primary operator surface. The CLI, JSON contract, and Rust core provide the
-deterministic backend used by Cockpit, scripts, and tests.
+Ajax is an operator cockpit for isolated AI coding tasks. Native Cockpit is the
+primary terminal surface, and mobile web Cockpit is a browser companion over the
+same backend contracts. The CLI, JSON contract, Rust core, TUI, and PWA adapter
+provide deterministic operator surfaces used by Cockpit, scripts, and tests.
 
 The codebase is a modular monolith organized around vertical slices.
 
@@ -22,6 +23,13 @@ JSON rendering, and process execution wiring.
 ### `ajax-tui`
 
 Owns the native Cockpit interface over `ajax-core` JSON-backed responses.
+
+### `ajax-web`
+
+Owns the mobile browser Cockpit adapter: HTTP routing, PWA assets, browser API
+DTOs, local HTTPS identity, Web Push, and any web companion server runtime. It is
+a presentation adapter over `ajax-core` Cockpit projections and task-operation
+contracts, not a second task domain.
 
 ### `ajax-supervisor`
 
@@ -123,9 +131,10 @@ Git diff, tmux attach, or process cleanup.
 Slices may depend on core domain models, lifecycle rules, policy, output
 contracts, registry traits, and command-spec ports. Mechanisms remain outside
 slices: filesystem, terminal, JSON, subprocess, Git, tmux, networking, SQLite,
-and process supervision stay in `adapters`, `registry/sqlite`, or
-`ajax-supervisor`. CLI and Cockpit code are composition and presentation layers;
-they call public slice facades and do not reach into private slice modules.
+and process supervision stay in `adapters`, `registry/sqlite`, `ajax-web`, or
+`ajax-supervisor`, depending on the external boundary. CLI, TUI, and PWA code
+are composition and presentation layers; they call public slice facades and do
+not reach into private slice modules.
 
 Architecture tests use `rust_arkitect` to enforce slice direction as the
 codebase migrates. Migrations happen one operator capability at a time, keeping
@@ -186,6 +195,12 @@ refresh algorithm.
 `live_application.rs` applies reduced observations to task state, agent status,
 side flags, activity timestamps, and visible live status.
 
+Core remains browser-agnostic. It may expose Cockpit projections, action policy,
+task-operation outcomes, runtime reconciliation, and typed output contracts that
+the PWA consumes, but it must not own HTTP routes, static web assets, service
+workers, TLS identity files, Web Push subscriptions, browser storage, or web
+server lifecycle.
+
 ## Command Architecture
 
 Command planning and command execution are separate.
@@ -212,6 +227,9 @@ The public CLI vocabulary is operator-facing: `start`, `resume`, `repair`,
 `review`, `ship`, `drop`, `tidy`, and `ready`. Some internal command modules
 still carry substrate-oriented names where they wrap the underlying git, tmux,
 or test-command operation.
+
+Runtime profile names such as `stable` and `dev` are runtime selections, not
+task-operation commands or separate operator domains.
 
 ## Adapter Architecture
 
@@ -243,13 +261,20 @@ or test-command operation.
 
 - `lib.rs` owns the Clap command tree, parsing, dispatch, and public test
   helpers.
-- `context` owns config/state path resolution and load/save behavior.
+- `context` owns runtime profile path resolution and load/save behavior.
+  Stable runtime resolution preserves the historical config/state/log/cache
+  defaults and legacy sibling task worktrees. Dev and custom-home runtimes use
+  isolated config, SQLite state, logs, cache, and rooted task worktrees.
 - `render` owns human, JSON, execution-output, and command-plan rendering.
 - `snapshot_dispatch` owns read-only command routing.
 - `execution_dispatch` owns mutable command routing.
 - `cockpit_backend` owns Cockpit snapshots, watch mode, and TUI backend glue.
   It calls core runtime refresh and explicit cockpit projection rebuilds rather
   than owning substrate refresh logic.
+- A thin web companion launcher may start or stop the mobile web companion
+  process from a resolved CLI context. Process launching is orchestration only;
+  the launcher passes explicit runtime context to `ajax-web` and must not
+  reinterpret task state or duplicate web server internals.
 - `agent_status_cache` owns filesystem reads for hook-backed agent status caches
   such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
@@ -257,11 +282,161 @@ or test-command operation.
   filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux
   bindings, and resumes Cockpit when the task attach client detaches.
 
+Startup behavior should stay inside normal CLI parsing and dispatch. Bare
+invocations may choose a default operator surface, and flags may select runtime
+profiles, but `main.rs` should not rewrite argv into hidden commands. Public CLI
+vocabulary remains operator-facing.
+
+## Mobile Web Companion Architecture
+
+`ajax-web` is the mobile browser Cockpit adapter. It is a vertical presentation
+adapter over the same Cockpit projection and task-operation contracts used by
+native Cockpit. It may shape responses for browser ergonomics, but it must not
+own task lifecycle rules, registry truth, runtime reconciliation, Git/tmux
+interpretation, or action policy.
+
+The PWA is a thin mobile cockpit for the native Ajax CLI. It is not an
+offline-first Ajax client and must not introduce a second browser-side task
+model. Git, tmux, SQLite, and the Ajax companion server remain authoritative for
+task state and operations.
+
+PWA files live under `crates/ajax-web/web`. The install slice owns serving the
+HTML shell, client JavaScript, stylesheet, web manifest, service worker, and app
+icons from that directory. `ajax-web::runtime` owns HTTP request routing, generic
+connection response handling, local TLS setup, Web Push endpoints, attention
+polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
+it resolves stable/dev context paths, reloads and saves the authoritative SQLite
+state, and delegates native command execution for browser-submitted actions.
+
+The manifest should stay small and install-focused: app name, short name,
+description, `start_url`, `scope`, standalone display, portrait orientation,
+theme/background colors, and app icons including a maskable icon. Icon files are
+static app-shell assets and belong beside the PWA shell.
+
+The service worker may cache only static app-shell assets: `/`, `/app.css`,
+`/app.js`, `/manifest.webmanifest`, `/sw.js`, and app icons. It must never cache
+live Ajax endpoints, including `/api/cockpit`, `/api/actions`, `/api/push/*`, or
+any future `/api/*` endpoint. Static shell requests may use network-first
+behavior with cache fallback so installed browsers pick up updates promptly
+while still showing the shell when the companion is temporarily unreachable.
+
+Service worker cache names must include an explicit Ajax Cockpit cache version.
+Changing the shell asset list or shell behavior requires bumping that version.
+Activation should delete old Ajax Cockpit caches and claim clients so installed
+PWAs converge on the new shell without keeping stale static assets indefinitely.
+
+Browser storage is intentionally limited. The PWA may use the service worker
+Cache API for static app-shell assets and browser-managed Web Push
+subscriptions. It must not use IndexedDB, background sync, local task queues, or
+offline mutations. It must not add Yew, Trunk, WASM, or a large frontend
+architecture unless the project explicitly adopts those elsewhere.
+
+Stable and dev runtime profiles remain separated by the native companion
+process and explicit runtime context. Stable uses the stable state database and
+default web port, while dev uses the development state database and dev web
+port. The PWA must not merge profile state in browser storage.
+
+Web Push remains opt-in and server-authoritative. The browser may register a
+subscription with `/api/push/subscribe`; VAPID identity, subscription
+persistence, attention polling, notification delivery, and pruning dead
+subscriptions belong to the companion boundary, not to core task logic or a
+browser-side scheduler.
+
+PWA validation should check manifest shape, icon availability, service worker
+registration, app-shell cache contents, `/api/*` cache bypass, cache versioning
+and cleanup behavior, local-only shell assets, stable/dev port separation, and
+clear browser error states for failed live requests or unsupported actions.
+
+`ajax-web` is organized around vertical browser/operator capabilities inside
+the crate:
+
+- `ajax-web::slices::*` owns browser/operator capabilities.
+- `ajax-web::adapters::*` owns mechanisms such as HTTP routing, TLS, Web Push,
+  static asset embedding, filesystem persistence, network clients, and browser
+  serialization formats.
+- `ajax-web::runtime` composes slices and adapters into a running web
+  companion.
+
+Slices may call adapter facades, but slices are named after capabilities rather
+than mechanisms. New browser features should start as a vertical slice when they
+represent an operator or browser capability; add an adapter only when the
+feature needs a concrete external mechanism.
+
+### `ajax-web::slices::cockpit`
+
+Owns the browser Cockpit read experience. It builds mobile browser DTOs from the
+core Cockpit projection, supports snapshot or stream delivery, and preserves the
+same task/action meaning as native Cockpit.
+
+### `ajax-web::slices::operate`
+
+Owns browser-submitted operator actions. It accepts mobile action requests,
+checks browser capability limits, delegates valid work to the existing core task
+operations, and returns the refreshed Cockpit projection. Unsupported
+capabilities, such as terminal attach, are reported as adapter capability
+errors rather than duplicated lifecycle policy.
+
+### `ajax-web::slices::install`
+
+Owns the installable PWA shell. It serves the HTML shell, client JavaScript,
+stylesheet, manifest, service worker, icons, and cache metadata needed for the
+browser app to install and refresh predictably.
+
+### `ajax-web::slices::attention`
+
+Owns mobile attention delivery. It compares Cockpit attention projections over
+time, detects newly attention-worthy tasks, and asks the push adapter to notify
+subscribed browsers.
+
+### `ajax-web::runtime`
+
+Owns web companion runtime wiring and is not itself a slice. It sets up the HTTP
+listener, request routing, connection handling, local HTTPS identity, graceful
+shutdown, and process-level startup when the companion runs separately by
+composing `ajax-web::slices::*` with `ajax-web::adapters::*`. If `ajax-cli`
+starts the companion, the CLI launcher passes resolved runtime context to
+`ajax-web` explicitly.
+
+The PWA consumes the same Cockpit view model as the native TUI. Browser-specific
+DTOs may be narrower or differently named, but they are projections of core
+output contracts, not separate task models. Any mobile-only restriction belongs
+at the adapter capability boundary; core remains responsible for deciding which
+task actions are valid for a task.
+
+The web companion may use HTTP, TLS, filesystem storage for certificates and
+subscriptions, network calls to push services, and static asset embedding inside
+`ajax-web`. Those mechanisms must not move into `ajax-core` or `ajax-tui`.
+
 ## Cockpit Architecture
 
 Cockpit is the primary operator surface over the JSON-backed command boundary.
 
 `ajax-tui` owns native terminal interaction and rendering.
+
+`ajax-web` owns mobile browser interaction and rendering. Native Cockpit and web
+Cockpit are sibling presentation adapters over shared core projections and
+actions; neither surface owns task truth. `ajax-tui` must not know about HTTP,
+TLS, Web Push, service workers, browser manifests, or static web assets.
+
+The companion serves HTTPS so that browsers grant it a secure context: the
+prerequisite for installing the PWA, running its service worker, and receiving
+Web Push. On first run it generates a self-signed certificate and persists it
+beside the state database; the operator trusts it once on the phone.
+
+Web Push is opt-in. The companion holds a persisted VAPID identity, serves its
+public key at `/api/push/config`, and stores browser subscriptions posted to
+`/api/push/subscribe`. A background attention poller rebuilds the Cockpit view
+on an interval, diffs the attention inbox, and sends a VAPID-signed encrypted
+notification for each task that newly needs attention; subscriptions the push
+service reports as gone are pruned.
+
+Native Cockpit starts the companion as an `ajax-cli web` process by default and
+keeps it alive for the Cockpit session. `ajax-cli` starts the companion on port
+`8787` with the stable state database, while `ajax-cli dev` starts it on port
+`8788` with the development state database. `--no-web` disables the companion.
+The companion is started with explicit `AJAX_PROFILE`, `AJAX_CONFIG`,
+`AJAX_STATE`, and rooted worktree values from the selected Ajax context so
+stable and dev browser sessions stay on their own runtime profile.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,

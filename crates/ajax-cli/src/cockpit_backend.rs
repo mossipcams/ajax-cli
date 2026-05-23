@@ -6,7 +6,13 @@ use ajax_core::{
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
-use std::{io::Write, time::Duration};
+use std::{
+    io::{ErrorKind, Write},
+    net::TcpListener,
+    path::Path,
+    process::{Child, Command, Stdio},
+    time::Duration,
+};
 
 use crate::{
     agent_status_cache::TmuxAgentStatusCache,
@@ -16,7 +22,7 @@ use crate::{
     },
     render::render_response,
     task_session::PtyTaskSessionRunner,
-    CliError, RenderedCommand,
+    CliContextPaths, CliError, RenderedCommand,
 };
 
 pub(crate) fn render_cockpit_command(
@@ -57,7 +63,14 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     subcommand: &ArgMatches,
     runner: &mut R,
+    mobile_web_port: u16,
+    paths: Option<&CliContextPaths>,
 ) -> Result<RenderedCommand, CliError> {
+    let _mobile_web_companion = if subcommand.get_flag("no-web") {
+        None
+    } else {
+        start_mobile_web_companion(mobile_web_port, paths)?
+    };
     let mut state_changed = false;
     let mut cockpit_flash = None;
     state_changed |= refresh_live_context(context, runner)?;
@@ -97,6 +110,145 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
         ) {
             continue;
         }
+    }
+}
+
+const MOBILE_WEB_HOST: &str = "0.0.0.0";
+const STABLE_MOBILE_WEB_PORT: u16 = 8787;
+const DEV_MOBILE_WEB_PORT: u16 = 8788;
+
+pub(crate) fn mobile_web_port_for_command(command: &str) -> u16 {
+    match command {
+        "dev" => DEV_MOBILE_WEB_PORT,
+        "stable" | "cockpit" => STABLE_MOBILE_WEB_PORT,
+        _ => STABLE_MOBILE_WEB_PORT,
+    }
+}
+
+struct MobileWebCompanion {
+    child: Child,
+}
+
+impl Drop for MobileWebCompanion {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn start_mobile_web_companion(
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Result<Option<MobileWebCompanion>, CliError> {
+    match TcpListener::bind((MOBILE_WEB_HOST, port)) {
+        Ok(listener) => drop(listener),
+        Err(error) if error.kind() == ErrorKind::AddrInUse => return Ok(None),
+        Err(error) => {
+            return Err(CliError::CommandFailed(format!(
+                "Ajax mobile web companion unavailable: {error}"
+            )));
+        }
+    }
+
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(error) => {
+            return Err(CliError::CommandFailed(format!(
+                "Ajax mobile web companion unavailable: {error}"
+            )));
+        }
+    };
+    let mut command = mobile_web_companion_command(&executable, port, paths);
+
+    command
+        .spawn()
+        .map(|child| Some(MobileWebCompanion { child }))
+        .map_err(|error| {
+            CliError::CommandFailed(format!("Ajax mobile web companion unavailable: {error}"))
+        })
+}
+
+fn mobile_web_companion_command(
+    executable: &Path,
+    port: u16,
+    paths: Option<&CliContextPaths>,
+) -> Command {
+    let mut command = Command::new(executable);
+    let port = port.to_string();
+    command
+        .args(["web", "--host", MOBILE_WEB_HOST, "--port", port.as_str()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
+    if let Some(paths) = paths {
+        command.env_remove("AJAX_HOME");
+        command.env_remove("AJAX_WORKTREE_ROOT");
+        command.env("AJAX_PROFILE", &paths.runtime_paths.profile);
+        command.env("AJAX_CONFIG", &paths.config_file);
+        command.env("AJAX_STATE", &paths.state_file);
+        if let ajax_core::config::WorktreePlacement::Root(root) =
+            &paths.runtime_paths.worktree_placement
+        {
+            command.env("AJAX_WORKTREE_ROOT", root);
+        }
+    } else {
+        preserve_ajax_context_env(&mut command, "AJAX_CONFIG");
+        preserve_ajax_context_env(&mut command, "AJAX_STATE");
+    }
+
+    command
+}
+
+fn preserve_ajax_context_env(command: &mut Command, name: &str) {
+    if let Some(value) = std::env::var_os(name) {
+        command.env(name, value);
+    }
+}
+
+#[cfg(test)]
+mod mobile_web_companion_tests {
+    use super::{mobile_web_companion_command, mobile_web_port_for_command};
+    use crate::CliContextPaths;
+    use ajax_core::config::RuntimePathRequest;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn dev_mobile_web_companion_uses_dev_port() {
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
+    fn mobile_web_companion_preserves_full_dev_runtime_context() {
+        let paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new("/Users/matt")
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+        let command = mobile_web_companion_command(
+            std::path::Path::new("/tmp/ajax-cli"),
+            mobile_web_port_for_command("dev"),
+            Some(&paths),
+        );
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let envs = command.get_envs().collect::<Vec<_>>();
+
+        assert_eq!(args, ["web", "--host", "0.0.0.0", "--port", "8788"]);
+        assert!(envs.contains(&(
+            OsStr::new("AJAX_PROFILE"),
+            Some(OsStr::new(paths.runtime_paths.profile.as_str()))
+        )));
+        assert!(envs.contains(&(
+            OsStr::new("AJAX_CONFIG"),
+            Some(paths.config_file.as_os_str())
+        )));
+        assert!(envs.contains(&(OsStr::new("AJAX_STATE"), Some(paths.state_file.as_os_str()))));
+        assert!(envs.iter().any(|(name, value)| {
+            *name == OsStr::new("AJAX_WORKTREE_ROOT")
+                && value.is_some_and(|value| value == "/Users/matt/.ajax-dev/worktrees")
+        }));
     }
 }
 
@@ -290,7 +442,7 @@ fn write_stream_frame(writer: &mut impl Write, frame: &str) -> Result<bool, CliE
 
 #[cfg(test)]
 mod tests {
-    use super::{build_cockpit_snapshot, refresh_cockpit_snapshot};
+    use super::{build_cockpit_snapshot, mobile_web_port_for_command, refresh_cockpit_snapshot};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -442,6 +594,59 @@ mod tests {
         let wrapper = ["fn ", "render_cockpit_frames"].concat();
 
         assert!(!source.contains(&wrapper));
+    }
+
+    #[test]
+    fn interactive_cockpit_auto_starts_mobile_web_companion() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let interactive = source
+            .split("pub(crate) fn render_interactive_cockpit_command")
+            .nth(1)
+            .and_then(|source| {
+                source
+                    .split("pub(crate) fn render_live_cockpit_command")
+                    .next()
+            })
+            .unwrap();
+
+        assert!(interactive.contains("start_mobile_web_companion"));
+        assert!(interactive.contains("no-web"));
+    }
+
+    #[test]
+    fn mobile_web_ports_are_separate_for_stable_and_dev() {
+        assert_eq!(mobile_web_port_for_command("stable"), 8787);
+        assert_eq!(mobile_web_port_for_command("cockpit"), 8787);
+        assert_eq!(mobile_web_port_for_command("dev"), 8788);
+    }
+
+    #[test]
+    fn mobile_web_companion_uses_child_process_and_guard() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("struct MobileWebCompanion"));
+        assert!(source.contains("impl Drop for MobileWebCompanion"));
+        assert!(source.contains("std::env::current_exe"));
+        assert!(source.contains("\"web\", \"--host\", MOBILE_WEB_HOST, \"--port\""));
+        assert!(source.contains("port.to_string"));
+    }
+
+    #[test]
+    fn mobile_web_companion_preserves_parent_ajax_context_environment() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_backend.rs"),
+        )
+        .unwrap();
+        let production_source = source.split("#[cfg(test)]").next().unwrap();
+
+        assert!(production_source.contains("AJAX_CONFIG"));
+        assert!(production_source.contains("AJAX_STATE"));
     }
 
     #[derive(Default)]

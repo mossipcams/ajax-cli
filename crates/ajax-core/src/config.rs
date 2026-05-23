@@ -3,6 +3,209 @@ use std::{error::Error, fmt, path::PathBuf};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorktreePlacement {
+    LegacySibling,
+    Root(PathBuf),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimePaths {
+    pub profile: String,
+    pub config_file: PathBuf,
+    pub state_db: PathBuf,
+    pub logs_dir: PathBuf,
+    pub cache_dir: PathBuf,
+    pub worktree_placement: WorktreePlacement,
+    pub overrides: Vec<RuntimePathOverride>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimePathOverride {
+    pub field: RuntimePathField,
+    pub source: RuntimePathSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimePathField {
+    ConfigFile,
+    StateDb,
+    WorktreeRoot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimePathSource {
+    Cli,
+    Env,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RuntimePathRequest {
+    home: PathBuf,
+    cli_profile: Option<String>,
+    env_profile: Option<String>,
+    cli_home: Option<PathBuf>,
+    env_home: Option<PathBuf>,
+    cli_config: Option<PathBuf>,
+    env_config: Option<PathBuf>,
+    cli_state: Option<PathBuf>,
+    env_state: Option<PathBuf>,
+    cli_worktree_root: Option<PathBuf>,
+    env_worktree_root: Option<PathBuf>,
+}
+
+impl RuntimePathRequest {
+    pub fn new(home: impl Into<PathBuf>) -> Self {
+        Self {
+            home: home.into(),
+            cli_profile: None,
+            env_profile: None,
+            cli_home: None,
+            env_home: None,
+            cli_config: None,
+            env_config: None,
+            cli_state: None,
+            env_state: None,
+            cli_worktree_root: None,
+            env_worktree_root: None,
+        }
+    }
+
+    pub fn with_cli_profile(mut self, profile: impl Into<String>) -> Self {
+        self.cli_profile = Some(profile.into());
+        self
+    }
+
+    pub fn with_env_profile(mut self, profile: impl Into<String>) -> Self {
+        self.env_profile = Some(profile.into());
+        self
+    }
+
+    pub fn with_cli_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.cli_home = Some(home.into());
+        self
+    }
+
+    pub fn with_env_home(mut self, home: impl Into<PathBuf>) -> Self {
+        self.env_home = Some(home.into());
+        self
+    }
+
+    pub fn with_cli_config(mut self, config: impl Into<PathBuf>) -> Self {
+        self.cli_config = Some(config.into());
+        self
+    }
+
+    pub fn with_env_config(mut self, config: impl Into<PathBuf>) -> Self {
+        self.env_config = Some(config.into());
+        self
+    }
+
+    pub fn with_cli_state(mut self, state: impl Into<PathBuf>) -> Self {
+        self.cli_state = Some(state.into());
+        self
+    }
+
+    pub fn with_env_state(mut self, state: impl Into<PathBuf>) -> Self {
+        self.env_state = Some(state.into());
+        self
+    }
+
+    pub fn with_cli_worktree_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.cli_worktree_root = Some(root.into());
+        self
+    }
+
+    pub fn with_env_worktree_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.env_worktree_root = Some(root.into());
+        self
+    }
+
+    pub fn resolve(self) -> RuntimePaths {
+        let profile = self
+            .cli_profile
+            .or(self.env_profile)
+            .unwrap_or_else(|| "stable".to_string());
+        let runtime_home = self.cli_home.or(self.env_home);
+        let mut paths = match runtime_home {
+            Some(home) => self_contained_runtime_paths(profile, home),
+            None if profile == "dev" => {
+                self_contained_runtime_paths(profile, self.home.join(".ajax-dev"))
+            }
+            None => stable_runtime_paths(self.home, profile),
+        };
+
+        if let Some(config_file) = self.cli_config {
+            paths.config_file = config_file;
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::ConfigFile,
+                source: RuntimePathSource::Cli,
+            });
+        } else if let Some(config_file) = self.env_config {
+            paths.config_file = config_file;
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::ConfigFile,
+                source: RuntimePathSource::Env,
+            });
+        }
+
+        if let Some(state_db) = self.cli_state {
+            paths.state_db = state_db;
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::StateDb,
+                source: RuntimePathSource::Cli,
+            });
+        } else if let Some(state_db) = self.env_state {
+            paths.state_db = state_db;
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::StateDb,
+                source: RuntimePathSource::Env,
+            });
+        }
+
+        if let Some(root) = self.cli_worktree_root {
+            paths.worktree_placement = WorktreePlacement::Root(root);
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::WorktreeRoot,
+                source: RuntimePathSource::Cli,
+            });
+        } else if let Some(root) = self.env_worktree_root {
+            paths.worktree_placement = WorktreePlacement::Root(root);
+            paths.overrides.push(RuntimePathOverride {
+                field: RuntimePathField::WorktreeRoot,
+                source: RuntimePathSource::Env,
+            });
+        }
+
+        paths
+    }
+}
+
+fn stable_runtime_paths(home: PathBuf, profile: String) -> RuntimePaths {
+    let defaults = ConfigPaths::for_home(home);
+    RuntimePaths {
+        profile,
+        config_file: defaults.config_file,
+        state_db: defaults.state_db,
+        logs_dir: defaults.logs_dir,
+        cache_dir: defaults.cache_dir,
+        worktree_placement: WorktreePlacement::LegacySibling,
+        overrides: Vec::new(),
+    }
+}
+
+fn self_contained_runtime_paths(profile: String, home: PathBuf) -> RuntimePaths {
+    RuntimePaths {
+        profile,
+        config_file: home.join("config.toml"),
+        state_db: home.join("ajax.db"),
+        logs_dir: home.join("logs"),
+        cache_dir: home.join("cache"),
+        worktree_placement: WorktreePlacement::Root(home.join("worktrees")),
+        overrides: Vec::new(),
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigPaths {
     pub config_file: PathBuf,
     pub state_db: PathBuf,
@@ -94,7 +297,10 @@ impl TestCommand {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConfigParseError, ConfigPaths, ManagedRepo, TestCommand};
+    use super::{
+        Config, ConfigParseError, ConfigPaths, ManagedRepo, RuntimePathField, RuntimePathRequest,
+        RuntimePathSource, TestCommand, WorktreePlacement,
+    };
     use proptest::prelude::*;
     use std::path::Path;
 
@@ -120,6 +326,141 @@ mod tests {
         assert!(!paths.state_db.starts_with(source_repo));
         assert!(!paths.logs_dir.starts_with(source_repo));
         assert!(!paths.cache_dir.starts_with(source_repo));
+    }
+
+    #[test]
+    fn runtime_paths_default_to_stable_profile_and_existing_paths() {
+        let paths = RuntimePathRequest::new("/Users/matt").resolve();
+
+        assert_eq!(paths.profile, "stable");
+        assert_eq!(
+            paths.config_file,
+            Path::new("/Users/matt/.config/ajax/config.toml")
+        );
+        assert_eq!(
+            paths.state_db,
+            Path::new("/Users/matt/.local/state/ajax/ajax.db")
+        );
+        assert_eq!(
+            paths.logs_dir,
+            Path::new("/Users/matt/.local/state/ajax/logs")
+        );
+        assert_eq!(paths.cache_dir, Path::new("/Users/matt/.cache/ajax"));
+        assert_eq!(paths.worktree_placement, WorktreePlacement::LegacySibling);
+        assert!(paths.overrides.is_empty());
+    }
+
+    #[test]
+    fn runtime_paths_dev_profile_uses_isolated_home_layout() {
+        let paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .resolve();
+
+        assert_eq!(paths.profile, "dev");
+        assert_eq!(
+            paths.config_file,
+            Path::new("/Users/matt/.ajax-dev/config.toml")
+        );
+        assert_eq!(paths.state_db, Path::new("/Users/matt/.ajax-dev/ajax.db"));
+        assert_eq!(paths.logs_dir, Path::new("/Users/matt/.ajax-dev/logs"));
+        assert_eq!(paths.cache_dir, Path::new("/Users/matt/.ajax-dev/cache"));
+        assert_eq!(
+            paths.worktree_placement,
+            WorktreePlacement::Root(Path::new("/Users/matt/.ajax-dev/worktrees").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn runtime_paths_env_dev_profile_uses_isolated_paths() {
+        let paths = RuntimePathRequest::new("/Users/matt")
+            .with_env_profile("dev")
+            .resolve();
+
+        assert_eq!(paths.profile, "dev");
+        assert_eq!(paths.state_db, Path::new("/Users/matt/.ajax-dev/ajax.db"));
+    }
+
+    #[test]
+    fn runtime_paths_custom_home_derives_self_contained_layout() {
+        let paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_home("/tmp/ajax-dev")
+            .resolve();
+
+        assert_eq!(paths.profile, "stable");
+        assert_eq!(paths.config_file, Path::new("/tmp/ajax-dev/config.toml"));
+        assert_eq!(paths.state_db, Path::new("/tmp/ajax-dev/ajax.db"));
+        assert_eq!(paths.logs_dir, Path::new("/tmp/ajax-dev/logs"));
+        assert_eq!(paths.cache_dir, Path::new("/tmp/ajax-dev/cache"));
+        assert_eq!(
+            paths.worktree_placement,
+            WorktreePlacement::Root(Path::new("/tmp/ajax-dev/worktrees").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn runtime_paths_env_home_derives_self_contained_layout() {
+        let paths = RuntimePathRequest::new("/Users/matt")
+            .with_env_home("/tmp/ajax-env")
+            .resolve();
+
+        assert_eq!(paths.config_file, Path::new("/tmp/ajax-env/config.toml"));
+        assert_eq!(paths.state_db, Path::new("/tmp/ajax-env/ajax.db"));
+        assert_eq!(
+            paths.worktree_placement,
+            WorktreePlacement::Root(Path::new("/tmp/ajax-env/worktrees").to_path_buf())
+        );
+    }
+
+    #[test]
+    fn runtime_path_direct_overrides_win_and_report_source() {
+        let paths = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .with_env_config("/tmp/env-config.toml")
+            .with_cli_state("/tmp/cli-state.db")
+            .with_env_worktree_root("/tmp/env-worktrees")
+            .resolve();
+
+        assert_eq!(paths.profile, "dev");
+        assert_eq!(paths.config_file, Path::new("/tmp/env-config.toml"));
+        assert_eq!(paths.state_db, Path::new("/tmp/cli-state.db"));
+        assert_eq!(
+            paths.worktree_placement,
+            WorktreePlacement::Root(Path::new("/tmp/env-worktrees").to_path_buf())
+        );
+        assert!(paths
+            .overrides
+            .iter()
+            .any(
+                |override_info| override_info.field == RuntimePathField::ConfigFile
+                    && override_info.source == RuntimePathSource::Env
+            ));
+        assert!(paths
+            .overrides
+            .iter()
+            .any(
+                |override_info| override_info.field == RuntimePathField::StateDb
+                    && override_info.source == RuntimePathSource::Cli
+            ));
+        assert!(paths
+            .overrides
+            .iter()
+            .any(
+                |override_info| override_info.field == RuntimePathField::WorktreeRoot
+                    && override_info.source == RuntimePathSource::Env
+            ));
+    }
+
+    #[test]
+    fn runtime_paths_stable_and_dev_do_not_collide() {
+        let stable = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("stable")
+            .resolve();
+        let dev = RuntimePathRequest::new("/Users/matt")
+            .with_cli_profile("dev")
+            .resolve();
+
+        assert_ne!(stable.state_db, dev.state_db);
+        assert_ne!(stable.worktree_placement, dev.worktree_placement);
     }
 
     #[test]

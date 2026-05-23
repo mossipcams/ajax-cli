@@ -4,6 +4,7 @@ members = [
     "crates/ajax-core",
     "crates/ajax-supervisor",
     "crates/ajax-tui",
+    "crates/ajax-web",
 ]
 resolver = "2"
 
@@ -18,19 +19,23 @@ repository = "https://github.com/mossipcams/ajax-cli"
 ajax-core = { version = "0.1.0", path = "crates/ajax-core" }
 ajax-supervisor = { version = "0.1.0", path = "crates/ajax-supervisor" }
 ajax-tui = { version = "0.1.0", path = "crates/ajax-tui" }
+ajax-web = { version = "0.1.0", path = "crates/ajax-web" }
 clap = "4.5"
 crossterm = "0.29"
 notify = "8"
 nix = { version = "0.29", features = ["fs", "poll", "process", "signal", "term"] }
 proptest = "1.11.0"
 ratatui = { version = "0.30", default-features = false }
+rcgen = { version = "0.13", default-features = false, features = ["pem", "ring"] }
 rstest = "0.26.1"
 rust_arkitect = "0.3.7"
 rusqlite = "0.39"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = "1"
 toml = "0.9"
+web-push = { version = "0.11", default-features = false, features = ["hyper-client"] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

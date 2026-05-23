@@ -156,4 +156,40 @@ mod tests {
         assert!(commands.contains("crate::slices::review::review_queue(context)"));
         assert!(diff_module.contains("crate::slices::review::review_task_plan"));
     }
+
+    #[test]
+    fn core_remains_browser_agnostic() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let sources = [
+            "src/adapters.rs",
+            "src/analysis.rs",
+            "src/commands.rs",
+            "src/config.rs",
+            "src/lib.rs",
+            "src/models.rs",
+            "src/output.rs",
+            "src/runtime.rs",
+            "src/runtime_refresh.rs",
+            "src/task_operations.rs",
+            "src/use_cases.rs",
+        ]
+        .into_iter()
+        .map(|relative| std::fs::read_to_string(manifest_dir.join(relative)).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+        for forbidden in [
+            ["service", " worker"].concat(),
+            ["web", " push"].concat(),
+            ["rust", "ls"].concat(),
+            ["http", " route"].concat(),
+            ["manifest", ".webmanifest"].concat(),
+            ["ajax-web", "::runtime"].concat(),
+        ] {
+            assert!(
+                !sources.contains(&forbidden),
+                "ajax-core must not own browser/PWA mechanism: {forbidden}"
+            );
+        }
+    }
 }
