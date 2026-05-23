@@ -92,6 +92,9 @@ mod tests {
             "id=\"inbox\"",
             "id=\"repos\"",
             "id=\"empty-state\"",
+            "id=\"new-task-button\"",
+            "id=\"new-task-sheet\"",
+            "id=\"task-detail\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
@@ -115,6 +118,34 @@ mod tests {
     }
 
     #[test]
+    fn pwa_stylesheet_uses_mid_century_modern_palette_and_no_monospace_body() {
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+        let lowered = css.to_ascii_lowercase();
+
+        // Eames/Braun palette tokens — these aren't enforced as exact-value
+        // checks; they confirm the cream/walnut/mustard/teal/terracotta family
+        // is present in the stylesheet rather than the prior dark terminal
+        // hex set.
+        for hex in ["#f2ebdc", "#2a2522", "#c9a24a", "#2e5e5a", "#b7553a"] {
+            assert!(
+                lowered.contains(hex),
+                "css missing MCM palette token: {hex}"
+            );
+        }
+
+        // Body text must read as a geometric/grotesk sans, not the prior
+        // mono-only stack.
+        assert!(
+            !lowered.contains("jetbrains mono"),
+            "body should no longer rely on JetBrains Mono"
+        );
+        assert!(
+            !lowered.contains("berkeley mono"),
+            "body should no longer rely on Berkeley Mono"
+        );
+    }
+
+    #[test]
     fn pwa_shell_is_local_only_and_service_worker_caches_only_static_shell() {
         let shell = pwa_shell();
         assert!(!shell.contains("fonts.googleapis.com"));
@@ -123,9 +154,13 @@ mod tests {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
         assert!(script.contains("Action failed"));
         assert!(script.contains("network error"));
+        assert!(
+            script.contains("/api/tasks"),
+            "missing POST start endpoint usage"
+        );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v12"));
+        assert!(worker.contains("ajax-cockpit-v13"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",

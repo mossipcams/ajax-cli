@@ -14,6 +14,7 @@ use ajax_web::runtime::Request;
 use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
+    slices::operate::{start_task, StartTaskRequest},
     WebError,
 };
 #[cfg(test)]
@@ -164,6 +165,48 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
                 })
             }
         }
+    }
+
+    fn execute_start_task(
+        &mut self,
+        request: StartTaskRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<bool, ActionFailure> {
+        match start_task(context, runner, request) {
+            Ok(outcome) => {
+                if outcome.state_changed {
+                    if let Some(paths) = self.paths {
+                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                    }
+                }
+                Ok(outcome.state_changed)
+            }
+            Err(error) => {
+                let state_changed = matches!(
+                    error,
+                    ajax_web::slices::operate::OperateError::Command(_, true)
+                );
+                if state_changed {
+                    if let Some(paths) = self.paths {
+                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                    }
+                }
+                Err(ActionFailure {
+                    message: format_start_error(&error),
+                    state_changed,
+                })
+            }
+        }
+    }
+}
+
+fn format_start_error(error: &ajax_web::slices::operate::OperateError) -> String {
+    use ajax_web::slices::operate::OperateError;
+    match error {
+        OperateError::UnknownAction(action) => format!("unknown action: {action}"),
+        OperateError::UnsupportedCapability(message) => (*message).to_string(),
+        OperateError::Command(error, _) => command_error(error.clone()).to_string(),
     }
 }
 
@@ -420,7 +463,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v12"));
+        assert!(sw_text.contains("ajax-cockpit-v13"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));

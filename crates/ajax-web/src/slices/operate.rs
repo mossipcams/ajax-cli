@@ -2,11 +2,14 @@
 
 use ajax_core::{
     adapters::CommandRunner,
-    commands::{CommandContext, CommandError, OpenMode},
+    commands::{CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::OperatorAction,
     registry::Registry,
-    task_operations::task_command::{
-        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
+    task_operations::{
+        start::{execute_start_task_operation, plan_start_task_operation},
+        task_command::{
+            execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
+        },
     },
 };
 
@@ -14,6 +17,13 @@ use ajax_core::{
 pub struct OperateRequest {
     pub task_handle: String,
     pub action: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct StartTaskRequest {
+    pub repo: String,
+    pub title: String,
+    pub agent: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -52,6 +62,40 @@ pub fn operate<R: Registry>(
     .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
 
     Ok(OperateOutcome { state_changed })
+}
+
+pub fn start_task<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    request: StartTaskRequest,
+) -> Result<OperateOutcome, OperateError> {
+    if request.title.trim().is_empty() {
+        return Err(OperateError::UnsupportedCapability(
+            "start requires a non-empty task title",
+        ));
+    }
+
+    let core_request = NewTaskRequest {
+        repo: request.repo,
+        title: request.title,
+        agent: request.agent,
+    };
+    let (_intent, plan) = plan_start_task_operation(context, core_request.clone())
+        .map_err(|error| OperateError::Command(error, false))?;
+    let confirmed = !plan.requires_confirmation;
+    execute_start_task_operation(
+        context,
+        runner,
+        &core_request,
+        &plan,
+        confirmed,
+        OpenMode::NoAttach,
+    )
+    .map_err(|error| OperateError::Command(error, true))?;
+
+    Ok(OperateOutcome {
+        state_changed: true,
+    })
 }
 
 fn task_command_kind(action: OperatorAction) -> Result<TaskCommandKind, OperateError> {
@@ -147,6 +191,91 @@ mod tests {
             OperateError::UnsupportedCapability("repair requires native cockpit terminal attach")
         );
         assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn start_task_creates_a_new_task_in_the_registry() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let outcome = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.state_changed);
+        let tasks = context.registry.list_tasks();
+        assert!(
+            tasks
+                .iter()
+                .any(|task| task.qualified_handle() == "web/fix-login"),
+            "expected new task in registry, got {:?}",
+            tasks
+                .iter()
+                .map(|t| t.qualified_handle())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn start_task_rejects_empty_title() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "   ".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            OperateError::UnsupportedCapability("start requires a non-empty task title")
+        );
+        assert!(runner.commands().is_empty());
+        assert!(context.registry.list_tasks().is_empty());
+    }
+
+    #[test]
+    fn start_task_surfaces_unknown_repo_as_command_error() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "missing".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, OperateError::Command(_, false)),
+            "{error:?}"
+        );
+        assert!(runner.commands().is_empty());
+    }
+
+    fn context_with_managed_repo() -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        CommandContext::new(config, InMemoryRegistry::default())
     }
 
     #[test]

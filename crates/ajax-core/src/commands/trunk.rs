@@ -71,6 +71,10 @@ pub fn trunk_task_plan_with_open_mode<R: Registry>(
             &task.worktree_path.display().to_string(),
         ));
     }
+    if matches!(mode, OpenMode::NoAttach) {
+        return Ok(plan);
+    }
+
     plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
     match mode {
@@ -80,6 +84,7 @@ pub fn trunk_task_plan_with_open_mode<R: Registry>(
         OpenMode::SwitchClient => plan
             .commands
             .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+        OpenMode::NoAttach => unreachable!("handled above"),
     };
 
     Ok(plan)

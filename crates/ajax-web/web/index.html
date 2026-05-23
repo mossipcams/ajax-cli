@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ajax Cockpit</title>
-  <meta name="theme-color" content="#0a0d12">
+  <meta name="theme-color" content="#F2EBDC">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Ajax">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
@@ -20,12 +20,13 @@
 
   <header>
     <div class="bar">
-      <h1>AJAX</h1>
+      <h1>Ajax</h1>
       <p id="status-line" class="status-line" aria-live="polite">— loading</p>
-      <span class="live-dot" aria-hidden="true">●</span>
+      <span class="live-dot" aria-hidden="true"></span>
       <div class="header-actions">
-        <button id="notify-button" type="button" class="ghost" hidden>Alerts</button>
-        <button id="refresh-button" type="button" class="ghost icon" aria-label="Refresh">
+        <button id="new-task-button" type="button" class="pill is-primary" aria-label="New task">+ New</button>
+        <button id="notify-button" type="button" class="pill" hidden>Alerts</button>
+        <button id="refresh-button" type="button" class="pill icon" aria-label="Refresh">
           <span class="refresh-glyph" aria-hidden="true">↻</span>
         </button>
       </div>
@@ -35,8 +36,30 @@
   <main>
     <section id="inbox" class="group" aria-live="polite"></section>
     <section id="repos" class="group" aria-live="polite"></section>
-    <p id="empty-state" class="empty" hidden>all quiet</p>
+    <p id="empty-state" class="empty" hidden>All quiet</p>
+
+    <section id="task-detail" aria-live="polite"></section>
   </main>
+
+  <div id="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title">
+    <form id="new-task-form" class="sheet-card" autocomplete="off">
+      <h2 id="new-task-title">New task</h2>
+      <label for="new-task-repo">Repository</label>
+      <select id="new-task-repo" name="repo" required></select>
+      <label for="new-task-title-input">Title</label>
+      <input id="new-task-title-input" name="title" type="text" required maxlength="80" placeholder="Short title">
+      <label for="new-task-agent">Agent</label>
+      <select id="new-task-agent" name="agent">
+        <option value="codex">Codex</option>
+        <option value="claude">Claude</option>
+      </select>
+      <p id="new-task-error" class="sheet-error" hidden></p>
+      <div class="sheet-actions">
+        <button type="button" class="pill" data-sheet-cancel>Cancel</button>
+        <button type="submit" class="pill is-primary">Start</button>
+      </div>
+    </form>
+  </div>
 
   <script src="/app.js" defer></script>
 </body>

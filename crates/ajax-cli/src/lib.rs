@@ -895,6 +895,7 @@ mod tests {
                 .with_mode(CommandMode::InheritStdio),
             OpenMode::SwitchClient => CommandSpec::new("tmux", ["switch-client", "-t", session])
                 .with_mode(CommandMode::InheritStdio),
+            OpenMode::NoAttach => unreachable!("CLI tests never run in NoAttach mode"),
         }
     }
 
@@ -3254,6 +3255,7 @@ mod tests {
             OpenMode::SwitchClient => {
                 assert!(output.contains("tmux switch-client -t ajax-web-fix-login"));
             }
+            OpenMode::NoAttach => unreachable!("CLI tests never run in NoAttach mode"),
         }
     }
 
