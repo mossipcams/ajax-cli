@@ -295,6 +295,58 @@ native Cockpit. It may shape responses for browser ergonomics, but it must not
 own task lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, or action policy.
 
+The PWA is a thin mobile cockpit for the native Ajax CLI. It is not an
+offline-first Ajax client and must not introduce a second browser-side task
+model. Git, tmux, SQLite, and the Ajax companion server remain authoritative for
+task state and operations.
+
+PWA files live under `crates/ajax-web/web`. The install slice owns serving the
+HTML shell, client JavaScript, stylesheet, web manifest, service worker, and app
+icons from that directory. `ajax-web::runtime` owns HTTP request routing, generic
+connection response handling, local TLS setup, Web Push endpoints, attention
+polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
+it resolves stable/dev context paths, reloads and saves the authoritative SQLite
+state, and delegates native command execution for browser-submitted actions.
+
+The manifest should stay small and install-focused: app name, short name,
+description, `start_url`, `scope`, standalone display, portrait orientation,
+theme/background colors, and app icons including a maskable icon. Icon files are
+static app-shell assets and belong beside the PWA shell.
+
+The service worker may cache only static app-shell assets: `/`, `/app.css`,
+`/app.js`, `/manifest.webmanifest`, `/sw.js`, and app icons. It must never cache
+live Ajax endpoints, including `/api/cockpit`, `/api/actions`, `/api/push/*`, or
+any future `/api/*` endpoint. Static shell requests may use network-first
+behavior with cache fallback so installed browsers pick up updates promptly
+while still showing the shell when the companion is temporarily unreachable.
+
+Service worker cache names must include an explicit Ajax Cockpit cache version.
+Changing the shell asset list or shell behavior requires bumping that version.
+Activation should delete old Ajax Cockpit caches and claim clients so installed
+PWAs converge on the new shell without keeping stale static assets indefinitely.
+
+Browser storage is intentionally limited. The PWA may use the service worker
+Cache API for static app-shell assets and browser-managed Web Push
+subscriptions. It must not use IndexedDB, background sync, local task queues, or
+offline mutations. It must not add Yew, Trunk, WASM, or a large frontend
+architecture unless the project explicitly adopts those elsewhere.
+
+Stable and dev runtime profiles remain separated by the native companion
+process and explicit runtime context. Stable uses the stable state database and
+default web port, while dev uses the development state database and dev web
+port. The PWA must not merge profile state in browser storage.
+
+Web Push remains opt-in and server-authoritative. The browser may register a
+subscription with `/api/push/subscribe`; VAPID identity, subscription
+persistence, attention polling, notification delivery, and pruning dead
+subscriptions belong to the companion boundary, not to core task logic or a
+browser-side scheduler.
+
+PWA validation should check manifest shape, icon availability, service worker
+registration, app-shell cache contents, `/api/*` cache bypass, cache versioning
+and cleanup behavior, local-only shell assets, stable/dev port separation, and
+clear browser error states for failed live requests or unsupported actions.
+
 `ajax-web` is organized around vertical browser/operator capabilities inside
 the crate:
 

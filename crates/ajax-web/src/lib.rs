@@ -4,6 +4,25 @@ pub mod adapters;
 pub mod runtime;
 pub mod slices;
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WebError {
+    CommandFailed(String),
+    JsonSerialization(String),
+}
+
+impl std::fmt::Display for WebError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CommandFailed(message) => write!(formatter, "{message}"),
+            Self::JsonSerialization(message) => {
+                write!(formatter, "json serialization failed: {message}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WebError {}
+
 #[cfg(test)]
 mod tests {
     #[test]

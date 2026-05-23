@@ -16,10 +16,6 @@ mod supervise;
 mod task_session;
 #[path = "web_backend.rs"]
 mod web_companion_backend;
-#[path = "web_push.rs"]
-mod web_companion_push;
-#[path = "web_tls.rs"]
-mod web_companion_tls;
 
 #[cfg(test)]
 use ajax_core::task_operations::task_command::TaskCommandKind;
@@ -368,9 +364,7 @@ mod tests {
         )
         .unwrap();
 
-        // `tokio` is a base dependency of the always-compiled mobile web
-        // companion, so it is intentionally not optional.
-        for dependency in ["ajax-supervisor", "ajax-tui", "nix"] {
+        for dependency in ["ajax-supervisor", "ajax-tui", "nix", "tokio"] {
             let line = manifest
                 .lines()
                 .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
@@ -382,7 +376,11 @@ mod tests {
         }
 
         assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
-        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\"]"));
+        assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+        assert!(
+            manifest.contains("ajax-web = { workspace = true }"),
+            "ajax-web is the always-compiled PWA boundary used by the web companion"
+        );
     }
 
     #[test]
@@ -394,20 +392,28 @@ mod tests {
         let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
 
         assert!(
-            manifest.contains("ajax-web = { workspace = true, optional = true }"),
+            manifest.contains("ajax-web = { workspace = true }"),
             "ajax-cli should integrate the PWA through the ajax-web crate boundary"
         );
         assert!(
-            manifest.contains("web-companion = [\"dep:ajax-web\"]"),
-            "ajax-web should stay behind an explicit CLI feature"
+            !manifest_dir.join("web").exists(),
+            "PWA assets belong in crates/ajax-web/web, not crates/ajax-cli/web"
         );
 
         for forbidden in [
             ["mod ", "web_backend"].concat(),
             ["mod ", "web_push"].concat(),
             ["mod ", "web_tls"].concat(),
+            ["web_companion", "_push"].concat(),
+            ["web_companion", "_tls"].concat(),
         ] {
             assert!(!lib_source.contains(&forbidden), "{forbidden}");
+        }
+        for forbidden_dependency in ["rcgen", "rustls", "web-push"] {
+            assert!(
+                !manifest.contains(&format!("{forbidden_dependency} =")),
+                "{forbidden_dependency} belongs to ajax-web, not ajax-cli"
+            );
         }
         for forbidden_command in [
             ["Command::new(\"", "stable", "\")"].concat(),

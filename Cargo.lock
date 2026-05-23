@@ -77,12 +77,9 @@ dependencies = [
  "ajax-web",
  "clap",
  "nix",
- "rcgen",
- "rustls",
  "serde",
  "serde_json",
  "tokio",
- "web-push",
 ]
 
 [[package]]
@@ -124,8 +121,12 @@ name = "ajax-web"
 version = "0.1.0"
 dependencies = [
  "ajax-core",
+ "rcgen",
+ "rustls",
  "serde",
  "serde_json",
+ "tokio",
+ "web-push",
 ]
 
 [[package]]

@@ -1,14 +1,43 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="manifest" href="/manifest.webmanifest">
-    <link rel="stylesheet" href="/app.css">
-    <title>Ajax Mobile Cockpit</title>
-  </head>
-  <body>
-    <main id="app"></main>
-    <script src="/app.js" defer></script>
-  </body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Ajax Cockpit</title>
+  <meta name="theme-color" content="#0a0d12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ajax">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="offline-banner" class="banner" role="status" hidden>
+    Offline — last known state
+  </div>
+
+  <header>
+    <div class="bar">
+      <h1>AJAX</h1>
+      <p id="status-line" class="status-line" aria-live="polite">— loading</p>
+      <span class="live-dot" aria-hidden="true">●</span>
+      <div class="header-actions">
+        <button id="notify-button" type="button" class="ghost" hidden>Alerts</button>
+        <button id="refresh-button" type="button" class="ghost icon" aria-label="Refresh">
+          <span class="refresh-glyph" aria-hidden="true">↻</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="inbox" class="group" aria-live="polite"></section>
+    <section id="repos" class="group" aria-live="polite"></section>
+    <p id="empty-state" class="empty" hidden>all quiet</p>
+  </main>
+
+  <script src="/app.js" defer></script>
+</body>
 </html>
