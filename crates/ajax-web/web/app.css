@@ -1,18 +1,25 @@
-/* Ajax Cockpit — mid-century-modern (Eames / Braun) ------------------------ */
+/* Ajax Cockpit — mid-century-modern (Eames / Braun), dark walnut variant ----
+   Inverted from the light cream version: walnut wood as the surface, cream
+   ink, the warm mustard/teal/terracotta accents stay the same and pop more
+   against dark wood. Same restrained type and hairline geometry. */
 :root {
-  color-scheme: light;
-  --paper: #F2EBDC;
-  --paper-tint: #E8DFC8;
-  --ink: #2A2522;
-  --ink-soft: #4A413B;
-  --ink-muted: #6E6A60;
-  --rule: #D8CFB6;
-  --rule-strong: #A89E84;
+  color-scheme: dark;
+  --paper: #1F1A17;
+  --paper-tint: #2A2522;
+  --paper-raised: #322B26;
+  --ink: #F2EBDC;
+  --ink-soft: #D8CFB6;
+  --ink-muted: #8C8579;
+  --rule: #3F3631;
+  --rule-strong: #5A4E45;
   --mustard: #C9A24A;
+  --mustard-bright: #D7B05A;
   --mustard-deep: #A07F2E;
   --teal: #2E5E5A;
+  --teal-bright: #3F8A82;
   --teal-deep: #1F4744;
   --terracotta: #B7553A;
+  --terracotta-bright: #C26648;
   --terracotta-deep: #8B3F2A;
   --sans: ui-sans-serif, "Avenir Next", "Helvetica Neue", "Inter", system-ui,
     -apple-system, sans-serif;
@@ -62,7 +69,7 @@ select {
   font-weight: 600;
   text-transform: uppercase;
   text-align: center;
-  color: var(--paper);
+  color: var(--ink);
   background: var(--terracotta);
 }
 
@@ -156,25 +163,25 @@ body.is-offline .live-dot {
 .pill.is-primary {
   background: var(--teal);
   border-color: var(--teal);
-  color: var(--paper);
+  color: var(--ink);
 }
 
 .pill.is-primary:hover,
 .pill.is-primary:focus-visible {
-  background: var(--teal-deep);
-  border-color: var(--teal-deep);
+  background: var(--teal-bright);
+  border-color: var(--teal-bright);
 }
 
 .pill.is-danger {
   background: var(--terracotta);
   border-color: var(--terracotta);
-  color: var(--paper);
+  color: var(--ink);
 }
 
 .pill.is-danger:hover,
 .pill.is-danger:focus-visible {
-  background: var(--terracotta-deep);
-  border-color: var(--terracotta-deep);
+  background: var(--terracotta-bright);
+  border-color: var(--terracotta-bright);
 }
 
 .pill.icon {
@@ -195,7 +202,7 @@ body.is-offline .live-dot {
 .pill.is-confirming {
   background: var(--terracotta);
   border-color: var(--terracotta);
-  color: var(--paper);
+  color: var(--ink);
   animation: pulse 700ms steps(2, jump-none) infinite;
 }
 
@@ -233,7 +240,7 @@ main {
 }
 
 .section-title.attention {
-  color: var(--mustard-deep);
+  color: var(--mustard-bright);
   border-bottom-color: var(--mustard);
 }
 
@@ -361,7 +368,7 @@ main {
   background: var(--teal);
   border: 1px solid var(--teal);
   border-radius: 2px;
-  color: var(--paper);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -372,8 +379,8 @@ main {
 
 .card-head .action.primary:hover,
 .card-head .action.primary:focus-visible {
-  background: var(--teal-deep);
-  border-color: var(--teal-deep);
+  background: var(--teal-bright);
+  border-color: var(--teal-bright);
 }
 
 /* Secondary actions revealed when card is expanded ----------------------- */
@@ -411,15 +418,15 @@ main {
 }
 
 .action[data-destructive="true"] {
-  color: var(--terracotta-deep);
+  color: var(--terracotta-bright);
   border-color: var(--terracotta);
 }
 
 .action[data-destructive="true"]:hover,
 .action[data-destructive="true"]:focus-visible {
   background: var(--terracotta);
-  border-color: var(--terracotta);
-  color: var(--paper);
+  border-color: var(--terracotta-bright);
+  color: var(--ink);
 }
 
 .action:disabled {
@@ -435,7 +442,7 @@ main {
 .action.confirming {
   background: var(--terracotta);
   border-color: var(--terracotta);
-  color: var(--paper);
+  color: var(--ink);
   animation: pulse 700ms steps(2, jump-none) infinite;
 }
 
@@ -618,7 +625,7 @@ body.view-detail #empty-state {
   position: fixed;
   inset: 0;
   z-index: 50;
-  background: rgba(42, 37, 34, 0.45);
+  background: rgba(0, 0, 0, 0.6);
   padding: 24px;
   align-items: center;
   justify-content: center;
@@ -629,7 +636,7 @@ body.sheet-open #new-task-sheet {
 }
 
 .sheet-card {
-  background: var(--paper);
+  background: var(--paper-raised);
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
   padding: 24px;
@@ -662,6 +669,7 @@ body.sheet-open #new-task-sheet {
   padding: 8px 10px;
   font-size: 15px;
   background: var(--paper);
+  color: var(--ink);
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
 }
@@ -681,7 +689,7 @@ body.sheet-open #new-task-sheet {
 
 .sheet-error {
   margin: 10px 0 0;
-  color: var(--terracotta-deep);
+  color: var(--terracotta-bright);
   font-size: 12px;
 }
 
