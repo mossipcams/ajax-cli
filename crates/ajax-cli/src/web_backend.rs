@@ -274,20 +274,42 @@ fn handle_action_request(
         );
     }
 
-    let state_changed = execute_mobile_action(action, &request.task_handle, context, runner)?;
-    if state_changed {
-        if let Some(paths) = paths {
-            save_context(paths, context)?;
+    match execute_mobile_action(action, &request.task_handle, context, runner) {
+        Ok(state_changed) => {
+            if state_changed {
+                if let Some(paths) = paths {
+                    save_context(paths, context)?;
+                }
+            }
+            json_response(
+                200,
+                serde_json::json!({
+                    "ok": true,
+                    "state_changed": state_changed,
+                    "cockpit": mobile_cockpit_view(context),
+                }),
+            )
+        }
+        Err(error) => {
+            // The action failed (blocked, requires confirmation, or the
+            // underlying command exited non-zero). Send a JSON error so the
+            // mobile UI can surface the message instead of dropping the
+            // connection and showing "network error" to the operator.
+            if matches!(error, CliError::CommandFailedAfterStateChange(_)) {
+                if let Some(paths) = paths {
+                    save_context(paths, context)?;
+                }
+            }
+            json_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("{error}"),
+                    "cockpit": mobile_cockpit_view(context),
+                }),
+            )
         }
     }
-    json_response(
-        200,
-        serde_json::json!({
-            "ok": true,
-            "state_changed": state_changed,
-            "cockpit": mobile_cockpit_view(context),
-        }),
-    )
 }
 
 pub(crate) fn serve_mobile_web(
@@ -828,6 +850,42 @@ mod tests {
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
         );
+    }
+
+    #[test]
+    fn action_endpoint_returns_json_when_underlying_command_fails() {
+        struct FailingRunner;
+        impl CommandRunner for FailingRunner {
+            fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                Ok(CommandOutput {
+                    status_code: 1,
+                    stdout: String::new(),
+                    stderr: "merge failed".to_string(),
+                })
+            }
+        }
+        let mut context = reviewable_context();
+        let mut runner = FailingRunner;
+
+        let response = handle_http_request_with_runner_and_paths(
+            "POST",
+            "/api/actions",
+            r#"{"task_handle":"web/fix-login","action":"ship"}"#,
+            &mut context,
+            &mut runner,
+            None,
+        )
+        .expect("handler should return a JSON error, not propagate the CliError");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 409);
+        assert_eq!(body["ok"], false);
+        assert!(
+            !body["error"].as_str().unwrap_or_default().is_empty(),
+            "error message should be populated, got: {:?}",
+            body["error"]
+        );
+        assert!(body["cockpit"].is_object());
     }
 
     #[test]
