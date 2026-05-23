@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v2";
+const CACHE = "ajax-cockpit-v10";
 const SHELL = [
   "/",
   "/app.css",
@@ -31,21 +31,18 @@ self.addEventListener("fetch", (event) => {
   // Live task data is never cached: always go to the network.
   if (url.pathname.startsWith("/api/")) return;
 
-  // App shell: serve from cache, refresh in the background, fall back to the
-  // cached start page when the network is unreachable.
+  // App shell: network-first so the latest deploy is always picked up on the
+  // next reload; cache only catches us when the network is unreachable.
   event.respondWith(
-    caches.match(request).then((cached) => {
-      const network = fetch(request)
-        .then((response) => {
-          if (response && response.ok) {
-            const copy = response.clone();
-            caches.open(CACHE).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached || caches.match("/"));
-      return cached || network;
-    }),
+    fetch(request)
+      .then((response) => {
+        if (response && response.ok) {
+          const copy = response.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+        }
+        return response;
+      })
+      .catch(() => caches.match(request).then((cached) => cached || caches.match("/"))),
   );
 });
 

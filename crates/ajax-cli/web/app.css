@@ -6,10 +6,13 @@
   --line: #2c3744;
   --text: #e6edf3;
   --muted: #8b97a5;
-  --accent: #2dd4bf;
-  --accent-ink: #06241f;
-  --attention: #f5a623;
-  --danger: #f87171;
+  /* Accents mirror the ratatui palette (indexed 110 / 179 / 174 / 108) so the
+     web cockpit reads as the same product as the native TUI. */
+  --accent: #87afd7;
+  --accent-ink: #0a1626;
+  --attention: #d7af5f;
+  --danger: #d78787;
+  --success: #87af87;
   --radius: 14px;
 }
 
@@ -21,6 +24,9 @@ html,
 body {
   margin: 0;
   background: var(--bg);
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 body {
@@ -46,9 +52,9 @@ header {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px
-    calc(16px + env(safe-area-inset-left));
-  background: rgba(16, 20, 26, 0.86);
+  padding: calc(6px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 6px
+    calc(12px + env(safe-area-inset-left));
+  background: rgba(16, 20, 26, 0.92);
   backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--line);
 }
@@ -56,32 +62,41 @@ header {
 .bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
+  min-height: 36px;
 }
 
 h1 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
+  font-weight: 700;
   letter-spacing: 0.01em;
+  flex: none;
+}
+
+.status-line {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-actions {
   display: flex;
-  gap: 8px;
-}
-
-.status-line {
-  margin: 8px 0 0;
-  font-size: 0.8rem;
-  color: var(--muted);
+  align-items: center;
+  gap: 6px;
+  flex: none;
 }
 
 /* Layout ----------------------------------------------------------------- */
 main {
   width: min(760px, 100%);
   margin: 0 auto;
-  padding: 14px calc(14px + env(safe-area-inset-right)) 28px calc(14px + env(safe-area-inset-left));
+  padding: 6px calc(12px + env(safe-area-inset-right)) 16px calc(12px + env(safe-area-inset-left));
 }
 
 .group {
@@ -92,126 +107,306 @@ main {
   display: none;
 }
 
-.group-title {
-  margin: 18px 4px 8px;
-  font-size: 0.74rem;
+.section-title {
+  margin: 4px 6px 8px;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--muted);
 }
 
-.group-title.attention {
+.section-title.attention {
   color: var(--attention);
+}
+
+#repos .section-title {
+  margin-top: 22px;
+}
+
+.group-title {
+  margin: 12px 6px 6px;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
 }
 
 .cards {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
 /* Cards ------------------------------------------------------------------ */
 .card {
   position: relative;
-  padding: 14px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: 10px;
   background: var(--surface);
-  border-left: 3px solid var(--line);
+  transition: border-color 160ms ease;
+}
+
+.card.has-details {
+  cursor: pointer;
 }
 
 .card.attention {
-  border-left-color: var(--attention);
+  border-color: var(--attention);
+}
+
+.card.attention[data-severity="high"] {
+  border-color: var(--danger);
+}
+
+.card.attention[data-severity="low"] {
+  border-color: var(--line);
 }
 
 .card-head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .handle {
-  font-weight: 700;
-  font-size: 0.98rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card.expanded .handle {
+  white-space: normal;
+  overflow: visible;
   overflow-wrap: anywhere;
 }
 
 .badge {
   flex: none;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 0.7rem;
+  font-size: 0.64rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   white-space: nowrap;
-  color: var(--accent);
-  background: var(--surface-2);
-}
-
-.summary {
-  margin: 8px 0 0;
-  font-size: 0.88rem;
-  line-height: 1.45;
   color: var(--muted);
 }
 
-/* Actions ---------------------------------------------------------------- */
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+.summary {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
+/* Collapsed: clamp the summary to one line and hide the secondary row. */
+.card:not(.expanded) .summary {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card:not(.expanded) .actions {
+  display: none;
+}
+
+/* Actions ---------------------------------------------------------------- */
 button {
   font: inherit;
   cursor: pointer;
 }
 
-.action {
-  min-height: 44px;
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--text);
-  font-weight: 600;
+/* Secondary action row (revealed on expand). */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.action.primary {
-  border-color: transparent;
+.action {
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.82rem;
+  transition: background 120ms ease;
+}
+
+/* Primary action lives inline in the card head as a compact pill. */
+.card-head .action.primary {
+  flex: none;
+  min-height: 30px;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 7px;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 700;
+  font-size: 0.78rem;
 }
 
 .action:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
 }
 
 .action:active {
   transform: translateY(1px);
 }
 
+.action.is-running {
+  opacity: 0.75;
+  cursor: progress;
+}
+
+.action.confirming {
+  background: var(--danger);
+  color: #1a0707;
+  border-color: transparent;
+  font-weight: 700;
+  animation: pulse-confirm 1s ease-in-out infinite;
+}
+
+@keyframes pulse-confirm {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+
+/* Card details (revealed by tapping the card body) ----------------------- */
+.card-details {
+  display: none;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 0.8rem;
+}
+
+.card.expanded .card-details {
+  display: block;
+}
+
+.detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 3px 0;
+}
+
+.detail-label {
+  flex: 0 0 78px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.detail-value {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* Offline: dim action buttons so taps don't silently fail. --------------- */
+body.is-offline .action {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* Header ghost / icon buttons -------------------------------------------- */
 .ghost {
-  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  min-width: 40px;
   padding: 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   color: var(--text);
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   font-weight: 600;
+  transition: background 120ms ease;
 }
 
 .ghost:active {
   background: var(--surface-2);
 }
 
+.ghost.icon {
+  padding: 6px;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.refresh-glyph {
+  display: inline-block;
+  font-size: 1.15rem;
+  line-height: 1;
+  transition: transform 200ms ease;
+}
+
+body.is-refreshing .refresh-glyph {
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Empty state ------------------------------------------------------------ */
 .empty {
-  margin: 48px 0;
+  margin: 56px 16px;
   text-align: center;
   color: var(--muted);
+}
+
+/* Adaptive ---------------------------------------------------------------- */
+@media (max-width: 420px) {
+  main {
+    padding-left: calc(8px + env(safe-area-inset-left));
+    padding-right: calc(8px + env(safe-area-inset-right));
+  }
+  .card {
+    padding: 10px;
+    border-radius: 9px;
+  }
+  .handle {
+    font-size: 0.88rem;
+  }
+  .summary {
+    font-size: 0.78rem;
+  }
+  .badge {
+    font-size: 0.6rem;
+    letter-spacing: 0.04em;
+  }
+  .card-head .action.primary {
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 0.74rem;
+  }
+  .ghost:not(.icon) {
+    padding: 6px 10px;
+    font-size: 0.76rem;
+  }
+}
+
+/* Very narrow phones: drop the inline primary action to its own row so the
+   handle has the whole width. */
+@media (max-width: 340px) {
+  .card-head .action.primary {
+    order: 99;
+    flex: 1 1 100%;
+    margin-top: 2px;
+  }
 }

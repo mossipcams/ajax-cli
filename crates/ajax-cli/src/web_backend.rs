@@ -533,7 +533,25 @@ fn mobile_cockpit_view(context: &CommandContext<InMemoryRegistry>) -> MobileCock
     }
 }
 
+// Resume drops the operator into a native tmux pane and Start needs an
+// interactive title prompt; both are rejected by `/api/actions`, so we never
+// surface them as buttons in the web cockpit.
+fn is_web_supported(action: OperatorAction) -> bool {
+    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
+}
+
 fn mobile_task_card(card: &TaskCard) -> MobileTaskCard {
+    let available: Vec<OperatorAction> = card
+        .available_actions
+        .iter()
+        .copied()
+        .filter(|action| is_web_supported(*action))
+        .collect();
+    let primary = if is_web_supported(card.primary_action) {
+        card.primary_action
+    } else {
+        available.first().copied().unwrap_or(card.primary_action)
+    };
     MobileTaskCard {
         id: card.id.as_str().to_string(),
         qualified_handle: card.qualified_handle.clone(),
@@ -541,9 +559,8 @@ fn mobile_task_card(card: &TaskCard) -> MobileTaskCard {
         ui_state: card.ui_state.as_str().to_string(),
         status_label: card.status_label.clone(),
         lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: card.primary_action.as_str().to_string(),
-        available_actions: card
-            .available_actions
+        primary_action: primary.as_str().to_string(),
+        available_actions: available
             .iter()
             .map(|action| action.as_str().to_string())
             .collect(),
@@ -613,7 +630,6 @@ mod tests {
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("id=\"offline-banner\""));
-        assert!(html.contains("id=\"install-button\""));
         assert!(html.contains("id=\"refresh-button\""));
     }
 
@@ -703,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn app_script_wires_cockpit_actions_and_install_prompt() {
+    fn app_script_wires_cockpit_actions() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
@@ -713,7 +729,6 @@ mod tests {
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/actions"));
-        assert!(script.contains("beforeinstallprompt"));
     }
 
     #[test]
@@ -722,7 +737,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v2"));
+        assert!(sw_text.contains("ajax-cockpit-v10"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
@@ -758,6 +773,18 @@ mod tests {
         let unsupported = handle_http_request("POST", "/", "", &context).unwrap();
         assert_eq!(unsupported.status_code, 405);
         assert!(String::from_utf8_lossy(&unsupported.body).contains("method not allowed"));
+    }
+
+    #[test]
+    fn web_supported_filter_drops_resume_and_start() {
+        use ajax_core::models::OperatorAction;
+
+        assert!(!super::is_web_supported(OperatorAction::Resume));
+        assert!(!super::is_web_supported(OperatorAction::Start));
+        assert!(super::is_web_supported(OperatorAction::Review));
+        assert!(super::is_web_supported(OperatorAction::Ship));
+        assert!(super::is_web_supported(OperatorAction::Drop));
+        assert!(super::is_web_supported(OperatorAction::Repair));
     }
 
     #[test]
