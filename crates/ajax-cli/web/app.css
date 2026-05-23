@@ -6,10 +6,13 @@
   --line: #2c3744;
   --text: #e6edf3;
   --muted: #8b97a5;
-  --accent: #2dd4bf;
-  --accent-ink: #06241f;
-  --attention: #f5a623;
-  --danger: #f87171;
+  /* Accents mirror the ratatui palette (indexed 110 / 179 / 174 / 108) so the
+     web cockpit reads as the same product as the native TUI. */
+  --accent: #87afd7;
+  --accent-ink: #0a1626;
+  --attention: #d7af5f;
+  --danger: #d78787;
+  --success: #87af87;
   --radius: 14px;
 }
 
