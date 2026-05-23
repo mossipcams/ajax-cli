@@ -39,10 +39,7 @@ use cockpit_backend::stream_live_cockpit_command;
 #[cfg(feature = "interactive")]
 use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 pub use context::CliContextPaths;
-use context::{
-    context_paths_from_matches, default_context_paths, load_context, load_context_with_events,
-    save_context,
-};
+use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
 #[cfg(test)]
 use dispatch::{render_drop_command, render_task_command};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
@@ -146,7 +143,7 @@ pub fn run_with_args_to_writer(
         ParsedArgs::Message(message) => return write_command_output(writer, &message),
     };
 
-    let paths = default_context_paths()?;
+    let paths = context_paths_from_matches(&matches)?;
     let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
 
@@ -1050,6 +1047,78 @@ mod tests {
             .list_tasks()
             .iter()
             .any(|task| task.qualified_handle() == "web/new-dev-task"));
+
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn writer_entrypoint_uses_selected_runtime_paths() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-writer-selected-db-{}",
+            std::process::id()
+        ));
+        let home = directory.join("home");
+        let stable_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("stable")
+                .resolve(),
+        );
+        let dev_paths = CliContextPaths::from_runtime_paths(
+            RuntimePathRequest::new(&home)
+                .with_cli_profile("dev")
+                .resolve(),
+        );
+        let config = r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#;
+        std::fs::create_dir_all(stable_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(stable_paths.state_file.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(dev_paths.config_file.parent().unwrap()).unwrap();
+        std::fs::write(&stable_paths.config_file, config).unwrap();
+        std::fs::write(&dev_paths.config_file, config).unwrap();
+        let mut stable_registry = registry_with_task("stable-task");
+        let fresh_runtime = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::now(),
+            RuntimeObservationSource::TmuxProbe,
+        );
+        stable_registry
+            .get_task_mut(&TaskId::new("web/stable-task"))
+            .unwrap()
+            .runtime_projection = fresh_runtime.clone();
+        let mut dev_registry = registry_with_task("dev-task");
+        dev_registry
+            .get_task_mut(&TaskId::new("web/dev-task"))
+            .unwrap()
+            .runtime_projection = fresh_runtime;
+        SqliteRegistryStore::new(&stable_paths.state_file)
+            .save(&stable_registry)
+            .unwrap();
+        SqliteRegistryStore::new(&dev_paths.state_file)
+            .save(&dev_registry)
+            .unwrap();
+
+        let mut output = Vec::new();
+        super::run_with_args_to_writer(
+            [
+                "ajax-cli",
+                "--config",
+                dev_paths.config_file.to_str().unwrap(),
+                "--state",
+                dev_paths.state_file.to_str().unwrap(),
+                "tasks",
+                "--json",
+            ],
+            &mut output,
+        )
+        .unwrap();
+        let output = String::from_utf8(output).unwrap();
+
+        assert!(output.contains("web/dev-task"), "{output}");
+        assert!(!output.contains("web/stable-task"), "{output}");
 
         std::fs::remove_dir_all(directory).unwrap();
     }
