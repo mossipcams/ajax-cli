@@ -2,6 +2,7 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
+    models::OperatorAction,
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
 };
@@ -43,6 +44,18 @@ pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> Browser
 }
 
 fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
+    let available: Vec<OperatorAction> = card
+        .available_actions
+        .iter()
+        .copied()
+        .filter(|action| is_web_supported(*action))
+        .collect();
+    let primary = if is_web_supported(card.primary_action) {
+        card.primary_action
+    } else {
+        available.first().copied().unwrap_or(card.primary_action)
+    };
+
     BrowserTaskCard {
         id: card.id.as_str().to_string(),
         qualified_handle: card.qualified_handle.clone(),
@@ -50,9 +63,8 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         ui_state: card.ui_state.as_str().to_string(),
         status_label: card.status_label.clone(),
         lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: card.primary_action.as_str().to_string(),
-        available_actions: card
-            .available_actions
+        primary_action: primary.as_str().to_string(),
+        available_actions: available
             .iter()
             .map(|action| action.as_str().to_string())
             .collect(),
@@ -60,10 +72,24 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
     }
 }
 
+// Resume drops the operator into a native tmux pane and Start needs an
+// interactive title prompt; both are rejected by web action handling, so the
+// browser Cockpit should not surface them as buttons.
+fn is_web_supported(action: OperatorAction) -> bool {
+    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::browser_cockpit_json;
-    use ajax_core::{commands::CommandContext, config::Config, registry::InMemoryRegistry};
+    use super::{browser_cockpit_json, browser_task_card};
+    use ajax_core::{
+        commands::CommandContext,
+        config::Config,
+        models::{LifecycleStatus, OperatorAction, TaskId},
+        output::TaskCard,
+        registry::InMemoryRegistry,
+        ui_state::UiState,
+    };
 
     #[test]
     fn cockpit_slice_serializes_empty_projection() {
@@ -74,5 +100,36 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn cockpit_slice_shapes_cards_for_the_mobile_pwa() {
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            ui_state: UiState::ReviewReady,
+            status_label: "review ready".to_string(),
+            lifecycle: LifecycleStatus::Reviewable,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![
+                OperatorAction::Start,
+                OperatorAction::Resume,
+                OperatorAction::Review,
+                OperatorAction::Ship,
+            ],
+            live_summary: Some("waiting for review".to_string()),
+        };
+
+        let browser = browser_task_card(&card);
+
+        assert_eq!(browser.qualified_handle, "web/fix-login");
+        assert_eq!(browser.ui_state, "review ready");
+        assert_eq!(browser.status_label, "review ready");
+        assert_eq!(browser.lifecycle, "Reviewable");
+        assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
+        assert_eq!(browser.primary_action, "review");
+        assert_eq!(browser.available_actions, ["review", "ship"]);
     }
 }

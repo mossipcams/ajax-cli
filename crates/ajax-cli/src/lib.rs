@@ -383,6 +383,10 @@ mod tests {
 
         assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
         assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\"]"));
+        assert!(
+            manifest.contains("ajax-web = { workspace = true }"),
+            "ajax-web is the always-compiled PWA boundary used by the web companion"
+        );
     }
 
     #[test]
@@ -394,12 +398,12 @@ mod tests {
         let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
 
         assert!(
-            manifest.contains("ajax-web = { workspace = true, optional = true }"),
+            manifest.contains("ajax-web = { workspace = true }"),
             "ajax-cli should integrate the PWA through the ajax-web crate boundary"
         );
         assert!(
-            manifest.contains("web-companion = [\"dep:ajax-web\"]"),
-            "ajax-web should stay behind an explicit CLI feature"
+            !manifest_dir.join("web").exists(),
+            "PWA assets belong in crates/ajax-web/web, not crates/ajax-cli/web"
         );
 
         for forbidden in [

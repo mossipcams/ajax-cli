@@ -81,7 +81,7 @@ mod tests {
         assert_eq!(shell.content_type, "text/html; charset=utf-8");
         assert!(std::str::from_utf8(&shell.body)
             .unwrap()
-            .contains("Ajax Mobile Cockpit"));
+            .contains("Ajax Cockpit"));
 
         let cockpit = route(
             Request {

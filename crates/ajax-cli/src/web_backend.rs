@@ -2,14 +2,15 @@ use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     models::OperatorAction,
-    output::{CockpitView, InboxResponse, ReposResponse, TaskCard},
+    output::CockpitView,
     registry::InMemoryRegistry,
     runtime_refresh::refresh_runtime_context,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
 };
-use serde::{Deserialize, Serialize};
+use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
+use serde::Deserialize;
 use std::{
     collections::HashSet,
     io::{Read, Write},
@@ -32,71 +33,6 @@ pub(crate) struct HttpResponse {
     pub(crate) body: Vec<u8>,
 }
 
-/// A compiled-in static web asset served from `crates/ajax-cli/web/`.
-struct StaticAsset {
-    content_type: &'static str,
-    body: &'static [u8],
-}
-
-/// Routes a request path to a compiled-in static asset, if one exists.
-fn static_asset(path: &str) -> Option<StaticAsset> {
-    match path {
-        "/app.css" => Some(StaticAsset {
-            content_type: "text/css; charset=utf-8",
-            body: include_bytes!("../web/app.css"),
-        }),
-        "/app.js" => Some(StaticAsset {
-            content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../web/app.js"),
-        }),
-        "/manifest.webmanifest" => Some(StaticAsset {
-            content_type: "application/manifest+json; charset=utf-8",
-            body: include_bytes!("../web/manifest.webmanifest"),
-        }),
-        "/sw.js" => Some(StaticAsset {
-            content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../web/sw.js"),
-        }),
-        "/icons/icon-192.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../web/icons/icon-192.png"),
-        }),
-        "/icons/icon-512.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../web/icons/icon-512.png"),
-        }),
-        "/icons/icon-maskable-512.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../web/icons/icon-maskable-512.png"),
-        }),
-        "/icons/apple-touch-icon.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../web/icons/apple-touch-icon.png"),
-        }),
-        _ => None,
-    }
-}
-
-#[derive(Serialize)]
-struct MobileCockpitView {
-    repos: ReposResponse,
-    cards: Vec<MobileTaskCard>,
-    inbox: InboxResponse,
-}
-
-#[derive(Serialize)]
-struct MobileTaskCard {
-    id: String,
-    qualified_handle: String,
-    title: String,
-    ui_state: String,
-    status_label: String,
-    lifecycle: String,
-    primary_action: String,
-    available_actions: Vec<String>,
-    live_summary: Option<String>,
-}
-
 #[derive(Deserialize)]
 struct MobileActionRequest {
     task_handle: String,
@@ -104,13 +40,13 @@ struct MobileActionRequest {
 }
 
 pub(crate) fn render_mobile_shell() -> String {
-    include_str!("../web/index.html").to_string()
+    web_install::pwa_shell().to_string()
 }
 
 pub(crate) fn cockpit_json(
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<String, serde_json::Error> {
-    serde_json::to_string(&mobile_cockpit_view(context))
+    web_cockpit::browser_cockpit_json(context)
 }
 
 pub(crate) fn handle_http_request(
@@ -134,7 +70,7 @@ pub(crate) fn handle_http_request(
             content_type: "application/json; charset=utf-8",
             body: cockpit_json(context)?.into_bytes(),
         }),
-        _ => match static_asset(path) {
+        _ => match web_install::static_asset(path) {
             Some(asset) => Ok(HttpResponse {
                 status_code: 200,
                 content_type: asset.content_type,
@@ -232,7 +168,7 @@ fn handle_refreshed_cockpit_request(
     }
     json_response(
         200,
-        serde_json::to_value(mobile_cockpit_view(context))
+        serde_json::to_value(web_cockpit::browser_cockpit_view(context))
             .map_err(|error| CliError::JsonSerialization(error.to_string()))?,
     )
 }
@@ -286,7 +222,7 @@ fn handle_action_request(
                 serde_json::json!({
                     "ok": true,
                     "state_changed": state_changed,
-                    "cockpit": mobile_cockpit_view(context),
+                    "cockpit": web_cockpit::browser_cockpit_view(context),
                 }),
             )
         }
@@ -305,7 +241,7 @@ fn handle_action_request(
                 serde_json::json!({
                     "ok": false,
                     "error": format!("{error}"),
-                    "cockpit": mobile_cockpit_view(context),
+                    "cockpit": web_cockpit::browser_cockpit_view(context),
                 }),
             )
         }
@@ -546,50 +482,6 @@ fn execute_mobile_action(
         })
 }
 
-fn mobile_cockpit_view(context: &CommandContext<InMemoryRegistry>) -> MobileCockpitView {
-    let view = commands::rebuild_cockpit_view(context);
-    MobileCockpitView {
-        repos: view.repos,
-        cards: view.cards.iter().map(mobile_task_card).collect(),
-        inbox: view.inbox,
-    }
-}
-
-// Resume drops the operator into a native tmux pane and Start needs an
-// interactive title prompt; both are rejected by `/api/actions`, so we never
-// surface them as buttons in the web cockpit.
-fn is_web_supported(action: OperatorAction) -> bool {
-    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
-}
-
-fn mobile_task_card(card: &TaskCard) -> MobileTaskCard {
-    let available: Vec<OperatorAction> = card
-        .available_actions
-        .iter()
-        .copied()
-        .filter(|action| is_web_supported(*action))
-        .collect();
-    let primary = if is_web_supported(card.primary_action) {
-        card.primary_action
-    } else {
-        available.first().copied().unwrap_or(card.primary_action)
-    };
-    MobileTaskCard {
-        id: card.id.as_str().to_string(),
-        qualified_handle: card.qualified_handle.clone(),
-        title: card.title.clone(),
-        ui_state: card.ui_state.as_str().to_string(),
-        status_label: card.status_label.clone(),
-        lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: primary.as_str().to_string(),
-        available_actions: available
-            .iter()
-            .map(|action| action.as_str().to_string())
-            .collect(),
-        live_summary: card.live_summary.clone(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -653,6 +545,19 @@ mod tests {
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("id=\"offline-banner\""));
         assert!(html.contains("id=\"refresh-button\""));
+    }
+
+    #[test]
+    fn cli_web_backend_delegates_pwa_reads_to_ajax_web() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_backend.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("ajax_web::slices::install"));
+        assert!(source.contains("ajax_web::slices::cockpit"));
+        assert!(!source.contains("include_str!(\"../web/"));
+        assert!(!source.contains("include_bytes!(\"../web/"));
     }
 
     #[test]
@@ -759,7 +664,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v11"));
+        assert!(sw_text.contains("ajax-cockpit-v12"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
@@ -798,15 +703,18 @@ mod tests {
     }
 
     #[test]
-    fn web_supported_filter_drops_resume_and_start() {
-        use ajax_core::models::OperatorAction;
+    fn web_supported_filter_lives_in_ajax_web_cockpit_slice() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let cli_source = std::fs::read_to_string(manifest_dir.join("src/web_backend.rs")).unwrap();
+        let web_source =
+            std::fs::read_to_string(manifest_dir.join("../ajax-web/src/slices/cockpit.rs"))
+                .unwrap();
 
-        assert!(!super::is_web_supported(OperatorAction::Resume));
-        assert!(!super::is_web_supported(OperatorAction::Start));
-        assert!(super::is_web_supported(OperatorAction::Review));
-        assert!(super::is_web_supported(OperatorAction::Ship));
-        assert!(super::is_web_supported(OperatorAction::Drop));
-        assert!(super::is_web_supported(OperatorAction::Repair));
+        let filter_fn = ["fn ", "is_web_supported"].concat();
+        assert!(!cli_source.contains(&filter_fn));
+        assert!(web_source.contains(&filter_fn));
+        assert!(web_source.contains("OperatorAction::Resume"));
+        assert!(web_source.contains("OperatorAction::Start"));
     }
 
     #[test]
