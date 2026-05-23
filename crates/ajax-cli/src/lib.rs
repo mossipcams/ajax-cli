@@ -2953,6 +2953,27 @@ mod tests {
     }
 
     #[test]
+    fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+        )
+        .unwrap();
+
+        let has_root_package = config["packages"].as_object().unwrap().contains_key(".");
+        let uses_cargo_workspace = config["plugins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|plugin| plugin.as_str() == Some("cargo-workspace"));
+
+        assert!(
+            !(has_root_package && uses_cargo_workspace),
+            "Release Please crashes when the cargo-workspace plugin processes the virtual workspace root package"
+        );
+    }
+
+    #[test]
     fn workspace_members_inherit_metadata_lints_and_dependencies() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
