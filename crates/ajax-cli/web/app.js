@@ -71,15 +71,22 @@ function taskCard(card, options) {
   const head = el("div", "card-head");
   head.append(el("span", "handle", card.qualified_handle));
   head.append(el("span", "badge", card.status_label || card.ui_state));
+
+  const available = card.available_actions || [];
+  const primary = card.primary_action;
+  if (primary && available.includes(primary)) {
+    head.append(actionButton(primary, card.qualified_handle, true));
+  }
   article.append(head);
 
   const summary = opts.reason || card.live_summary || card.status_label || card.title;
   if (summary) article.append(el("p", "summary", summary));
 
-  if (card.available_actions && card.available_actions.length) {
+  const secondary = available.filter((action) => action !== primary);
+  if (secondary.length) {
     const actions = el("div", "actions");
-    for (const action of card.available_actions) {
-      actions.append(actionButton(action, card.qualified_handle, action === card.primary_action));
+    for (const action of secondary) {
+      actions.append(actionButton(action, card.qualified_handle, false));
     }
     article.append(actions);
   }
@@ -130,6 +137,7 @@ function renderRepos(data) {
     byRepo.get(repo).push(card);
   }
   if (!byRepo.size) return;
+  repos.append(el("div", "section-title", "Tasks"));
   for (const repo of [...byRepo.keys()].sort()) {
     const block = el("section");
     block.append(el("div", "group-title", repo));

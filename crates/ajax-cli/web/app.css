@@ -102,24 +102,30 @@ main {
 }
 
 .section-title {
-  margin: 10px 4px 6px;
-  font-size: 0.86rem;
+  margin: 4px 6px 8px;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.01em;
-  color: var(--text);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .section-title.attention {
   color: var(--attention);
 }
 
+#repos .section-title {
+  margin-top: 22px;
+}
+
 .group-title {
-  margin: 10px 4px 6px;
-  font-size: 0.68rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
+  margin: 12px 6px 6px;
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
+  opacity: 0.75;
 }
 
 .cards {
@@ -130,11 +136,10 @@ main {
 /* Cards ------------------------------------------------------------------ */
 .card {
   position: relative;
-  padding: 8px 10px 8px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-  border-left: 3px solid var(--line);
   transition: border-color 160ms ease;
 }
 
@@ -143,100 +148,107 @@ main {
 }
 
 .card.attention {
-  border-left-color: var(--attention);
-  background: linear-gradient(180deg, rgba(245, 166, 35, 0.06), var(--surface) 60%);
+  border-color: var(--attention);
 }
 
 .card.attention[data-severity="high"] {
-  border-left-color: var(--danger);
-  background: linear-gradient(180deg, rgba(248, 113, 113, 0.08), var(--surface) 60%);
+  border-color: var(--danger);
 }
 
 .card.attention[data-severity="low"] {
-  border-left-color: var(--line);
-  background: var(--surface);
+  border-color: var(--line);
 }
 
 .card-head {
   display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .handle {
-  font-weight: 700;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-weight: 600;
   font-size: 0.92rem;
-  line-height: 1.25;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card.expanded .handle {
+  white-space: normal;
+  overflow: visible;
   overflow-wrap: anywhere;
 }
 
 .badge {
   flex: none;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   white-space: nowrap;
-  color: var(--accent);
-  background: var(--surface-2);
-}
-
-.summary {
-  margin: 4px 0 0;
-  font-size: 0.82rem;
-  line-height: 1.35;
   color: var(--muted);
 }
 
-/* Compact (collapsed) cards: one-line summary, primary action only. */
+.summary {
+  margin: 6px 0 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Collapsed: clamp the summary to one line and hide the secondary row. */
 .card:not(.expanded) .summary {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.card:not(.expanded) .actions .action:not(.primary) {
+.card:not(.expanded) .actions {
   display: none;
 }
 
 /* Actions ---------------------------------------------------------------- */
-.actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
 button {
   font: inherit;
   cursor: pointer;
 }
 
-.action {
-  flex: 1 1 auto;
-  min-height: 36px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface-2);
-  color: var(--text);
-  font-weight: 600;
-  font-size: 0.85rem;
-  transition: background 120ms ease, transform 80ms ease;
+/* Secondary action row (revealed on expand). */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
 }
 
-.action.primary {
-  order: -1;
-  border-color: transparent;
+.action {
+  flex: 1 1 auto;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.82rem;
+  transition: background 120ms ease;
+}
+
+/* Primary action lives inline in the card head as a compact pill. */
+.card-head .action.primary {
+  flex: none;
+  min-height: 30px;
+  padding: 4px 14px;
+  border: none;
+  border-radius: 7px;
   background: var(--accent);
   color: var(--accent-ink);
   font-weight: 700;
-}
-
-.card.expanded .action.primary {
-  flex-basis: 100%;
+  font-size: 0.78rem;
 }
 
 .action:disabled {
