@@ -673,7 +673,7 @@ mod tests {
         let shell = handle_http_request("GET", "/", "", &context).unwrap();
         assert_eq!(shell.status_code, 200);
         assert_eq!(shell.content_type, "text/html; charset=utf-8");
-        assert!(String::from_utf8_lossy(&shell.body).contains("Ajax Mobile Cockpit"));
+        assert!(String::from_utf8_lossy(&shell.body).contains("Ajax Cockpit"));
 
         let cockpit = handle_http_request("GET", "/api/cockpit", "", &context).unwrap();
         assert_eq!(cockpit.status_code, 200);
@@ -759,7 +759,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v10"));
+        assert!(sw_text.contains("ajax-cockpit-v11"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));

@@ -1,19 +1,18 @@
 :root {
   color-scheme: dark;
-  --bg: #10141a;
-  --surface: #1a212b;
-  --surface-2: #222c38;
-  --line: #2c3744;
+  --bg: #0a0d12;
+  --line: #1d2530;
+  --line-bright: #2e3a4a;
   --text: #e6edf3;
-  --muted: #8b97a5;
+  --muted: #6a7480;
   /* Accents mirror the ratatui palette (indexed 110 / 179 / 174 / 108) so the
      web cockpit reads as the same product as the native TUI. */
   --accent: #87afd7;
-  --accent-ink: #0a1626;
+  --accent-ink: #0a0d12;
   --attention: #d7af5f;
   --danger: #d78787;
   --success: #87af87;
-  --radius: 14px;
+  --mono: "JetBrains Mono", "Berkeley Mono", "IBM Plex Mono", "Fira Code", ui-monospace, monospace;
 }
 
 * {
@@ -30,32 +29,37 @@ body {
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.45;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "ss02", "cv02", "calt";
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-/* Offline banner --------------------------------------------------------- */
+/* OFFLINE BANNER --------------------------------------------------------- */
 .banner {
   margin: 0;
-  padding: 8px calc(16px + env(safe-area-inset-right)) 8px calc(16px + env(safe-area-inset-left));
-  font-size: 0.82rem;
-  font-weight: 600;
+  padding: 6px 14px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  text-transform: uppercase;
   text-align: center;
-  color: var(--accent-ink);
+  color: var(--bg);
   background: var(--attention);
 }
 
-/* Header ----------------------------------------------------------------- */
+/* HEADER ----------------------------------------------------------------- */
 header {
   position: sticky;
   top: 0;
   z-index: 5;
-  padding: calc(6px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 6px
-    calc(12px + env(safe-area-inset-left));
-  background: rgba(16, 20, 26, 0.92);
-  backdrop-filter: blur(14px);
+  padding: calc(10px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) 10px
+    calc(14px + env(safe-area-inset-left));
+  background: rgba(10, 13, 18, 0.92);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--line);
 }
 
@@ -63,14 +67,16 @@ header {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 36px;
+  min-height: 30px;
 }
 
 h1 {
   margin: 0;
-  font-size: 1rem;
+  font-family: var(--mono);
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.22em;
+  color: var(--text);
   flex: none;
 }
 
@@ -78,75 +84,181 @@ h1 {
   margin: 0;
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 0.82rem;
+  font-size: 12px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
+.status-line::before {
+  content: "// ";
+  color: var(--line-bright);
+}
+
+/* The single signature animation — a heartbeat that says the cockpit is
+   reading live data. Pulses primary while online; flips to a flat danger dot
+   when the network drops. */
+.live-dot {
+  flex: none;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--accent);
+  animation: blink 1.4s steps(2, jump-none) infinite;
+}
+
+body.is-offline .live-dot {
+  color: var(--danger);
+  animation: none;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   flex: none;
 }
 
-/* Layout ----------------------------------------------------------------- */
+/* GHOST / ICON BUTTONS --------------------------------------------------- */
+.ghost {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 8px;
+  min-height: 30px;
+  transition: border-color 120ms ease, color 120ms ease;
+}
+
+.ghost::before {
+  content: "[ ";
+  color: var(--muted);
+}
+.ghost::after {
+  content: " ]";
+  color: var(--muted);
+}
+
+.ghost.icon {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ghost.icon::before,
+.ghost.icon::after {
+  content: "";
+}
+
+.ghost:active,
+.ghost:focus-visible {
+  border-color: var(--text);
+}
+
+.refresh-glyph {
+  display: inline-block;
+  line-height: 1;
+}
+
+body.is-refreshing .refresh-glyph {
+  animation: spin 700ms linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+
+/* LAYOUT ----------------------------------------------------------------- */
 main {
   width: min(760px, 100%);
   margin: 0 auto;
-  padding: 6px calc(12px + env(safe-area-inset-right)) 16px calc(12px + env(safe-area-inset-left));
+  padding: 10px calc(14px + env(safe-area-inset-right)) 32px calc(14px + env(safe-area-inset-left));
 }
 
-.group {
-  display: block;
-}
-
-.group:empty {
-  display: none;
-}
-
+/* SECTION TITLES — ASCII-style line filling remaining width -------------- */
 .section-title {
-  margin: 4px 6px 8px;
-  font-size: 0.72rem;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 8px;
+  font-size: 11px;
   font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  letter-spacing: 0.22em;
   color: var(--muted);
+  text-transform: uppercase;
+}
+
+.section-title::before {
+  content: "──";
+  color: var(--line-bright);
+  letter-spacing: 0;
+}
+
+.section-title::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--line);
 }
 
 .section-title.attention {
   color: var(--attention);
 }
 
-#repos .section-title {
-  margin-top: 22px;
+.section-title.attention::after {
+  background: linear-gradient(to right, var(--attention), var(--line) 60%);
+  opacity: 0.7;
 }
 
+#repos .section-title {
+  margin-top: 26px;
+}
+
+/* GROUP TITLES — per-repo subheaders ------------------------------------- */
 .group-title {
-  margin: 12px 6px 6px;
-  font-size: 0.64rem;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  margin: 12px 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
   color: var(--muted);
-  opacity: 0.75;
+  text-transform: uppercase;
+}
+
+.group-title::before {
+  content: "» ";
+  color: var(--line-bright);
 }
 
 .cards {
   display: grid;
-  gap: 6px;
+  gap: 2px;
 }
 
-/* Cards ------------------------------------------------------------------ */
+/* CARDS — no backgrounds; identity comes from a left rule ---------------- */
 .card {
   position: relative;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface);
-  transition: border-color 160ms ease;
+  padding: 9px 10px 9px 12px;
+  border-left: 2px solid var(--line);
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.card:hover {
+  background: rgba(135, 175, 215, 0.03);
+  border-left-color: var(--line-bright);
 }
 
 .card.has-details {
@@ -154,34 +266,53 @@ main {
 }
 
 .card.attention {
-  border-color: var(--attention);
+  border-left-color: var(--attention);
 }
 
 .card.attention[data-severity="high"] {
-  border-color: var(--danger);
+  border-left-color: var(--danger);
 }
 
 .card.attention[data-severity="low"] {
-  border-color: var(--line);
+  border-left-color: var(--line);
 }
 
+/* CARD HEAD: indicator · handle · badge · primary action ---------------- */
 .card-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
+  flex-wrap: wrap;
 }
+
+.indicator {
+  flex: none;
+  width: 12px;
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  color: var(--muted);
+}
+
+.indicator.is-running {
+  color: var(--accent);
+  animation: blink 1.4s steps(2, jump-none) infinite;
+}
+.indicator.is-attention { color: var(--attention); }
+.indicator.is-danger { color: var(--danger); }
+.indicator.is-success { color: var(--success); }
+.indicator.is-muted { color: var(--muted); }
 
 .handle {
   flex: 1 1 auto;
   min-width: 0;
+  font-size: 13px;
   font-weight: 600;
-  font-size: 0.92rem;
-  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: 0;
 }
 
 .card.expanded .handle {
@@ -192,105 +323,119 @@ main {
 
 .badge {
   flex: none;
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   white-space: nowrap;
   color: var(--muted);
 }
 
 .summary {
-  margin: 6px 0 0;
-  font-size: 0.82rem;
-  line-height: 1.4;
+  margin: 3px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
   color: var(--muted);
 }
 
-/* Collapsed: clamp the summary to one line and hide the secondary row. */
 .card:not(.expanded) .summary {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.card:not(.expanded) .actions {
-  display: none;
-}
-
-/* Actions ---------------------------------------------------------------- */
+/* BUTTONS — bracketed terminal style ------------------------------------- */
 button {
   font: inherit;
   cursor: pointer;
 }
 
-/* Secondary action row (revealed on expand). */
+/* Primary action lives inline with the card head. */
+.card-head .action.primary {
+  flex: none;
+  border-radius: 0;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  min-height: 26px;
+}
+
+.card-head .action.primary::before { content: "[ "; opacity: 0.5; }
+.card-head .action.primary::after { content: " ]"; opacity: 0.5; }
+
+/* Secondary actions appear only when expanded. */
 .actions {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 8px;
+  padding-left: 20px;
+}
+
+.card:not(.expanded) .actions {
+  display: none;
 }
 
 .action {
-  flex: 1 1 auto;
-  min-height: 34px;
-  padding: 6px 12px;
+  flex: 0 0 auto;
+  border-radius: 0;
   border: 1px solid var(--line);
-  border-radius: 8px;
   background: transparent;
   color: var(--text);
-  font-weight: 600;
-  font-size: 0.82rem;
-  transition: background 120ms ease;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  min-height: 26px;
+  transition: border-color 120ms ease, color 120ms ease;
 }
 
-/* Primary action lives inline in the card head as a compact pill. */
-.card-head .action.primary {
-  flex: none;
-  min-height: 30px;
-  padding: 4px 14px;
-  border: none;
-  border-radius: 7px;
-  background: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 700;
-  font-size: 0.78rem;
+.action::before { content: "[ "; color: var(--muted); }
+.action::after  { content: " ]"; color: var(--muted); }
+
+.action:active,
+.action:focus-visible {
+  border-color: var(--text);
 }
 
 .action:disabled {
-  opacity: 0.55;
-}
-
-.action:active {
-  transform: translateY(1px);
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .action.is-running {
-  opacity: 0.75;
+  color: var(--muted);
   cursor: progress;
 }
 
 .action.confirming {
   background: var(--danger);
-  color: #1a0707;
-  border-color: transparent;
-  font-weight: 700;
-  animation: pulse-confirm 1s ease-in-out infinite;
+  border-color: var(--danger);
+  color: var(--bg);
+  animation: blink 700ms steps(2, jump-none) infinite;
 }
 
-@keyframes pulse-confirm {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.78; }
+body.is-offline .action,
+body.is-offline .card-head .action.primary {
+  opacity: 0.35;
+  pointer-events: none;
 }
 
-/* Card details (revealed by tapping the card body) ----------------------- */
+/* CARD DETAIL PANEL ------------------------------------------------------ */
 .card-details {
   display: none;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-  font-size: 0.8rem;
+  margin-top: 10px;
+  padding: 8px 0 0 20px;
+  border-top: 1px dashed var(--line);
+  font-size: 11px;
 }
 
 .card.expanded .card-details {
@@ -299,114 +444,83 @@ button {
 
 .detail-row {
   display: flex;
-  gap: 12px;
-  padding: 3px 0;
+  gap: 10px;
+  padding: 2px 0;
 }
 
 .detail-label {
-  flex: 0 0 78px;
+  flex: 0 0 72px;
   color: var(--muted);
-  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .detail-value {
+  flex: 1 1 auto;
   color: var(--text);
   overflow-wrap: anywhere;
 }
 
-/* Offline: dim action buttons so taps don't silently fail. --------------- */
-body.is-offline .action {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-/* Header ghost / icon buttons -------------------------------------------- */
-.ghost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 40px;
-  min-width: 40px;
-  padding: 6px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text);
-  font-size: 0.82rem;
-  font-weight: 600;
-  transition: background 120ms ease;
-}
-
-.ghost:active {
-  background: var(--surface-2);
-}
-
-.ghost.icon {
-  padding: 6px;
-  font-size: 1.1rem;
-  line-height: 1;
-}
-
-.refresh-glyph {
-  display: inline-block;
-  font-size: 1.15rem;
-  line-height: 1;
-  transition: transform 200ms ease;
-}
-
-body.is-refreshing .refresh-glyph {
-  animation: spin 700ms linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
-}
-
-/* Empty state ------------------------------------------------------------ */
+/* EMPTY STATE ------------------------------------------------------------ */
 .empty {
-  margin: 56px 16px;
+  margin: 56px 0;
+  padding: 0 4px;
   text-align: center;
   color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
-/* Adaptive ---------------------------------------------------------------- */
-@media (max-width: 420px) {
-  main {
-    padding-left: calc(8px + env(safe-area-inset-left));
-    padding-right: calc(8px + env(safe-area-inset-right));
-  }
-  .card {
-    padding: 10px;
-    border-radius: 9px;
-  }
-  .handle {
-    font-size: 0.88rem;
-  }
-  .summary {
-    font-size: 0.78rem;
-  }
-  .badge {
-    font-size: 0.6rem;
-    letter-spacing: 0.04em;
-  }
+.empty::before {
+  content: "── ";
+  color: var(--line-bright);
+}
+.empty::after {
+  content: " ──";
+  color: var(--line-bright);
+}
+
+/* ONE-SHOT PAGE REVEAL — staggered cascade ------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  header { animation: reveal 280ms ease-out backwards; }
+  .section-title { animation: reveal 320ms ease-out 40ms backwards; }
+  .group-title { animation: reveal 320ms ease-out 60ms backwards; }
+  .card { animation: reveal 260ms ease-out backwards; }
+  .card:nth-of-type(1) { animation-delay: 80ms; }
+  .card:nth-of-type(2) { animation-delay: 130ms; }
+  .card:nth-of-type(3) { animation-delay: 180ms; }
+  .card:nth-of-type(4) { animation-delay: 230ms; }
+  .card:nth-of-type(5) { animation-delay: 280ms; }
+  .card:nth-of-type(6) { animation-delay: 330ms; }
+  .card:nth-of-type(n + 7) { animation-delay: 380ms; }
+}
+
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* NARROW PHONES ---------------------------------------------------------- */
+@media (max-width: 380px) {
+  body { font-size: 13px; }
+  h1 { font-size: 12px; letter-spacing: 0.18em; }
+  .status-line { font-size: 11px; }
+  .handle { font-size: 12px; }
+  .summary { font-size: 11px; padding-left: 18px; }
+  .actions { padding-left: 18px; }
   .card-head .action.primary {
-    min-height: 28px;
-    padding: 3px 10px;
-    font-size: 0.74rem;
-  }
-  .ghost:not(.icon) {
-    padding: 6px 10px;
-    font-size: 0.76rem;
+    font-size: 10px;
+    padding: 3px 8px;
+    min-height: 24px;
   }
 }
 
-/* Very narrow phones: drop the inline primary action to its own row so the
-   handle has the whole width. */
 @media (max-width: 340px) {
   .card-head .action.primary {
     order: 99;
     flex: 1 1 100%;
-    margin-top: 2px;
+    margin-top: 4px;
+    margin-left: 20px;
   }
 }

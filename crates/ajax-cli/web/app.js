@@ -51,6 +51,30 @@ function actionButton(action, handle, isPrimary) {
   return button;
 }
 
+// Maps ui_state to a single terminal-style glyph + semantic class so each
+// card shows its run state at a glance in the same visual register as the
+// native TUI.
+function stateIndicator(state) {
+  switch ((state || "").toLowerCase()) {
+    case "running":
+      return { glyph: "●", className: "is-running" };
+    case "review ready":
+    case "safe merge":
+      return { glyph: "▲", className: "is-attention" };
+    case "needs input":
+    case "blocked":
+    case "failed":
+      return { glyph: "!", className: "is-danger" };
+    case "cleanable":
+      return { glyph: "▼", className: "is-success" };
+    case "idle":
+      return { glyph: "○", className: "is-muted" };
+    case "archived":
+    default:
+      return { glyph: "·", className: "is-muted" };
+  }
+}
+
 function appendDetailRow(parent, label, value) {
   if (!value) return;
   const row = el("div", "detail-row");
@@ -69,6 +93,10 @@ function taskCard(card, options) {
   }
 
   const head = el("div", "card-head");
+  const indicator = stateIndicator(card.ui_state);
+  const indicatorEl = el("span", `indicator ${indicator.className}`.trim(), indicator.glyph);
+  indicatorEl.setAttribute("aria-hidden", "true");
+  head.append(indicatorEl);
   head.append(el("span", "handle", card.qualified_handle));
   head.append(el("span", "badge", card.status_label || card.ui_state));
 
