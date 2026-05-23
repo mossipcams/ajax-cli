@@ -11,5 +11,9 @@ workspace = true
 
 [dependencies]
 ajax-core = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"] }
+web-push = { workspace = true }

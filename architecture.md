@@ -302,9 +302,11 @@ task state and operations.
 
 PWA files live under `crates/ajax-web/web`. The install slice owns serving the
 HTML shell, client JavaScript, stylesheet, web manifest, service worker, and app
-icons from that directory. `ajax-cli` may temporarily host the HTTP connection
-loop while migration is in progress, but it must delegate PWA shell assets and
-browser Cockpit projection shaping to `ajax-web`.
+icons from that directory. `ajax-web::runtime` owns HTTP request routing, generic
+connection response handling, local TLS setup, Web Push endpoints, attention
+polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
+it resolves stable/dev context paths, reloads and saves the authoritative SQLite
+state, and delegates native command execution for browser-submitted actions.
 
 The manifest should stay small and install-focused: app name, short name,
 description, `start_url`, `scope`, standalone display, portrait orientation,

@@ -2,85 +2,59 @@ use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     models::OperatorAction,
-    output::CockpitView,
     registry::InMemoryRegistry,
     runtime_refresh::refresh_runtime_context,
     task_operations::task_command::{
         execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
     },
 };
+#[cfg(test)]
+use ajax_web::runtime::Request;
+#[cfg(test)]
 use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
-use serde::Deserialize;
-use std::{
-    collections::HashSet,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-    time::Duration,
+use ajax_web::{
+    runtime::{self, ActionFailure, RuntimeBridge},
+    WebError,
 };
+#[cfg(test)]
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use crate::{
     command_error,
     context::{load_context, save_context},
     dispatch::execute_observed_drop,
-    web_companion_push, web_companion_tls, CliContextPaths, CliError,
+    CliContextPaths, CliError,
 };
 
-pub(crate) struct HttpResponse {
-    pub(crate) status_code: u16,
-    pub(crate) content_type: &'static str,
-    pub(crate) body: Vec<u8>,
-}
+#[cfg(test)]
+pub(crate) type HttpResponse = runtime::Response;
 
-#[derive(Deserialize)]
-struct MobileActionRequest {
-    task_handle: String,
-    action: String,
-}
-
+#[cfg(test)]
 pub(crate) fn render_mobile_shell() -> String {
     web_install::pwa_shell().to_string()
 }
 
+#[cfg(test)]
 pub(crate) fn cockpit_json(
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<String, serde_json::Error> {
     web_cockpit::browser_cockpit_json(context)
 }
 
+#[cfg(test)]
 pub(crate) fn handle_http_request(
     method: &str,
     path: &str,
-    _body: &str,
+    body: &str,
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<HttpResponse, serde_json::Error> {
-    if method != "GET" {
-        return Ok(text_response(405, "method not allowed"));
-    }
-
-    match path {
-        "/" => Ok(HttpResponse {
-            status_code: 200,
-            content_type: "text/html; charset=utf-8",
-            body: render_mobile_shell().into_bytes(),
-        }),
-        "/api/cockpit" => Ok(HttpResponse {
-            status_code: 200,
-            content_type: "application/json; charset=utf-8",
-            body: cockpit_json(context)?.into_bytes(),
-        }),
-        _ => match web_install::static_asset(path) {
-            Some(asset) => Ok(HttpResponse {
-                status_code: 200,
-                content_type: asset.content_type,
-                body: asset.body.to_vec(),
-            }),
-            None => Ok(text_response(404, "not found")),
-        },
-    }
+    runtime::route(Request { method, path, body }, context).map_err(|error| match error {
+        runtime::RouteError::Json(error) => error,
+    })
 }
 
+#[cfg(test)]
 pub(crate) fn handle_http_request_with_runner_and_paths(
     method: &str,
     path: &str,
@@ -89,163 +63,16 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
-    match (method, path) {
-        ("POST", "/api/actions") => return handle_action_request(body, context, runner, paths),
-        ("GET", "/api/cockpit") => {
-            return handle_refreshed_cockpit_request(context, runner, paths);
-        }
-        ("GET", "/api/push/config") => return handle_push_config(paths),
-        ("POST", "/api/push/subscribe") => return handle_push_subscribe(body, paths),
-        ("POST", "/api/push/unsubscribe") => return handle_push_unsubscribe(body, paths),
-        _ => {}
-    }
-
-    handle_http_request(method, path, body, context)
-        .map_err(|error| CliError::JsonSerialization(error.to_string()))
-}
-
-/// Serves the VAPID application server key the browser needs to subscribe.
-fn handle_push_config(paths: Option<&CliContextPaths>) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let keys = web_companion_push::load_or_create_vapid_keys(&dir)?;
-    json_response(
-        200,
-        serde_json::json!({
-            "public_key": keys.public_key,
-        }),
+    let mut bridge = CliRuntimeBridge { paths };
+    runtime::route_with_bridge(
+        Request { method, path, body },
+        context,
+        runner,
+        &mut bridge,
+        &dir,
     )
-}
-
-/// Stores a browser push subscription so the companion can notify it later.
-fn handle_push_subscribe(
-    body: &str,
-    paths: Option<&CliContextPaths>,
-) -> Result<HttpResponse, CliError> {
-    let subscription: web_companion_push::PushSubscription = match serde_json::from_str(body) {
-        Ok(subscription) => subscription,
-        Err(error) => {
-            return json_response(
-                400,
-                serde_json::json!({ "ok": false, "error": error.to_string() }),
-            );
-        }
-    };
-    let dir = companion_state_dir(paths)?;
-    web_companion_push::add_subscription(&dir, subscription)?;
-    json_response(200, serde_json::json!({ "ok": true }))
-}
-
-/// Removes a browser push subscription.
-fn handle_push_unsubscribe(
-    body: &str,
-    paths: Option<&CliContextPaths>,
-) -> Result<HttpResponse, CliError> {
-    let request: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    let Some(endpoint) = request.get("endpoint").and_then(serde_json::Value::as_str) else {
-        return json_response(
-            400,
-            serde_json::json!({ "ok": false, "error": "endpoint is required" }),
-        );
-    };
-    let dir = companion_state_dir(paths)?;
-    web_companion_push::remove_subscription(&dir, endpoint)?;
-    json_response(200, serde_json::json!({ "ok": true }))
-}
-
-fn handle_refreshed_cockpit_request(
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<HttpResponse, CliError> {
-    if let Some(paths) = paths {
-        *context = load_context(paths)?;
-    }
-    let state_changed = refresh_runtime_context(context, runner).map_err(command_error)?;
-    if state_changed {
-        if let Some(paths) = paths {
-            save_context(paths, context)?;
-        }
-    }
-    json_response(
-        200,
-        serde_json::to_value(web_cockpit::browser_cockpit_view(context))
-            .map_err(|error| CliError::JsonSerialization(error.to_string()))?,
-    )
-}
-
-fn handle_action_request(
-    body: &str,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<HttpResponse, CliError> {
-    let request: MobileActionRequest = serde_json::from_str(body)
-        .map_err(|error| CliError::JsonSerialization(error.to_string()))?;
-    let Some(action) = OperatorAction::from_label(&request.action) else {
-        return json_response(
-            400,
-            serde_json::json!({
-                "ok": false,
-                "error": format!("unknown action: {}", request.action),
-            }),
-        );
-    };
-
-    if action == OperatorAction::Resume {
-        return json_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": "resume requires native cockpit task entry",
-            }),
-        );
-    }
-    if action == OperatorAction::Start {
-        return json_response(
-            400,
-            serde_json::json!({
-                "ok": false,
-                "error": "start requires task title input",
-            }),
-        );
-    }
-
-    match execute_mobile_action(action, &request.task_handle, context, runner) {
-        Ok(state_changed) => {
-            if state_changed {
-                if let Some(paths) = paths {
-                    save_context(paths, context)?;
-                }
-            }
-            json_response(
-                200,
-                serde_json::json!({
-                    "ok": true,
-                    "state_changed": state_changed,
-                    "cockpit": web_cockpit::browser_cockpit_view(context),
-                }),
-            )
-        }
-        Err(error) => {
-            // The action failed (blocked, requires confirmation, or the
-            // underlying command exited non-zero). Send a JSON error so the
-            // mobile UI can surface the message instead of dropping the
-            // connection and showing "network error" to the operator.
-            if matches!(error, CliError::CommandFailedAfterStateChange(_)) {
-                if let Some(paths) = paths {
-                    save_context(paths, context)?;
-                }
-            }
-            json_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("{error}"),
-                    "cockpit": web_cockpit::browser_cockpit_view(context),
-                }),
-            )
-        }
-    }
+    .map_err(cli_error_from_web)
 }
 
 pub(crate) fn serve_mobile_web(
@@ -264,90 +91,10 @@ pub(crate) fn serve_mobile_web_with_paths(
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
-    let cert_dir = companion_state_dir(paths)?;
-    let identity = web_companion_tls::load_or_create_identity(&cert_dir)?;
-    let tls_config = web_companion_tls::tls_server_config(&identity)?;
-
-    let listener = TcpListener::bind((host, port))
-        .map_err(|error| CliError::CommandFailed(format!("web bind failed: {error}")))?;
-    eprintln!("Ajax mobile web listening on https://{host}:{port}");
-
-    // The connection loop and the attention poller share one context, so it is
-    // guarded by a mutex. A scoped thread lets the poller borrow it without
-    // requiring a `'static` clone.
-    let shared = Mutex::new(context);
-    std::thread::scope(|scope| {
-        let poller_state = &shared;
-        let poller_dir = cert_dir.clone();
-        scope.spawn(move || run_attention_poller(poller_state, &poller_dir));
-
-        // A failed TLS handshake or connection error must not take down the
-        // companion: log it and keep accepting connections.
-        for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(stream) => stream,
-                Err(error) => {
-                    eprintln!("Ajax web accept error: {error}");
-                    continue;
-                }
-            };
-            let mut guard = shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let context: &mut CommandContext<InMemoryRegistry> = &mut guard;
-            if let Err(error) = serve_tls_connection(stream, &tls_config, context, runner, paths) {
-                eprintln!("Ajax web connection error: {error}");
-            }
-        }
-    });
-
-    Ok(())
-}
-
-/// Interval between attention-poll cycles.
-const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
-
-/// Periodically rebuilds the cockpit view and sends a push notification for
-/// every task that has newly entered the attention inbox.
-fn run_attention_poller(state: &Mutex<&mut CommandContext<InMemoryRegistry>>, dir: &Path) {
-    let mut known: HashSet<String> = HashSet::new();
-    loop {
-        std::thread::sleep(ATTENTION_POLL_INTERVAL);
-        let current = {
-            let guard = state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            attention_handles(&commands::rebuild_cockpit_view(&**guard))
-        };
-        for handle in newly_attention(&known, &current) {
-            let notification = web_companion_push::PushNotification {
-                title: "Ajax task needs attention".to_string(),
-                body: handle.clone(),
-                tag: handle.clone(),
-            };
-            if let Err(error) = web_companion_push::send_to_all(dir, &notification) {
-                eprintln!("Ajax web push notification failed: {error}");
-            }
-        }
-        known = current;
-    }
-}
-
-/// The set of task handles currently in the attention inbox.
-fn attention_handles(view: &CockpitView) -> HashSet<String> {
-    view.inbox
-        .items
-        .iter()
-        .map(|item| item.task_handle.clone())
-        .collect()
-}
-
-/// The handles present in `current` but not in `previous`, sorted for
-/// deterministic notification ordering.
-fn newly_attention(previous: &HashSet<String>, current: &HashSet<String>) -> Vec<String> {
-    let mut added: Vec<String> = current.difference(previous).cloned().collect();
-    added.sort();
-    added
+    let state_dir = companion_state_dir(paths)?;
+    let mut bridge = CliRuntimeBridge { paths };
+    runtime::serve_mobile_web_with_bridge(host, port, context, runner, &mut bridge, &state_dir)
+        .map_err(cli_error_from_web)
 }
 
 /// Resolves the directory the companion persists its files in (TLS identity,
@@ -364,85 +111,94 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
         .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
 }
 
-fn serve_tls_connection(
-    tcp: TcpStream,
-    tls_config: &Arc<rustls::ServerConfig>,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<(), CliError> {
-    let connection = rustls::ServerConnection::new(Arc::clone(tls_config))
-        .map_err(|error| CliError::CommandFailed(format!("web tls session failed: {error}")))?;
-    let stream = rustls::StreamOwned::new(connection, tcp);
-    serve_connection(stream, context, runner, paths)
+struct CliRuntimeBridge<'a> {
+    paths: Option<&'a CliContextPaths>,
 }
 
-fn serve_connection<S: Read + Write>(
-    mut stream: S,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<(), CliError> {
-    let mut buffer = [0_u8; 8192];
-    let bytes_read = stream
-        .read(&mut buffer)
-        .map_err(|error| CliError::CommandFailed(format!("web request read failed: {error}")))?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let Some(request_line) = request.lines().next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let mut parts = request_line.split_whitespace();
-    let Some(method) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let Some(path) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let path = path.split('?').next().unwrap_or(path);
-    let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
-    let response =
-        handle_http_request_with_runner_and_paths(method, path, body, context, runner, paths)?;
+impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
+    fn refresh_cockpit(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<bool, WebError> {
+        if let Some(paths) = self.paths {
+            *context = load_context(paths).map_err(web_error_from_cli)?;
+        }
+        let state_changed = refresh_runtime_context(context, runner)
+            .map_err(command_error)
+            .map_err(web_error_from_cli)?;
+        if state_changed {
+            if let Some(paths) = self.paths {
+                save_context(paths, context).map_err(web_error_from_cli)?;
+            }
+        }
+        Ok(state_changed)
+    }
 
-    write_http_response(stream, response)
-}
-
-fn write_http_response<S: Write>(mut stream: S, response: HttpResponse) -> Result<(), CliError> {
-    let status_text = match response.status_code {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        _ => "Internal Server Error",
-    };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        response.status_code,
-        status_text,
-        response.content_type,
-        response.body.len()
-    );
-    stream
-        .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(&response.body))
-        .and_then(|_| stream.flush())
-        .map_err(|error| CliError::CommandFailed(format!("web response write failed: {error}")))
-}
-
-fn text_response(status_code: u16, body: impl Into<String>) -> HttpResponse {
-    HttpResponse {
-        status_code,
-        content_type: "text/plain; charset=utf-8",
-        body: body.into().into_bytes(),
+    fn execute_mobile_action(
+        &mut self,
+        action: OperatorAction,
+        task_handle: &str,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<bool, ActionFailure> {
+        match execute_mobile_action(action, task_handle, context, runner) {
+            Ok(state_changed) => {
+                if state_changed {
+                    if let Some(paths) = self.paths {
+                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                    }
+                }
+                Ok(state_changed)
+            }
+            Err(error) => {
+                let state_changed = error.state_changed();
+                if state_changed {
+                    if let Some(paths) = self.paths {
+                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                    }
+                }
+                Err(ActionFailure {
+                    message: error.to_string(),
+                    state_changed,
+                })
+            }
+        }
     }
 }
 
-fn json_response(status_code: u16, value: serde_json::Value) -> Result<HttpResponse, CliError> {
-    Ok(HttpResponse {
-        status_code,
-        content_type: "application/json; charset=utf-8",
-        body: serde_json::to_vec(&value)
-            .map_err(|error| CliError::JsonSerialization(error.to_string()))?,
-    })
+#[cfg(test)]
+fn serve_connection<S: Read + Write>(
+    stream: S,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl CommandRunner,
+    paths: Option<&CliContextPaths>,
+) -> Result<(), CliError> {
+    let state_dir = companion_state_dir(paths)?;
+    let mut bridge = CliRuntimeBridge { paths };
+    runtime::serve_connection(stream, context, runner, &mut bridge, &state_dir)
+        .map_err(cli_error_from_web)
+}
+
+fn web_error_from_cli(error: CliError) -> WebError {
+    match error {
+        CliError::JsonSerialization(message) => WebError::JsonSerialization(message),
+        error => WebError::CommandFailed(error.to_string()),
+    }
+}
+
+fn cli_error_from_web(error: WebError) -> CliError {
+    match error {
+        WebError::JsonSerialization(message) => CliError::JsonSerialization(message),
+        WebError::CommandFailed(message) => CliError::CommandFailed(message),
+    }
+}
+
+fn action_failure_from_cli(error: CliError) -> ActionFailure {
+    ActionFailure {
+        message: error.to_string(),
+        state_changed: error.state_changed(),
+    }
 }
 
 fn execute_mobile_action(
@@ -486,10 +242,10 @@ fn execute_mobile_action(
 mod tests {
     use super::{
         cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
-        newly_attention, render_mobile_shell, serve_connection,
+        render_mobile_shell, serve_connection,
     };
     use std::cell::RefCell;
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
     use std::io::{Cursor, Read, Write};
     use std::rc::Rc;
 
@@ -907,7 +663,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(subscribe.status_code, 200);
-        assert_eq!(crate::web_companion_push::load_subscriptions(&dir).len(), 1);
+        assert_eq!(ajax_web::adapters::push::load_subscriptions(&dir).len(), 1);
 
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
@@ -919,17 +675,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unsubscribe.status_code, 200);
-        assert!(crate::web_companion_push::load_subscriptions(&dir).is_empty());
+        assert!(ajax_web::adapters::push::load_subscriptions(&dir).is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn newly_attention_returns_only_freshly_added_handles() {
-        let previous: HashSet<String> = ["web/a".to_string(), "web/b".to_string()]
+        let previous: BTreeSet<String> = ["web/a".to_string(), "web/b".to_string()]
             .into_iter()
             .collect();
-        let current: HashSet<String> = [
+        let current: BTreeSet<String> = [
             "web/b".to_string(),
             "web/c".to_string(),
             "web/d".to_string(),
@@ -937,8 +693,11 @@ mod tests {
         .into_iter()
         .collect();
 
-        assert_eq!(newly_attention(&previous, &current), vec!["web/c", "web/d"]);
-        assert!(newly_attention(&current, &current).is_empty());
+        assert_eq!(
+            ajax_web::slices::attention::new_attention_handles(&previous, &current),
+            vec!["web/c", "web/d"]
+        );
+        assert!(ajax_web::slices::attention::new_attention_handles(&current, &current).is_empty());
     }
 
     struct OkRunner;
