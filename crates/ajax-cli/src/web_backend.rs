@@ -65,7 +65,10 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
+    let mut bridge = CliRuntimeBridge {
+        paths,
+        snapshot_only: false,
+    };
     runtime::route_with_bridge(
         Request { method, path, body },
         context,
@@ -93,7 +96,10 @@ pub(crate) fn serve_mobile_web_with_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
+    let mut bridge = CliRuntimeBridge {
+        paths,
+        snapshot_only: web_snapshot_only(),
+    };
     runtime::serve_mobile_web_with_bridge(host, port, context, runner, &mut bridge, &state_dir)
         .map_err(cli_error_from_web)
 }
@@ -112,8 +118,16 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
         .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
 }
 
+fn web_snapshot_only() -> bool {
+    std::env::var_os("AJAX_WEB_SNAPSHOT_ONLY").is_some_and(|value| {
+        let value = value.to_string_lossy();
+        value != "0" && !value.eq_ignore_ascii_case("false")
+    })
+}
+
 struct CliRuntimeBridge<'a> {
     paths: Option<&'a CliContextPaths>,
+    snapshot_only: bool,
 }
 
 impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
@@ -124,6 +138,9 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
     ) -> Result<bool, WebError> {
         if let Some(paths) = self.paths {
             *context = load_context(paths).map_err(web_error_from_cli)?;
+        }
+        if self.snapshot_only {
+            return Ok(false);
         }
         let state_changed = refresh_runtime_context(context, runner)
             .map_err(command_error)
@@ -218,7 +235,10 @@ fn serve_connection<S: Read + Write>(
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
+    let mut bridge = CliRuntimeBridge {
+        paths,
+        snapshot_only: false,
+    };
     runtime::serve_connection(stream, context, runner, &mut bridge, &state_dir)
         .map_err(cli_error_from_web)
 }
@@ -647,6 +667,51 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["live_summary"], "agent running");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_only_cockpit_api_reloads_state_without_live_refresh() {
+        struct PanicRunner;
+        impl CommandRunner for PanicRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                panic!("snapshot-only web API should not run {command:?}");
+            }
+        }
+
+        let root =
+            std::env::temp_dir().join(format!("ajax-web-snapshot-only-{}", std::process::id()));
+        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let saved_context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&saved_context.registry)
+            .unwrap();
+        let mut server_context =
+            CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = PanicRunner;
+        let mut bridge = super::CliRuntimeBridge {
+            paths: Some(&paths),
+            snapshot_only: true,
+        };
+
+        let response = ajax_web::runtime::route_with_bridge(
+            ajax_web::runtime::Request {
+                method: "GET",
+                path: "/api/cockpit",
+                body: "",
+            },
+            &mut server_context,
+            &mut runner,
+            &mut bridge,
+            &root,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_ne!(body["cards"][0]["live_summary"], "agent running");
 
         let _ = std::fs::remove_dir_all(root);
     }
