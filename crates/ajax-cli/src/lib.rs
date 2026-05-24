@@ -9,6 +9,7 @@ mod context;
 mod dispatch;
 mod execution_dispatch;
 mod render;
+mod server;
 mod snapshot_dispatch;
 #[cfg(feature = "supervisor")]
 mod supervise;
@@ -115,8 +116,12 @@ pub fn run_with_args(
         );
     }
 
-    let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
+    if let Some(rendered) = render_server_runtime_matches(&matches, &mut runner) {
+        return rendered.map(|rendered| rendered.output);
+    }
+
+    let mut context = load_context_for_matches(&paths, &matches)?;
     let rendered =
         match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
             Ok(rendered) => rendered,
@@ -244,6 +249,9 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
+    if let Some(rendered) = render_server_runtime_matches(&matches, runner) {
+        return rendered.map(|rendered| rendered.output);
+    }
     let mut context = load_context_for_matches(paths, &matches)?;
     let rendered = match render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))
     {
@@ -266,6 +274,16 @@ pub fn run_with_context_paths_and_runner(
 pub(crate) struct RenderedCommand {
     pub(crate) output: String,
     pub(crate) state_changed: bool,
+}
+
+fn render_server_runtime_matches(
+    matches: &ArgMatches,
+    runner: &mut impl CommandRunner,
+) -> Option<Result<RenderedCommand, CliError>> {
+    match matches.subcommand() {
+        Some(("server", subcommand)) => Some(server::render_server_command(subcommand, runner)),
+        _ => None,
+    }
 }
 
 // The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.
@@ -572,6 +590,27 @@ mod tests {
 
         assert!(rendered.state_changed);
         assert!(rendered.output.contains("recorded task: web/fix-logout"));
+    }
+
+    #[test]
+    fn server_commands_do_not_require_task_state_load() {
+        let root =
+            std::env::temp_dir().join(format!("ajax-server-no-state-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let state_file = root.join("state.db");
+        std::fs::write(&state_file, "{}").unwrap();
+        let paths = CliContextPaths::new(root.join("missing-config.toml"), state_file);
+        let mut runner = RecordingCommandRunner::default();
+
+        let output =
+            run_with_context_paths_and_runner(["ajax", "server", "status"], &paths, &mut runner)
+                .unwrap();
+
+        assert!(output.contains("ajax web server status"));
+        assert_eq!(runner.commands().len(), 1);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -3041,6 +3080,38 @@ mod tests {
             !(has_root_package && uses_cargo_workspace),
             "Release Please crashes when the cargo-workspace plugin processes the virtual workspace root package"
         );
+    }
+
+    #[test]
+    fn release_please_rust_packages_point_to_package_manifests() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+        )
+        .unwrap();
+        let default_release_type = config["release-type"].as_str();
+
+        for (package_path, package_config) in config["packages"].as_object().unwrap() {
+            let release_type = package_config["release-type"]
+                .as_str()
+                .or(default_release_type);
+            if release_type != Some("rust") {
+                continue;
+            }
+
+            let manifest = std::fs::read_to_string(root.join(package_path).join("Cargo.toml"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Release Please Rust package {package_path} must point to a Cargo.toml: {error}"
+                    )
+                });
+            let has_package_table = manifest.lines().any(|line| line.trim() == "[package]");
+
+            assert!(
+                has_package_table,
+                "Release Please Rust package {package_path} must point to a Cargo package manifest, not a virtual workspace manifest"
+            );
+        }
     }
 
     #[test]
