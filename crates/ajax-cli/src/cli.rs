@@ -48,7 +48,6 @@ pub fn build_cli() -> Command {
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
         .subcommand(web_command())
-        .subcommand(server_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
         .subcommand(cockpit_command())
@@ -149,16 +148,6 @@ fn web_command() -> Command {
                 .value_name("PORT")
                 .default_value("8787"),
         )
-}
-
-fn server_command() -> Command {
-    Command::new("server")
-        .about("Manage the Ajax web server daemon")
-        .subcommand(Command::new("install").about("Install or update the launchd server job"))
-        .subcommand(Command::new("start").about("Start the launchd server job"))
-        .subcommand(Command::new("stop").about("Stop the launchd server job"))
-        .subcommand(Command::new("restart").about("Restart the launchd server job"))
-        .subcommand(Command::new("status").about("Show launchd server job status"))
 }
 
 fn cockpit_command() -> Command {
@@ -294,25 +283,6 @@ mod tests {
             web_matches.get_one::<String>("port").map(String::as_str),
             Some("8787")
         );
-    }
-
-    #[test]
-    fn server_lifecycle_commands_parse() {
-        for command in ["install", "start", "stop", "restart", "status"] {
-            let ParsedArgs::Matches(matches) = parse_args(["ajax", "server", command])
-                .unwrap_or_else(|error| panic!("server {command} should parse: {error}"))
-            else {
-                panic!("expected parsed matches");
-            };
-
-            let Some(("server", server_matches)) = matches.subcommand() else {
-                panic!("server command should parse");
-            };
-            assert_eq!(
-                server_matches.subcommand().map(|(name, _)| name),
-                Some(command)
-            );
-        }
     }
 
     #[test]
