@@ -69,6 +69,30 @@ Web Push: the phone is then notified when a task newly needs attention, even
 when the app is closed. Web Push on iOS requires iOS 16.4 or later and the app
 installed to the home screen.
 
+### Persistent Docker web companion
+
+For a persistent dev web companion, run the ajax-web Docker runtime instead of
+tying the server to a terminal or SSH session:
+
+```sh
+scripts/seed-docker-web-dev.sh
+docker compose -f compose.ajax-web.yml up -d --build
+```
+
+The Compose service publishes `https://localhost:8788` and runs
+`ajax-cli --profile dev --home /ajax-dev --config /ajax-dev/config.toml --state /ajax-dev/ajax.db --worktree-root /ajax-dev/worktrees web --host 0.0.0.0 --port 8788`
+with `restart: unless-stopped`. Runtime data lives in the
+`ajax-web-dev-home` Docker volume. `scripts/seed-docker-web-dev.sh` copies the
+host dev Ajax state from `~/.ajax-dev` into that volume, including the trusted
+dev TLS identity, so browsers do not see a new self-signed certificate when
+moving the web companion into Docker. The Docker web API serves the seeded
+snapshot without running live host substrate refresh; reseed the volume when the
+host dev state should be reflected in Docker.
+
+Docker owns process restart, but the machine running Docker still owns network
+reachability and power state. On a sleeping MacBook, Docker cannot keep the LAN
+service reachable; use an always-on host or prevent host sleep when that matters.
+
 The same loop is available from the CLI:
 
 ```sh

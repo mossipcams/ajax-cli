@@ -308,15 +308,26 @@ polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
 it resolves stable/dev context paths, reloads and saves the authoritative SQLite
 state, and delegates native command execution for browser-submitted actions.
 
-The mobile companion can also run as an always-on user daemon. On macOS,
-launchd owns 24/7 process lifetime; Ajax installs a user LaunchAgent that runs
-the foreground `ajax web` command rather than spawning a replacement from inside
-the server. `ajax server install`, `start`, `stop`, `restart`, and `status` are
-CLI process-manager controls around that launchd job. Restart is launchd-owned:
-the job is asked to restart or the foreground server exits after responding to a
-restart request, and launchd relaunches it. Stop is distinct from restart
-because it must unload or stop the job so launchd does not immediately relaunch
-it.
+The ajax-web Docker runtime is the preferred persistent dev web companion. It
+runs the foreground `ajax web` command as a container entrypoint, publishes the
+dev web port, and lets Docker own restart policy and log collection. The
+container owns its dev Ajax runtime context through mounted config, SQLite
+state, logs, cache, and worktree volumes; it is not a browser-only proxy to a
+host-side Ajax process. Host tmux sessions, host paths, and host agent tools are
+not implicitly available inside the container unless the operator explicitly
+mounts or installs them there. The dev Docker runtime uses a Docker-owned Ajax
+home volume seeded from host `~/.ajax-dev`, rather than live-binding the macOS
+SQLite directory into Linux. Seeding also carries over the trusted host dev TLS
+identity, so installed browsers and phones keep the same trusted HTTPS identity
+after the runtime moves from a host process to Docker. Because host tmux and
+worktree substrates are not container-owned by default, the Docker web API may
+serve the seeded cockpit snapshot without running live host substrate refresh.
+
+On macOS, launchd remains a host process-management adapter around the
+foreground `ajax web` command. `ajax server install`, `start`, `stop`,
+`restart`, and `status` are CLI controls for that local LaunchAgent path.
+Launchd can supervise a host process, but it does not solve Docker host sleep,
+network reachability, or container runtime placement.
 
 The manifest should stay small and install-focused: app name, short name,
 description, `start_url`, `scope`, standalone display, portrait orientation,
@@ -341,10 +352,12 @@ subscriptions. It must not use IndexedDB, background sync, local task queues, or
 offline mutations. It must not add Yew, Trunk, WASM, or a large frontend
 architecture unless the project explicitly adopts those elsewhere.
 
-Stable and dev runtime profiles remain separated by the native companion
-process and explicit runtime context. Stable uses the stable state database and
-default web port, while dev uses the development state database and dev web
-port. The PWA must not merge profile state in browser storage.
+Stable, host-dev, and Docker-dev runtime profiles remain separated by explicit
+runtime context. Stable uses the stable state database and default web port,
+while dev uses development state and port `8788`. Docker-dev state lives in the
+container volumes configured by `compose.ajax-web.yml` and is refreshed from the
+host dev profile by an explicit seed step. The PWA must not merge profile state
+in browser storage.
 
 Web Push remains opt-in and server-authoritative. The browser may register a
 subscription with `/api/push/subscribe`; VAPID identity, subscription
