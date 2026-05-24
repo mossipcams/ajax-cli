@@ -40,6 +40,7 @@ use crate::{
     dispatch::{render_drop_command, render_task_command},
     new_task_request,
     render::{render_execution_outputs, render_plan},
+    server,
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
     web_companion_backend::{serve_mobile_web, serve_mobile_web_with_paths},
     CliContextPaths, CliError, RenderedCommand,
@@ -122,6 +123,7 @@ pub(crate) fn render_matches_mut(
                 state_changed: false,
             })
         }
+        Some(("server", subcommand)) => server::render_server_command(subcommand, runner),
         Some(("tidy", subcommand)) => {
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
@@ -529,5 +531,16 @@ mod tests {
         assert!(with_paths_dispatch.contains("Some((\"web\", subcommand))"));
         assert!(with_paths_dispatch.contains("serve_mobile_web"));
         assert!(with_paths_dispatch.contains("paths"));
+    }
+
+    #[test]
+    fn cli_server_dispatch_routes_to_server_module() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
+        )
+        .unwrap();
+
+        assert!(source.contains("Some((\"server\", subcommand))"));
+        assert!(source.contains("server::render_server_command"));
     }
 }

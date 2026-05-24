@@ -308,6 +308,16 @@ polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
 it resolves stable/dev context paths, reloads and saves the authoritative SQLite
 state, and delegates native command execution for browser-submitted actions.
 
+The mobile companion can also run as an always-on user daemon. On macOS,
+launchd owns 24/7 process lifetime; Ajax installs a user LaunchAgent that runs
+the foreground `ajax web` command rather than spawning a replacement from inside
+the server. `ajax server install`, `start`, `stop`, `restart`, and `status` are
+CLI process-manager controls around that launchd job. Restart is launchd-owned:
+the job is asked to restart or the foreground server exits after responding to a
+restart request, and launchd relaunches it. Stop is distinct from restart
+because it must unload or stop the job so launchd does not immediately relaunch
+it.
+
 The manifest should stay small and install-focused: app name, short name,
 description, `start_url`, `scope`, standalone display, portrait orientation,
 theme/background colors, and app icons including a maskable icon. Icon files are
