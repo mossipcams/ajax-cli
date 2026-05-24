@@ -223,7 +223,7 @@ body.is-refreshing .refresh-glyph {
 main {
   width: min(720px, 100%);
   margin: 0 auto;
-  padding: 10px calc(20px + env(safe-area-inset-right)) 24px
+  padding: 6px calc(20px + env(safe-area-inset-right)) 16px
     calc(20px + env(safe-area-inset-left));
 }
 
@@ -269,7 +269,7 @@ main {
 .card {
   position: relative;
   background: var(--paper);
-  padding: 9px 14px 9px 16px;
+  padding: 6px 14px 6px 16px;
   border-left: 3px solid transparent;
   transition: background 140ms ease, border-left-color 140ms ease;
 }
@@ -357,9 +357,7 @@ main {
 }
 
 .card:not(.expanded) .summary {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  display: none;
 }
 
 /* Card-head action button (primary) -------------------------------------- */
