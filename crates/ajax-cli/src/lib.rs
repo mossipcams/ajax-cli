@@ -3082,6 +3082,38 @@ mod tests {
     }
 
     #[test]
+    fn release_please_rust_packages_point_to_package_manifests() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+        )
+        .unwrap();
+        let default_release_type = config["release-type"].as_str();
+
+        for (package_path, package_config) in config["packages"].as_object().unwrap() {
+            let release_type = package_config["release-type"]
+                .as_str()
+                .or(default_release_type);
+            if release_type != Some("rust") {
+                continue;
+            }
+
+            let manifest = std::fs::read_to_string(root.join(package_path).join("Cargo.toml"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Release Please Rust package {package_path} must point to a Cargo.toml: {error}"
+                    )
+                });
+            let has_package_table = manifest.lines().any(|line| line.trim() == "[package]");
+
+            assert!(
+                has_package_table,
+                "Release Please Rust package {package_path} must point to a Cargo package manifest, not a virtual workspace manifest"
+            );
+        }
+    }
+
+    #[test]
     fn workspace_members_inherit_metadata_lints_and_dependencies() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
