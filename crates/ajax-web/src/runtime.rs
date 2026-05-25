@@ -32,6 +32,7 @@ pub struct Request<'a> {
 pub struct Response {
     pub status_code: u16,
     pub content_type: &'static str,
+    pub cache_control: &'static str,
     pub body: Vec<u8>,
 }
 
@@ -75,6 +76,10 @@ struct MobileActionRequest {
     action: String,
 }
 
+const CACHE_NO_STORE: &str = "no-store";
+const CACHE_REVALIDATE: &str = "no-cache, must-revalidate";
+const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
+
 pub fn route<R: Registry>(
     request: Request<'_>,
     context: &CommandContext<R>,
@@ -84,11 +89,14 @@ pub fn route<R: Registry>(
         ("GET", "/") => Ok(Response {
             status_code: 200,
             content_type: "text/html; charset=utf-8",
+            cache_control: CACHE_REVALIDATE,
             body: install::pwa_shell().as_bytes().to_vec(),
         }),
+        ("GET", "/healthz") => Ok(text_response(200, "ok")),
         ("GET", "/api/cockpit") => Ok(Response {
             status_code: 200,
             content_type: "application/json; charset=utf-8",
+            cache_control: CACHE_NO_STORE,
             body: cockpit::browser_cockpit_json(context)
                 .map_err(RouteError::Json)?
                 .into_bytes(),
@@ -99,20 +107,26 @@ pub fn route<R: Registry>(
                 Some(Ok(body)) => Ok(Response {
                     status_code: 200,
                     content_type: "application/json; charset=utf-8",
+                    cache_control: CACHE_NO_STORE,
                     body: body.into_bytes(),
                 }),
                 Some(Err(error)) => Err(RouteError::Json(error)),
-                None => Ok(text_response(404, "task not found")),
+                None => json_route_error(404, "task not found"),
             }
         }
-        ("GET", asset_path) => match install::static_asset(asset_path) {
-            Some(asset) => Ok(Response {
-                status_code: 200,
-                content_type: asset.content_type,
-                body: asset.body.to_vec(),
-            }),
-            None => Ok(text_response(404, "not found")),
-        },
+        ("GET", asset_path) if !asset_path.starts_with("/api/") => {
+            match install::static_asset(asset_path) {
+                Some(asset) => Ok(Response {
+                    status_code: 200,
+                    content_type: asset.content_type,
+                    cache_control: static_asset_cache_control(asset_path),
+                    body: asset.body.to_vec(),
+                }),
+                None => Ok(text_response(404, "not found")),
+            }
+        }
+        (_, api_path) if is_known_api_path(api_path) => json_route_error(405, "method not allowed"),
+        (_, api_path) if api_path.starts_with("/api/") => json_route_error(404, "not found"),
         _ => Ok(text_response(405, "method not allowed")),
     }
 }
@@ -408,10 +422,11 @@ fn write_http_response<S: Write>(mut stream: S, response: Response) -> Result<()
         _ => "Internal Server Error",
     };
     let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         response.status_code,
         status_text,
         response.content_type,
+        response.cache_control,
         response.body.len()
     );
     stream
@@ -425,6 +440,7 @@ fn text_response(status_code: u16, body: &str) -> Response {
     Response {
         status_code,
         content_type: "text/plain; charset=utf-8",
+        cache_control: CACHE_NO_STORE,
         body: body.as_bytes().to_vec(),
     }
 }
@@ -433,9 +449,43 @@ fn json_response(status_code: u16, value: serde_json::Value) -> Result<Response,
     Ok(Response {
         status_code,
         content_type: "application/json; charset=utf-8",
+        cache_control: CACHE_NO_STORE,
         body: serde_json::to_vec(&value)
             .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
     })
+}
+
+fn json_route_error(status_code: u16, error: &str) -> Result<Response, RouteError> {
+    Ok(Response {
+        status_code,
+        content_type: "application/json; charset=utf-8",
+        cache_control: CACHE_NO_STORE,
+        body: serde_json::to_vec(&serde_json::json!({
+            "ok": false,
+            "error": error,
+        }))
+        .map_err(RouteError::Json)?,
+    })
+}
+
+fn is_known_api_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/api/cockpit"
+            | "/api/actions"
+            | "/api/tasks"
+            | "/api/push/config"
+            | "/api/push/subscribe"
+            | "/api/push/unsubscribe"
+    ) || path.starts_with("/api/tasks/")
+}
+
+fn static_asset_cache_control(path: &str) -> &'static str {
+    if path.starts_with("/icons/") {
+        CACHE_IMMUTABLE
+    } else {
+        CACHE_REVALIDATE
+    }
 }
 
 #[cfg(test)]
@@ -551,6 +601,23 @@ mod tests {
         ))
     }
 
+    fn serve_raw_request(path: &str) -> String {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("raw");
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let stream = MockStream {
+            input: Cursor::new(format!("GET {path} HTTP/1.1\r\nHost: ajax\r\n\r\n").into_bytes()),
+            output: Rc::clone(&output),
+        };
+
+        serve_connection(stream, &mut context, &mut runner, &mut bridge, &dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
+        written
+    }
+
     #[test]
     fn runtime_routes_to_vertical_slices() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -584,6 +651,58 @@ mod tests {
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&cockpit.body).unwrap()["cards"],
             serde_json::json!([])
+        );
+    }
+
+    #[test]
+    fn healthz_endpoint_reports_container_readiness() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let response = route(
+            Request {
+                method: "GET",
+                path: "/healthz",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content_type, "text/plain; charset=utf-8");
+        assert_eq!(response.body, b"ok");
+    }
+
+    #[test]
+    fn http_cache_policy_matches_pwa_runtime_contract() {
+        let api = serve_raw_request("/api/cockpit");
+        assert!(api.contains("Cache-Control: no-store"), "{api}");
+
+        let health = serve_raw_request("/healthz");
+        assert!(health.contains("Cache-Control: no-store"), "{health}");
+
+        let shell = serve_raw_request("/");
+        assert!(
+            shell.contains("Cache-Control: no-cache, must-revalidate"),
+            "{shell}"
+        );
+
+        let service_worker = serve_raw_request("/sw.js");
+        assert!(
+            service_worker.contains("Cache-Control: no-cache, must-revalidate"),
+            "{service_worker}"
+        );
+
+        let manifest = serve_raw_request("/manifest.webmanifest");
+        assert!(
+            manifest.contains("Cache-Control: no-cache, must-revalidate"),
+            "{manifest}"
+        );
+
+        let icon = serve_raw_request("/icons/icon-192.png");
+        assert!(
+            icon.contains("Cache-Control: public, max-age=31536000, immutable"),
+            "{icon}"
         );
     }
 
@@ -704,6 +823,42 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 404);
+    }
+
+    #[test]
+    fn api_errors_return_json_bodies() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let missing = route(
+            Request {
+                method: "GET",
+                path: "/api/missing",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+        let missing_body: serde_json::Value = serde_json::from_slice(&missing.body).unwrap();
+        assert_eq!(missing.status_code, 404);
+        assert_eq!(missing.content_type, "application/json; charset=utf-8");
+        assert_eq!(missing_body["ok"], false);
+        assert_eq!(missing_body["error"], "not found");
+
+        let wrong_method = route(
+            Request {
+                method: "POST",
+                path: "/api/cockpit",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+        let wrong_method_body: serde_json::Value =
+            serde_json::from_slice(&wrong_method.body).unwrap();
+        assert_eq!(wrong_method.status_code, 405);
+        assert_eq!(wrong_method.content_type, "application/json; charset=utf-8");
+        assert_eq!(wrong_method_body["ok"], false);
+        assert_eq!(wrong_method_body["error"], "method not allowed");
     }
 
     #[test]
@@ -839,7 +994,10 @@ mod tests {
         let written = String::from_utf8_lossy(&output.borrow()).into_owned();
         assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
         assert!(written.contains("Content-Type: text/css"), "{written}");
-        assert!(written.contains("Cache-Control: no-store"), "{written}");
+        assert!(
+            written.contains("Cache-Control: no-cache, must-revalidate"),
+            "{written}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }

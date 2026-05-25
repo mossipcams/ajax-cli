@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v14";
+const CACHE = "ajax-cockpit-v15";
 const SHELL = [
   "/",
   "/app.css",
@@ -33,6 +33,11 @@ self.addEventListener("fetch", (event) => {
 
   // Live task data is never cached: always go to the network.
   if (url.pathname.startsWith("/api/")) return;
+
+  if (request.mode === "navigate") {
+    event.respondWith(fetch(request).catch(() => caches.match("/")));
+    return;
+  }
 
   // App shell: network-first so the latest deploy is always picked up on the
   // next reload; cache only catches us when the network is unreachable.

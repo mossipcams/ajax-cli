@@ -14,15 +14,26 @@ RUN cargo build --release --bin ajax-cli
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates git tmux libsqlite3-0 \
+    && apt-get install -y --no-install-recommends ca-certificates curl git gosu tmux libsqlite3-0 \
+    && groupadd --system ajax \
+    && useradd --system --gid ajax --home-dir /ajax-dev --shell /usr/sbin/nologin ajax \
     && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /ajax-dev/logs /ajax-dev/cache /ajax-dev/worktrees
+    && mkdir -p /ajax-dev/logs /ajax-dev/cache /ajax-dev/worktrees \
+    && chown -R ajax:ajax /ajax-dev
 
 COPY --from=builder /workspace/target/release/ajax-cli /usr/local/bin/ajax-cli
+COPY docker/ajax-web-entrypoint.sh /usr/local/bin/ajax-web-entrypoint
+
+RUN chmod +x /usr/local/bin/ajax-web-entrypoint
 
 ENV AJAX_WEB_SNAPSHOT_ONLY=1
 
 VOLUME ["/ajax-dev"]
 EXPOSE 8788
+
+ENTRYPOINT ["/usr/local/bin/ajax-web-entrypoint"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl --fail --insecure --silent --show-error https://127.0.0.1:8788/healthz || exit 1
 
 CMD ["ajax-cli", "--profile", "dev", "--home", "/ajax-dev", "--config", "/ajax-dev/config.toml", "--state", "/ajax-dev/ajax.db", "--worktree-root", "/ajax-dev/worktrees", "web", "--host", "0.0.0.0", "--port", "8788"]
