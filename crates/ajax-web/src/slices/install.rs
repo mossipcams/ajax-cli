@@ -160,7 +160,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v14"));
+        assert!(worker.contains("ajax-cockpit-v15"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -178,6 +178,44 @@ mod tests {
                 "service worker does not cache {cached}"
             );
         }
+        assert!(!worker.contains("IndexedDB"));
+        assert!(!worker.contains("sync"));
+    }
+
+    #[test]
+    fn manifest_and_shell_metadata_are_installable_and_consistent() {
+        let shell = pwa_shell();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(static_asset("/manifest.webmanifest").unwrap().body).unwrap();
+        let theme = manifest["theme_color"].as_str().unwrap();
+
+        assert_eq!(manifest["id"], "/");
+        assert_eq!(manifest["start_url"], "/");
+        assert_eq!(manifest["scope"], "/");
+        assert_eq!(manifest["display"], "standalone");
+        assert!(manifest["background_color"].as_str().is_some());
+        assert!(
+            shell.contains(&format!("name=\"theme-color\" content=\"{theme}\"")),
+            "shell theme-color must match manifest theme_color"
+        );
+        assert!(shell.contains("name=\"apple-mobile-web-app-capable\""));
+        assert!(shell.contains("name=\"apple-mobile-web-app-status-bar-style\""));
+        assert!(shell.contains("rel=\"apple-touch-icon\""));
+
+        let icons = manifest["icons"].as_array().unwrap();
+        assert!(icons.iter().any(|icon| icon["purpose"] == "maskable"));
+    }
+
+    #[test]
+    fn service_worker_has_update_safe_navigation_fallback() {
+        let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
+
+        assert!(worker.contains("ajax-cockpit-v15"));
+        assert!(worker.contains("request.mode === \"navigate\""));
+        assert!(worker.contains("caches.match(\"/\")"));
+        assert!(worker.contains("key !== CACHE"));
+        assert!(worker.contains("caches.delete(key)"));
+        assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
     }
