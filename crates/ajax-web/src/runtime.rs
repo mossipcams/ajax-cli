@@ -48,6 +48,10 @@ pub struct ActionFailure {
 }
 
 pub trait RuntimeBridge<C: CommandRunner> {
+    fn backend_authority(&self) -> cockpit::BackendAuthority {
+        cockpit::BackendAuthority::HostNative
+    }
+
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -202,9 +206,10 @@ fn handle_refreshed_cockpit_request<C: CommandRunner>(
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
     let _state_changed = bridge.refresh_cockpit(context, runner)?;
+    let backend = bridge.backend_authority();
     json_response(
         200,
-        serde_json::to_value(cockpit::browser_cockpit_view(context))
+        serde_json::to_value(cockpit::browser_cockpit_view_with_backend(context, backend))
             .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
     )
 }
@@ -246,13 +251,18 @@ fn handle_action_request<C: CommandRunner>(
         );
     }
 
+    let backend = bridge.backend_authority();
+    if !backend.control_enabled() {
+        return control_disabled_response(context, backend);
+    }
+
     match bridge.execute_mobile_action(action, &request.task_handle, context, runner) {
         Ok(state_changed) => json_response(
             200,
             serde_json::json!({
                 "ok": true,
                 "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view(context),
+                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
             }),
         ),
         Err(error) => json_response(
@@ -260,7 +270,7 @@ fn handle_action_request<C: CommandRunner>(
             serde_json::json!({
                 "ok": false,
                 "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view(context),
+                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
             }),
         ),
     }
@@ -274,13 +284,18 @@ fn handle_start_task_request<C: CommandRunner>(
 ) -> Result<Response, WebError> {
     let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
+    let backend = bridge.backend_authority();
+    if !backend.control_enabled() {
+        return control_disabled_response(context, backend);
+    }
+
     match bridge.execute_start_task(request, context, runner) {
         Ok(state_changed) => json_response(
             200,
             serde_json::json!({
                 "ok": true,
                 "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view(context),
+                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
             }),
         ),
         Err(error) => json_response(
@@ -288,10 +303,24 @@ fn handle_start_task_request<C: CommandRunner>(
             serde_json::json!({
                 "ok": false,
                 "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view(context),
+                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
             }),
         ),
     }
+}
+
+fn control_disabled_response(
+    context: &CommandContext<InMemoryRegistry>,
+    backend: cockpit::BackendAuthority,
+) -> Result<Response, WebError> {
+    json_response(
+        409,
+        serde_json::json!({
+            "ok": false,
+            "error": "mutable PWA actions require the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state",
+            "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
+        }),
+    )
 }
 
 fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {

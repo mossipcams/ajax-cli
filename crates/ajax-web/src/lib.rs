@@ -78,8 +78,8 @@ mod tests {
         let compose = repo_file("compose.ajax-web.yml");
 
         assert!(
-            !dockerfile.contains("AJAX_WEB_SNAPSHOT_ONLY=1"),
-            "Docker web runtime must not default to snapshot-only mode"
+            compose.contains("AJAX_WEB_SNAPSHOT_ONLY=1"),
+            "Docker web runtime must declare snapshot-only mode unless it proxies to a host-native Ajax backend"
         );
         assert!(dockerfile.contains("VOLUME [\"/ajax-dev\"]"));
         assert!(dockerfile.contains("EXPOSE 8788"));
@@ -112,12 +112,12 @@ mod tests {
             "Docker web runtime must bind the host dev Ajax home into /ajax-dev"
         );
         assert!(
-            compose.contains("${HOME}/Desktop/Projects:/Users/matt/Desktop/Projects"),
-            "Docker live mode must mount configured host repo paths"
+            !compose.contains("${HOME}/Desktop/Projects:/Users/matt/Desktop/Projects"),
+            "Docker snapshot mode must not masquerade as live control by mounting host repo paths"
         );
         assert!(
-            compose.contains("${HOME}/.ajax-dev/worktrees:/Users/matt/.ajax-dev/worktrees"),
-            "Docker live mode must mount host dev worktrees at their stored paths"
+            !compose.contains("${HOME}/.ajax-dev/worktrees:/Users/matt/.ajax-dev/worktrees"),
+            "Docker snapshot mode must not masquerade as live control by mounting host worktrees"
         );
         assert!(
             compose.contains("AJAX_WEB_CHOWN_STATE=0"),
@@ -130,6 +130,32 @@ mod tests {
         assert!(
             !compose.contains("./:/ajax-dev"),
             "compose must not mount the source tree over Ajax state"
+        );
+    }
+
+    #[test]
+    fn live_pwa_control_backend_is_host_native_ajax() {
+        let architecture = repo_file("architecture.md");
+        let readme = repo_file("README.md");
+
+        for document in [&architecture, &readme] {
+            assert!(
+                document.contains("host-native live control backend"),
+                "PWA control docs must name host-native Ajax as the live backend"
+            );
+            assert!(
+                document.contains("SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state"),
+                "PWA control docs must name the host-local substrates required for live control"
+            );
+        }
+
+        assert!(
+            architecture.contains("Docker is not the live Ajax control authority"),
+            "architecture must prevent Docker from masquerading as live task authority"
+        );
+        assert!(
+            readme.contains("For a persistent controllable PWA, run the web companion on the host"),
+            "README must document the persistent host-native control path"
         );
     }
 
@@ -155,8 +181,13 @@ mod tests {
     #[test]
     fn docker_docs_mark_volume_seeding_as_snapshot_only() {
         let readme = repo_file("README.md");
+        let architecture = repo_file("architecture.md");
         let seed_script = repo_file("scripts/seed-docker-web-dev.sh");
 
+        assert!(readme.contains("Docker snapshot mode"));
+        assert!(readme.contains("does not run mutable PWA actions"));
+        assert!(architecture.contains("Docker snapshot mode"));
+        assert!(architecture.contains("does not run mutable PWA actions"));
         assert!(readme.contains("bind-mounts the host dev Ajax home"));
         assert!(readme.contains("snapshot-only"));
         assert!(readme.contains("host tmux"));

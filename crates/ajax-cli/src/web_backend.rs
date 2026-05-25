@@ -131,6 +131,14 @@ struct CliRuntimeBridge<'a> {
 }
 
 impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
+    fn backend_authority(&self) -> ajax_web::slices::cockpit::BackendAuthority {
+        if self.snapshot_only {
+            ajax_web::slices::cockpit::BackendAuthority::SnapshotOnly
+        } else {
+            ajax_web::slices::cockpit::BackendAuthority::HostNative
+        }
+    }
+
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -710,10 +718,82 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 200);
+        assert_eq!(body["backend"]["authority"], "snapshot-only");
+        assert_eq!(body["backend"]["control_enabled"], false);
+        assert!(body["backend"]["warning"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("host-native Ajax"));
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_ne!(body["cards"][0]["live_summary"], "agent running");
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_only_backend_rejects_mutable_mobile_operations() {
+        struct PanicRunner;
+        impl CommandRunner for PanicRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                panic!("snapshot-only web API should not run {command:?}");
+            }
+        }
+
+        let mut context = reviewable_context();
+        let mut runner = PanicRunner;
+        let mut bridge = super::CliRuntimeBridge {
+            paths: None,
+            snapshot_only: true,
+        };
+        let dir = scratch_dir("snapshot-actions");
+
+        for action in ["review", "ship", "repair", "drop"] {
+            let response = ajax_web::runtime::route_with_bridge(
+                ajax_web::runtime::Request {
+                    method: "POST",
+                    path: "/api/actions",
+                    body: &format!(r#"{{"task_handle":"web/fix-login","action":"{action}"}}"#),
+                },
+                &mut context,
+                &mut runner,
+                &mut bridge,
+                &dir,
+            )
+            .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+            assert_eq!(response.status_code, 409);
+            assert_eq!(body["ok"], false);
+            assert!(body["error"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("host-native Ajax"));
+            assert_eq!(body["cockpit"]["backend"]["control_enabled"], false);
+        }
+
+        let start = ajax_web::runtime::route_with_bridge(
+            ajax_web::runtime::Request {
+                method: "POST",
+                path: "/api/tasks",
+                body: r#"{"repo":"web","title":"Fix search","agent":"codex"}"#,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&start.body).unwrap();
+
+        assert_eq!(start.status_code, 409);
+        assert_eq!(body["ok"], false);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("host-native Ajax"));
+        assert_eq!(body["cockpit"]["backend"]["control_enabled"], false);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
