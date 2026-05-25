@@ -11,9 +11,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
+    pub backend: BrowserBackend,
     pub repos: ReposResponse,
     pub cards: Vec<BrowserTaskCard>,
     pub inbox: InboxResponse,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BackendAuthority {
+    HostNative,
+    SnapshotOnly,
+}
+
+impl BackendAuthority {
+    pub fn control_enabled(self) -> bool {
+        matches!(self, Self::HostNative)
+    }
+}
+
+#[derive(Serialize)]
+pub struct BrowserBackend {
+    pub authority: &'static str,
+    pub control_enabled: bool,
+    pub warning: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -36,11 +56,36 @@ pub fn browser_cockpit_json<R: Registry>(
 }
 
 pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> BrowserCockpitView {
+    browser_cockpit_view_with_backend(context, BackendAuthority::HostNative)
+}
+
+pub fn browser_cockpit_view_with_backend<R: Registry>(
+    context: &CommandContext<R>,
+    backend: BackendAuthority,
+) -> BrowserCockpitView {
     let view = commands::rebuild_cockpit_view(context);
     BrowserCockpitView {
+        backend: browser_backend(backend),
         repos: view.repos,
         cards: view.cards.iter().map(browser_task_card).collect(),
         inbox: view.inbox,
+    }
+}
+
+fn browser_backend(backend: BackendAuthority) -> BrowserBackend {
+    match backend {
+        BackendAuthority::HostNative => BrowserBackend {
+            authority: "host-native",
+            control_enabled: true,
+            warning: None,
+        },
+        BackendAuthority::SnapshotOnly => BrowserBackend {
+            authority: "snapshot-only",
+            control_enabled: false,
+            warning: Some(
+                "Live PWA control requires the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state.",
+            ),
+        },
     }
 }
 

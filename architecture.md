@@ -293,12 +293,16 @@ vocabulary remains operator-facing.
 adapter over the same Cockpit projection and task-operation contracts used by
 native Cockpit. It may shape responses for browser ergonomics, but it must not
 own task lifecycle rules, registry truth, runtime reconciliation, Git/tmux
-interpretation, or action policy.
+interpretation, or action policy. The PWA's host-native live control backend is
+the `ajax-cli web` process running on the same host-local Ajax authority as
+native Cockpit: SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state.
 
 The PWA is a thin mobile cockpit for the native Ajax CLI. It is not an
 offline-first Ajax client and must not introduce a second browser-side task
 model. Git, tmux, SQLite, and the Ajax companion server remain authoritative for
-task state and operations.
+task state and operations. Docker is not the live Ajax control authority because
+it does not naturally share the host tmux server, agent processes, installed
+agent CLIs, or other host process state.
 
 PWA files live under `crates/ajax-web/web`. The install slice owns serving the
 HTML shell, client JavaScript, stylesheet, web manifest, service worker, and app
@@ -308,20 +312,15 @@ polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
 it resolves stable/dev context paths, reloads and saves the authoritative SQLite
 state, and delegates native command execution for browser-submitted actions.
 
-The ajax-web Docker runtime is the persistent dev web companion. It runs the
+The ajax-web Docker runtime is a persistent snapshot companion. It runs the
 foreground `ajax web` command as a container entrypoint, publishes the dev web
-port, and lets Docker own restart policy and log collection. The live dev
-Compose profile bind-mounts the host dev Ajax home from `~/.ajax-dev` into
-`/ajax-dev`, plus the host project and dev worktree roots at their recorded host
-paths. That keeps the Docker PWA on the same config, SQLite state, TLS identity,
-push identity, and cached projections as `ajax-cli --profile dev` instead of a
-stale Docker-owned snapshot. Host tmux sessions, host paths, and host agent
-tools are not implicitly available inside the container unless the operator
-explicitly mounts or installs them there, so Docker live mode can still report
-missing runtime evidence or fail mutable actions when those host substrates are
-not visible from Linux. `scripts/seed-docker-web-dev.sh` is a legacy
-snapshot-only helper for deployments that intentionally copy host dev state into
-a Docker volume.
+port, and lets Docker own restart policy and log collection, but it runs with
+snapshot-only authority. Docker snapshot mode bind-mounts the host dev Ajax home
+from `~/.ajax-dev` into `/ajax-dev` so it can read the same config, SQLite
+state, TLS identity, push identity, and cached projections as
+`ajax-cli --profile dev`. It does not mount host repos or worktrees, does not
+see host tmux sessions or host-only agent CLIs, and does not run mutable PWA actions. `scripts/seed-docker-web-dev.sh` is a legacy snapshot-only helper for
+deployments that intentionally copy host dev state into a Docker volume.
 
 There is no `ajax server` subcommand; lifecycle is whatever `docker compose up
 -d`, `docker compose restart`, and `docker compose down` already provide. Host
@@ -352,9 +351,10 @@ architecture unless the project explicitly adopts those elsewhere.
 
 Stable and dev runtime profiles remain separated by explicit runtime context.
 Stable uses the stable state database and default web port, while dev uses
-development state and port `8788`. The Docker dev companion bind-mounts the
-host dev profile instead of creating a separate Docker-dev state profile. The
-PWA must not merge profile state in browser storage.
+development state and port `8788`. Docker snapshot mode bind-mounts the host dev
+profile instead of creating a separate Docker-dev state profile, but live
+control still belongs to the host-native backend. The PWA must not merge profile
+state in browser storage.
 
 Web Push remains opt-in and server-authoritative. The browser may register a
 subscription with `/api/push/subscribe`; VAPID identity, subscription

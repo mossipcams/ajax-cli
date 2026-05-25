@@ -69,10 +69,23 @@ Web Push: the phone is then notified when a task newly needs attention, even
 when the app is closed. Web Push on iOS requires iOS 16.4 or later and the app
 installed to the home screen.
 
+### Persistent host web companion
+
+For a persistent controllable PWA, run the web companion on the host so Ajax
+keeps the same live authority as native Cockpit:
+
+```sh
+ajax-cli --profile dev web --host 0.0.0.0 --port 8788
+```
+
+This host-native live control backend can read and operate against the same
+SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state
+as the terminal Cockpit. Use a host-native supervisor such as launchd, systemd,
+or your terminal multiplexer if you need it to survive a shell logout.
+
 ### Persistent Docker web companion
 
-For a persistent dev web companion, run the ajax-web Docker runtime instead of
-tying the server to a terminal or SSH session:
+For a persistent snapshot companion, run the ajax-web Docker runtime:
 
 ```sh
 docker compose -f compose.ajax-web.yml up -d --build
@@ -80,24 +93,19 @@ docker compose -f compose.ajax-web.yml up -d --build
 
 The Compose service publishes `https://localhost:8788` and runs
 `ajax-cli --profile dev --home /ajax-dev --config /ajax-dev/config.toml --state /ajax-dev/ajax.db --worktree-root /ajax-dev/worktrees web --host 0.0.0.0 --port 8788`
-with `restart: unless-stopped`. The service bind-mounts the host dev Ajax home
-from `~/.ajax-dev` into `/ajax-dev`, so the PWA reads the same config, state DB,
-TLS identity, push keys, and cached projections as `ajax-cli --profile dev`.
-It also mounts `~/Desktop/Projects` and `~/.ajax-dev/worktrees` at their host
-paths so task records that contain absolute host paths still resolve inside the
-container.
+with `restart: unless-stopped` and `AJAX_WEB_SNAPSHOT_ONLY=1`. Docker snapshot
+mode bind-mounts the host dev Ajax home from `~/.ajax-dev` into `/ajax-dev`, so
+the PWA can read the same config, state DB, TLS identity, push keys, and cached
+projections as `ajax-cli --profile dev`. It does not mount host repos or
+worktrees, does not see host tmux sessions or host-only agent CLIs, and does not run mutable PWA actions.
 
-Live Docker mode still depends on the same host substrates as native Cockpit:
-configured repo paths, host tmux sessions, and the selected agent CLI. On macOS,
-host tmux sockets and host-only agent binaries are not automatically available
-inside Linux containers. If those substrates are unavailable, Docker can serve
-the live Ajax DB but may still report missing runtime evidence or fail mutable
-actions that need the agent. For a fully native live cockpit, run
+Docker snapshot mode is useful when you want Docker to keep the HTTPS shell
+reachable, but it is not the live Ajax control backend. For control, run
 `ajax-cli --profile dev web --host 0.0.0.0 --port 8788` on the host.
 
 `scripts/seed-docker-web-dev.sh` remains available for legacy snapshot-only
 Docker deployments that intentionally copy `~/.ajax-dev` into a Docker volume,
-but it is not the default live path.
+but it is not the live control path.
 
 Docker owns process restart, but the machine running Docker still owns network
 reachability and power state. On a sleeping MacBook, Docker cannot keep the LAN
