@@ -5,10 +5,11 @@ services:
       dockerfile: Dockerfile.ajax-web
     image: ajax-web-dev:local
     restart: unless-stopped
+    environment:
+      - AJAX_WEB_CHOWN_STATE=0
     ports:
       - "8788:8788"
     volumes:
-      - ajax-web-dev-home:/ajax-dev
-
-volumes:
-  ajax-web-dev-home:
+      - "${HOME}/.ajax-dev:/ajax-dev"
+      - "${HOME}/Desktop/Projects:/Users/matt/Desktop/Projects"
+      - "${HOME}/.ajax-dev/worktrees:/Users/matt/.ajax-dev/worktrees"

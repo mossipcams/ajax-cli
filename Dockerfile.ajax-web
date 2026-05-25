@@ -26,8 +26,6 @@ COPY docker/ajax-web-entrypoint.sh /usr/local/bin/ajax-web-entrypoint
 
 RUN chmod +x /usr/local/bin/ajax-web-entrypoint
 
-ENV AJAX_WEB_SNAPSHOT_ONLY=1
-
 VOLUME ["/ajax-dev"]
 EXPOSE 8788
 

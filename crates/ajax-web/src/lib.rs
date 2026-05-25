@@ -77,7 +77,10 @@ mod tests {
         let dockerfile = repo_file("Dockerfile.ajax-web");
         let compose = repo_file("compose.ajax-web.yml");
 
-        assert!(dockerfile.contains("ENV AJAX_WEB_SNAPSHOT_ONLY=1"));
+        assert!(
+            !dockerfile.contains("AJAX_WEB_SNAPSHOT_ONLY=1"),
+            "Docker web runtime must not default to snapshot-only mode"
+        );
         assert!(dockerfile.contains("VOLUME [\"/ajax-dev\"]"));
         assert!(dockerfile.contains("EXPOSE 8788"));
         assert!(
@@ -100,11 +103,30 @@ mod tests {
 
         let entrypoint = repo_file("docker/ajax-web-entrypoint.sh");
         assert!(entrypoint.contains("chown -R ajax:ajax /ajax-dev"));
+        assert!(entrypoint.contains("AJAX_WEB_CHOWN_STATE"));
         assert!(entrypoint.contains("exec gosu ajax \"$@\""));
 
         assert!(compose.contains("\"8788:8788\"") || compose.contains("- 8788:8788"));
-        assert!(compose.contains("ajax-web-dev-home:/ajax-dev"));
-        assert!(compose.contains("ajax-web-dev-home:"));
+        assert!(
+            compose.contains("${HOME}/.ajax-dev:/ajax-dev"),
+            "Docker web runtime must bind the host dev Ajax home into /ajax-dev"
+        );
+        assert!(
+            compose.contains("${HOME}/Desktop/Projects:/Users/matt/Desktop/Projects"),
+            "Docker live mode must mount configured host repo paths"
+        );
+        assert!(
+            compose.contains("${HOME}/.ajax-dev/worktrees:/Users/matt/.ajax-dev/worktrees"),
+            "Docker live mode must mount host dev worktrees at their stored paths"
+        );
+        assert!(
+            compose.contains("AJAX_WEB_CHOWN_STATE=0"),
+            "Docker live mode must not chown the host bind-mounted Ajax home"
+        );
+        assert!(
+            !compose.contains("ajax-web-dev-home:/ajax-dev"),
+            "Docker live mode must not read a stale named-volume snapshot"
+        );
         assert!(
             !compose.contains("./:/ajax-dev"),
             "compose must not mount the source tree over Ajax state"
@@ -128,5 +150,16 @@ mod tests {
                 ".dockerignore must exclude {expected}"
             );
         }
+    }
+
+    #[test]
+    fn docker_docs_mark_volume_seeding_as_snapshot_only() {
+        let readme = repo_file("README.md");
+        let seed_script = repo_file("scripts/seed-docker-web-dev.sh");
+
+        assert!(readme.contains("bind-mounts the host dev Ajax home"));
+        assert!(readme.contains("snapshot-only"));
+        assert!(readme.contains("host tmux"));
+        assert!(seed_script.contains("snapshot-only"));
     }
 }

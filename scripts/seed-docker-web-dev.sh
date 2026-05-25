@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# snapshot-only helper for legacy Docker deployments. The default Compose
+# service now bind-mounts the host dev Ajax home for live state instead.
+
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 volume="web-server_ajax-web-dev-home"
 source_dir="${AJAX_DOCKER_DEV_HOME:-$HOME/.ajax-dev}"
