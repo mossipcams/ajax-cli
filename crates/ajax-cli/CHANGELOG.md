@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.0...ajax-cli-v0.2.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* require host-native pwa control backend ([#58](https://github.com/mossipcams/ajax-cli/issues/58)) ([29abd4d](https://github.com/mossipcams/ajax-cli/commit/29abd4dd7ea9bd3b2a5f5e48c540264d74de107e))
+
 ## [0.2.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.1.0...ajax-cli-v0.2.0) (2026-05-25)
 
 
