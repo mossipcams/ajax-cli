@@ -310,18 +310,18 @@ state, and delegates native command execution for browser-submitted actions.
 
 The ajax-web Docker runtime is the persistent dev web companion. It runs the
 foreground `ajax web` command as a container entrypoint, publishes the dev web
-port, and lets Docker own restart policy and log collection. The container owns
-its dev Ajax runtime context through mounted config, SQLite state, logs, cache,
-and worktree volumes; it is not a browser-only proxy to a host-side Ajax
-process. Host tmux sessions, host paths, and host agent tools are not
-implicitly available inside the container unless the operator explicitly mounts
-or installs them there. The dev Docker runtime uses a Docker-owned Ajax home
-volume seeded from host `~/.ajax-dev`, rather than live-binding the macOS
-SQLite directory into Linux. Seeding also carries over the trusted host dev TLS
-identity, so installed browsers and phones keep the same trusted HTTPS identity
-after the runtime moves from a host process to Docker. Because host tmux and
-worktree substrates are not container-owned by default, the Docker web API may
-serve the seeded cockpit snapshot without running live host substrate refresh.
+port, and lets Docker own restart policy and log collection. The live dev
+Compose profile bind-mounts the host dev Ajax home from `~/.ajax-dev` into
+`/ajax-dev`, plus the host project and dev worktree roots at their recorded host
+paths. That keeps the Docker PWA on the same config, SQLite state, TLS identity,
+push identity, and cached projections as `ajax-cli --profile dev` instead of a
+stale Docker-owned snapshot. Host tmux sessions, host paths, and host agent
+tools are not implicitly available inside the container unless the operator
+explicitly mounts or installs them there, so Docker live mode can still report
+missing runtime evidence or fail mutable actions when those host substrates are
+not visible from Linux. `scripts/seed-docker-web-dev.sh` is a legacy
+snapshot-only helper for deployments that intentionally copy host dev state into
+a Docker volume.
 
 There is no `ajax server` subcommand; lifecycle is whatever `docker compose up
 -d`, `docker compose restart`, and `docker compose down` already provide. Host
@@ -350,12 +350,11 @@ subscriptions. It must not use IndexedDB, background sync, local task queues, or
 offline mutations. It must not add Yew, Trunk, WASM, or a large frontend
 architecture unless the project explicitly adopts those elsewhere.
 
-Stable, host-dev, and Docker-dev runtime profiles remain separated by explicit
-runtime context. Stable uses the stable state database and default web port,
-while dev uses development state and port `8788`. Docker-dev state lives in the
-container volumes configured by `compose.ajax-web.yml` and is refreshed from the
-host dev profile by an explicit seed step. The PWA must not merge profile state
-in browser storage.
+Stable and dev runtime profiles remain separated by explicit runtime context.
+Stable uses the stable state database and default web port, while dev uses
+development state and port `8788`. The Docker dev companion bind-mounts the
+host dev profile instead of creating a separate Docker-dev state profile. The
+PWA must not merge profile state in browser storage.
 
 Web Push remains opt-in and server-authoritative. The browser may register a
 subscription with `/api/push/subscribe`; VAPID identity, subscription

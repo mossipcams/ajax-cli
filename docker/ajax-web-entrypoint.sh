@@ -1,6 +1,8 @@
 #!/bin/sh
 set -eu
 
-chown -R ajax:ajax /ajax-dev
+if [ "${AJAX_WEB_CHOWN_STATE:-1}" != "0" ]; then
+    chown -R ajax:ajax /ajax-dev
+fi
 
 exec gosu ajax "$@"

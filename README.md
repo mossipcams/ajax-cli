@@ -75,19 +75,29 @@ For a persistent dev web companion, run the ajax-web Docker runtime instead of
 tying the server to a terminal or SSH session:
 
 ```sh
-scripts/seed-docker-web-dev.sh
 docker compose -f compose.ajax-web.yml up -d --build
 ```
 
 The Compose service publishes `https://localhost:8788` and runs
 `ajax-cli --profile dev --home /ajax-dev --config /ajax-dev/config.toml --state /ajax-dev/ajax.db --worktree-root /ajax-dev/worktrees web --host 0.0.0.0 --port 8788`
-with `restart: unless-stopped`. Runtime data lives in the
-`ajax-web-dev-home` Docker volume. `scripts/seed-docker-web-dev.sh` copies the
-host dev Ajax state from `~/.ajax-dev` into that volume, including the trusted
-dev TLS identity, so browsers do not see a new self-signed certificate when
-moving the web companion into Docker. The Docker web API serves the seeded
-snapshot without running live host substrate refresh; reseed the volume when the
-host dev state should be reflected in Docker.
+with `restart: unless-stopped`. The service bind-mounts the host dev Ajax home
+from `~/.ajax-dev` into `/ajax-dev`, so the PWA reads the same config, state DB,
+TLS identity, push keys, and cached projections as `ajax-cli --profile dev`.
+It also mounts `~/Desktop/Projects` and `~/.ajax-dev/worktrees` at their host
+paths so task records that contain absolute host paths still resolve inside the
+container.
+
+Live Docker mode still depends on the same host substrates as native Cockpit:
+configured repo paths, host tmux sessions, and the selected agent CLI. On macOS,
+host tmux sockets and host-only agent binaries are not automatically available
+inside Linux containers. If those substrates are unavailable, Docker can serve
+the live Ajax DB but may still report missing runtime evidence or fail mutable
+actions that need the agent. For a fully native live cockpit, run
+`ajax-cli --profile dev web --host 0.0.0.0 --port 8788` on the host.
+
+`scripts/seed-docker-web-dev.sh` remains available for legacy snapshot-only
+Docker deployments that intentionally copy `~/.ajax-dev` into a Docker volume,
+but it is not the default live path.
 
 Docker owns process restart, but the machine running Docker still owns network
 reachability and power state. On a sleeping MacBook, Docker cannot keep the LAN
