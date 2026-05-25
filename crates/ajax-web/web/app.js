@@ -1,22 +1,30 @@
-// Ajax Mobile Cockpit — client for the companion PWA.
+// Ajax Cockpit — Eames/Braun PWA client.
 const inbox = document.getElementById("inbox");
 const repos = document.getElementById("repos");
+const emptyState = document.getElementById("empty-state");
 const statusLine = document.getElementById("status-line");
 const offlineBanner = document.getElementById("offline-banner");
-const emptyState = document.getElementById("empty-state");
 const refreshButton = document.getElementById("refresh-button");
 const notifyButton = document.getElementById("notify-button");
+const newTaskButton = document.getElementById("new-task-button");
+const newTaskSheet = document.getElementById("new-task-sheet");
+const newTaskForm = document.getElementById("new-task-form");
+const newTaskRepo = document.getElementById("new-task-repo");
+const newTaskTitle = document.getElementById("new-task-title-input");
+const newTaskAgent = document.getElementById("new-task-agent");
+const newTaskError = document.getElementById("new-task-error");
+const detailContainer = document.getElementById("task-detail");
 
 const REFRESH_INTERVAL_MS = 1000;
-// Actions that should require a two-tap confirm before firing.
 const DESTRUCTIVE_ACTIONS = new Set(["drop"]);
 const CONFIRM_TIMEOUT_MS = 3000;
 
+let lastCockpit = null;
 let lastFingerprint = null;
 let refreshInFlight = false;
-// Card handles whose detail panel should stay expanded across re-renders.
+let detailHandle = null;
+let detailInFlight = false;
 const expandedCards = new Set();
-// Timers for buttons currently staged in their "tap to confirm" state.
 const pendingConfirms = new WeakMap();
 
 function el(tag, className, text) {
@@ -35,44 +43,45 @@ function repoOf(handle) {
   return slash === -1 ? handle : handle.slice(0, slash);
 }
 
-// Severity is 1..4 in the backend, lower = more urgent.
 function severityBucket(value) {
   if (value <= 2) return "high";
   if (value <= 3) return "medium";
   return "low";
 }
 
+// LIST VIEW -----------------------------------------------------------------
+
+function stateIndicator(state) {
+  switch ((state || "").toLowerCase()) {
+    case "running":
+      return "is-running";
+    case "review ready":
+    case "safe merge":
+      return "is-attention";
+    case "needs input":
+    case "blocked":
+    case "failed":
+      return "is-danger";
+    case "cleanable":
+      return "is-success";
+    case "idle":
+    case "archived":
+    default:
+      return "is-muted";
+  }
+}
+
 function actionButton(action, handle, isPrimary) {
-  const button = el("button", isPrimary ? "action primary" : "action", titleCase(action));
+  const button = el(
+    "button",
+    isPrimary ? "action primary" : "action",
+    titleCase(action)
+  );
   button.type = "button";
   button.dataset.action = action;
   button.dataset.task = handle;
   if (DESTRUCTIVE_ACTIONS.has(action)) button.dataset.destructive = "true";
   return button;
-}
-
-// Maps ui_state to a single terminal-style glyph + semantic class so each
-// card shows its run state at a glance in the same visual register as the
-// native TUI.
-function stateIndicator(state) {
-  switch ((state || "").toLowerCase()) {
-    case "running":
-      return { glyph: "●", className: "is-running" };
-    case "review ready":
-    case "safe merge":
-      return { glyph: "▲", className: "is-attention" };
-    case "needs input":
-    case "blocked":
-    case "failed":
-      return { glyph: "!", className: "is-danger" };
-    case "cleanable":
-      return { glyph: "▼", className: "is-success" };
-    case "idle":
-      return { glyph: "○", className: "is-muted" };
-    case "archived":
-    default:
-      return { glyph: "·", className: "is-muted" };
-  }
 }
 
 function appendDetailRow(parent, label, value) {
@@ -88,15 +97,12 @@ function taskCard(card, options) {
   const article = el("article", opts.attention ? "card attention" : "card");
   article.dataset.state = card.ui_state;
   article.dataset.handle = card.qualified_handle;
-  if (expandedCards.has(card.qualified_handle)) {
-    article.classList.add("expanded");
-  }
+  if (expandedCards.has(card.qualified_handle)) article.classList.add("expanded");
 
   const head = el("div", "card-head");
-  const indicator = stateIndicator(card.ui_state);
-  const indicatorEl = el("span", `indicator ${indicator.className}`.trim(), indicator.glyph);
-  indicatorEl.setAttribute("aria-hidden", "true");
-  head.append(indicatorEl);
+  const indicator = el("span", `indicator ${stateIndicator(card.ui_state)}`.trim());
+  indicator.setAttribute("aria-hidden", "true");
+  head.append(indicator);
   head.append(el("span", "handle", card.qualified_handle));
   head.append(el("span", "badge", card.status_label || card.ui_state));
 
@@ -119,9 +125,9 @@ function taskCard(card, options) {
     article.append(actions);
   }
 
-  // Detail panel revealed by tapping the card body.
   const details = el("div", "card-details");
-  const titleText = card.title && card.title !== card.qualified_handle ? card.title : null;
+  const titleText =
+    card.title && card.title !== card.qualified_handle ? card.title : null;
   appendDetailRow(details, "Title", titleText);
   appendDetailRow(details, "Lifecycle", titleCase(card.lifecycle));
   appendDetailRow(details, "State", titleCase(card.ui_state));
@@ -155,7 +161,7 @@ function renderInbox(data, cardsByHandle) {
 function renderRepos(data) {
   repos.replaceChildren();
   const inboxHandles = new Set(
-    ((data.inbox && data.inbox.items) || []).map((item) => item.task_handle),
+    ((data.inbox && data.inbox.items) || []).map((item) => item.task_handle)
   );
   const byRepo = new Map();
   for (const card of data.cards) {
@@ -182,11 +188,9 @@ function summarize(data) {
   if (!total) return "All quiet";
   const taskWord = total === 1 ? "task" : "tasks";
   if (!attention) return `${total} ${taskWord}`;
-  return `${total} ${taskWord} · ${attention} needs attention`;
+  return `${total} ${taskWord} · ${attention} need attention`;
 }
 
-// Cheap stable signature of just the parts we render — used to skip DOM
-// rebuilds when polled data is unchanged so the cards never flash.
 function fingerprint(data) {
   const cards = data.cards.map((c) => [
     c.qualified_handle,
@@ -205,7 +209,7 @@ function fingerprint(data) {
   });
 }
 
-function render(data) {
+function renderList(data) {
   const cardsByHandle = new Map(data.cards.map((card) => [card.qualified_handle, card]));
   renderInbox(data, cardsByHandle);
   renderRepos(data);
@@ -213,9 +217,10 @@ function render(data) {
 }
 
 function applyData(data) {
+  lastCockpit = data;
   const fp = fingerprint(data);
   if (fp !== lastFingerprint) {
-    render(data);
+    renderList(data);
     lastFingerprint = fp;
   }
   statusLine.textContent = summarize(data);
@@ -245,8 +250,229 @@ async function loadCockpit(options) {
   }
 }
 
-// First tap on a destructive action arms the confirm; second tap within the
-// window proceeds. Returns true when the tap was *consumed* by staging.
+// DETAIL VIEW ---------------------------------------------------------------
+
+function renderDetail(detail) {
+  detailContainer.replaceChildren();
+
+  const header = el("div", "detail-header");
+  const back = el("button", "back", "← Back");
+  back.type = "button";
+  back.addEventListener("click", () => {
+    window.location.hash = "#/";
+  });
+  header.append(back);
+  header.append(el("h1", "detail-title", detail.title || detail.qualified_handle));
+  detailContainer.append(header);
+
+  // Live status
+  const liveSection = el("section", "detail-section");
+  liveSection.append(el("h2", null, "Live status"));
+  const liveGrid = el("dl", "detail-grid");
+  appendGridRow(liveGrid, "Handle", detail.qualified_handle);
+  appendGridRow(liveGrid, "State", detail.ui_state || "—");
+  appendGridRow(liveGrid, "Lifecycle", detail.lifecycle || "—");
+  appendGridRow(liveGrid, "Status", detail.status_label || "—");
+  if (detail.live_status_kind) {
+    appendGridRow(liveGrid, "Live kind", detail.live_status_kind);
+  }
+  if (detail.live_status_summary) {
+    appendGridRow(liveGrid, "Live note", detail.live_status_summary);
+  }
+  liveSection.append(liveGrid);
+  detailContainer.append(liveSection);
+
+  // Git / branch info
+  const gitSection = el("section", "detail-section");
+  gitSection.append(el("h2", null, "Branch"));
+  const gitGrid = el("dl", "detail-grid");
+  appendGridRow(gitGrid, "Branch", detail.branch);
+  appendGridRow(gitGrid, "Base", detail.base_branch);
+  appendGridRow(gitGrid, "Worktree", detail.worktree_path);
+  if (detail.git) {
+    const ahead = detail.git.ahead || 0;
+    const behind = detail.git.behind || 0;
+    const dirty = detail.git.dirty ? "dirty" : "clean";
+    appendGridRow(gitGrid, "Diff", `${ahead} ahead · ${behind} behind · ${dirty}`);
+    if (detail.git.unpushed_commits) {
+      appendGridRow(gitGrid, "Unpushed", String(detail.git.unpushed_commits));
+    }
+  }
+  gitSection.append(gitGrid);
+  detailContainer.append(gitSection);
+
+  // Agent
+  const agentSection = el("section", "detail-section");
+  agentSection.append(el("h2", null, "Agent"));
+  const agentGrid = el("dl", "detail-grid");
+  appendGridRow(agentGrid, "Client", detail.agent);
+  appendGridRow(agentGrid, "Runtime", detail.agent_status);
+  appendGridRow(agentGrid, "Tmux", detail.tmux_session);
+  agentSection.append(agentGrid);
+
+  if (detail.agent_attempts && detail.agent_attempts.length) {
+    const attemptsHeading = el("h2", null, "Recent attempts");
+    attemptsHeading.style.marginTop = "16px";
+    agentSection.append(attemptsHeading);
+    const list = el("ul", "attempt-list");
+    for (const attempt of detail.agent_attempts.slice(-5).reverse()) {
+      const li = el("li", "attempt");
+      li.append(el("span", null, attempt.outcome));
+      const started = new Date(attempt.started_unix_secs * 1000);
+      const time = el("time", null, started.toLocaleString());
+      li.append(time);
+      list.append(li);
+    }
+    agentSection.append(list);
+  }
+
+  detailContainer.append(agentSection);
+
+  // Actions
+  const available = (detail.available_actions || []).filter((a) => a !== "resume" && a !== "start");
+  if (available.length) {
+    const actions = el("div", "detail-actions");
+    for (const action of available) {
+      const btn = actionButton(action, detail.qualified_handle, false);
+      if (action === detail.primary_action) btn.classList.add("primary");
+      actions.append(btn);
+    }
+    detailContainer.append(actions);
+  }
+}
+
+function appendGridRow(grid, label, value) {
+  if (value == null || value === "") return;
+  grid.append(el("dt", null, label));
+  grid.append(el("dd", null, String(value)));
+}
+
+async function loadDetail() {
+  if (!detailHandle || detailInFlight || document.hidden) return;
+  detailInFlight = true;
+  try {
+    const response = await fetch(`/api/tasks/${detailHandle}`, { cache: "no-store" });
+    if (response.status === 404) {
+      statusLine.textContent = "Task no longer exists";
+      window.location.hash = "#/";
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const detail = await response.json();
+    renderDetail(detail);
+    setOnline(true);
+  } catch (error) {
+    setOnline(false);
+  } finally {
+    detailInFlight = false;
+  }
+}
+
+// HASH ROUTER ---------------------------------------------------------------
+
+function applyRoute() {
+  const hash = window.location.hash || "#/";
+  if (hash.startsWith("#/t/")) {
+    const handle = decodeURIComponent(hash.slice("#/t/".length));
+    detailHandle = handle;
+    document.body.classList.add("view-detail");
+    loadDetail();
+  } else {
+    detailHandle = null;
+    document.body.classList.remove("view-detail");
+    loadCockpit();
+  }
+}
+
+window.addEventListener("hashchange", applyRoute);
+
+// NEW TASK SHEET ------------------------------------------------------------
+
+function openNewTaskSheet() {
+  populateRepoOptions();
+  newTaskTitle.value = "";
+  newTaskError.hidden = true;
+  newTaskError.textContent = "";
+  document.body.classList.add("sheet-open");
+  setTimeout(() => newTaskTitle.focus(), 60);
+}
+
+function closeNewTaskSheet() {
+  document.body.classList.remove("sheet-open");
+}
+
+function populateRepoOptions() {
+  const repos = lastCockpit && lastCockpit.repos && lastCockpit.repos.repos
+    ? lastCockpit.repos.repos
+    : [];
+  newTaskRepo.replaceChildren();
+  if (!repos.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "No repositories configured";
+    opt.disabled = true;
+    newTaskRepo.append(opt);
+    return;
+  }
+  for (const repo of repos) {
+    const opt = document.createElement("option");
+    opt.value = repo.name;
+    opt.textContent = repo.name;
+    newTaskRepo.append(opt);
+  }
+}
+
+async function submitNewTask(event) {
+  event.preventDefault();
+  const repo = newTaskRepo.value;
+  const title = newTaskTitle.value.trim();
+  const agent = newTaskAgent.value;
+  if (!repo) {
+    newTaskError.textContent = "Pick a repository first";
+    newTaskError.hidden = false;
+    return;
+  }
+  if (!title) {
+    newTaskError.textContent = "Add a title";
+    newTaskError.hidden = false;
+    return;
+  }
+  const submit = newTaskForm.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const response = await fetch("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ repo, title, agent }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      newTaskError.textContent = payload.error || "Action failed";
+      newTaskError.hidden = false;
+      if (payload.cockpit) applyData(payload.cockpit);
+      return;
+    }
+    if (payload.cockpit) applyData(payload.cockpit);
+    closeNewTaskSheet();
+  } catch (error) {
+    newTaskError.textContent = "Action failed — network error";
+    newTaskError.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+newTaskButton.addEventListener("click", openNewTaskSheet);
+newTaskForm.addEventListener("submit", submitNewTask);
+newTaskSheet.addEventListener("click", (event) => {
+  if (event.target === newTaskSheet) closeNewTaskSheet();
+});
+document.querySelectorAll("[data-sheet-cancel]").forEach((btn) =>
+  btn.addEventListener("click", closeNewTaskSheet),
+);
+
+// ACTIONS -------------------------------------------------------------------
+
 function tryConfirmDestructive(button) {
   if (!button.dataset.destructive) return false;
   if (button.classList.contains("confirming")) {
@@ -296,6 +522,8 @@ async function runAction(button) {
     }
     if (!response.ok) {
       statusLine.textContent = payload.error || `Action failed (HTTP ${response.status})`;
+    } else if (detailHandle) {
+      loadDetail();
     }
   } catch (error) {
     statusLine.textContent = "Action failed — network error";
@@ -331,16 +559,36 @@ document.addEventListener("click", (event) => {
     return;
   }
   const cardEl = event.target.closest(".card.has-details");
-  if (cardEl) toggleCardExpansion(cardEl);
+  if (cardEl) {
+    // If the user clicks a non-button area inside an inbox/repo card, open the
+    // detail view; secondary tap on the card body still toggles inline detail
+    // for users who prefer it.
+    const handle = cardEl.dataset.handle;
+    if (handle && event.detail >= 2) {
+      window.location.hash = `#/t/${encodeURIComponent(handle)}`;
+      return;
+    }
+    toggleCardExpansion(cardEl);
+  }
 });
 
-refreshButton.addEventListener("click", () => loadCockpit({ manual: true }));
+refreshButton.addEventListener("click", () => {
+  if (detailHandle) loadDetail();
+  else loadCockpit({ manual: true });
+});
 
-window.addEventListener("online", () => loadCockpit());
+window.addEventListener("online", () => {
+  if (detailHandle) loadDetail();
+  else loadCockpit();
+});
 window.addEventListener("offline", () => setOnline(false));
-document.addEventListener("visibilitychange", () => loadCockpit());
+document.addEventListener("visibilitychange", () => {
+  if (detailHandle) loadDetail();
+  else loadCockpit();
+});
 
-// Push notifications --------------------------------------------------------
+// PUSH NOTIFICATIONS --------------------------------------------------------
+
 function pushSupported() {
   return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
 }
@@ -396,5 +644,10 @@ if ("serviceWorker" in navigator) {
 
 if (!navigator.onLine) setOnline(false);
 
-setInterval(loadCockpit, REFRESH_INTERVAL_MS);
-loadCockpit();
+// Poll the active view every second.
+setInterval(() => {
+  if (detailHandle) loadDetail();
+  else loadCockpit();
+}, REFRESH_INTERVAL_MS);
+
+applyRoute();

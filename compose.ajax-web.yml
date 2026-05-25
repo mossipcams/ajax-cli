@@ -1,0 +1,14 @@
+services:
+  ajax-web-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.ajax-web
+    image: ajax-web-dev:local
+    restart: unless-stopped
+    ports:
+      - "8788:8788"
+    volumes:
+      - ajax-web-dev-home:/ajax-dev
+
+volumes:
+  ajax-web-dev-home:

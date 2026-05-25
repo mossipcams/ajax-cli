@@ -1,0 +1,28 @@
+FROM rust:1.88-slim-bookworm AS builder
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pkg-config libsqlite3-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+
+RUN cargo build --release --bin ajax-cli
+
+FROM debian:bookworm-slim AS runtime
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git tmux libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /ajax-dev/logs /ajax-dev/cache /ajax-dev/worktrees
+
+COPY --from=builder /workspace/target/release/ajax-cli /usr/local/bin/ajax-cli
+
+ENV AJAX_WEB_SNAPSHOT_ONLY=1
+
+VOLUME ["/ajax-dev"]
+EXPOSE 8788
+
+CMD ["ajax-cli", "--profile", "dev", "--home", "/ajax-dev", "--config", "/ajax-dev/config.toml", "--state", "/ajax-dev/ajax.db", "--worktree-root", "/ajax-dev/worktrees", "web", "--host", "0.0.0.0", "--port", "8788"]

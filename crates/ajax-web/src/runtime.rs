@@ -60,6 +60,13 @@ pub trait RuntimeBridge<C: CommandRunner> {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<bool, ActionFailure>;
+
+    fn execute_start_task(
+        &mut self,
+        request: crate::slices::operate::StartTaskRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<bool, ActionFailure>;
 }
 
 #[derive(Deserialize)]
@@ -86,6 +93,18 @@ pub fn route<R: Registry>(
                 .map_err(RouteError::Json)?
                 .into_bytes(),
         }),
+        ("GET", path) if path.starts_with("/api/tasks/") => {
+            let handle = &path["/api/tasks/".len()..];
+            match cockpit::browser_task_detail_json(context, handle) {
+                Some(Ok(body)) => Ok(Response {
+                    status_code: 200,
+                    content_type: "application/json; charset=utf-8",
+                    body: body.into_bytes(),
+                }),
+                Some(Err(error)) => Err(RouteError::Json(error)),
+                None => Ok(text_response(404, "task not found")),
+            }
+        }
         ("GET", asset_path) => match install::static_asset(asset_path) {
             Some(asset) => Ok(Response {
                 status_code: 200,
@@ -109,6 +128,7 @@ pub fn route_with_bridge<C: CommandRunner>(
     match (request.method, path) {
         ("GET", "/api/cockpit") => handle_refreshed_cockpit_request(context, runner, bridge),
         ("POST", "/api/actions") => handle_action_request(request.body, context, runner, bridge),
+        ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
@@ -213,6 +233,34 @@ fn handle_action_request<C: CommandRunner>(
     }
 
     match bridge.execute_mobile_action(action, &request.task_handle, context, runner) {
+        Ok(state_changed) => json_response(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "state_changed": state_changed,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
+        ),
+        Err(error) => json_response(
+            409,
+            serde_json::json!({
+                "ok": false,
+                "error": error.message,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
+        ),
+    }
+}
+
+fn handle_start_task_request<C: CommandRunner>(
+    body: &str,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut C,
+    bridge: &mut impl RuntimeBridge<C>,
+) -> Result<Response, WebError> {
+    let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
+        .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
+    match bridge.execute_start_task(request, context, runner) {
         Ok(state_changed) => json_response(
             200,
             serde_json::json!({
@@ -410,6 +458,8 @@ mod tests {
         refreshed: bool,
         action: Option<(OperatorAction, String)>,
         action_result: Result<bool, ActionFailure>,
+        start: Option<crate::slices::operate::StartTaskRequest>,
+        start_result: Result<bool, ActionFailure>,
     }
 
     impl Default for TestBridge {
@@ -418,6 +468,8 @@ mod tests {
                 refreshed: false,
                 action: None,
                 action_result: Ok(true),
+                start: None,
+                start_result: Ok(true),
             }
         }
     }
@@ -441,6 +493,16 @@ mod tests {
         ) -> Result<bool, ActionFailure> {
             self.action = Some((action, task_handle.to_string()));
             self.action_result.clone()
+        }
+
+        fn execute_start_task(
+            &mut self,
+            request: crate::slices::operate::StartTaskRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut OkRunner,
+        ) -> Result<bool, ActionFailure> {
+            self.start = Some(request);
+            self.start_result.clone()
         }
     }
 
@@ -578,6 +640,103 @@ mod tests {
         assert_eq!(
             bridge.action,
             Some((OperatorAction::Review, "web/fix-login".to_string()))
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn get_task_detail_returns_json_for_existing_handle() {
+        use ajax_core::config::ManagedRepo;
+        use ajax_core::models::{AgentClient, Task, TaskId};
+        use ajax_core::registry::Registry as _;
+
+        let config = ajax_core::config::Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..ajax_core::config::Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(Task::new(
+                TaskId::new("web/fix-login"),
+                "web",
+                "fix-login",
+                "Fix login",
+                "ajax/fix-login",
+                "main",
+                "/repo/web__worktrees/ajax-fix-login",
+                "ajax-web-fix-login",
+                "worktrunk",
+                AgentClient::Codex,
+            ))
+            .unwrap();
+        let context = CommandContext::new(config, registry);
+
+        let response = route(
+            Request {
+                method: "GET",
+                path: "/api/tasks/web/fix-login",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(response.content_type, "application/json; charset=utf-8");
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["qualified_handle"], "web/fix-login");
+        assert_eq!(body["title"], "Fix login");
+        assert_eq!(body["branch"], "ajax/fix-login");
+    }
+
+    #[test]
+    fn get_task_detail_returns_404_for_unknown_handle() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let response = route(
+            Request {
+                method: "GET",
+                path: "/api/tasks/web/missing",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 404);
+    }
+
+    #[test]
+    fn post_tasks_endpoint_delegates_to_start_bridge_method() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("start");
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/tasks",
+                body: r#"{"repo":"web","title":"Fix login","agent":"codex"}"#,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["ok"], true);
+        assert!(body["cockpit"].is_object());
+        assert_eq!(
+            bridge.start,
+            Some(crate::slices::operate::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            })
         );
         std::fs::remove_dir_all(&dir).ok();
     }

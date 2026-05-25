@@ -93,4 +93,7 @@ impl CommandPlan {
 pub enum OpenMode {
     Attach,
     SwitchClient,
+    // Used when the caller (web companion, scripts) wants to provision the
+    // task without attaching an interactive terminal to its tmux session.
+    NoAttach,
 }

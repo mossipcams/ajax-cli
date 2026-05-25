@@ -48,6 +48,10 @@ pub fn open_task_plan<R: Registry>(
         return Ok(plan);
     }
 
+    if matches!(mode, OpenMode::NoAttach) {
+        return Ok(plan);
+    }
+
     let tmux = TmuxAdapter::new("tmux");
     plan.commands
         .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
@@ -58,6 +62,7 @@ pub fn open_task_plan<R: Registry>(
         OpenMode::SwitchClient => plan
             .commands
             .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+        OpenMode::NoAttach => unreachable!("handled above"),
     };
 
     Ok(plan)

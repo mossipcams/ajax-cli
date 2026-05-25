@@ -2303,6 +2303,16 @@ mod tests {
     }
 
     #[test]
+    fn open_task_plan_emits_no_commands_for_no_attach_mode() {
+        let context = context_with_tasks();
+
+        let plan = open_task_plan(&context, "web/fix-login", OpenMode::NoAttach).unwrap();
+
+        assert!(plan.blocked_reasons.is_empty(), "{plan:?}");
+        assert!(plan.commands.is_empty(), "{plan:?}");
+    }
+
+    #[test]
     fn open_task_plan_blocks_removed_tasks() {
         let mut context = context_with_tasks();
         context
