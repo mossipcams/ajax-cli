@@ -27,6 +27,13 @@ let detailInFlight = false;
 const expandedCards = new Set();
 const pendingConfirms = new WeakMap();
 
+function requestId(prefix) {
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    return `${prefix}-${window.crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
@@ -509,10 +516,14 @@ async function runAction(button) {
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;
   try {
-    const response = await fetch("/api/actions", {
+    const response = await fetch("/api/operations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task_handle: button.dataset.task, action: button.dataset.action }),
+      body: JSON.stringify({
+        request_id: requestId("op"),
+        task_handle: button.dataset.task,
+        action: button.dataset.action,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (payload.cockpit) {
