@@ -22,3 +22,6 @@ tower = { workspace = true, features = ["util"] }
 tower-http = { workspace = true, features = ["trace"] }
 tracing = { workspace = true }
 web-push = { workspace = true }
+
+[dev-dependencies]
+rust_arkitect = { workspace = true }

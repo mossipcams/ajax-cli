@@ -10,6 +10,9 @@ pub mod repo_observer;
 pub mod runtime;
 mod status;
 
+#[cfg(test)]
+mod architecture;
+
 pub use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent, RepoEvent};
 pub use runtime::{spawn_monitor, GitSnapshotPolicy, MonitorConfig, MonitorExit, MonitorHandle};
 pub use status::SupervisorStatusMachine;

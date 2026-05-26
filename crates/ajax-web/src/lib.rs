@@ -4,6 +4,9 @@ pub mod adapters;
 pub mod runtime;
 pub mod slices;
 
+#[cfg(test)]
+mod architecture;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebError {
     CommandFailed(String),
