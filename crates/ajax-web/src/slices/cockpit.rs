@@ -2,12 +2,17 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, TmuxStatus},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, Task, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
+    recommended::operator_action,
     registry::Registry,
+    ui_state::derive_ui_state,
 };
 use serde::Serialize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use crate::slices::operate::{supported_web_action, web_action_state, WebActionState};
 
@@ -67,10 +72,11 @@ pub fn browser_cockpit_view_with_backend<R: Registry>(
     backend: BackendAuthority,
 ) -> BrowserCockpitView {
     let view = commands::rebuild_cockpit_view(context);
+    let cards = browser_task_cards(context, view.cards.as_slice());
     BrowserCockpitView {
         backend: browser_backend(backend),
         repos: view.repos,
-        cards: view.cards.iter().map(browser_task_card).collect(),
+        cards,
         inbox: view.inbox,
     }
 }
@@ -124,6 +130,70 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
             .map(web_action_state)
             .collect(),
         live_summary: card.live_summary.clone(),
+    }
+}
+
+fn browser_task_cards<R: Registry>(
+    context: &CommandContext<R>,
+    native_cards: &[TaskCard],
+) -> Vec<BrowserTaskCard> {
+    let mut cards: Vec<BrowserTaskCard> = native_cards.iter().map(browser_task_card).collect();
+    let mut included: HashSet<String> = native_cards
+        .iter()
+        .map(|card| card.qualified_handle.clone())
+        .collect();
+
+    for task in context.registry.list_tasks() {
+        if task.lifecycle_status == LifecycleStatus::Removed
+            || included.contains(&task.qualified_handle())
+        {
+            continue;
+        }
+        included.insert(task.qualified_handle());
+        cards.push(browser_task_card_from_task(task));
+    }
+
+    cards
+}
+
+fn browser_task_card_from_task(task: &Task) -> BrowserTaskCard {
+    let ui_state = derive_ui_state(task);
+    let plan = operator_action(task);
+    let available: Vec<OperatorAction> = plan
+        .available_actions
+        .iter()
+        .copied()
+        .filter(|action| is_web_supported(*action))
+        .collect();
+    let primary = if is_web_supported(plan.action) {
+        plan.action
+    } else {
+        available.first().copied().unwrap_or(plan.action)
+    };
+
+    BrowserTaskCard {
+        id: task.id.as_str().to_string(),
+        qualified_handle: task.qualified_handle(),
+        title: task.title.clone(),
+        ui_state: ui_state.as_str().to_string(),
+        status_label: task
+            .live_status
+            .as_ref()
+            .map(|live| live.summary.clone())
+            .unwrap_or_else(|| ui_state.as_str().to_string()),
+        lifecycle: format!("{:?}", task.lifecycle_status),
+        primary_action: primary.as_str().to_string(),
+        available_actions: available
+            .iter()
+            .map(|action| action.as_str().to_string())
+            .collect(),
+        action_states: plan
+            .available_actions
+            .iter()
+            .copied()
+            .map(web_action_state)
+            .collect(),
+        live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
     }
 }
 
@@ -284,9 +354,12 @@ mod tests {
     use ajax_core::{
         commands::CommandContext,
         config::Config,
-        models::{LifecycleStatus, OperatorAction, TaskId},
+        models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
+            SideFlag, Task, TaskId,
+        },
         output::TaskCard,
-        registry::InMemoryRegistry,
+        registry::{InMemoryRegistry, Registry as _},
         ui_state::UiState,
     };
 
@@ -299,6 +372,65 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn browser_cockpit_includes_visible_missing_substrate_tasks() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux session missing",
+        ));
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"].as_array().unwrap().len(), 1);
+        assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(value["cards"][0]["title"], "Fix login");
+        assert_eq!(value["cards"][0]["live_summary"], "tmux session missing");
+    }
+
+    #[test]
+    fn browser_cockpit_keeps_removed_tasks_out_of_browser_only_cards() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/old-task"),
+            "web",
+            "old-task",
+            "Old task",
+            "ajax/old-task",
+            "main",
+            "/repo/web__worktrees/ajax-old-task",
+            "ajax-web-old-task",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Removed;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"], serde_json::json!([]));
     }
 
     #[test]
