@@ -145,6 +145,9 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         let mut command = Command::new(ajax_binary());
         command
             .args(args)
+            .env_remove("AJAX_PROFILE")
+            .env_remove("AJAX_HOME")
+            .env_remove("AJAX_WORKTREE_ROOT")
             .env("HOME", &self.root)
             .env("AJAX_CONFIG", &self.config_file)
             .env("AJAX_STATE", &self.state_file)
