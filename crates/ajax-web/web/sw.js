@@ -34,6 +34,11 @@ self.addEventListener("fetch", (event) => {
   // Live task data is never cached: always go to the network.
   if (url.pathname.startsWith("/api/")) return;
 
+  if (request.mode === "navigate") {
+    event.respondWith(fetch(request).catch(() => caches.match("/")));
+    return;
+  }
+
   // App shell: network-first so the latest deploy is always picked up on the
   // next reload; cache only catches us when the network is unreachable.
   event.respondWith(
@@ -66,7 +71,9 @@ self.addEventListener("push", (event) => {
       tag: data.tag,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      data: { url: "/" },
+      data: {
+        url: data.task_handle ? `/#/t/${encodeURIComponent(data.task_handle)}` : "/",
+      },
     }),
   );
 });
@@ -79,7 +86,12 @@ self.addEventListener("notificationclick", (event) => {
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
         for (const client of clients) {
-          if ("focus" in client) return client.focus();
+          if ("focus" in client) {
+            if ("navigate" in client) {
+              return client.navigate(target).then((navigated) => (navigated || client).focus());
+            }
+            return client.focus();
+          }
         }
         return self.clients.openWindow(target);
       }),

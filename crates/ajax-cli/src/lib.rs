@@ -115,8 +115,8 @@ pub fn run_with_args(
         );
     }
 
-    let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
+    let mut context = load_context_for_matches(&paths, &matches)?;
     let rendered =
         match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
             Ok(rendered) => rendered,
@@ -3041,6 +3041,38 @@ mod tests {
             !(has_root_package && uses_cargo_workspace),
             "Release Please crashes when the cargo-workspace plugin processes the virtual workspace root package"
         );
+    }
+
+    #[test]
+    fn release_please_rust_packages_point_to_package_manifests() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+        )
+        .unwrap();
+        let default_release_type = config["release-type"].as_str();
+
+        for (package_path, package_config) in config["packages"].as_object().unwrap() {
+            let release_type = package_config["release-type"]
+                .as_str()
+                .or(default_release_type);
+            if release_type != Some("rust") {
+                continue;
+            }
+
+            let manifest = std::fs::read_to_string(root.join(package_path).join("Cargo.toml"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Release Please Rust package {package_path} must point to a Cargo.toml: {error}"
+                    )
+                });
+            let has_package_table = manifest.lines().any(|line| line.trim() == "[package]");
+
+            assert!(
+                has_package_table,
+                "Release Please Rust package {package_path} must point to a Cargo package manifest, not a virtual workspace manifest"
+            );
+        }
     }
 
     #[test]

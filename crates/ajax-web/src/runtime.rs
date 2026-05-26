@@ -1337,6 +1337,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             })
         );
         std::fs::remove_dir_all(&dir).ok();
