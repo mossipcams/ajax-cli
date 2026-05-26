@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.1...ajax-cli-v0.2.2) (2026-05-26)
+
+
+### Bug Fixes
+
+* web cockpit reliability, zoom, registry view, drop pairing token ([#59](https://github.com/mossipcams/ajax-cli/issues/59)) ([233f8bb](https://github.com/mossipcams/ajax-cli/commit/233f8bba5c85d558ff101c473c72a4e37df5ed3a))
+
 ## [0.2.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.0...ajax-cli-v0.2.1) (2026-05-25)
 
 
