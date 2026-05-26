@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.2...ajax-cli-v0.3.0) (2026-05-26)
+
+
+### Features
+
+* serve web cockpit through axum runtime ([#62](https://github.com/mossipcams/ajax-cli/issues/62)) ([2c3347f](https://github.com/mossipcams/ajax-cli/commit/2c3347fe72767ab315d8c04b04fd9834cbec912e))
+
+
+### Bug Fixes
+
+* hard-delete dropped tasks ([#64](https://github.com/mossipcams/ajax-cli/issues/64)) ([bd70439](https://github.com/mossipcams/ajax-cli/commit/bd70439a0b09a85e6ecd5c1359cc4fd6713b3a4f))
+
 ## [0.2.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.1...ajax-cli-v0.2.2) (2026-05-26)
 
 
