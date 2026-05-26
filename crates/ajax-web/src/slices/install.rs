@@ -163,7 +163,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v15"));
+        assert!(worker.contains("ajax-cockpit-v16"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -213,7 +213,7 @@ mod tests {
     fn service_worker_has_update_safe_navigation_fallback() {
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
 
-        assert!(worker.contains("ajax-cockpit-v15"));
+        assert!(worker.contains("ajax-cockpit-v16"));
         assert!(worker.contains("request.mode === \"navigate\""));
         assert!(worker.contains("caches.match(\"/\")"));
         assert!(worker.contains("key !== CACHE"));
@@ -245,6 +245,28 @@ mod tests {
             !script.contains(".focus()"),
             "new-task sheet must not autofocus on mobile"
         );
+    }
+
+    #[test]
+    fn pwa_blocks_ios_safari_pinch_zoom_gestures() {
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+        assert!(
+            css.contains("touch-action: manipulation;"),
+            "Safari PWAs need touch-action hardening in addition to the viewport tag"
+        );
+
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        for expected in [
+            "gesturestart",
+            "gesturechange",
+            "gestureend",
+            "touchmove",
+            "event.touches.length > 1",
+            "passive: false",
+            "preventDefault()",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
     }
 
     #[test]
@@ -291,7 +313,7 @@ mod tests {
     fn service_worker_deep_links_task_notifications_without_api_caching() {
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
 
-        assert!(worker.contains("ajax-cockpit-v15"));
+        assert!(worker.contains("ajax-cockpit-v16"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(worker.contains("task_handle"));
         assert!(worker.contains("encodeURIComponent(data.task_handle)"));

@@ -31,6 +31,22 @@ const pendingConfirms = new WeakMap();
 const inFlightActions = new Map();
 const actionStates = new Map();
 
+function blockSafariPwaZoomGestures() {
+  const preventGestureZoom = (event) => event.preventDefault();
+  for (const eventName of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(eventName, preventGestureZoom, { passive: false });
+  }
+  document.addEventListener(
+    "touchmove",
+    (event) => {
+      if (event.touches.length > 1) event.preventDefault();
+    },
+    { passive: false },
+  );
+}
+
+blockSafariPwaZoomGestures();
+
 function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;

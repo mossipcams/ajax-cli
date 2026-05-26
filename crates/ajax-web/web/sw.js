@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v15";
+const CACHE = "ajax-cockpit-v16";
 const SHELL = [
   "/",
   "/app.css",
