@@ -27,6 +27,22 @@ let detailInFlight = false;
 const expandedCards = new Set();
 const pendingConfirms = new WeakMap();
 
+function blockSafariPwaZoomGestures() {
+  const preventGestureZoom = (event) => event.preventDefault();
+  for (const eventName of ["gesturestart", "gesturechange", "gestureend"]) {
+    document.addEventListener(eventName, preventGestureZoom, { passive: false });
+  }
+  document.addEventListener(
+    "touchmove",
+    (event) => {
+      if (event.touches.length > 1) event.preventDefault();
+    },
+    { passive: false },
+  );
+}
+
+blockSafariPwaZoomGestures();
+
 function requestId(prefix) {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
     return `${prefix}-${window.crypto.randomUUID()}`;
