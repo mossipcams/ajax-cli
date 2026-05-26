@@ -9,6 +9,8 @@ use ajax_core::{
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::slices::operate::{supported_web_action, web_action_state, WebActionState};
+
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
     pub backend: BrowserBackend,
@@ -46,6 +48,7 @@ pub struct BrowserTaskCard {
     pub lifecycle: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_summary: Option<String>,
 }
 
@@ -114,6 +117,12 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
             .iter()
             .map(|action| action.as_str().to_string())
             .collect(),
+        action_states: card
+            .available_actions
+            .iter()
+            .copied()
+            .map(web_action_state)
+            .collect(),
         live_summary: card.live_summary.clone(),
     }
 }
@@ -122,7 +131,7 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
 // interactive title prompt; both are rejected by web action handling, so the
 // browser Cockpit should not surface them as buttons.
 fn is_web_supported(action: OperatorAction) -> bool {
-    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
+    supported_web_action(action)
 }
 
 #[derive(Serialize)]
@@ -140,6 +149,7 @@ pub struct BrowserTaskDetail {
     pub status_label: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
     pub git: Option<GitStatus>,
@@ -192,6 +202,16 @@ pub fn browser_task_detail_view<R: Registry>(
                 .collect()
         })
         .unwrap_or_default();
+    let action_states = card_clone
+        .as_ref()
+        .map(|card| {
+            card.available_actions
+                .iter()
+                .copied()
+                .map(web_action_state)
+                .collect()
+        })
+        .unwrap_or_default();
     let primary_action = card_clone
         .as_ref()
         .map(|card| card.primary_action.as_str().to_string())
@@ -217,6 +237,7 @@ pub fn browser_task_detail_view<R: Registry>(
             .unwrap_or_default(),
         primary_action,
         available_actions,
+        action_states,
         live_status_kind: task
             .live_status
             .as_ref()
@@ -379,5 +400,48 @@ mod tests {
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
         assert_eq!(browser.primary_action, "review");
         assert_eq!(browser.available_actions, ["review", "ship"]);
+    }
+
+    #[test]
+    fn cockpit_cards_expose_backend_web_action_states() {
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            ui_state: UiState::ReviewReady,
+            status_label: "review ready".to_string(),
+            lifecycle: LifecycleStatus::Reviewable,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![
+                OperatorAction::Resume,
+                OperatorAction::Review,
+                OperatorAction::Drop,
+            ],
+            live_summary: None,
+        };
+
+        let browser = browser_task_card(&card);
+        let states: Vec<(&str, &str, bool, bool)> = browser
+            .action_states
+            .iter()
+            .map(|state| {
+                (
+                    state.action.as_str(),
+                    state.status.as_str(),
+                    state.destructive,
+                    state.confirmation_required,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            states,
+            vec![
+                ("resume", "needs_terminal", false, false),
+                ("review", "supported", false, false),
+                ("drop", "supported", true, true),
+            ]
+        );
     }
 }

@@ -10,6 +10,7 @@ use ajax_core::{
 use serde::Deserialize;
 use std::{
     collections::BTreeSet,
+    fs,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     path::Path,
@@ -78,6 +79,20 @@ pub trait RuntimeBridge<C: CommandRunner> {
 struct MobileActionRequest {
     task_handle: String,
     action: String,
+    request_id: String,
+    operator_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PushSubscriptionRequest {
+    operator_token: Option<String>,
+    subscription: push::PushSubscription,
+}
+
+#[derive(Deserialize)]
+struct PushUnsubscribeRequest {
+    operator_token: Option<String>,
+    endpoint: String,
 }
 
 const CACHE_NO_STORE: &str = "no-store";
@@ -145,8 +160,12 @@ pub fn route_with_bridge<C: CommandRunner>(
     let path = request.path.split('?').next().unwrap_or(request.path);
     match (request.method, path) {
         ("GET", "/api/cockpit") => handle_refreshed_cockpit_request(context, runner, bridge),
-        ("POST", "/api/actions") => handle_action_request(request.body, context, runner, bridge),
-        ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
+        ("POST", "/api/actions") | ("POST", "/api/operations") => {
+            handle_action_request(request.body, context, runner, bridge, state_dir)
+        }
+        ("POST", "/api/tasks") => {
+            handle_start_task_request(request.body, context, runner, bridge, state_dir)
+        }
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
@@ -166,10 +185,12 @@ pub fn serve_mobile_web_with_bridge<C: CommandRunner>(
 ) -> Result<(), WebError> {
     let identity = tls::load_or_create_identity(state_dir)?;
     let tls_config = tls::tls_server_config(&identity)?;
+    let operator_token = load_or_create_operator_token(state_dir)?;
 
     let listener = TcpListener::bind((host, port))
         .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
     eprintln!("Ajax mobile web listening on https://{host}:{port}");
+    eprintln!("Ajax Web Cockpit pairing token: {operator_token}");
 
     let shared = Mutex::new(context);
     std::thread::scope(|scope| {
@@ -219,61 +240,104 @@ fn handle_action_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
+    state_dir: &Path,
 ) -> Result<Response, WebError> {
     let request: MobileActionRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-    let Some(action) = OperatorAction::from_label(&request.action) else {
-        return json_response(
+    if !operator_token_authorized(state_dir, request.operator_token.as_deref())? {
+        return auth_required_response();
+    }
+    if request.request_id.trim().is_empty() {
+        return operation_error_response(
             400,
-            serde_json::json!({
-                "ok": false,
-                "error": format!("unknown action: {}", request.action),
-            }),
+            None,
+            "unsupported",
+            "missing_request_id",
+            "request_id is required",
+            context,
+            bridge.backend_authority(),
         );
+    }
+    if let Some(response) = load_idempotent_response(state_dir, &request.request_id)? {
+        return Ok(response);
+    }
+
+    let Some(action) = OperatorAction::from_label(&request.action) else {
+        let response = operation_error_response(
+            400,
+            Some(&request.request_id),
+            "unsupported",
+            "unknown_action",
+            &format!("unknown action: {}", request.action),
+            context,
+            bridge.backend_authority(),
+        );
+        return store_idempotent_response(state_dir, &request.request_id, response?);
     };
 
     if action == OperatorAction::Resume {
-        return json_response(
+        let response = operation_error_response(
             409,
-            serde_json::json!({
-                "ok": false,
-                "error": "resume requires native cockpit task entry",
-            }),
+            Some(&request.request_id),
+            "needs_terminal",
+            "needs_terminal",
+            "resume requires native cockpit task entry",
+            context,
+            bridge.backend_authority(),
         );
+        return store_idempotent_response(state_dir, &request.request_id, response?);
     }
     if action == OperatorAction::Start {
-        return json_response(
+        let response = operation_error_response(
             400,
-            serde_json::json!({
-                "ok": false,
-                "error": "start requires task title input",
-            }),
+            Some(&request.request_id),
+            "unsupported",
+            "unsupported",
+            "start requires task title input",
+            context,
+            bridge.backend_authority(),
         );
+        return store_idempotent_response(state_dir, &request.request_id, response?);
     }
 
     let backend = bridge.backend_authority();
     if !backend.control_enabled() {
-        return control_disabled_response(context, backend);
+        let response = control_disabled_response(Some(&request.request_id), context, backend)?;
+        return store_idempotent_response(state_dir, &request.request_id, response);
     }
 
-    match bridge.execute_mobile_action(action, &request.task_handle, context, runner) {
-        Ok(state_changed) => json_response(
-            200,
-            serde_json::json!({
-                "ok": true,
-                "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-            }),
-        ),
-        Err(error) => json_response(
+    let Some(lock) =
+        OperationLock::try_acquire(state_dir, &request.task_handle, &request.request_id)?
+    else {
+        let response = operation_error_response(
             409,
-            serde_json::json!({
-                "ok": false,
-                "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-            }),
+            Some(&request.request_id),
+            "blocked",
+            "operation_in_progress",
+            "another operation is already running for this task",
+            context,
+            backend,
+        )?;
+        return store_idempotent_response(state_dir, &request.request_id, response);
+    };
+
+    let response = match bridge.execute_mobile_action(action, &request.task_handle, context, runner)
+    {
+        Ok(state_changed) => {
+            operation_success_response(&request.request_id, state_changed, context, backend)
+        }
+        Err(error) => operation_error_response(
+            409,
+            Some(&request.request_id),
+            "failed",
+            "operation_failed",
+            &error.message,
+            context,
+            backend,
         ),
-    }
+    }?;
+    drop(lock);
+    store_idempotent_response(state_dir, &request.request_id, response)
 }
 
 fn handle_start_task_request<C: CommandRunner>(
@@ -281,45 +345,123 @@ fn handle_start_task_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
+    state_dir: &Path,
 ) -> Result<Response, WebError> {
     let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
+    if !operator_token_authorized(state_dir, request.operator_token.as_deref())? {
+        return auth_required_response();
+    }
+    if request.request_id.trim().is_empty() {
+        return operation_error_response(
+            400,
+            None,
+            "unsupported",
+            "missing_request_id",
+            "request_id is required",
+            context,
+            bridge.backend_authority(),
+        );
+    }
+    if let Some(response) = load_idempotent_response(state_dir, &request.request_id)? {
+        return Ok(response);
+    }
+    let request_id = request.request_id.clone();
     let backend = bridge.backend_authority();
     if !backend.control_enabled() {
-        return control_disabled_response(context, backend);
+        let response = control_disabled_response(Some(&request_id), context, backend)?;
+        return store_idempotent_response(state_dir, &request_id, response);
     }
 
     match bridge.execute_start_task(request, context, runner) {
-        Ok(state_changed) => json_response(
-            200,
-            serde_json::json!({
-                "ok": true,
-                "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-            }),
-        ),
-        Err(error) => json_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-            }),
-        ),
+        Ok(state_changed) => {
+            let response =
+                operation_success_response(&request_id, state_changed, context, backend)?;
+            store_idempotent_response(state_dir, &request_id, response)
+        }
+        Err(error) => {
+            let response = operation_error_response(
+                409,
+                Some(&request_id),
+                "failed",
+                "operation_failed",
+                &error.message,
+                context,
+                backend,
+            )?;
+            store_idempotent_response(state_dir, &request_id, response)
+        }
     }
 }
 
-fn control_disabled_response(
+fn operation_success_response(
+    request_id: &str,
+    state_changed: bool,
     context: &CommandContext<InMemoryRegistry>,
     backend: cockpit::BackendAuthority,
 ) -> Result<Response, WebError> {
     json_response(
-        409,
+        200,
         serde_json::json!({
-            "ok": false,
-            "error": "mutable PWA actions require the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state",
+            "ok": true,
+            "operation_id": operation_id(request_id),
+            "status": "succeeded",
+            "state_changed": state_changed,
             "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
         }),
+    )
+}
+
+fn operation_error_response(
+    status_code: u16,
+    request_id: Option<&str>,
+    status: &str,
+    code: &str,
+    message: &str,
+    context: &CommandContext<InMemoryRegistry>,
+    backend: cockpit::BackendAuthority,
+) -> Result<Response, WebError> {
+    let mut value = serde_json::json!({
+        "ok": false,
+        "status": status,
+        "error": {
+            "code": code,
+            "message": message,
+        },
+        "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
+    });
+    if let Some(request_id) = request_id {
+        value["operation_id"] = serde_json::Value::String(operation_id(request_id));
+    }
+    json_response(status_code, value)
+}
+
+fn auth_required_response() -> Result<Response, WebError> {
+    json_response(
+        401,
+        serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": "auth_required",
+                "message": "operator token is required",
+            },
+        }),
+    )
+}
+
+fn control_disabled_response(
+    request_id: Option<&str>,
+    context: &CommandContext<InMemoryRegistry>,
+    backend: cockpit::BackendAuthority,
+) -> Result<Response, WebError> {
+    operation_error_response(
+        409,
+        request_id,
+        "unsupported",
+        "snapshot_only",
+        "mutable PWA actions require the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state",
+        context,
+        backend,
     )
 }
 
@@ -334,8 +476,8 @@ fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {
 }
 
 fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let subscription: push::PushSubscription = match serde_json::from_str(body) {
-        Ok(subscription) => subscription,
+    let request: PushSubscriptionRequest = match serde_json::from_str(body) {
+        Ok(request) => request,
         Err(error) => {
             return json_response(
                 400,
@@ -343,20 +485,185 @@ fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebEr
             );
         }
     };
-    push::add_subscription(state_dir, subscription)?;
+    if !operator_token_authorized(state_dir, request.operator_token.as_deref())? {
+        return auth_required_response();
+    }
+    push::add_subscription(state_dir, request.subscription)?;
     json_response(200, serde_json::json!({ "ok": true }))
 }
 
 fn handle_push_unsubscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let request: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    let Some(endpoint) = request.get("endpoint").and_then(serde_json::Value::as_str) else {
-        return json_response(
-            400,
-            serde_json::json!({ "ok": false, "error": "endpoint is required" }),
-        );
+    let request: PushUnsubscribeRequest = match serde_json::from_str(body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_response(
+                400,
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            );
+        }
     };
-    push::remove_subscription(state_dir, endpoint)?;
+    if !operator_token_authorized(state_dir, request.operator_token.as_deref())? {
+        return auth_required_response();
+    }
+    push::remove_subscription(state_dir, &request.endpoint)?;
     json_response(200, serde_json::json!({ "ok": true }))
+}
+
+const OPERATOR_TOKEN_FILE: &str = "web-operator-token";
+
+fn load_or_create_operator_token(state_dir: &Path) -> Result<String, WebError> {
+    fs::create_dir_all(state_dir).map_err(|error| {
+        WebError::CommandFailed(format!("web state dir create failed: {error}"))
+    })?;
+    let path = state_dir.join(OPERATOR_TOKEN_FILE);
+    if let Ok(token) = fs::read_to_string(&path) {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(token);
+        }
+    }
+    let token = generate_operator_token();
+    fs::write(&path, format!("{token}\n")).map_err(|error| {
+        WebError::CommandFailed(format!("web operator token write failed: {error}"))
+    })?;
+    Ok(token)
+}
+
+fn operator_token_authorized(state_dir: &Path, supplied: Option<&str>) -> Result<bool, WebError> {
+    let Some(supplied) = supplied else {
+        return Ok(false);
+    };
+    Ok(load_or_create_operator_token(state_dir)? == supplied)
+}
+
+fn generate_operator_token() -> String {
+    let mut bytes = [0_u8; 24];
+    if fs::File::open("/dev/urandom")
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .is_err()
+    {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or_default();
+        bytes[..16].copy_from_slice(&nanos.to_le_bytes());
+        bytes[16..20].copy_from_slice(&std::process::id().to_le_bytes());
+    }
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn operation_id(request_id: &str) -> String {
+    format!("web-{request_id}")
+}
+
+fn operation_dir(state_dir: &Path) -> std::path::PathBuf {
+    state_dir.join("web-operations")
+}
+
+fn idempotency_path(state_dir: &Path, request_id: &str) -> std::path::PathBuf {
+    operation_dir(state_dir).join(format!("{}.json", storage_key(request_id)))
+}
+
+fn idempotency_status_path(state_dir: &Path, request_id: &str) -> std::path::PathBuf {
+    operation_dir(state_dir).join(format!("{}.status", storage_key(request_id)))
+}
+
+fn load_idempotent_response(
+    state_dir: &Path,
+    request_id: &str,
+) -> Result<Option<Response>, WebError> {
+    let path = idempotency_path(state_dir, request_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let body = fs::read(path)
+        .map_err(|error| WebError::CommandFailed(format!("web operation read failed: {error}")))?;
+    let status_code = fs::read_to_string(idempotency_status_path(state_dir, request_id))
+        .ok()
+        .and_then(|value| value.trim().parse::<u16>().ok())
+        .unwrap_or(200);
+    Ok(Some(Response {
+        status_code,
+        content_type: "application/json; charset=utf-8",
+        cache_control: CACHE_NO_STORE,
+        body,
+    }))
+}
+
+fn store_idempotent_response(
+    state_dir: &Path,
+    request_id: &str,
+    response: Response,
+) -> Result<Response, WebError> {
+    fs::create_dir_all(operation_dir(state_dir)).map_err(|error| {
+        WebError::CommandFailed(format!("web operation dir create failed: {error}"))
+    })?;
+    fs::write(idempotency_path(state_dir, request_id), &response.body)
+        .map_err(|error| WebError::CommandFailed(format!("web operation write failed: {error}")))?;
+    fs::write(
+        idempotency_status_path(state_dir, request_id),
+        response.status_code.to_string(),
+    )
+    .map_err(|error| {
+        WebError::CommandFailed(format!("web operation status write failed: {error}"))
+    })?;
+    Ok(response)
+}
+
+struct OperationLock {
+    path: std::path::PathBuf,
+}
+
+impl OperationLock {
+    fn try_acquire(
+        state_dir: &Path,
+        task_handle: &str,
+        request_id: &str,
+    ) -> Result<Option<Self>, WebError> {
+        fs::create_dir_all(operation_dir(state_dir)).map_err(|error| {
+            WebError::CommandFailed(format!("web operation dir create failed: {error}"))
+        })?;
+        let path = operation_lock_path(state_dir, task_handle);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                file.write_all(request_id.as_bytes()).map_err(|error| {
+                    WebError::CommandFailed(format!("web operation lock write failed: {error}"))
+                })?;
+                Ok(Some(Self { path }))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
+            Err(error) => Err(WebError::CommandFailed(format!(
+                "web operation lock create failed: {error}"
+            ))),
+        }
+    }
+}
+
+impl Drop for OperationLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn operation_lock_path(state_dir: &Path, task_handle: &str) -> std::path::PathBuf {
+    operation_dir(state_dir).join(format!("{}.lock", storage_key(task_handle)))
+}
+
+fn storage_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
 }
 
 const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
@@ -536,6 +843,7 @@ mod tests {
     struct TestBridge {
         refreshed: bool,
         action: Option<(OperatorAction, String)>,
+        action_calls: usize,
         action_result: Result<bool, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
         start_result: Result<bool, ActionFailure>,
@@ -546,6 +854,7 @@ mod tests {
             Self {
                 refreshed: false,
                 action: None,
+                action_calls: 0,
                 action_result: Ok(true),
                 start: None,
                 start_result: Ok(true),
@@ -570,6 +879,7 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
         ) -> Result<bool, ActionFailure> {
+            self.action_calls += 1;
             self.action = Some((action, task_handle.to_string()));
             self.action_result.clone()
         }
@@ -766,12 +1076,15 @@ mod tests {
         let mut runner = OkRunner;
         let mut bridge = TestBridge::default();
         let dir = scratch_dir("action");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
 
         let response = route_with_bridge(
             Request {
                 method: "POST",
                 path: "/api/actions",
-                body: r#"{"task_handle":"web/fix-login","action":"review"}"#,
+                body: &format!(
+                    r#"{{"task_handle":"web/fix-login","action":"review","request_id":"req-action","operator_token":"{token}"}}"#
+                ),
             },
             &mut context,
             &mut runner,
@@ -783,12 +1096,168 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
+        assert_eq!(body["status"], "succeeded");
         assert_eq!(body["state_changed"], true);
         assert!(body["cockpit"].is_object());
         assert_eq!(
             bridge.action,
             Some((OperatorAction::Review, "web/fix-login".to_string()))
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn operation_endpoint_requires_operator_token() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("operation-auth");
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-1"}"#,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 401);
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"]["code"], "auth_required");
+        assert_eq!(bridge.action, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn operation_endpoint_returns_typed_operation_status() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("operation-status");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: &format!(
+                    r#"{{"task_handle":"web/fix-login","action":"review","request_id":"req-1","operator_token":"{token}"}}"#
+                ),
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["operation_id"], "web-req-1");
+        assert_eq!(body["status"], "succeeded");
+        assert_eq!(body["state_changed"], true);
+        assert_eq!(bridge.action_calls, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn duplicate_operation_request_id_is_idempotent() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("operation-idempotent");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
+        let body = format!(
+            r#"{{"task_handle":"web/fix-login","action":"review","request_id":"req-same","operator_token":"{token}"}}"#
+        );
+
+        let first = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: &body,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let second = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: &body,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+
+        assert_eq!(first.status_code, second.status_code);
+        assert_eq!(first.body, second.body);
+        assert_eq!(bridge.action_calls, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn conflicting_task_operation_is_blocked() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("operation-lock");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
+        std::fs::create_dir_all(super::operation_dir(&dir)).unwrap();
+        std::fs::write(super::operation_lock_path(&dir, "web/fix-login"), "other").unwrap();
+        let request_body = format!(
+            r#"{{"task_handle":"web/fix-login","action":"drop","request_id":"req-drop","operator_token":"{token}"}}"#
+        );
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: &request_body,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 409);
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["status"], "blocked");
+        assert_eq!(body["error"]["code"], "operation_in_progress");
+        assert_eq!(bridge.action_calls, 0);
+        std::fs::remove_file(super::operation_lock_path(&dir, "web/fix-login")).unwrap();
+
+        let repeat = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/operations",
+                body: &request_body,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(repeat.status_code, 409);
+        assert_eq!(repeat.body, response.body);
+        assert_eq!(bridge.action_calls, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -896,12 +1365,15 @@ mod tests {
         let mut runner = OkRunner;
         let mut bridge = TestBridge::default();
         let dir = scratch_dir("start");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
 
         let response = route_with_bridge(
             Request {
                 method: "POST",
                 path: "/api/tasks",
-                body: r#"{"repo":"web","title":"Fix login","agent":"codex"}"#,
+                body: &format!(
+                    r#"{{"repo":"web","title":"Fix login","agent":"codex","request_id":"req-start","operator_token":"{token}"}}"#
+                ),
             },
             &mut context,
             &mut runner,
@@ -920,6 +1392,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: "req-start".to_string(),
+                operator_token: Some(token),
             })
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -931,12 +1405,15 @@ mod tests {
         let mut runner = OkRunner;
         let mut bridge = TestBridge::default();
         let dir = scratch_dir("native-action");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
 
         let response = route_with_bridge(
             Request {
                 method: "POST",
                 path: "/api/actions",
-                body: r#"{"task_handle":"web/fix-login","action":"resume"}"#,
+                body: &format!(
+                    r#"{{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume","operator_token":"{token}"}}"#
+                ),
             },
             &mut context,
             &mut runner,
@@ -946,6 +1423,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 409);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["status"], "needs_terminal");
+        assert_eq!(body["error"]["code"], "needs_terminal");
         assert_eq!(bridge.action, None);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -956,6 +1436,7 @@ mod tests {
         let mut runner = OkRunner;
         let mut bridge = TestBridge::default();
         let dir = scratch_dir("push");
+        let token = super::load_or_create_operator_token(&dir).unwrap();
 
         let config = route_with_bridge(
             Request {
@@ -977,7 +1458,9 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/push/subscribe",
-                body: r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
+                body: &format!(
+                    r#"{{"operator_token":"{token}","subscription":{{"endpoint":"https://push.example/x","keys":{{"p256dh":"k","auth":"a"}}}}}}"#
+                ),
             },
             &mut context,
             &mut runner,
@@ -992,7 +1475,9 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/push/unsubscribe",
-                body: r#"{"endpoint":"https://push.example/x"}"#,
+                body: &format!(
+                    r#"{{"operator_token":"{token}","endpoint":"https://push.example/x"}}"#
+                ),
             },
             &mut context,
             &mut runner,

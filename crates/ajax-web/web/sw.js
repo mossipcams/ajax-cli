@@ -71,7 +71,9 @@ self.addEventListener("push", (event) => {
       tag: data.tag,
       icon: "/icons/icon-192.png",
       badge: "/icons/icon-192.png",
-      data: { url: "/" },
+      data: {
+        url: data.task_handle ? `/#/t/${encodeURIComponent(data.task_handle)}` : "/",
+      },
     }),
   );
 });
@@ -84,7 +86,12 @@ self.addEventListener("notificationclick", (event) => {
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
         for (const client of clients) {
-          if ("focus" in client) return client.focus();
+          if ("focus" in client) {
+            if ("navigate" in client) {
+              return client.navigate(target).then((navigated) => (navigated || client).focus());
+            }
+            return client.focus();
+          }
         }
         return self.clients.openWindow(target);
       }),

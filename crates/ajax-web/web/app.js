@@ -18,14 +18,18 @@ const detailContainer = document.getElementById("task-detail");
 const REFRESH_INTERVAL_MS = 1000;
 const DESTRUCTIVE_ACTIONS = new Set(["drop"]);
 const CONFIRM_TIMEOUT_MS = 3000;
+const OPERATOR_TOKEN_KEY = "ajax-web-operator-token";
 
 let lastCockpit = null;
 let lastFingerprint = null;
 let refreshInFlight = false;
 let detailHandle = null;
 let detailInFlight = false;
+let mutationInFlight = 0;
 const expandedCards = new Set();
 const pendingConfirms = new WeakMap();
+const inFlightActions = new Map();
+const actionStates = new Map();
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -36,6 +40,42 @@ function el(tag, className, text) {
 
 function titleCase(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+function requestId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function actionKey(handle, action) {
+  return `${handle}\n${action}`;
+}
+
+function operatorToken() {
+  let token = localStorage.getItem(OPERATOR_TOKEN_KEY);
+  if (token) return token;
+  token = window.prompt("Ajax Web Cockpit pairing token");
+  if (token) {
+    token = token.trim();
+    if (token) localStorage.setItem(OPERATOR_TOKEN_KEY, token);
+  }
+  return token || "";
+}
+
+function matchingActionButtons(handle, action) {
+  return Array.from(document.querySelectorAll("button[data-action]")).filter(
+    (button) => button.dataset.task === handle && button.dataset.action === action,
+  );
+}
+
+function setActionState(handle, action, status, message) {
+  let entry;
+  if (status === "sending") entry = { status: "sending", message };
+  else if (status === "succeeded") entry = { status: "succeeded", message };
+  else if (status === "failed") entry = { status: "failed", message };
+  else entry = { status, message };
+  actionStates.set(actionKey(handle, action), entry);
+  renderActionState(handle, action);
 }
 
 function repoOf(handle) {
@@ -82,6 +122,37 @@ function actionButton(action, handle, isPrimary) {
   button.dataset.task = handle;
   if (DESTRUCTIVE_ACTIONS.has(action)) button.dataset.destructive = "true";
   return button;
+}
+
+function latestActionState(handle) {
+  let latest = null;
+  for (const [key, state] of actionStates.entries()) {
+    if (key.startsWith(`${handle}\n`)) latest = state;
+  }
+  return latest;
+}
+
+function actionMessage(handle) {
+  const state = latestActionState(handle);
+  if (!state) return null;
+  const message = el("p", `action-state ${state.status}`, state.message);
+  message.dataset.actionState = handle;
+  return message;
+}
+
+function renderActionState(handle, action) {
+  const state = actionStates.get(actionKey(handle, action));
+  const text = state ? state.message : "";
+  document.querySelectorAll(`[data-action-state="${handle}"]`).forEach((node) => {
+    node.className = state ? `action-state ${state.status}` : "action-state";
+    node.textContent = text;
+    node.hidden = !state;
+  });
+  for (const button of matchingActionButtons(handle, action)) {
+    button.classList.toggle("is-running", state && state.status === "sending");
+    button.classList.toggle("is-succeeded", state && state.status === "succeeded");
+    button.classList.toggle("is-failed", state && state.status === "failed");
+  }
 }
 
 function appendDetailRow(parent, label, value) {
@@ -135,6 +206,8 @@ function taskCard(card, options) {
     article.append(details);
     article.classList.add("has-details");
   }
+  const message = actionMessage(card.qualified_handle);
+  if (message) article.append(message);
 
   return article;
 }
@@ -234,7 +307,7 @@ function setOnline(online) {
 
 async function loadCockpit(options) {
   const manual = options && options.manual;
-  if (refreshInFlight || document.hidden) return;
+  if (refreshInFlight || document.hidden || mutationInFlight > 0) return;
   refreshInFlight = true;
   if (manual) document.body.classList.add("is-refreshing");
   try {
@@ -339,6 +412,8 @@ function renderDetail(detail) {
     }
     detailContainer.append(actions);
   }
+  const message = actionMessage(detail.qualified_handle);
+  if (message) detailContainer.append(message);
 }
 
 function appendGridRow(grid, label, value) {
@@ -348,7 +423,7 @@ function appendGridRow(grid, label, value) {
 }
 
 async function loadDetail() {
-  if (!detailHandle || detailInFlight || document.hidden) return;
+  if (!detailHandle || detailInFlight || document.hidden || mutationInFlight > 0) return;
   detailInFlight = true;
   try {
     const response = await fetch(`/api/tasks/${detailHandle}`, { cache: "no-store" });
@@ -394,7 +469,6 @@ function openNewTaskSheet() {
   newTaskError.hidden = true;
   newTaskError.textContent = "";
   document.body.classList.add("sheet-open");
-  setTimeout(() => newTaskTitle.focus(), 60);
 }
 
 function closeNewTaskSheet() {
@@ -439,11 +513,19 @@ async function submitNewTask(event) {
   }
   const submit = newTaskForm.querySelector('button[type="submit"]');
   submit.disabled = true;
+  const token = operatorToken();
+  if (!token) {
+    newTaskError.textContent = "Pairing token is required";
+    newTaskError.hidden = false;
+    submit.disabled = false;
+    return;
+  }
+  mutationInFlight += 1;
   try {
     const response = await fetch("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repo, title, agent }),
+      body: JSON.stringify({ repo, title, agent, request_id: requestId(), operator_token: token }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -458,6 +540,7 @@ async function submitNewTask(event) {
     newTaskError.textContent = "Action failed — network error";
     newTaskError.hidden = false;
   } finally {
+    mutationInFlight = Math.max(0, mutationInFlight - 1);
     submit.disabled = false;
   }
 }
@@ -500,34 +583,58 @@ function tryConfirmDestructive(button) {
 }
 
 async function runAction(button) {
-  const cardEl = button.closest(".card");
-  const peers = cardEl
-    ? Array.from(cardEl.querySelectorAll("button[data-action]"))
-    : [button];
+  const handle = button.dataset.task;
+  const action = button.dataset.action;
+  const key = actionKey(handle, action);
+  if (inFlightActions.has(key)) return;
+  const token = operatorToken();
+  if (!token) {
+    setActionState(handle, action, "failed", "Pairing token is required");
+    return;
+  }
+  const peers = matchingActionButtons(handle, action);
   const originalLabel = button.textContent;
+  inFlightActions.set(key, true);
+  mutationInFlight += 1;
+  setActionState(handle, action, "sending", `${titleCase(action)} sending`);
   button.textContent = `${originalLabel} …`;
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;
   try {
-    const response = await fetch("/api/actions", {
+    const response = await fetch("/api/operations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task_handle: button.dataset.task, action: button.dataset.action }),
+      body: JSON.stringify({
+        task_handle: handle,
+        action,
+        request_id: requestId(),
+        operator_token: token,
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (payload.cockpit) {
       applyData(payload.cockpit);
-    } else {
+    } else if (mutationInFlight <= 1) {
       await loadCockpit();
     }
     if (!response.ok) {
-      statusLine.textContent = payload.error || `Action failed (HTTP ${response.status})`;
+      const message = payload.error && payload.error.message
+        ? payload.error.message
+        : payload.error || `Action failed (HTTP ${response.status})`;
+      setActionState(handle, action, "failed", message);
+      statusLine.textContent = message;
     } else if (detailHandle) {
+      setActionState(handle, action, "succeeded", `${titleCase(action)} succeeded`);
       loadDetail();
+    } else {
+      setActionState(handle, action, "succeeded", `${titleCase(action)} succeeded`);
     }
   } catch (error) {
+    setActionState(handle, action, "failed", "Action failed — network error");
     statusLine.textContent = "Action failed — network error";
   } finally {
+    inFlightActions.delete(key);
+    mutationInFlight = Math.max(0, mutationInFlight - 1);
     if (button.isConnected) {
       button.textContent = originalLabel;
       button.classList.remove("is-running");
@@ -613,6 +720,11 @@ async function enableNotifications() {
     }
     const registration = await navigator.serviceWorker.ready;
     const config = await (await fetch("/api/push/config")).json();
+    const token = operatorToken();
+    if (!token) {
+      statusLine.textContent = "Pairing token is required";
+      return;
+    }
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: new Uint8Array(config.public_key),
@@ -620,7 +732,7 @@ async function enableNotifications() {
     const response = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(subscription),
+      body: JSON.stringify({ operator_token: token, subscription: subscription.toJSON() }),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     notifyButton.hidden = true;

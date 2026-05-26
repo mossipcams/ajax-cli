@@ -13,6 +13,15 @@ use ajax_core::{
     },
 };
 
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct WebActionState {
+    pub action: String,
+    pub status: String,
+    pub reason: Option<&'static str>,
+    pub destructive: bool,
+    pub confirmation_required: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateRequest {
     pub task_handle: String,
@@ -24,6 +33,10 @@ pub struct StartTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub operator_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -117,6 +130,35 @@ fn task_command_kind(action: OperatorAction) -> Result<TaskCommandKind, OperateE
     }
 }
 
+pub fn web_action_state(action: OperatorAction) -> WebActionState {
+    let (status, reason) = match action {
+        OperatorAction::Review
+        | OperatorAction::Ship
+        | OperatorAction::Repair
+        | OperatorAction::Drop => ("supported", None),
+        OperatorAction::Resume => (
+            "needs_terminal",
+            Some("terminal attach requires native cockpit"),
+        ),
+        OperatorAction::Start => (
+            "unsupported",
+            Some("start uses the dedicated Web Cockpit new-task operation"),
+        ),
+    };
+
+    WebActionState {
+        action: action.as_str().to_string(),
+        status: status.to_string(),
+        reason,
+        destructive: action == OperatorAction::Drop,
+        confirmation_required: action == OperatorAction::Drop,
+    }
+}
+
+pub fn supported_web_action(action: OperatorAction) -> bool {
+    web_action_state(action).status == "supported"
+}
+
 #[cfg(test)]
 mod tests {
     use super::{operate, OperateError, OperateRequest};
@@ -205,6 +247,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
+                operator_token: None,
             },
         )
         .unwrap();
@@ -235,6 +279,8 @@ mod tests {
                 repo: "web".to_string(),
                 title: "   ".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
+                operator_token: None,
             },
         )
         .unwrap_err();
@@ -259,6 +305,8 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
+                operator_token: None,
             },
         )
         .unwrap_err();

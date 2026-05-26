@@ -44,10 +44,11 @@ From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
-### Mobile web companion (PWA)
+### Web Cockpit companion (PWA)
 
 When native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
-starts the mobile web Cockpit companion: a mobile-first Progressive Web App.
+starts the Web Cockpit companion: a mobile-first Progressive Web App that acts
+as a full browser operator surface over the Ajax backend.
 Stable serves on `0.0.0.0:8787`; dev serves on `0.0.0.0:8788` and uses the
 isolated dev runtime profile. Use `--no-web` to keep native Cockpit
 terminal-only.
@@ -62,12 +63,26 @@ enable notifications, trust that certificate once. On iOS, open
 `web-tls-cert.pem`, install the profile, then enable full trust under Settings,
 General, About, Certificate Trust Settings.
 
+Because the PWA can mutate Ajax state, Ajax pairs browsers with a device token
+for mutable routes. Read-only Cockpit projections stay live and
+server-authoritative; the browser renders backend projections and sends typed
+operation intents. It does not own task lifecycle, registry truth, Git/tmux
+interpretation, action policy, or offline mutation replay.
+
 From the installed app you can monitor every repo's tasks, see the attention
-inbox, and run `review`, `ship`, `repair`, and `drop`. `resume` stays
-native-Cockpit only because it needs an attached terminal. Tap Alerts to enable
-Web Push: the phone is then notified when a task newly needs attention, even
-when the app is closed. Web Push on iOS requires iOS 16.4 or later and the app
-installed to the home screen.
+inbox, start tasks, and run supported operations such as `review`, `ship`,
+`repair`, and `drop`. Mutable operation requests include request IDs so retries
+and fast taps do not execute the same operation twice, and the backend allows
+only one mutable operation per task at a time. `resume` is reported as requiring
+a terminal until the browser terminal bridge lands. Tap Alerts to enable Web
+Push: the phone is then notified when a task newly needs attention, even when
+the app is closed, and task notifications deep-link back to the relevant task
+when the payload includes a handle. Web Push on iOS requires iOS 16.4 or later
+and the app installed to the home screen.
+
+The PWA service worker caches only the static app shell, stylesheet, script,
+manifest, and icons. `/api/*` responses, mutable requests, push routes, and
+future terminal endpoints are never cached; they remain live backend responses.
 
 ### Persistent host web companion
 

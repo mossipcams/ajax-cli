@@ -26,9 +26,10 @@ Owns the native Cockpit interface over `ajax-core` JSON-backed responses.
 
 ### `ajax-web`
 
-Owns the mobile browser Cockpit adapter: HTTP routing, PWA assets, browser API
-DTOs, local HTTPS identity, Web Push, and any web companion server runtime. It is
-a presentation adapter over `ajax-core` Cockpit projections and task-operation
+Owns the Web Cockpit companion adapter: HTTP routing, PWA assets, browser API
+DTOs, local HTTPS identity, Web Push, pairing/auth, operation request
+coordination, and any web companion server runtime. It is a full browser
+operator surface over `ajax-core` Cockpit projections and task-operation
 contracts, not a second task domain.
 
 ### `ajax-supervisor`
@@ -287,30 +288,34 @@ invocations may choose a default operator surface, and flags may select runtime
 profiles, but `main.rs` should not rewrite argv into hidden commands. Public CLI
 vocabulary remains operator-facing.
 
-## Mobile Web Companion Architecture
+## Web Cockpit Companion Architecture
 
-`ajax-web` is the mobile browser Cockpit adapter. It is a vertical presentation
-adapter over the same Cockpit projection and task-operation contracts used by
-native Cockpit. It may shape responses for browser ergonomics, but it must not
-own task lifecycle rules, registry truth, runtime reconciliation, Git/tmux
-interpretation, or action policy. The PWA's host-native live control backend is
-the `ajax-cli web` process running on the same host-local Ajax authority as
-native Cockpit: SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state.
+`ajax-web` is the full browser Cockpit companion adapter. It is a first-class
+operator surface over the same Cockpit projection and task-operation contracts
+used by native Cockpit. It may shape responses for browser ergonomics, and it
+may initiate supported Ajax operations through backend APIs, but it must not own
+task lifecycle rules, registry truth, runtime reconciliation, Git/tmux
+interpretation, action policy, operation outcomes, or offline mutation state.
+The PWA's host-native live control backend is the `ajax-cli web` process running
+on the same host-local Ajax authority as native Cockpit: SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state.
 
-The PWA is a thin mobile cockpit for the native Ajax CLI. It is not an
-offline-first Ajax client and must not introduce a second browser-side task
-model. Git, tmux, SQLite, and the Ajax companion server remain authoritative for
-task state and operations. Docker is not the live Ajax control authority because
-it does not naturally share the host tmux server, agent processes, installed
-agent CLIs, or other host process state.
+The PWA is a full browser operator control surface for Ajax, not an
+offline-first Ajax client and not a second browser-side task engine. Git, tmux,
+SQLite, `ajax-core`, and the Ajax companion server remain authoritative for task
+state, registry state, substrate evidence, action policy, and operation
+outcomes. The browser renders server-authoritative projections and dispatches
+typed operator intents. Docker is not the live Ajax control authority because it
+does not naturally share the host tmux server, agent processes, installed agent
+CLIs, or other host process state.
 
 PWA files live under `crates/ajax-web/web`. The install slice owns serving the
 HTML shell, client JavaScript, stylesheet, web manifest, service worker, and app
 icons from that directory. `ajax-web::runtime` owns HTTP request routing, generic
 connection response handling, local TLS setup, Web Push endpoints, attention
-polling, and app-shell asset delivery. `ajax-cli` remains a thin native bridge:
-it resolves stable/dev context paths, reloads and saves the authoritative SQLite
-state, and delegates native command execution for browser-submitted actions.
+polling, operation request coordination, mutable-route authentication, and
+app-shell asset delivery. `ajax-cli` remains a thin native bridge: it resolves
+stable/dev context paths, reloads and saves the authoritative SQLite state, and
+delegates native command execution for browser-submitted operations.
 
 The ajax-web Docker runtime is a persistent snapshot companion. It runs the
 foreground `ajax web` command as a container entrypoint, publishes the dev web
@@ -333,7 +338,8 @@ static app-shell assets and belong beside the PWA shell.
 
 The service worker may cache only static app-shell assets: `/`, `/app.css`,
 `/app.js`, `/manifest.webmanifest`, `/sw.js`, and app icons. It must never cache
-live Ajax endpoints, including `/api/cockpit`, `/api/actions`, `/api/push/*`, or
+live Ajax endpoints, including `/api/cockpit`, `/api/actions`,
+`/api/operations`, `/api/tasks`, `/api/push/*`, terminal WebSocket endpoints, or
 any future `/api/*` endpoint. Static shell requests may use network-first
 behavior with cache fallback so installed browsers pick up updates promptly
 while still showing the shell when the companion is temporarily unreachable.
@@ -344,10 +350,12 @@ Activation should delete old Ajax Cockpit caches and claim clients so installed
 PWAs converge on the new shell without keeping stale static assets indefinitely.
 
 Browser storage is intentionally limited. The PWA may use the service worker
-Cache API for static app-shell assets and browser-managed Web Push
-subscriptions. It must not use IndexedDB, background sync, local task queues, or
-offline mutations. It must not add Yew, Trunk, WASM, or a large frontend
-architecture unless the project explicitly adopts those elsewhere.
+Cache API for static app-shell assets, browser-managed Web Push subscriptions,
+and a paired device token for mutable-route authentication. It must not use
+IndexedDB, background sync, local task queues, offline mutation replay, or
+browser-owned task state. Reloading the PWA must not imply the browser owns or
+replays a pending mutation. It must not add Yew, Trunk, WASM, or a large
+frontend architecture unless the project explicitly adopts those elsewhere.
 
 Stable and dev runtime profiles remain separated by explicit runtime context.
 Stable uses the stable state database and default web port, while dev uses
@@ -356,16 +364,34 @@ profile instead of creating a separate Docker-dev state profile, but live
 control still belongs to the host-native backend. The PWA must not merge profile
 state in browser storage.
 
+Full Web Cockpit control requires a paired device token for mutable routes.
+Read-only projection endpoints may remain available on the local network so
+operators can inspect state quickly, but `POST /api/tasks`, `POST /api/actions`,
+`POST /api/operations`, `POST /api/push/subscribe`, `POST
+/api/push/unsubscribe`, and future terminal WebSocket endpoints require the
+token. The `ajax web` runtime prints or exposes the pairing token; browsers store
+the device token and present it on mutable requests.
+
+Mutable browser requests are operation intents. They include a client-generated
+`request_id` so network retries and double submissions are idempotent. The
+backend coordinates one mutable operation per task at a time, returns typed
+operation states such as `queued`, `running`, `succeeded`, `failed`, `blocked`,
+`unsupported`, and `needs_terminal`, and reports refreshed Cockpit projections
+from the server-authoritative state. The browser may show transient local
+sending/success/failure state, but it must not persist pending operations.
+
 Web Push remains opt-in and server-authoritative. The browser may register a
 subscription with `/api/push/subscribe`; VAPID identity, subscription
-persistence, attention polling, notification delivery, and pruning dead
-subscriptions belong to the companion boundary, not to core task logic or a
-browser-side scheduler.
+persistence, attention polling, notification delivery, task deep-link payloads,
+and pruning dead subscriptions belong to the companion boundary, not to core
+task logic or a browser-side scheduler.
 
 PWA validation should check manifest shape, icon availability, service worker
 registration, app-shell cache contents, `/api/*` cache bypass, cache versioning
-and cleanup behavior, local-only shell assets, stable/dev port separation, and
-clear browser error states for failed live requests or unsupported actions.
+and cleanup behavior, local-only shell assets, stable/dev port separation,
+mutable-route token enforcement, idempotent operation requests, per-task
+operation locking, and clear browser error states for failed, blocked,
+unsupported, or terminal-required actions.
 
 `ajax-web` is organized around vertical browser/operator capabilities inside
 the crate:
@@ -390,11 +416,12 @@ same task/action meaning as native Cockpit.
 
 ### `ajax-web::slices::operate`
 
-Owns browser-submitted operator actions. It accepts mobile action requests,
-checks browser capability limits, delegates valid work to the existing core task
-operations, and returns the refreshed Cockpit projection. Unsupported
-capabilities, such as terminal attach, are reported as adapter capability
-errors rather than duplicated lifecycle policy.
+Owns browser-submitted operator actions. It accepts typed operation intents,
+checks browser capability limits from one web action policy, delegates valid
+work to the existing core task operations, and returns operation status plus the
+refreshed Cockpit projection. Unsupported capabilities, such as terminal attach,
+are reported as typed `unsupported` or `needs_terminal` outcomes rather than
+being hidden or duplicated as frontend lifecycle policy.
 
 ### `ajax-web::slices::install`
 
@@ -419,9 +446,16 @@ starts the companion, the CLI launcher passes resolved runtime context to
 
 The PWA consumes the same Cockpit view model as the native TUI. Browser-specific
 DTOs may be narrower or differently named, but they are projections of core
-output contracts, not separate task models. Any mobile-only restriction belongs
-at the adapter capability boundary; core remains responsible for deciding which
-task actions are valid for a task.
+output contracts, not separate task models. Any browser-only restriction belongs
+at the adapter capability boundary and is projected by the backend; core remains
+responsible for deciding which task actions are valid for a task.
+
+Browser `resume` will become a terminal bridge capability: PWA terminal screen
+to WebSocket, `ajax-web` backend, PTY/tmux attach bridge, and task session. The
+target bridge streams terminal output, forwards keyboard input, supports mobile
+shortcuts for Esc, Tab, Ctrl-C, Ctrl-D, Ctrl-Q/detach, and arrows, handles
+resize and reconnect, and preserves Ajax as the session authority. Until that
+bridge exists, Web Cockpit must surface `resume` as `needs_terminal`.
 
 The web companion may use HTTP, TLS, filesystem storage for certificates and
 subscriptions, network calls to push services, and static asset embedding inside
@@ -433,10 +467,11 @@ Cockpit is the primary operator surface over the JSON-backed command boundary.
 
 `ajax-tui` owns native terminal interaction and rendering.
 
-`ajax-web` owns mobile browser interaction and rendering. Native Cockpit and web
+`ajax-web` owns full browser interaction and rendering. Native Cockpit and Web
 Cockpit are sibling presentation adapters over shared core projections and
 actions; neither surface owns task truth. `ajax-tui` must not know about HTTP,
-TLS, Web Push, service workers, browser manifests, or static web assets.
+TLS, Web Push, service workers, browser manifests, mutable-route tokens, or
+static web assets.
 
 The companion serves HTTPS so that browsers grant it a secure context: the
 prerequisite for installing the PWA, running its service worker, and receiving

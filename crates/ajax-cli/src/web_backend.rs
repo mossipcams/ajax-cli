@@ -482,7 +482,9 @@ mod tests {
         assert!(script.contains("cache: \"no-store\""));
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
-        assert!(script.contains("/api/actions"));
+        assert!(script.contains("/api/operations"));
+        assert!(script.contains("request_id"));
+        assert!(script.contains("operator_token"));
     }
 
     #[test]
@@ -548,43 +550,57 @@ mod tests {
     fn action_endpoint_guards_resume_for_native_cockpit() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
+        let (dir, paths, token) = paired_paths("resume");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"resume"}"#,
+            &format!(
+                r#"{{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume","operator_token":"{token}"}}"#
+            ),
             &mut context,
             &mut runner,
-            None,
+            Some(&paths),
         )
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        assert!(String::from_utf8_lossy(&response.body).contains("resume requires native cockpit"));
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["status"], "needs_terminal");
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("resume requires native cockpit"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn action_endpoint_executes_non_interactive_task_actions() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
+        let (dir, paths, token) = paired_paths("action");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
-            "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"review"}"#,
+            "/api/operations",
+            &format!(
+                r#"{{"task_handle":"web/fix-login","action":"review","request_id":"req-review","operator_token":"{token}"}}"#
+            ),
             &mut context,
             &mut runner,
-            None,
+            Some(&paths),
         )
         .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
+        assert_eq!(body["status"], "succeeded");
         assert_eq!(
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
         );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -601,26 +617,34 @@ mod tests {
         }
         let mut context = reviewable_context();
         let mut runner = FailingRunner;
+        let (dir, paths, token) = paired_paths("action-fail");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"ship"}"#,
+            &format!(
+                r#"{{"task_handle":"web/fix-login","action":"ship","request_id":"req-ship","operator_token":"{token}"}}"#
+            ),
             &mut context,
             &mut runner,
-            None,
+            Some(&paths),
         )
         .expect("handler should return a JSON error, not propagate the CliError");
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 409);
         assert_eq!(body["ok"], false);
+        assert_eq!(body["status"], "failed");
         assert!(
-            !body["error"].as_str().unwrap_or_default().is_empty(),
+            !body["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty(),
             "error message should be populated, got: {:?}",
             body["error"]
         );
         assert!(body["cockpit"].is_object());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -745,14 +769,16 @@ mod tests {
             paths: None,
             snapshot_only: true,
         };
-        let dir = scratch_dir("snapshot-actions");
+        let (dir, _paths, token) = paired_paths("snapshot-actions");
 
         for action in ["review", "ship", "repair", "drop"] {
             let response = ajax_web::runtime::route_with_bridge(
                 ajax_web::runtime::Request {
                     method: "POST",
                     path: "/api/actions",
-                    body: &format!(r#"{{"task_handle":"web/fix-login","action":"{action}"}}"#),
+                    body: &format!(
+                        r#"{{"task_handle":"web/fix-login","action":"{action}","request_id":"snapshot-{action}","operator_token":"{token}"}}"#
+                    ),
                 },
                 &mut context,
                 &mut runner,
@@ -764,7 +790,9 @@ mod tests {
 
             assert_eq!(response.status_code, 409);
             assert_eq!(body["ok"], false);
-            assert!(body["error"]
+            assert_eq!(body["status"], "unsupported");
+            assert_eq!(body["error"]["code"], "snapshot_only");
+            assert!(body["error"]["message"]
                 .as_str()
                 .unwrap_or_default()
                 .contains("host-native Ajax"));
@@ -775,7 +803,9 @@ mod tests {
             ajax_web::runtime::Request {
                 method: "POST",
                 path: "/api/tasks",
-                body: r#"{"repo":"web","title":"Fix search","agent":"codex"}"#,
+                body: &format!(
+                    r#"{{"repo":"web","title":"Fix search","agent":"codex","request_id":"snapshot-start","operator_token":"{token}"}}"#
+                ),
             },
             &mut context,
             &mut runner,
@@ -787,7 +817,9 @@ mod tests {
 
         assert_eq!(start.status_code, 409);
         assert_eq!(body["ok"], false);
-        assert!(body["error"]
+        assert_eq!(body["status"], "unsupported");
+        assert_eq!(body["error"]["code"], "snapshot_only");
+        assert!(body["error"]["message"]
             .as_str()
             .unwrap_or_default()
             .contains("host-native Ajax"));
@@ -821,12 +853,20 @@ mod tests {
         std::env::temp_dir().join(format!("ajax-web-be-{tag}-{}-{nanos}", std::process::id()))
     }
 
+    fn paired_paths(tag: &str) -> (std::path::PathBuf, super::CliContextPaths, String) {
+        let dir = scratch_dir(tag);
+        std::fs::create_dir_all(&dir).unwrap();
+        let token = "test-operator-token".to_string();
+        std::fs::write(dir.join("web-operator-token"), format!("{token}\n")).unwrap();
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
+        (dir, paths, token)
+    }
+
     #[test]
     fn push_config_and_subscribe_endpoints_round_trip() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
-        let dir = scratch_dir("push");
-        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
+        let (dir, paths, token) = paired_paths("push");
 
         let config = handle_http_request_with_runner_and_paths(
             "GET",
@@ -844,7 +884,9 @@ mod tests {
         let subscribe = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/push/subscribe",
-            r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
+            &format!(
+                r#"{{"operator_token":"{token}","subscription":{{"endpoint":"https://push.example/x","keys":{{"p256dh":"k","auth":"a"}}}}}}"#
+            ),
             &mut context,
             &mut runner,
             Some(&paths),
@@ -856,7 +898,7 @@ mod tests {
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/push/unsubscribe",
-            r#"{"endpoint":"https://push.example/x"}"#,
+            &format!(r#"{{"operator_token":"{token}","endpoint":"https://push.example/x"}}"#),
             &mut context,
             &mut runner,
             Some(&paths),
