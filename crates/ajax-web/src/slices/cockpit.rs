@@ -2,12 +2,19 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, TmuxStatus},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, Task, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
+    recommended::operator_action,
     registry::Registry,
+    ui_state::derive_ui_state,
 };
 use serde::Serialize;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use crate::slices::operate::{supported_web_action, web_action_state, WebActionState};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
@@ -46,6 +53,7 @@ pub struct BrowserTaskCard {
     pub lifecycle: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_summary: Option<String>,
 }
 
@@ -64,10 +72,11 @@ pub fn browser_cockpit_view_with_backend<R: Registry>(
     backend: BackendAuthority,
 ) -> BrowserCockpitView {
     let view = commands::rebuild_cockpit_view(context);
+    let cards = browser_task_cards(context, view.cards.as_slice());
     BrowserCockpitView {
         backend: browser_backend(backend),
         repos: view.repos,
-        cards: view.cards.iter().map(browser_task_card).collect(),
+        cards,
         inbox: view.inbox,
     }
 }
@@ -114,7 +123,77 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
             .iter()
             .map(|action| action.as_str().to_string())
             .collect(),
+        action_states: card
+            .available_actions
+            .iter()
+            .copied()
+            .map(web_action_state)
+            .collect(),
         live_summary: card.live_summary.clone(),
+    }
+}
+
+fn browser_task_cards<R: Registry>(
+    context: &CommandContext<R>,
+    native_cards: &[TaskCard],
+) -> Vec<BrowserTaskCard> {
+    let mut cards: Vec<BrowserTaskCard> = native_cards.iter().map(browser_task_card).collect();
+    let mut included: HashSet<String> = native_cards
+        .iter()
+        .map(|card| card.qualified_handle.clone())
+        .collect();
+
+    for task in context.registry.list_tasks() {
+        if task.lifecycle_status == LifecycleStatus::Removed
+            || included.contains(&task.qualified_handle())
+        {
+            continue;
+        }
+        included.insert(task.qualified_handle());
+        cards.push(browser_task_card_from_task(task));
+    }
+
+    cards
+}
+
+fn browser_task_card_from_task(task: &Task) -> BrowserTaskCard {
+    let ui_state = derive_ui_state(task);
+    let plan = operator_action(task);
+    let available: Vec<OperatorAction> = plan
+        .available_actions
+        .iter()
+        .copied()
+        .filter(|action| is_web_supported(*action))
+        .collect();
+    let primary = if is_web_supported(plan.action) {
+        plan.action
+    } else {
+        available.first().copied().unwrap_or(plan.action)
+    };
+
+    BrowserTaskCard {
+        id: task.id.as_str().to_string(),
+        qualified_handle: task.qualified_handle(),
+        title: task.title.clone(),
+        ui_state: ui_state.as_str().to_string(),
+        status_label: task
+            .live_status
+            .as_ref()
+            .map(|live| live.summary.clone())
+            .unwrap_or_else(|| ui_state.as_str().to_string()),
+        lifecycle: format!("{:?}", task.lifecycle_status),
+        primary_action: primary.as_str().to_string(),
+        available_actions: available
+            .iter()
+            .map(|action| action.as_str().to_string())
+            .collect(),
+        action_states: plan
+            .available_actions
+            .iter()
+            .copied()
+            .map(web_action_state)
+            .collect(),
+        live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
     }
 }
 
@@ -122,7 +201,7 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
 // interactive title prompt; both are rejected by web action handling, so the
 // browser Cockpit should not surface them as buttons.
 fn is_web_supported(action: OperatorAction) -> bool {
-    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
+    supported_web_action(action)
 }
 
 #[derive(Serialize)]
@@ -140,6 +219,7 @@ pub struct BrowserTaskDetail {
     pub status_label: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
     pub git: Option<GitStatus>,
@@ -192,6 +272,16 @@ pub fn browser_task_detail_view<R: Registry>(
                 .collect()
         })
         .unwrap_or_default();
+    let action_states = card_clone
+        .as_ref()
+        .map(|card| {
+            card.available_actions
+                .iter()
+                .copied()
+                .map(web_action_state)
+                .collect()
+        })
+        .unwrap_or_default();
     let primary_action = card_clone
         .as_ref()
         .map(|card| card.primary_action.as_str().to_string())
@@ -217,6 +307,7 @@ pub fn browser_task_detail_view<R: Registry>(
             .unwrap_or_default(),
         primary_action,
         available_actions,
+        action_states,
         live_status_kind: task
             .live_status
             .as_ref()
@@ -263,9 +354,12 @@ mod tests {
     use ajax_core::{
         commands::CommandContext,
         config::Config,
-        models::{LifecycleStatus, OperatorAction, TaskId},
+        models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
+            SideFlag, Task, TaskId,
+        },
         output::TaskCard,
-        registry::InMemoryRegistry,
+        registry::{InMemoryRegistry, Registry as _},
         ui_state::UiState,
     };
 
@@ -278,6 +372,65 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn browser_cockpit_includes_visible_missing_substrate_tasks() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux session missing",
+        ));
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"].as_array().unwrap().len(), 1);
+        assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(value["cards"][0]["title"], "Fix login");
+        assert_eq!(value["cards"][0]["live_summary"], "tmux session missing");
+    }
+
+    #[test]
+    fn browser_cockpit_keeps_removed_tasks_out_of_browser_only_cards() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/old-task"),
+            "web",
+            "old-task",
+            "Old task",
+            "ajax/old-task",
+            "main",
+            "/repo/web__worktrees/ajax-old-task",
+            "ajax-web-old-task",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Removed;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"], serde_json::json!([]));
     }
 
     #[test]
@@ -379,5 +532,48 @@ mod tests {
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
         assert_eq!(browser.primary_action, "review");
         assert_eq!(browser.available_actions, ["review", "ship"]);
+    }
+
+    #[test]
+    fn cockpit_cards_expose_backend_web_action_states() {
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            ui_state: UiState::ReviewReady,
+            status_label: "review ready".to_string(),
+            lifecycle: LifecycleStatus::Reviewable,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![
+                OperatorAction::Resume,
+                OperatorAction::Review,
+                OperatorAction::Drop,
+            ],
+            live_summary: None,
+        };
+
+        let browser = browser_task_card(&card);
+        let states: Vec<(&str, &str, bool, bool)> = browser
+            .action_states
+            .iter()
+            .map(|state| {
+                (
+                    state.action.as_str(),
+                    state.status.as_str(),
+                    state.destructive,
+                    state.confirmation_required,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            states,
+            vec![
+                ("resume", "needs_terminal", false, false),
+                ("review", "supported", false, false),
+                ("drop", "supported", true, true),
+            ]
+        );
     }
 }
