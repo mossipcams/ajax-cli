@@ -102,6 +102,7 @@ dependencies = [
  "ajax-core",
  "notify",
  "rstest",
+ "rust_arkitect",
  "serde_json",
  "tokio",
 ]
@@ -114,6 +115,7 @@ dependencies = [
  "crossterm",
  "ratatui",
  "rstest",
+ "rust_arkitect",
 ]
 
 [[package]]
@@ -123,6 +125,7 @@ dependencies = [
  "ajax-core",
  "axum",
  "rcgen",
+ "rust_arkitect",
  "rustls",
  "serde",
  "serde_json",
