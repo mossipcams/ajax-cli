@@ -279,7 +279,6 @@ mod tests {
             "function actionKey(handle, action)",
             "function requestId()",
             "request_id",
-            "operator_token",
             "mutationInFlight",
             "setActionState",
             "matchingActionButtons",
@@ -294,19 +293,26 @@ mod tests {
             !script.contains("pendingActions"),
             "the browser must not persist or replay pending mutations"
         );
+        assert!(
+            !script.contains("operator_token"),
+            "operator_token pairing was removed; app.js must not still send it"
+        );
+        assert!(
+            !script.contains("OPERATOR_TOKEN_KEY"),
+            "operator_token pairing was removed; app.js must not still cache it"
+        );
     }
 
     #[test]
-    fn pwa_script_tokens_all_mutable_routes() {
+    fn pwa_script_hits_all_mutable_routes() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
-        assert!(script.contains("localStorage.getItem(OPERATOR_TOKEN_KEY)"));
-        assert!(script.contains("localStorage.setItem(OPERATOR_TOKEN_KEY"));
         assert!(script.contains("/api/operations"));
         assert!(script.contains("/api/tasks"));
         assert!(script.contains("/api/push/subscribe"));
         assert!(script.contains("subscription: subscription.toJSON()"));
-        assert!(script.contains("body: JSON.stringify({ repo, title, agent, request_id: requestId(), operator_token: token })"));
+        assert!(script
+            .contains("body: JSON.stringify({ repo, title, agent, request_id: requestId() })"));
     }
 
     #[test]

@@ -35,8 +35,6 @@ pub struct StartTaskRequest {
     pub agent: String,
     #[serde(default)]
     pub request_id: String,
-    #[serde(default)]
-    pub operator_token: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -248,7 +246,6 @@ mod tests {
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
                 request_id: String::new(),
-                operator_token: None,
             },
         )
         .unwrap();
@@ -280,7 +277,6 @@ mod tests {
                 title: "   ".to_string(),
                 agent: "codex".to_string(),
                 request_id: String::new(),
-                operator_token: None,
             },
         )
         .unwrap_err();
@@ -306,7 +302,6 @@ mod tests {
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
                 request_id: String::new(),
-                operator_token: None,
             },
         )
         .unwrap_err();

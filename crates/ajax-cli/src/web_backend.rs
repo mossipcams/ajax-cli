@@ -484,7 +484,6 @@ mod tests {
         assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/operations"));
         assert!(script.contains("request_id"));
-        assert!(script.contains("operator_token"));
     }
 
     #[test]
@@ -550,14 +549,12 @@ mod tests {
     fn action_endpoint_guards_resume_for_native_cockpit() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
-        let (dir, paths, token) = paired_paths("resume");
+        let (dir, paths) = paired_paths("resume");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            &format!(
-                r#"{{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume","operator_token":"{token}"}}"#
-            ),
+            r#"{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume"}"#,
             &mut context,
             &mut runner,
             Some(&paths),
@@ -578,14 +575,12 @@ mod tests {
     fn action_endpoint_executes_non_interactive_task_actions() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
-        let (dir, paths, token) = paired_paths("action");
+        let (dir, paths) = paired_paths("action");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/operations",
-            &format!(
-                r#"{{"task_handle":"web/fix-login","action":"review","request_id":"req-review","operator_token":"{token}"}}"#
-            ),
+            r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-review"}"#,
             &mut context,
             &mut runner,
             Some(&paths),
@@ -617,14 +612,12 @@ mod tests {
         }
         let mut context = reviewable_context();
         let mut runner = FailingRunner;
-        let (dir, paths, token) = paired_paths("action-fail");
+        let (dir, paths) = paired_paths("action-fail");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            &format!(
-                r#"{{"task_handle":"web/fix-login","action":"ship","request_id":"req-ship","operator_token":"{token}"}}"#
-            ),
+            r#"{"task_handle":"web/fix-login","action":"ship","request_id":"req-ship"}"#,
             &mut context,
             &mut runner,
             Some(&paths),
@@ -769,7 +762,7 @@ mod tests {
             paths: None,
             snapshot_only: true,
         };
-        let (dir, _paths, token) = paired_paths("snapshot-actions");
+        let (dir, _paths) = paired_paths("snapshot-actions");
 
         for action in ["review", "ship", "repair", "drop"] {
             let response = ajax_web::runtime::route_with_bridge(
@@ -777,7 +770,7 @@ mod tests {
                     method: "POST",
                     path: "/api/actions",
                     body: &format!(
-                        r#"{{"task_handle":"web/fix-login","action":"{action}","request_id":"snapshot-{action}","operator_token":"{token}"}}"#
+                        r#"{{"task_handle":"web/fix-login","action":"{action}","request_id":"snapshot-{action}"}}"#
                     ),
                 },
                 &mut context,
@@ -803,9 +796,7 @@ mod tests {
             ajax_web::runtime::Request {
                 method: "POST",
                 path: "/api/tasks",
-                body: &format!(
-                    r#"{{"repo":"web","title":"Fix search","agent":"codex","request_id":"snapshot-start","operator_token":"{token}"}}"#
-                ),
+                body: r#"{"repo":"web","title":"Fix search","agent":"codex","request_id":"snapshot-start"}"#,
             },
             &mut context,
             &mut runner,
@@ -853,20 +844,18 @@ mod tests {
         std::env::temp_dir().join(format!("ajax-web-be-{tag}-{}-{nanos}", std::process::id()))
     }
 
-    fn paired_paths(tag: &str) -> (std::path::PathBuf, super::CliContextPaths, String) {
+    fn paired_paths(tag: &str) -> (std::path::PathBuf, super::CliContextPaths) {
         let dir = scratch_dir(tag);
         std::fs::create_dir_all(&dir).unwrap();
-        let token = "test-operator-token".to_string();
-        std::fs::write(dir.join("web-operator-token"), format!("{token}\n")).unwrap();
         let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
-        (dir, paths, token)
+        (dir, paths)
     }
 
     #[test]
     fn push_config_and_subscribe_endpoints_round_trip() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
-        let (dir, paths, token) = paired_paths("push");
+        let (dir, paths) = paired_paths("push");
 
         let config = handle_http_request_with_runner_and_paths(
             "GET",
@@ -884,9 +873,7 @@ mod tests {
         let subscribe = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/push/subscribe",
-            &format!(
-                r#"{{"operator_token":"{token}","subscription":{{"endpoint":"https://push.example/x","keys":{{"p256dh":"k","auth":"a"}}}}}}"#
-            ),
+            r#"{"subscription":{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}}"#,
             &mut context,
             &mut runner,
             Some(&paths),
@@ -898,7 +885,7 @@ mod tests {
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/push/unsubscribe",
-            &format!(r#"{{"operator_token":"{token}","endpoint":"https://push.example/x"}}"#),
+            r#"{"endpoint":"https://push.example/x"}"#,
             &mut context,
             &mut runner,
             Some(&paths),

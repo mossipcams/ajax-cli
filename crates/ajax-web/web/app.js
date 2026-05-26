@@ -18,7 +18,6 @@ const detailContainer = document.getElementById("task-detail");
 const REFRESH_INTERVAL_MS = 1000;
 const DESTRUCTIVE_ACTIONS = new Set(["drop"]);
 const CONFIRM_TIMEOUT_MS = 3000;
-const OPERATOR_TOKEN_KEY = "ajax-web-operator-token";
 
 let lastCockpit = null;
 let lastFingerprint = null;
@@ -65,17 +64,6 @@ function requestId() {
 
 function actionKey(handle, action) {
   return `${handle}\n${action}`;
-}
-
-function operatorToken() {
-  let token = localStorage.getItem(OPERATOR_TOKEN_KEY);
-  if (token) return token;
-  token = window.prompt("Ajax Web Cockpit pairing token");
-  if (token) {
-    token = token.trim();
-    if (token) localStorage.setItem(OPERATOR_TOKEN_KEY, token);
-  }
-  return token || "";
 }
 
 function matchingActionButtons(handle, action) {
@@ -529,19 +517,12 @@ async function submitNewTask(event) {
   }
   const submit = newTaskForm.querySelector('button[type="submit"]');
   submit.disabled = true;
-  const token = operatorToken();
-  if (!token) {
-    newTaskError.textContent = "Pairing token is required";
-    newTaskError.hidden = false;
-    submit.disabled = false;
-    return;
-  }
   mutationInFlight += 1;
   try {
     const response = await fetch("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repo, title, agent, request_id: requestId(), operator_token: token }),
+      body: JSON.stringify({ repo, title, agent, request_id: requestId() }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -603,11 +584,6 @@ async function runAction(button) {
   const action = button.dataset.action;
   const key = actionKey(handle, action);
   if (inFlightActions.has(key)) return;
-  const token = operatorToken();
-  if (!token) {
-    setActionState(handle, action, "failed", "Pairing token is required");
-    return;
-  }
   const peers = matchingActionButtons(handle, action);
   const originalLabel = button.textContent;
   inFlightActions.set(key, true);
@@ -624,7 +600,6 @@ async function runAction(button) {
         task_handle: handle,
         action,
         request_id: requestId(),
-        operator_token: token,
       }),
     });
     const payload = await response.json().catch(() => ({}));
@@ -736,11 +711,6 @@ async function enableNotifications() {
     }
     const registration = await navigator.serviceWorker.ready;
     const config = await (await fetch("/api/push/config")).json();
-    const token = operatorToken();
-    if (!token) {
-      statusLine.textContent = "Pairing token is required";
-      return;
-    }
     const subscription = await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: new Uint8Array(config.public_key),
@@ -748,7 +718,7 @@ async function enableNotifications() {
     const response = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ operator_token: token, subscription: subscription.toJSON() }),
+      body: JSON.stringify({ subscription: subscription.toJSON() }),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     notifyButton.hidden = true;

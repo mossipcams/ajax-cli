@@ -364,13 +364,13 @@ profile instead of creating a separate Docker-dev state profile, but live
 control still belongs to the host-native backend. The PWA must not merge profile
 state in browser storage.
 
-Full Web Cockpit control requires a paired device token for mutable routes.
-Read-only projection endpoints may remain available on the local network so
-operators can inspect state quickly, but `POST /api/tasks`, `POST /api/actions`,
-`POST /api/operations`, `POST /api/push/subscribe`, `POST
-/api/push/unsubscribe`, and future terminal WebSocket endpoints require the
-token. The `ajax web` runtime prints or exposes the pairing token; browsers store
-the device token and present it on mutable requests.
+The Web Cockpit relies on the network for transport-level isolation (e.g.
+binding to a private WireGuard interface) rather than an application-level
+operator token. Mutable routes — `POST /api/tasks`, `POST /api/actions`, `POST
+/api/operations`, `POST /api/push/subscribe`, `POST /api/push/unsubscribe`, and
+future terminal WebSocket endpoints — accept any caller that can reach the
+listener; operators must ensure only trusted devices can. Public exposure
+without a network-level boundary is unsupported.
 
 Mutable browser requests are operation intents. They include a client-generated
 `request_id` so network retries and double submissions are idempotent. The
