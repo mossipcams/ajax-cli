@@ -617,6 +617,10 @@ mod tests {
             self.inner.create_task(task)
         }
 
+        fn delete_task(&mut self, task_id: &TaskId) -> Result<(), RegistryError> {
+            self.inner.delete_task(task_id)
+        }
+
         fn get_task(&self, task_id: &TaskId) -> Option<&Task> {
             self.inner.get_task(task_id)
         }
