@@ -404,7 +404,17 @@ pub mod drop_task {
             .into_iter()
             .next()
         else {
-            commands::mark_task_removed(context, qualified_handle)?;
+            let task_id = context
+                .registry
+                .list_tasks()
+                .into_iter()
+                .find(|task| task.qualified_handle() == qualified_handle)
+                .map(|task| task.id.clone())
+                .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
+            context
+                .registry
+                .delete_task(&task_id)
+                .map_err(CommandError::Registry)?;
             return Ok(DropTaskCompletion::Removed);
         };
 
@@ -826,8 +836,8 @@ mod tests {
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, StepReceiptStatus,
-            Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskId,
+            TaskOperationKind, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -1755,13 +1765,11 @@ mod tests {
             .unwrap();
 
             assert_eq!(completion, DropTaskCompletion::Removed);
-            assert_eq!(
+            assert!(
                 context
                     .registry
                     .get_task(&TaskId::new("web/fix-login"))
-                    .unwrap()
-                    .lifecycle_status,
-                LifecycleStatus::Removed,
+                    .is_none(),
                 "{lifecycle_status:?}"
             );
         }
@@ -1801,7 +1809,7 @@ mod tests {
     }
 
     #[test]
-    fn drop_completion_marks_removed_when_final_observation_is_absent() {
+    fn drop_completion_hard_deletes_task_when_final_observation_is_absent() {
         let mut context = context_with_cleanable_task();
 
         let completion = complete_drop_task_operation(
@@ -1816,12 +1824,11 @@ mod tests {
         )
         .unwrap();
 
-        let task = context
+        assert_eq!(completion, DropTaskCompletion::Removed);
+        assert!(context
             .registry
             .get_task(&TaskId::new("web/fix-login"))
-            .unwrap();
-        assert_eq!(completion, DropTaskCompletion::Removed);
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+            .is_none());
     }
 
     #[test]
@@ -1877,14 +1884,10 @@ mod tests {
 
         assert_eq!(outputs.len(), 3);
         assert_eq!(completion, DropTaskCompletion::Removed);
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("web/fix-login"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none());
         assert!(runner.commands.iter().any(|command| {
             command.program == "tmux" && command.args.iter().any(|arg| arg == "kill-session")
         }));
@@ -1895,35 +1898,10 @@ mod tests {
             command.program == "git" && command.args.iter().any(|arg| arg == "branch")
         }));
 
-        let receipts = context
+        assert!(context
             .registry
-            .step_receipts_for_task(&TaskId::new("web/fix-login"));
-        let keys = receipts
-            .iter()
-            .map(|receipt| {
-                (
-                    receipt.operation,
-                    receipt.step_key.as_str(),
-                    receipt.target.as_str(),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            keys,
-            vec![
-                (
-                    TaskOperationKind::Drop,
-                    "tmux_session_absent",
-                    "ajax-web-fix-login",
-                ),
-                (
-                    TaskOperationKind::Drop,
-                    "worktree_absent",
-                    "/repo/web__worktrees/ajax-fix-login",
-                ),
-                (TaskOperationKind::Drop, "branch_absent", "ajax/fix-login",),
-            ]
-        );
+            .step_receipts_for_task(&TaskId::new("web/fix-login"))
+            .is_empty());
     }
 
     #[test]
@@ -1938,43 +1916,10 @@ mod tests {
         execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
             .unwrap();
 
-        let receipts = context
+        assert!(context
             .registry
-            .step_receipts_for_task(&TaskId::new("web/fix-login"));
-        let keys = receipts
-            .iter()
-            .map(|receipt| {
-                (
-                    receipt.operation,
-                    receipt.step_key.as_str(),
-                    receipt.status,
-                    receipt.target.as_str(),
-                )
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            keys,
-            vec![
-                (
-                    TaskOperationKind::Drop,
-                    "tmux_session_absent",
-                    StepReceiptStatus::SkippedObserved,
-                    "ajax-web-fix-login",
-                ),
-                (
-                    TaskOperationKind::Drop,
-                    "worktree_absent",
-                    StepReceiptStatus::SkippedObserved,
-                    "/repo/web__worktrees/ajax-fix-login",
-                ),
-                (
-                    TaskOperationKind::Drop,
-                    "branch_absent",
-                    StepReceiptStatus::SkippedObserved,
-                    "ajax/fix-login",
-                ),
-            ]
-        );
+            .step_receipts_for_task(&TaskId::new("web/fix-login"))
+            .is_empty());
     }
 
     #[test]
@@ -2006,14 +1951,10 @@ mod tests {
 
         assert_eq!(outputs.len(), 3);
         assert_eq!(completion, DropTaskCompletion::Removed);
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("web/fix-login"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none());
     }
 
     #[test]
