@@ -24,8 +24,8 @@ ajax-cli
 - Tracks which tasks are active, review-ready, merged, errored, or safe to
   clean up.
 - Lets you resume, repair, review, ship, drop, and tidy tasks from one cockpit.
-- Keeps the same state available through stable CLI commands and JSON output
-  for scripts, tests, and future UIs.
+- Keeps the same state available through Native Cockpit, Web Cockpit, stable CLI
+  commands, and JSON output for scripts and tests.
 - Records enough local task history to recover from interrupted provisioning or
   cleanup without treating cached state as more authoritative than Git or tmux.
 
@@ -44,98 +44,68 @@ From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
-### Web Cockpit companion (PWA)
+### Web Cockpit (PWA)
 
-When native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
-starts the Web Cockpit companion: a mobile-first Progressive Web App that acts
-as a full browser operator surface over the Ajax backend.
-Stable serves on `0.0.0.0:8787`; dev serves on `0.0.0.0:8788` and uses the
-isolated dev runtime profile. Use `--no-web` to keep native Cockpit
-terminal-only.
+Web Cockpit is a mobile-first Progressive Web App and full browser operator
+surface over Ajax. It runs host-native through `ajax-cli web`, with the same
+host authority as SQLite, configured repos, worktrees, tmux sessions, agent
+CLIs, and host process state. Docker is no longer part of the Web Cockpit
+runtime.
 
-The companion serves HTTPS, which browsers require before they will install a
-PWA, run its service worker, or deliver push notifications. Open
+When Native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
+starts the host-native Web Cockpit server. Stable serves on `0.0.0.0:8787`; dev
+serves on `0.0.0.0:8788` and uses the isolated dev runtime profile. Use
+`--no-web` to keep Native Cockpit terminal-only.
+
+Persistent Web Cockpit deployments should run `ajax-cli web` under a
+host-native supervisor such as launchd, `systemd --user`, tmux, or another
+service manager. Ajax does not provide its own daemon manager.
+
+WireGuard or an equivalent private network is the access boundary for Web
+Cockpit. Public internet exposure is unsupported. Bind the server to a trusted
+interface or restrict access at the network layer before using it from another
+device.
+
+Web Cockpit serves HTTPS, which browsers require before they will install a PWA,
+run its service worker, or deliver push notifications. Open
 `https://<this-machine-ip>:8787` or `https://<this-machine-ip>:8788` from a
-phone on the same routed network. On first run Ajax generates a self-signed
+browser device on the private network. On first run Ajax generates a self-signed
 certificate and stores it beside the state database (`web-tls-cert.pem`); your
 browser will warn the first time. To install the app to your home screen and
 enable notifications, trust that certificate once. On iOS, open
 `web-tls-cert.pem`, install the profile, then enable full trust under Settings,
 General, About, Certificate Trust Settings.
 
-Because the PWA can mutate Ajax state, Ajax pairs browsers with a device token
-for mutable routes. Read-only Cockpit projections stay live and
-server-authoritative; the browser renders backend projections and sends typed
-operation intents. It does not own task lifecycle, registry truth, Git/tmux
-interpretation, action policy, or offline mutation replay.
+From the installed app you can see every repo's tasks, use the attention inbox,
+and run browser-capable operations such as `review`, `ship`, `repair`, and
+`drop`. Browser `resume` remains `needs_terminal` until the terminal bridge
+exists. Tap Alerts to enable Web Push: the phone is then notified when a task
+newly needs attention, even when the app is closed. Web Push on iOS requires iOS
+16.4 or later and the app installed to the home screen.
 
-From the installed app you can monitor every repo's tasks, see the attention
-inbox, start tasks, and run supported operations such as `review`, `ship`,
-`repair`, and `drop`. Mutable operation requests include request IDs so retries
-and fast taps do not execute the same operation twice, and the backend allows
-only one mutable operation per task at a time. `resume` is reported as requiring
-a terminal until the browser terminal bridge lands. Tap Alerts to enable Web
-Push: the phone is then notified when a task newly needs attention, even when
-the app is closed, and task notifications deep-link back to the relevant task
-when the payload includes a handle. Web Push on iOS requires iOS 16.4 or later
-and the app installed to the home screen.
+The PWA renders server-authoritative Cockpit projections and submits typed
+operator intents. It does not own offline task mutation state, persist task
+operation queues, or replay mutations after reload. The service worker is only
+for static app-shell assets and must not cache `/api/*`.
 
-The PWA service worker caches only the static app shell, stylesheet, script,
-manifest, and icons. `/api/*` responses, mutable requests, push routes, and
-future terminal endpoints are never cached; they remain live backend responses.
-
-### Persistent host web companion
-
-For a persistent controllable PWA, run the web companion on the host so Ajax
-keeps the same live authority as native Cockpit:
-
-```sh
-ajax-cli --profile dev web --host 0.0.0.0 --port 8788
-```
-
-This host-native live control backend can read and operate against the same
-SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state
-as the terminal Cockpit. Use a host-native supervisor such as launchd, systemd,
-or your terminal multiplexer if you need it to survive a shell logout.
-
-### Persistent Docker web companion
-
-For a persistent snapshot companion, run the ajax-web Docker runtime:
-
-```sh
-docker compose -f compose.ajax-web.yml up -d --build
-```
-
-The Compose service publishes `https://localhost:8788` and runs
-`ajax-cli --profile dev --home /ajax-dev --config /ajax-dev/config.toml --state /ajax-dev/ajax.db --worktree-root /ajax-dev/worktrees web --host 0.0.0.0 --port 8788`
-with `restart: unless-stopped` and `AJAX_WEB_SNAPSHOT_ONLY=1`. Docker snapshot
-mode bind-mounts the host dev Ajax home from `~/.ajax-dev` into `/ajax-dev`, so
-the PWA can read the same config, state DB, TLS identity, push keys, and cached
-projections as `ajax-cli --profile dev`. It does not mount host repos or
-worktrees, does not see host tmux sessions or host-only agent CLIs, and does not run mutable PWA actions.
-
-Docker snapshot mode is useful when you want Docker to keep the HTTPS shell
-reachable, but it is not the live Ajax control backend. For control, run
-`ajax-cli --profile dev web --host 0.0.0.0 --port 8788` on the host.
-
-`scripts/seed-docker-web-dev.sh` remains available for legacy snapshot-only
-Docker deployments that intentionally copy `~/.ajax-dev` into a Docker volume,
-but it is not the live control path.
-
-Docker owns process restart, but the machine running Docker still owns network
-reachability and power state. On a sleeping MacBook, Docker cannot keep the LAN
-service reachable; use an always-on host or prevent host sleep when that matters.
+The Web Cockpit HTTP runtime uses Axum inside the host-native `ajax-cli web`
+process. Axum is transport only: routing, request extraction, response
+construction, static PWA serving, TLS wiring, and future stream/WebSocket
+endpoints. Task lifecycle, registry truth, substrate evidence, action policy,
+browser DTOs, and operation outcomes remain server-authoritative Ajax
+contracts. Bind `--host` to the WireGuard interface address when you want the
+Cockpit reachable only on that private network.
 
 The same loop is available from the CLI:
 
 ```sh
-ajax-cli start --repo web --title "fix login" --agent codex --execute
+ajax-cli start --repo web --title "fix navbar" --agent codex --execute
 ajax-cli inbox
-ajax-cli resume web/fix-login
-ajax-cli repair web/fix-login
-ajax-cli review web/fix-login
-ajax-cli ship web/fix-login
-ajax-cli drop web/fix-login
+ajax-cli resume web/fix-navbar
+ajax-cli repair web/fix-navbar
+ajax-cli review web/fix-navbar
+ajax-cli ship web/fix-navbar
+ajax-cli drop web/fix-navbar
 ajax-cli tidy
 ```
 
@@ -218,13 +188,13 @@ ajax-cli
 Start a task from Cockpit, or create a CLI plan before executing it:
 
 ```sh
-ajax-cli start --repo web --title "fix login" --agent codex
+ajax-cli start --repo web --title "fix navbar" --agent codex
 ```
 
 When the plan looks right, execute it:
 
 ```sh
-ajax-cli start --repo web --title "fix login" --agent codex --execute
+ajax-cli start --repo web --title "fix navbar" --agent codex --execute
 ```
 
 Come back later through Cockpit or the attention queues:
@@ -285,20 +255,20 @@ The CLI surface backs Cockpit and remains intentionally stable and scriptable:
 ajax-cli repos
 ajax-cli tasks
 ajax-cli tasks --repo web
-ajax-cli inspect web/fix-login
-ajax-cli start --repo web --title "fix login" --agent codex
-ajax-cli resume web/fix-login
-ajax-cli repair web/fix-login
-ajax-cli review web/fix-login
-ajax-cli ship web/fix-login
-ajax-cli drop web/fix-login
+ajax-cli inspect web/fix-navbar
+ajax-cli start --repo web --title "fix navbar" --agent codex
+ajax-cli resume web/fix-navbar
+ajax-cli repair web/fix-navbar
+ajax-cli review web/fix-navbar
+ajax-cli ship web/fix-navbar
+ajax-cli drop web/fix-navbar
 ajax-cli tidy
 ajax-cli next
 ajax-cli inbox
 ajax-cli ready
 ajax-cli status
 ajax-cli doctor
-ajax-cli supervise --task web/fix-login --prompt "implement the approved plan"
+ajax-cli supervise --task web/fix-navbar --prompt "implement the approved plan"
 ajax-cli
 ajax-cli dev
 ajax-cli cockpit
@@ -310,7 +280,7 @@ Commands that feed a UI support JSON output:
 ```sh
 ajax-cli repos --json
 ajax-cli tasks --json
-ajax-cli inspect web/fix-login --json
+ajax-cli inspect web/fix-navbar --json
 ajax-cli next --json
 ajax-cli inbox --json
 ajax-cli ready --json
@@ -353,7 +323,7 @@ worktrees separate:
 - Stable logs/cache: `~/.local/state/ajax/logs`, `~/.cache/ajax`
 - Dev logs/cache: `~/.ajax-dev/logs`, `~/.ajax-dev/cache`
 - Managed repos: for example `~/projects/api`, `~/projects/web`, `~/projects/infra`
-- Task worktrees: sibling directories such as `repo__worktrees/ajax-fix-login`
+- Task worktrees: sibling directories such as `repo__worktrees/ajax-fix-navbar`
 - Dev task worktrees: rooted under `~/.ajax-dev/worktrees`
 
 The `ajax-cli` source repo should not be included in the default managed repo

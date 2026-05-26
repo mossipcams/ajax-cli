@@ -1,5 +1,5 @@
 use ajax_core::{
-    adapters::CommandRunner,
+    adapters::{CommandRunner, ProcessCommandRunner},
     commands::{self, CommandContext},
     models::OperatorAction,
     registry::InMemoryRegistry,
@@ -17,8 +17,6 @@ use ajax_web::{
     slices::operate::{start_task, StartTaskRequest},
     WebError,
 };
-#[cfg(test)]
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -66,8 +64,7 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
     let mut bridge = CliRuntimeBridge {
-        paths,
-        snapshot_only: false,
+        paths: paths.cloned(),
     };
     runtime::route_with_bridge(
         Request { method, path, body },
@@ -92,16 +89,15 @@ pub(crate) fn serve_mobile_web_with_paths(
     host: &str,
     port: u16,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
+    _runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge {
-        paths,
-        snapshot_only: web_snapshot_only(),
+    let bridge = CliRuntimeBridge {
+        paths: paths.cloned(),
     };
-    runtime::serve_mobile_web_with_bridge(host, port, context, runner, &mut bridge, &state_dir)
-        .map_err(cli_error_from_web)
+    let state = runtime::WebAppState::new(context.clone(), ProcessCommandRunner, bridge, state_dir);
+    runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
 
 /// Resolves the directory the companion persists its files in (TLS identity,
@@ -118,43 +114,25 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
         .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
 }
 
-fn web_snapshot_only() -> bool {
-    std::env::var_os("AJAX_WEB_SNAPSHOT_ONLY").is_some_and(|value| {
-        let value = value.to_string_lossy();
-        value != "0" && !value.eq_ignore_ascii_case("false")
-    })
+#[derive(Clone)]
+struct CliRuntimeBridge {
+    paths: Option<CliContextPaths>,
 }
 
-struct CliRuntimeBridge<'a> {
-    paths: Option<&'a CliContextPaths>,
-    snapshot_only: bool,
-}
-
-impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
-    fn backend_authority(&self) -> ajax_web::slices::cockpit::BackendAuthority {
-        if self.snapshot_only {
-            ajax_web::slices::cockpit::BackendAuthority::SnapshotOnly
-        } else {
-            ajax_web::slices::cockpit::BackendAuthority::HostNative
-        }
-    }
-
+impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<bool, WebError> {
-        if let Some(paths) = self.paths {
+        if let Some(paths) = self.paths.as_ref() {
             *context = load_context(paths).map_err(web_error_from_cli)?;
-        }
-        if self.snapshot_only {
-            return Ok(false);
         }
         let state_changed = refresh_runtime_context(context, runner)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
         if state_changed {
-            if let Some(paths) = self.paths {
+            if let Some(paths) = self.paths.as_ref() {
                 save_context(paths, context).map_err(web_error_from_cli)?;
             }
         }
@@ -171,7 +149,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
         match execute_mobile_action(action, task_handle, context, runner) {
             Ok(state_changed) => {
                 if state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
@@ -180,7 +158,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
             Err(error) => {
                 let state_changed = error.state_changed();
                 if state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
@@ -201,7 +179,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
         match start_task(context, runner, request) {
             Ok(outcome) => {
                 if outcome.state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
@@ -213,7 +191,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
                     ajax_web::slices::operate::OperateError::Command(_, true)
                 );
                 if state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
@@ -233,22 +211,6 @@ fn format_start_error(error: &ajax_web::slices::operate::OperateError) -> String
         OperateError::UnsupportedCapability(message) => (*message).to_string(),
         OperateError::Command(error, _) => command_error(error.clone()).to_string(),
     }
-}
-
-#[cfg(test)]
-fn serve_connection<S: Read + Write>(
-    stream: S,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<(), CliError> {
-    let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge {
-        paths,
-        snapshot_only: false,
-    };
-    runtime::serve_connection(stream, context, runner, &mut bridge, &state_dir)
-        .map_err(cli_error_from_web)
 }
 
 fn web_error_from_cli(error: CliError) -> WebError {
@@ -313,36 +275,8 @@ fn execute_mobile_action(
 mod tests {
     use super::{
         cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
-        render_mobile_shell, serve_connection,
+        render_mobile_shell,
     };
-    use std::cell::RefCell;
-    use std::collections::BTreeSet;
-    use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
-
-    /// An in-memory bidirectional stream for exercising the generic connection
-    /// path without binding a socket.
-    struct MockStream {
-        input: Cursor<Vec<u8>>,
-        output: Rc<RefCell<Vec<u8>>>,
-    }
-
-    impl Read for MockStream {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.input.read(buf)
-        }
-    }
-
-    impl Write for MockStream {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.output.borrow_mut().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -352,6 +286,7 @@ mod tests {
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
+    use std::collections::BTreeSet;
 
     #[test]
     fn mobile_shell_is_responsive_and_loads_cockpit_data() {
@@ -549,53 +484,43 @@ mod tests {
     fn action_endpoint_guards_resume_for_native_cockpit() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
-        let (dir, paths) = paired_paths("resume");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume"}"#,
+            r#"{"task_handle":"web/fix-login","action":"resume"}"#,
             &mut context,
             &mut runner,
-            Some(&paths),
+            None,
         )
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["status"], "needs_terminal");
-        assert!(body["error"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("resume requires native cockpit"));
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(String::from_utf8_lossy(&response.body).contains("resume requires native cockpit"));
     }
 
     #[test]
     fn action_endpoint_executes_non_interactive_task_actions() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
-        let (dir, paths) = paired_paths("action");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
-            "/api/operations",
-            r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-review"}"#,
+            "/api/actions",
+            r#"{"task_handle":"web/fix-login","action":"review"}"#,
             &mut context,
             &mut runner,
-            Some(&paths),
+            None,
         )
         .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
-        assert_eq!(body["status"], "succeeded");
         assert_eq!(
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
         );
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -612,32 +537,26 @@ mod tests {
         }
         let mut context = reviewable_context();
         let mut runner = FailingRunner;
-        let (dir, paths) = paired_paths("action-fail");
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"ship","request_id":"req-ship"}"#,
+            r#"{"task_handle":"web/fix-login","action":"ship"}"#,
             &mut context,
             &mut runner,
-            Some(&paths),
+            None,
         )
         .expect("handler should return a JSON error, not propagate the CliError");
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 409);
         assert_eq!(body["ok"], false);
-        assert_eq!(body["status"], "failed");
         assert!(
-            !body["error"]["message"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty(),
+            !body["error"].as_str().unwrap_or_default().is_empty(),
             "error message should be populated, got: {:?}",
             body["error"]
         );
         assert!(body["cockpit"].is_object());
-        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -697,143 +616,16 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_only_cockpit_api_reloads_state_without_live_refresh() {
-        struct PanicRunner;
-        impl CommandRunner for PanicRunner {
-            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-                panic!("snapshot-only web API should not run {command:?}");
-            }
-        }
-
-        let root =
-            std::env::temp_dir().join(format!("ajax-web-snapshot-only-{}", std::process::id()));
-        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
-        let saved_context = reviewable_context();
-        SqliteRegistryStore::new(&paths.state_file)
-            .save(&saved_context.registry)
-            .unwrap();
-        let mut server_context =
-            CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = PanicRunner;
-        let mut bridge = super::CliRuntimeBridge {
-            paths: Some(&paths),
-            snapshot_only: true,
-        };
-
-        let response = ajax_web::runtime::route_with_bridge(
-            ajax_web::runtime::Request {
-                method: "GET",
-                path: "/api/cockpit",
-                body: "",
-            },
-            &mut server_context,
-            &mut runner,
-            &mut bridge,
-            &root,
+    fn cli_web_backend_uses_axum_runtime_server() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_backend.rs"),
         )
         .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
-        assert_eq!(response.status_code, 200);
-        assert_eq!(body["backend"]["authority"], "snapshot-only");
-        assert_eq!(body["backend"]["control_enabled"], false);
-        assert!(body["backend"]["warning"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("host-native Ajax"));
-        assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
-        assert_ne!(body["cards"][0]["live_summary"], "agent running");
-
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn snapshot_only_backend_rejects_mutable_mobile_operations() {
-        struct PanicRunner;
-        impl CommandRunner for PanicRunner {
-            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-                panic!("snapshot-only web API should not run {command:?}");
-            }
-        }
-
-        let mut context = reviewable_context();
-        let mut runner = PanicRunner;
-        let mut bridge = super::CliRuntimeBridge {
-            paths: None,
-            snapshot_only: true,
-        };
-        let (dir, _paths) = paired_paths("snapshot-actions");
-
-        for action in ["review", "ship", "repair", "drop"] {
-            let response = ajax_web::runtime::route_with_bridge(
-                ajax_web::runtime::Request {
-                    method: "POST",
-                    path: "/api/actions",
-                    body: &format!(
-                        r#"{{"task_handle":"web/fix-login","action":"{action}","request_id":"snapshot-{action}"}}"#
-                    ),
-                },
-                &mut context,
-                &mut runner,
-                &mut bridge,
-                &dir,
-            )
-            .unwrap();
-            let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-
-            assert_eq!(response.status_code, 409);
-            assert_eq!(body["ok"], false);
-            assert_eq!(body["status"], "unsupported");
-            assert_eq!(body["error"]["code"], "snapshot_only");
-            assert!(body["error"]["message"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("host-native Ajax"));
-            assert_eq!(body["cockpit"]["backend"]["control_enabled"], false);
-        }
-
-        let start = ajax_web::runtime::route_with_bridge(
-            ajax_web::runtime::Request {
-                method: "POST",
-                path: "/api/tasks",
-                body: r#"{"repo":"web","title":"Fix search","agent":"codex","request_id":"snapshot-start"}"#,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&start.body).unwrap();
-
-        assert_eq!(start.status_code, 409);
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["status"], "unsupported");
-        assert_eq!(body["error"]["code"], "snapshot_only");
-        assert!(body["error"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("host-native Ajax"));
-        assert_eq!(body["cockpit"]["backend"]["control_enabled"], false);
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn serve_connection_serves_a_request_over_a_generic_stream() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let stream = MockStream {
-            input: Cursor::new(b"GET /app.css HTTP/1.1\r\nHost: ajax\r\n\r\n".to_vec()),
-            output: Rc::clone(&output),
-        };
-
-        serve_connection(stream, &mut context, &mut runner, None).unwrap();
-
-        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
-        assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
-        assert!(written.contains("Content-Type: text/css"), "{written}");
+        assert!(source.contains("runtime::serve_axum_web"));
+        assert!(source.contains("runtime::WebAppState::new"));
+        assert!(!source.contains(&["runtime::", "serve_connection"].concat()));
+        assert!(!source.contains(&["runtime::", "serve_mobile_web_with_bridge"].concat()));
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
@@ -844,18 +636,12 @@ mod tests {
         std::env::temp_dir().join(format!("ajax-web-be-{tag}-{}-{nanos}", std::process::id()))
     }
 
-    fn paired_paths(tag: &str) -> (std::path::PathBuf, super::CliContextPaths) {
-        let dir = scratch_dir(tag);
-        std::fs::create_dir_all(&dir).unwrap();
-        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
-        (dir, paths)
-    }
-
     #[test]
     fn push_config_and_subscribe_endpoints_round_trip() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
-        let (dir, paths) = paired_paths("push");
+        let dir = scratch_dir("push");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("ajax.db"));
 
         let config = handle_http_request_with_runner_and_paths(
             "GET",
@@ -873,7 +659,7 @@ mod tests {
         let subscribe = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/push/subscribe",
-            r#"{"subscription":{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}}"#,
+            r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
             &mut context,
             &mut runner,
             Some(&paths),

@@ -7,16 +7,24 @@ use ajax_core::{
     output::CockpitView,
     registry::{InMemoryRegistry, Registry},
 };
+use axum::{
+    body::Bytes,
+    extract::{Path as AxumPath, State},
+    http::{header, HeaderValue, StatusCode, Uri},
+    response::{IntoResponse, Response as AxumResponse},
+    routing::{get, post},
+    serve::Listener,
+    Json, Router,
+};
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
-    fs,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    path::Path,
+    collections::{BTreeSet, HashMap},
+    net::{SocketAddr, ToSocketAddrs},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tower_http::trace::TraceLayer;
 
 use crate::{
     adapters::{push, tls},
@@ -24,17 +32,527 @@ use crate::{
     WebError,
 };
 
+pub struct WebAppState<C, B> {
+    shared: Arc<Mutex<WebSharedState<C, B>>>,
+    operations: Arc<Mutex<OperationCoordinator>>,
+    state_dir: Arc<PathBuf>,
+}
+
+struct WebSharedState<C, B> {
+    context: CommandContext<InMemoryRegistry>,
+    runner: C,
+    bridge: B,
+}
+
+impl<C, B> Clone for WebAppState<C, B> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            operations: Arc::clone(&self.operations),
+            state_dir: Arc::clone(&self.state_dir),
+        }
+    }
+}
+
+impl<C, B> WebAppState<C, B> {
+    pub fn new(
+        context: CommandContext<InMemoryRegistry>,
+        runner: C,
+        bridge: B,
+        state_dir: PathBuf,
+    ) -> Self {
+        Self {
+            shared: Arc::new(Mutex::new(WebSharedState {
+                context,
+                runner,
+                bridge,
+            })),
+            operations: Arc::new(Mutex::new(OperationCoordinator::default())),
+            state_dir: Arc::new(state_dir),
+        }
+    }
+}
+
+#[derive(Default)]
+struct OperationCoordinator {
+    completed: HashMap<String, Response>,
+    in_flight_requests: BTreeSet<String>,
+    in_flight_tasks: BTreeSet<String>,
+}
+
+pub fn axum_app<C, B>(state: WebAppState<C, B>) -> Router
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    Router::new()
+        .route("/", get(axum_pwa_shell))
+        .route("/index.html", get(axum_pwa_shell))
+        .route("/app.css", get(axum_app_css))
+        .route("/app.js", get(axum_app_js))
+        .route("/manifest.webmanifest", get(axum_manifest))
+        .route("/sw.js", get(axum_service_worker))
+        .route("/icons/{*path}", get(axum_icon))
+        .route("/api/health", get(axum_health))
+        .route("/api/cockpit", get(axum_cockpit::<C, B>))
+        .route("/api/tasks/{*handle}", get(axum_task_detail::<C, B>))
+        .route("/api/tasks", post(axum_start_task::<C, B>))
+        .route("/api/actions", post(axum_action::<C, B>))
+        .route("/api/operations", post(axum_action::<C, B>))
+        .route("/api/push/config", get(axum_push_config::<C, B>))
+        .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
+        .route("/api/push/unsubscribe", post(axum_push_unsubscribe::<C, B>))
+        .fallback(axum_fallback)
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+pub fn serve_axum_web<C, B>(host: &str, port: u16, state: WebAppState<C, B>) -> Result<(), WebError>
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let identity = tls::load_or_create_identity(&state.state_dir)?;
+    let address = resolve_bind_address(host, port)?;
+    eprintln!("Ajax mobile web listening on https://{host}:{port}");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
+
+    runtime.block_on(async move {
+        let tls_config = tls::tls_server_config(&identity)?;
+        let tcp_listener = tokio::net::TcpListener::bind(address)
+            .await
+            .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
+        let tls_listener = TlsListener {
+            listener: tcp_listener,
+            acceptor: tokio_rustls::TlsAcceptor::from(tls_config),
+        };
+        tokio::spawn(run_attention_poller_for_state(state.clone()));
+        axum::serve(tls_listener, axum_app(state))
+            .await
+            .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
+    })
+}
+
+struct TlsListener {
+    listener: tokio::net::TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+}
+
+impl Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, address) = match self.listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    eprintln!("Ajax web accept error: {error}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            match self.acceptor.accept(stream).await {
+                Ok(stream) => return (stream, address),
+                Err(error) => {
+                    eprintln!("Ajax web TLS handshake error from {address}: {error}");
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.listener.local_addr()
+    }
+}
+
+fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, WebError> {
+    (host, port)
+        .to_socket_addrs()
+        .map_err(|error| WebError::CommandFailed(format!("web bind address failed: {error}")))?
+        .next()
+        .ok_or_else(|| {
+            WebError::CommandFailed(format!("web bind address unresolved: {host}:{port}"))
+        })
+}
+
+async fn run_attention_poller_for_state<C, B>(state: WebAppState<C, B>)
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    loop {
+        tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
+        let current = {
+            let guard = state
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            attention_handles(&commands::rebuild_cockpit_view(&guard.context))
+        };
+        for handle in attention::new_attention_handles(&known, &current) {
+            let notification = push::PushNotification {
+                title: "Ajax task needs attention".to_string(),
+                body: handle.clone(),
+                tag: handle.clone(),
+            };
+            if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
+                eprintln!("Ajax web push notification failed: {error}");
+            }
+        }
+        known = current;
+    }
+}
+
+async fn axum_pwa_shell() -> AxumResponse {
+    html_response(install::pwa_shell().as_bytes().to_vec())
+}
+
+async fn axum_app_css() -> AxumResponse {
+    static_asset_response("/app.css")
+}
+
+async fn axum_app_js() -> AxumResponse {
+    static_asset_response("/app.js")
+}
+
+async fn axum_manifest() -> AxumResponse {
+    static_asset_response("/manifest.webmanifest")
+}
+
+async fn axum_service_worker() -> AxumResponse {
+    static_asset_response("/sw.js")
+}
+
+async fn axum_icon(AxumPath(path): AxumPath<String>) -> AxumResponse {
+    static_asset_response(&format!("/icons/{path}"))
+}
+
+async fn axum_health() -> AxumResponse {
+    json_value_response(200, serde_json::json!({ "ok": true }))
+}
+
+async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    match handle_refreshed_cockpit_request(context, runner, bridge) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_task_detail<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    AxumPath(handle): AxumPath<String>,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match cockpit::browser_task_detail_view(&guard.context, &handle) {
+        Some(detail) => json_value_response(200, serde_json::to_value(detail).unwrap_or_default()),
+        None => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+    }
+}
+
+async fn axum_start_task<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    Json(request): Json<crate::slices::operate::StartTaskRequest>,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    match handle_start_task_request(
+        &serde_json::to_string(&request).unwrap_or_default(),
+        context,
+        runner,
+        bridge,
+    ) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let request: MobileActionRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("json parse failed: {error}"),
+                }),
+            );
+        }
+    };
+    let request_id = request.request_id.clone();
+    let task_key = request.task_handle.clone();
+    {
+        let mut operations = state
+            .operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(request_id) = request_id.as_ref() {
+            if let Some(response) = operations.completed.get(request_id) {
+                return response.clone().into_axum_response();
+            }
+            if !operations.in_flight_requests.insert(request_id.clone()) {
+                return json_value_response(
+                    409,
+                    serde_json::json!({
+                        "ok": false,
+                        "request_id": request_id,
+                        "error": "operation already in progress",
+                    }),
+                );
+            }
+        }
+        if !operations.in_flight_tasks.insert(task_key.clone()) {
+            if let Some(request_id) = request_id.as_ref() {
+                operations.in_flight_requests.remove(request_id);
+            }
+            return json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": "task operation already in progress",
+                }),
+            );
+        }
+    }
+
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    let response = match handle_action_request(
+        &serde_json::to_string(&request).unwrap_or_default(),
+        context,
+        runner,
+        bridge,
+    ) {
+        Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+        Err(error) => response_from_web_error(error, request_id.as_deref()),
+    };
+    drop(guard);
+
+    let mut operations = state
+        .operations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    operations.in_flight_tasks.remove(&task_key);
+    if let Some(request_id) = request_id.as_ref() {
+        operations.in_flight_requests.remove(request_id);
+        operations
+            .completed
+            .insert(request_id.clone(), response.clone());
+    }
+
+    response.into_axum_response()
+}
+
+async fn axum_push_config<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_config(&state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_push_subscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: String,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_subscribe(&body, &state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_push_unsubscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: String,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_unsubscribe(&body, &state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_fallback(uri: Uri) -> AxumResponse {
+    if uri.path().starts_with("/api/") {
+        return json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "not found" }),
+        );
+    }
+    text_axum_response(404, "not found")
+}
+
+fn static_asset_response(path: &str) -> AxumResponse {
+    match install::static_asset(path) {
+        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
+        None => text_axum_response(404, "not found"),
+    }
+}
+
+fn html_response(body: Vec<u8>) -> AxumResponse {
+    bytes_axum_response(200, "text/html; charset=utf-8", body)
+}
+
+fn text_axum_response(status_code: u16, body: &str) -> AxumResponse {
+    bytes_axum_response(
+        status_code,
+        "text/plain; charset=utf-8",
+        body.as_bytes().to_vec(),
+    )
+}
+
+fn json_value_response(status_code: u16, value: serde_json::Value) -> AxumResponse {
+    match serde_json::to_vec(&value) {
+        Ok(body) => bytes_axum_response(status_code, "application/json; charset=utf-8", body),
+        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
+    }
+}
+
+fn bytes_axum_response(
+    status_code: u16,
+    content_type: &'static str,
+    body: Vec<u8>,
+) -> AxumResponse {
+    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut response = (status, body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    apply_no_store(&mut response);
+    response
+}
+
+fn web_error_response(error: WebError) -> AxumResponse {
+    json_value_response(
+        500,
+        serde_json::json!({
+            "ok": false,
+            "error": error.to_string(),
+        }),
+    )
+}
+
+fn response_from_web_error(error: WebError, request_id: Option<&str>) -> Response {
+    let mut value = serde_json::json!({
+        "ok": false,
+        "error": error.to_string(),
+    });
+    if let Some(request_id) = request_id {
+        value["request_id"] = serde_json::Value::String(request_id.to_string());
+    }
+    Response {
+        status_code: 500,
+        content_type: "application/json; charset=utf-8",
+        body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{\"ok\":false}".to_vec()),
+    }
+}
+
+fn operation_response_with_request_id(
+    mut response: Response,
+    request_id: Option<&str>,
+) -> Response {
+    let Some(request_id) = request_id else {
+        return response;
+    };
+    if response.content_type != "application/json; charset=utf-8" {
+        return response;
+    }
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&response.body) else {
+        return response;
+    };
+    value["request_id"] = serde_json::Value::String(request_id.to_string());
+    if let Ok(body) = serde_json::to_vec(&value) {
+        response.body = body;
+    }
+    response
+}
+
+fn apply_no_store(response: &mut AxumResponse) {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+}
+
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
     pub body: &'a str,
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status_code: u16,
     pub content_type: &'static str,
-    pub cache_control: &'static str,
     pub body: Vec<u8>,
+}
+
+impl Response {
+    fn into_axum_response(self) -> AxumResponse {
+        bytes_axum_response(self.status_code, self.content_type, self.body)
+    }
 }
 
 #[derive(Debug)]
@@ -49,10 +567,6 @@ pub struct ActionFailure {
 }
 
 pub trait RuntimeBridge<C: CommandRunner> {
-    fn backend_authority(&self) -> cockpit::BackendAuthority {
-        cockpit::BackendAuthority::HostNative
-    }
-
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -75,26 +589,13 @@ pub trait RuntimeBridge<C: CommandRunner> {
     ) -> Result<bool, ActionFailure>;
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, serde::Serialize)]
 struct MobileActionRequest {
+    #[serde(default)]
+    request_id: Option<String>,
     task_handle: String,
     action: String,
-    request_id: String,
 }
-
-#[derive(Deserialize)]
-struct PushSubscriptionRequest {
-    subscription: push::PushSubscription,
-}
-
-#[derive(Deserialize)]
-struct PushUnsubscribeRequest {
-    endpoint: String,
-}
-
-const CACHE_NO_STORE: &str = "no-store";
-const CACHE_REVALIDATE: &str = "no-cache, must-revalidate";
-const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
 
 pub fn route<R: Registry>(
     request: Request<'_>,
@@ -105,14 +606,11 @@ pub fn route<R: Registry>(
         ("GET", "/") => Ok(Response {
             status_code: 200,
             content_type: "text/html; charset=utf-8",
-            cache_control: CACHE_REVALIDATE,
             body: install::pwa_shell().as_bytes().to_vec(),
         }),
-        ("GET", "/healthz") => Ok(text_response(200, "ok")),
         ("GET", "/api/cockpit") => Ok(Response {
             status_code: 200,
             content_type: "application/json; charset=utf-8",
-            cache_control: CACHE_NO_STORE,
             body: cockpit::browser_cockpit_json(context)
                 .map_err(RouteError::Json)?
                 .into_bytes(),
@@ -123,26 +621,20 @@ pub fn route<R: Registry>(
                 Some(Ok(body)) => Ok(Response {
                     status_code: 200,
                     content_type: "application/json; charset=utf-8",
-                    cache_control: CACHE_NO_STORE,
                     body: body.into_bytes(),
                 }),
                 Some(Err(error)) => Err(RouteError::Json(error)),
-                None => json_route_error(404, "task not found"),
+                None => Ok(text_response(404, "task not found")),
             }
         }
-        ("GET", asset_path) if !asset_path.starts_with("/api/") => {
-            match install::static_asset(asset_path) {
-                Some(asset) => Ok(Response {
-                    status_code: 200,
-                    content_type: asset.content_type,
-                    cache_control: static_asset_cache_control(asset_path),
-                    body: asset.body.to_vec(),
-                }),
-                None => Ok(text_response(404, "not found")),
-            }
-        }
-        (_, api_path) if is_known_api_path(api_path) => json_route_error(405, "method not allowed"),
-        (_, api_path) if api_path.starts_with("/api/") => json_route_error(404, "not found"),
+        ("GET", asset_path) => match install::static_asset(asset_path) {
+            Some(asset) => Ok(Response {
+                status_code: 200,
+                content_type: asset.content_type,
+                body: asset.body.to_vec(),
+            }),
+            None => Ok(text_response(404, "not found")),
+        },
         _ => Ok(text_response(405, "method not allowed")),
     }
 }
@@ -158,11 +650,9 @@ pub fn route_with_bridge<C: CommandRunner>(
     match (request.method, path) {
         ("GET", "/api/cockpit") => handle_refreshed_cockpit_request(context, runner, bridge),
         ("POST", "/api/actions") | ("POST", "/api/operations") => {
-            handle_action_request(request.body, context, runner, bridge, state_dir)
+            handle_action_request(request.body, context, runner, bridge)
         }
-        ("POST", "/api/tasks") => {
-            handle_start_task_request(request.body, context, runner, bridge, state_dir)
-        }
+        ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
@@ -172,60 +662,15 @@ pub fn route_with_bridge<C: CommandRunner>(
     }
 }
 
-pub fn serve_mobile_web_with_bridge<C: CommandRunner>(
-    host: &str,
-    port: u16,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let identity = tls::load_or_create_identity(state_dir)?;
-    let tls_config = tls::tls_server_config(&identity)?;
-
-    let listener = TcpListener::bind((host, port))
-        .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
-    eprintln!("Ajax mobile web listening on https://{host}:{port}");
-
-    let shared = Mutex::new(context);
-    std::thread::scope(|scope| {
-        let poller_state = &shared;
-        let poller_dir = state_dir.to_path_buf();
-        scope.spawn(move || run_attention_poller(poller_state, &poller_dir));
-
-        for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(stream) => stream,
-                Err(error) => {
-                    eprintln!("Ajax web accept error: {error}");
-                    continue;
-                }
-            };
-            let mut guard = shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let context: &mut CommandContext<InMemoryRegistry> = &mut guard;
-            if let Err(error) =
-                serve_tls_connection(stream, &tls_config, context, runner, bridge, state_dir)
-            {
-                eprintln!("Ajax web connection error: {error}");
-            }
-        }
-    });
-
-    Ok(())
-}
-
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
     let _state_changed = bridge.refresh_cockpit(context, runner)?;
-    let backend = bridge.backend_authority();
     json_response(
         200,
-        serde_json::to_value(cockpit::browser_cockpit_view_with_backend(context, backend))
+        serde_json::to_value(cockpit::browser_cockpit_view(context))
             .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
     )
 }
@@ -235,101 +680,56 @@ fn handle_action_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
 ) -> Result<Response, WebError> {
     let request: MobileActionRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-    if request.request_id.trim().is_empty() {
-        return operation_error_response(
-            400,
-            None,
-            "unsupported",
-            "missing_request_id",
-            "request_id is required",
-            context,
-            bridge.backend_authority(),
-        );
-    }
-    if let Some(response) = load_idempotent_response(state_dir, &request.request_id)? {
-        return Ok(response);
-    }
-
     let Some(action) = OperatorAction::from_label(&request.action) else {
-        let response = operation_error_response(
+        return json_response(
             400,
-            Some(&request.request_id),
-            "unsupported",
-            "unknown_action",
-            &format!("unknown action: {}", request.action),
-            context,
-            bridge.backend_authority(),
+            serde_json::json!({
+                "ok": false,
+                "error": format!("unknown action: {}", request.action),
+            }),
         );
-        return store_idempotent_response(state_dir, &request.request_id, response?);
     };
 
     if action == OperatorAction::Resume {
-        let response = operation_error_response(
+        return json_response(
             409,
-            Some(&request.request_id),
-            "needs_terminal",
-            "needs_terminal",
-            "resume requires native cockpit task entry",
-            context,
-            bridge.backend_authority(),
+            serde_json::json!({
+                "ok": false,
+                "error": "resume requires native cockpit task entry",
+            }),
         );
-        return store_idempotent_response(state_dir, &request.request_id, response?);
     }
     if action == OperatorAction::Start {
-        let response = operation_error_response(
+        return json_response(
             400,
-            Some(&request.request_id),
-            "unsupported",
-            "unsupported",
-            "start requires task title input",
-            context,
-            bridge.backend_authority(),
+            serde_json::json!({
+                "ok": false,
+                "error": "start requires task title input",
+            }),
         );
-        return store_idempotent_response(state_dir, &request.request_id, response?);
     }
 
-    let backend = bridge.backend_authority();
-    if !backend.control_enabled() {
-        let response = control_disabled_response(Some(&request.request_id), context, backend)?;
-        return store_idempotent_response(state_dir, &request.request_id, response);
-    }
-
-    let Some(lock) =
-        OperationLock::try_acquire(state_dir, &request.task_handle, &request.request_id)?
-    else {
-        let response = operation_error_response(
-            409,
-            Some(&request.request_id),
-            "blocked",
-            "operation_in_progress",
-            "another operation is already running for this task",
-            context,
-            backend,
-        )?;
-        return store_idempotent_response(state_dir, &request.request_id, response);
-    };
-
-    let response = match bridge.execute_mobile_action(action, &request.task_handle, context, runner)
-    {
-        Ok(state_changed) => {
-            operation_success_response(&request.request_id, state_changed, context, backend)
-        }
-        Err(error) => operation_error_response(
-            409,
-            Some(&request.request_id),
-            "failed",
-            "operation_failed",
-            &error.message,
-            context,
-            backend,
+    match bridge.execute_mobile_action(action, &request.task_handle, context, runner) {
+        Ok(state_changed) => json_response(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "state_changed": state_changed,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
         ),
-    }?;
-    drop(lock);
-    store_idempotent_response(state_dir, &request.request_id, response)
+        Err(error) => json_response(
+            409,
+            serde_json::json!({
+                "ok": false,
+                "error": error.message,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
+        ),
+    }
 }
 
 fn handle_start_task_request<C: CommandRunner>(
@@ -337,108 +737,27 @@ fn handle_start_task_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
 ) -> Result<Response, WebError> {
     let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-    if request.request_id.trim().is_empty() {
-        return operation_error_response(
-            400,
-            None,
-            "unsupported",
-            "missing_request_id",
-            "request_id is required",
-            context,
-            bridge.backend_authority(),
-        );
-    }
-    if let Some(response) = load_idempotent_response(state_dir, &request.request_id)? {
-        return Ok(response);
-    }
-    let request_id = request.request_id.clone();
-    let backend = bridge.backend_authority();
-    if !backend.control_enabled() {
-        let response = control_disabled_response(Some(&request_id), context, backend)?;
-        return store_idempotent_response(state_dir, &request_id, response);
-    }
-
     match bridge.execute_start_task(request, context, runner) {
-        Ok(state_changed) => {
-            let response =
-                operation_success_response(&request_id, state_changed, context, backend)?;
-            store_idempotent_response(state_dir, &request_id, response)
-        }
-        Err(error) => {
-            let response = operation_error_response(
-                409,
-                Some(&request_id),
-                "failed",
-                "operation_failed",
-                &error.message,
-                context,
-                backend,
-            )?;
-            store_idempotent_response(state_dir, &request_id, response)
-        }
+        Ok(state_changed) => json_response(
+            200,
+            serde_json::json!({
+                "ok": true,
+                "state_changed": state_changed,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
+        ),
+        Err(error) => json_response(
+            409,
+            serde_json::json!({
+                "ok": false,
+                "error": error.message,
+                "cockpit": cockpit::browser_cockpit_view(context),
+            }),
+        ),
     }
-}
-
-fn operation_success_response(
-    request_id: &str,
-    state_changed: bool,
-    context: &CommandContext<InMemoryRegistry>,
-    backend: cockpit::BackendAuthority,
-) -> Result<Response, WebError> {
-    json_response(
-        200,
-        serde_json::json!({
-            "ok": true,
-            "operation_id": operation_id(request_id),
-            "status": "succeeded",
-            "state_changed": state_changed,
-            "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-        }),
-    )
-}
-
-fn operation_error_response(
-    status_code: u16,
-    request_id: Option<&str>,
-    status: &str,
-    code: &str,
-    message: &str,
-    context: &CommandContext<InMemoryRegistry>,
-    backend: cockpit::BackendAuthority,
-) -> Result<Response, WebError> {
-    let mut value = serde_json::json!({
-        "ok": false,
-        "status": status,
-        "error": {
-            "code": code,
-            "message": message,
-        },
-        "cockpit": cockpit::browser_cockpit_view_with_backend(context, backend),
-    });
-    if let Some(request_id) = request_id {
-        value["operation_id"] = serde_json::Value::String(operation_id(request_id));
-    }
-    json_response(status_code, value)
-}
-
-fn control_disabled_response(
-    request_id: Option<&str>,
-    context: &CommandContext<InMemoryRegistry>,
-    backend: cockpit::BackendAuthority,
-) -> Result<Response, WebError> {
-    operation_error_response(
-        409,
-        request_id,
-        "unsupported",
-        "snapshot_only",
-        "mutable PWA actions require the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state",
-        context,
-        backend,
-    )
 }
 
 fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {
@@ -452,8 +771,8 @@ fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {
 }
 
 fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let request: PushSubscriptionRequest = match serde_json::from_str(body) {
-        Ok(request) => request,
+    let subscription: push::PushSubscription = match serde_json::from_str(body) {
+        Ok(subscription) => subscription,
         Err(error) => {
             return json_response(
                 400,
@@ -461,163 +780,23 @@ fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebEr
             );
         }
     };
-    push::add_subscription(state_dir, request.subscription)?;
+    push::add_subscription(state_dir, subscription)?;
     json_response(200, serde_json::json!({ "ok": true }))
 }
 
 fn handle_push_unsubscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let request: PushUnsubscribeRequest = match serde_json::from_str(body) {
-        Ok(request) => request,
-        Err(error) => {
-            return json_response(
-                400,
-                serde_json::json!({ "ok": false, "error": error.to_string() }),
-            );
-        }
+    let request: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    let Some(endpoint) = request.get("endpoint").and_then(serde_json::Value::as_str) else {
+        return json_response(
+            400,
+            serde_json::json!({ "ok": false, "error": "endpoint is required" }),
+        );
     };
-    push::remove_subscription(state_dir, &request.endpoint)?;
+    push::remove_subscription(state_dir, endpoint)?;
     json_response(200, serde_json::json!({ "ok": true }))
 }
 
-fn operation_id(request_id: &str) -> String {
-    format!("web-{request_id}")
-}
-
-fn operation_dir(state_dir: &Path) -> std::path::PathBuf {
-    state_dir.join("web-operations")
-}
-
-fn idempotency_path(state_dir: &Path, request_id: &str) -> std::path::PathBuf {
-    operation_dir(state_dir).join(format!("{}.json", storage_key(request_id)))
-}
-
-fn idempotency_status_path(state_dir: &Path, request_id: &str) -> std::path::PathBuf {
-    operation_dir(state_dir).join(format!("{}.status", storage_key(request_id)))
-}
-
-fn load_idempotent_response(
-    state_dir: &Path,
-    request_id: &str,
-) -> Result<Option<Response>, WebError> {
-    let path = idempotency_path(state_dir, request_id);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let body = fs::read(path)
-        .map_err(|error| WebError::CommandFailed(format!("web operation read failed: {error}")))?;
-    let status_code = fs::read_to_string(idempotency_status_path(state_dir, request_id))
-        .ok()
-        .and_then(|value| value.trim().parse::<u16>().ok())
-        .unwrap_or(200);
-    Ok(Some(Response {
-        status_code,
-        content_type: "application/json; charset=utf-8",
-        cache_control: CACHE_NO_STORE,
-        body,
-    }))
-}
-
-fn store_idempotent_response(
-    state_dir: &Path,
-    request_id: &str,
-    response: Response,
-) -> Result<Response, WebError> {
-    fs::create_dir_all(operation_dir(state_dir)).map_err(|error| {
-        WebError::CommandFailed(format!("web operation dir create failed: {error}"))
-    })?;
-    fs::write(idempotency_path(state_dir, request_id), &response.body)
-        .map_err(|error| WebError::CommandFailed(format!("web operation write failed: {error}")))?;
-    fs::write(
-        idempotency_status_path(state_dir, request_id),
-        response.status_code.to_string(),
-    )
-    .map_err(|error| {
-        WebError::CommandFailed(format!("web operation status write failed: {error}"))
-    })?;
-    Ok(response)
-}
-
-struct OperationLock {
-    path: std::path::PathBuf,
-}
-
-impl OperationLock {
-    fn try_acquire(
-        state_dir: &Path,
-        task_handle: &str,
-        request_id: &str,
-    ) -> Result<Option<Self>, WebError> {
-        fs::create_dir_all(operation_dir(state_dir)).map_err(|error| {
-            WebError::CommandFailed(format!("web operation dir create failed: {error}"))
-        })?;
-        let path = operation_lock_path(state_dir, task_handle);
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => {
-                file.write_all(request_id.as_bytes()).map_err(|error| {
-                    WebError::CommandFailed(format!("web operation lock write failed: {error}"))
-                })?;
-                Ok(Some(Self { path }))
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(None),
-            Err(error) => Err(WebError::CommandFailed(format!(
-                "web operation lock create failed: {error}"
-            ))),
-        }
-    }
-}
-
-impl Drop for OperationLock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
-    }
-}
-
-fn operation_lock_path(state_dir: &Path, task_handle: &str) -> std::path::PathBuf {
-    operation_dir(state_dir).join(format!("{}.lock", storage_key(task_handle)))
-}
-
-fn storage_key(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect()
-}
-
 const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
-
-fn run_attention_poller(state: &Mutex<&mut CommandContext<InMemoryRegistry>>, dir: &Path) {
-    let mut known: BTreeSet<String> = BTreeSet::new();
-    loop {
-        std::thread::sleep(ATTENTION_POLL_INTERVAL);
-        let current = {
-            let guard = state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            attention_handles(&commands::rebuild_cockpit_view(&**guard))
-        };
-        for handle in attention::new_attention_handles(&known, &current) {
-            let notification = push::PushNotification {
-                title: "Ajax task needs attention".to_string(),
-                body: handle.clone(),
-                tag: handle.clone(),
-            };
-            if let Err(error) = push::send_to_all(dir, &notification) {
-                eprintln!("Ajax web push notification failed: {error}");
-            }
-        }
-        known = current;
-    }
-}
 
 fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
     view.inbox
@@ -627,83 +806,10 @@ fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
         .collect()
 }
 
-fn serve_tls_connection<C: CommandRunner>(
-    tcp: TcpStream,
-    tls_config: &Arc<rustls::ServerConfig>,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let connection = rustls::ServerConnection::new(Arc::clone(tls_config))
-        .map_err(|error| WebError::CommandFailed(format!("web tls session failed: {error}")))?;
-    let stream = rustls::StreamOwned::new(connection, tcp);
-    serve_connection(stream, context, runner, bridge, state_dir)
-}
-
-pub fn serve_connection<S: Read + Write, C: CommandRunner>(
-    mut stream: S,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let mut buffer = [0_u8; 8192];
-    let bytes_read = stream
-        .read(&mut buffer)
-        .map_err(|error| WebError::CommandFailed(format!("web request read failed: {error}")))?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let Some(request_line) = request.lines().next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let mut parts = request_line.split_whitespace();
-    let Some(method) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let Some(path) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
-    let response = route_with_bridge(
-        Request { method, path, body },
-        context,
-        runner,
-        bridge,
-        state_dir,
-    )?;
-
-    write_http_response(stream, response)
-}
-
-fn write_http_response<S: Write>(mut stream: S, response: Response) -> Result<(), WebError> {
-    let status_text = match response.status_code {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        409 => "Conflict",
-        _ => "Internal Server Error",
-    };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        response.status_code,
-        status_text,
-        response.content_type,
-        response.cache_control,
-        response.body.len()
-    );
-    stream
-        .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(&response.body))
-        .and_then(|_| stream.flush())
-        .map_err(|error| WebError::CommandFailed(format!("web response write failed: {error}")))
-}
-
 fn text_response(status_code: u16, body: &str) -> Response {
     Response {
         status_code,
         content_type: "text/plain; charset=utf-8",
-        cache_control: CACHE_NO_STORE,
         body: body.as_bytes().to_vec(),
     }
 }
@@ -712,50 +818,14 @@ fn json_response(status_code: u16, value: serde_json::Value) -> Result<Response,
     Ok(Response {
         status_code,
         content_type: "application/json; charset=utf-8",
-        cache_control: CACHE_NO_STORE,
         body: serde_json::to_vec(&value)
             .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
     })
 }
 
-fn json_route_error(status_code: u16, error: &str) -> Result<Response, RouteError> {
-    Ok(Response {
-        status_code,
-        content_type: "application/json; charset=utf-8",
-        cache_control: CACHE_NO_STORE,
-        body: serde_json::to_vec(&serde_json::json!({
-            "ok": false,
-            "error": error,
-        }))
-        .map_err(RouteError::Json)?,
-    })
-}
-
-fn is_known_api_path(path: &str) -> bool {
-    matches!(
-        path,
-        "/api/cockpit"
-            | "/api/actions"
-            | "/api/tasks"
-            | "/api/push/config"
-            | "/api/push/subscribe"
-            | "/api/push/unsubscribe"
-    ) || path.starts_with("/api/tasks/")
-}
-
-fn static_asset_cache_control(path: &str) -> &'static str {
-    if path.starts_with("/icons/") {
-        CACHE_IMMUTABLE
-    } else {
-        CACHE_REVALIDATE
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{
-        route, route_with_bridge, serve_connection, ActionFailure, Request, RuntimeBridge,
-    };
+    use super::{route, route_with_bridge, ActionFailure, Request, RuntimeBridge};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -763,14 +833,18 @@ mod tests {
         models::OperatorAction,
         registry::InMemoryRegistry,
     };
-    use std::cell::RefCell;
-    use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request as AxumRequest, StatusCode},
+    };
+    use std::time::Duration;
+    use tower::ServiceExt;
 
     struct TestBridge {
         refreshed: bool,
         action: Option<(OperatorAction, String)>,
-        action_calls: usize,
+        action_count: usize,
+        action_delay: Duration,
         action_result: Result<bool, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
         start_result: Result<bool, ActionFailure>,
@@ -781,7 +855,8 @@ mod tests {
             Self {
                 refreshed: false,
                 action: None,
-                action_calls: 0,
+                action_count: 0,
+                action_delay: Duration::ZERO,
                 action_result: Ok(true),
                 start: None,
                 start_result: Ok(true),
@@ -806,7 +881,8 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
         ) -> Result<bool, ActionFailure> {
-            self.action_calls += 1;
+            self.action_count += 1;
+            std::thread::sleep(self.action_delay);
             self.action = Some((action, task_handle.to_string()));
             self.action_result.clone()
         }
@@ -834,28 +910,6 @@ mod tests {
         }
     }
 
-    struct MockStream {
-        input: Cursor<Vec<u8>>,
-        output: Rc<RefCell<Vec<u8>>>,
-    }
-
-    impl Read for MockStream {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.input.read(buf)
-        }
-    }
-
-    impl Write for MockStream {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.output.borrow_mut().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -867,21 +921,235 @@ mod tests {
         ))
     }
 
-    fn serve_raw_request(path: &str) -> String {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("raw");
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let stream = MockStream {
-            input: Cursor::new(format!("GET {path} HTTP/1.1\r\nHost: ajax\r\n\r\n").into_bytes()),
-            output: Rc::clone(&output),
-        };
+    #[tokio::test]
+    async fn axum_router_serves_static_shell_and_cockpit_json() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-static"),
+        );
+        let app = super::axum_app(state);
 
-        serve_connection(stream, &mut context, &mut runner, &mut bridge, &dir).unwrap();
-        std::fs::remove_dir_all(&dir).ok();
-        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
-        written
+        let shell = app
+            .clone()
+            .oneshot(AxumRequest::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert_eq!(shell.headers()["content-type"], "text/html; charset=utf-8");
+        let shell_body = to_bytes(shell.into_body(), usize::MAX).await.unwrap();
+        assert!(std::str::from_utf8(&shell_body)
+            .unwrap()
+            .contains("Ajax Cockpit"));
+
+        let cockpit = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(
+            cockpit.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let cockpit_body = to_bytes(cockpit.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&cockpit_body).unwrap()["cards"],
+            serde_json::json!([])
+        );
+
+        let missing_api = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            missing_api.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let missing_api_body = to_bytes(missing_api.into_body(), usize::MAX).await.unwrap();
+        assert!(!std::str::from_utf8(&missing_api_body)
+            .unwrap()
+            .contains("Ajax Cockpit"));
+    }
+
+    #[tokio::test]
+    async fn axum_operations_are_idempotent_by_request_id() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-idempotency"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let operation = r#"{"request_id":"req-1","task_handle":"web/fix-login","action":"review"}"#;
+        let first = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(operation))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+        assert_eq!(first_json["ok"], true);
+        assert_eq!(first_json["request_id"], "req-1");
+
+        let second = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(operation))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+        assert_eq!(second_json, first_json);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.action_count, 1);
+    }
+
+    #[tokio::test]
+    async fn axum_operation_parse_errors_are_json() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-json-error"),
+        );
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{not-json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"].as_str().unwrap_or_default().contains("json"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_blocks_conflicting_task_operations() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let bridge = TestBridge {
+            action_delay: Duration::from_millis(150),
+            ..TestBridge::default()
+        };
+        let state =
+            super::WebAppState::new(context, OkRunner, bridge, scratch_dir("axum-conflict"));
+        let app = super::axum_app(state.clone());
+
+        let first_app = app.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .method("POST")
+                        .uri("/api/operations")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let conflict = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"req-b","task_handle":"web/fix-login","action":"ship"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["request_id"], "req-b");
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("already in progress"));
+
+        assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.action_count, 1);
+    }
+
+    #[test]
+    fn production_server_uses_axum_instead_of_manual_http_loop() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .unwrap();
+        let server_fn = source
+            .split("pub fn serve_axum_web")
+            .nth(1)
+            .and_then(|tail| tail.split("fn resolve_bind_address").next())
+            .unwrap();
+
+        assert!(server_fn.contains("axum::serve"));
+        assert!(server_fn.contains("TlsListener"));
+        assert!(server_fn.contains("axum_app"));
+        assert!(!server_fn.contains("listener.incoming()"));
+        assert!(!server_fn.contains("serve_tls_connection"));
     }
 
     #[test]
@@ -921,58 +1189,6 @@ mod tests {
     }
 
     #[test]
-    fn healthz_endpoint_reports_container_readiness() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let response = route(
-            Request {
-                method: "GET",
-                path: "/healthz",
-                body: "",
-            },
-            &context,
-        )
-        .unwrap();
-
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.content_type, "text/plain; charset=utf-8");
-        assert_eq!(response.body, b"ok");
-    }
-
-    #[test]
-    fn http_cache_policy_matches_pwa_runtime_contract() {
-        let api = serve_raw_request("/api/cockpit");
-        assert!(api.contains("Cache-Control: no-store"), "{api}");
-
-        let health = serve_raw_request("/healthz");
-        assert!(health.contains("Cache-Control: no-store"), "{health}");
-
-        let shell = serve_raw_request("/");
-        assert!(
-            shell.contains("Cache-Control: no-cache, must-revalidate"),
-            "{shell}"
-        );
-
-        let service_worker = serve_raw_request("/sw.js");
-        assert!(
-            service_worker.contains("Cache-Control: no-cache, must-revalidate"),
-            "{service_worker}"
-        );
-
-        let manifest = serve_raw_request("/manifest.webmanifest");
-        assert!(
-            manifest.contains("Cache-Control: no-cache, must-revalidate"),
-            "{manifest}"
-        );
-
-        let icon = serve_raw_request("/icons/icon-192.png");
-        assert!(
-            icon.contains("Cache-Control: public, max-age=31536000, immutable"),
-            "{icon}"
-        );
-    }
-
-    #[test]
     fn cockpit_api_refreshes_before_rendering() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
@@ -1008,7 +1224,7 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/actions",
-                body: r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-action"}"#,
+                body: r#"{"task_handle":"web/fix-login","action":"review"}"#,
             },
             &mut context,
             &mut runner,
@@ -1020,132 +1236,12 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
-        assert_eq!(body["status"], "succeeded");
         assert_eq!(body["state_changed"], true);
         assert!(body["cockpit"].is_object());
         assert_eq!(
             bridge.action,
             Some((OperatorAction::Review, "web/fix-login".to_string()))
         );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn operation_endpoint_returns_typed_operation_status() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("operation-status");
-
-        let response = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/operations",
-                body: r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-1"}"#,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-
-        assert_eq!(response.status_code, 200);
-        assert_eq!(body["ok"], true);
-        assert_eq!(body["operation_id"], "web-req-1");
-        assert_eq!(body["status"], "succeeded");
-        assert_eq!(body["state_changed"], true);
-        assert_eq!(bridge.action_calls, 1);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn duplicate_operation_request_id_is_idempotent() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("operation-idempotent");
-        let body = r#"{"task_handle":"web/fix-login","action":"review","request_id":"req-same"}"#;
-
-        let first = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/operations",
-                body,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        let second = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/operations",
-                body,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-
-        assert_eq!(first.status_code, second.status_code);
-        assert_eq!(first.body, second.body);
-        assert_eq!(bridge.action_calls, 1);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn conflicting_task_operation_is_blocked() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("operation-lock");
-        std::fs::create_dir_all(super::operation_dir(&dir)).unwrap();
-        std::fs::write(super::operation_lock_path(&dir, "web/fix-login"), "other").unwrap();
-        let request_body =
-            r#"{"task_handle":"web/fix-login","action":"drop","request_id":"req-drop"}"#;
-
-        let response = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/operations",
-                body: request_body,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-
-        assert_eq!(response.status_code, 409);
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["status"], "blocked");
-        assert_eq!(body["error"]["code"], "operation_in_progress");
-        assert_eq!(bridge.action_calls, 0);
-        std::fs::remove_file(super::operation_lock_path(&dir, "web/fix-login")).unwrap();
-
-        let repeat = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/operations",
-                body: request_body,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        assert_eq!(repeat.status_code, 409);
-        assert_eq!(repeat.body, response.body);
-        assert_eq!(bridge.action_calls, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1212,42 +1308,6 @@ mod tests {
     }
 
     #[test]
-    fn api_errors_return_json_bodies() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let missing = route(
-            Request {
-                method: "GET",
-                path: "/api/missing",
-                body: "",
-            },
-            &context,
-        )
-        .unwrap();
-        let missing_body: serde_json::Value = serde_json::from_slice(&missing.body).unwrap();
-        assert_eq!(missing.status_code, 404);
-        assert_eq!(missing.content_type, "application/json; charset=utf-8");
-        assert_eq!(missing_body["ok"], false);
-        assert_eq!(missing_body["error"], "not found");
-
-        let wrong_method = route(
-            Request {
-                method: "POST",
-                path: "/api/cockpit",
-                body: "",
-            },
-            &context,
-        )
-        .unwrap();
-        let wrong_method_body: serde_json::Value =
-            serde_json::from_slice(&wrong_method.body).unwrap();
-        assert_eq!(wrong_method.status_code, 405);
-        assert_eq!(wrong_method.content_type, "application/json; charset=utf-8");
-        assert_eq!(wrong_method_body["ok"], false);
-        assert_eq!(wrong_method_body["error"], "method not allowed");
-    }
-
-    #[test]
     fn post_tasks_endpoint_delegates_to_start_bridge_method() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
@@ -1258,7 +1318,7 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/tasks",
-                body: r#"{"repo":"web","title":"Fix login","agent":"codex","request_id":"req-start"}"#,
+                body: r#"{"repo":"web","title":"Fix login","agent":"codex"}"#,
             },
             &mut context,
             &mut runner,
@@ -1277,7 +1337,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
-                request_id: "req-start".to_string(),
+                request_id: String::new(),
             })
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -1294,7 +1354,7 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/actions",
-                body: r#"{"task_handle":"web/fix-login","action":"resume","request_id":"req-resume"}"#,
+                body: r#"{"task_handle":"web/fix-login","action":"resume"}"#,
             },
             &mut context,
             &mut runner,
@@ -1304,9 +1364,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["status"], "needs_terminal");
-        assert_eq!(body["error"]["code"], "needs_terminal");
         assert_eq!(bridge.action, None);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1338,7 +1395,7 @@ mod tests {
             Request {
                 method: "POST",
                 path: "/api/push/subscribe",
-                body: r#"{"subscription":{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}}"#,
+                body: r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
             },
             &mut context,
             &mut runner,
@@ -1368,26 +1425,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_serves_a_request_over_a_generic_stream() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("stream");
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let stream = MockStream {
-            input: Cursor::new(b"GET /app.css HTTP/1.1\r\nHost: ajax\r\n\r\n".to_vec()),
-            output: Rc::clone(&output),
-        };
+    fn runtime_keeps_custom_connection_serving_out_of_production() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .unwrap();
 
-        serve_connection(stream, &mut context, &mut runner, &mut bridge, &dir).unwrap();
-
-        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
-        assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
-        assert!(written.contains("Content-Type: text/css"), "{written}");
-        assert!(
-            written.contains("Cache-Control: no-cache, must-revalidate"),
-            "{written}"
-        );
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(!source.contains(&["pub fn ", "serve_connection"].concat()));
+        assert!(!source.contains(&["fn ", "serve_tls_connection"].concat()));
+        assert!(!source.contains(&["fn ", "write_http_response"].concat()));
     }
 }

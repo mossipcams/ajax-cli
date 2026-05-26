@@ -161,6 +161,14 @@ mod tests {
             script.contains("/api/tasks"),
             "missing POST start endpoint usage"
         );
+        assert!(
+            script.contains("/api/operations"),
+            "missing operation endpoint usage"
+        );
+        assert!(
+            script.contains("request_id"),
+            "operation requests should carry request IDs"
+        );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
         assert!(worker.contains("ajax-cockpit-v16"));

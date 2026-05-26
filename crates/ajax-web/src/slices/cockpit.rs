@@ -24,18 +24,6 @@ pub struct BrowserCockpitView {
     pub inbox: InboxResponse,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum BackendAuthority {
-    HostNative,
-    SnapshotOnly,
-}
-
-impl BackendAuthority {
-    pub fn control_enabled(self) -> bool {
-        matches!(self, Self::HostNative)
-    }
-}
-
 #[derive(Serialize)]
 pub struct BrowserBackend {
     pub authority: &'static str,
@@ -64,37 +52,21 @@ pub fn browser_cockpit_json<R: Registry>(
 }
 
 pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> BrowserCockpitView {
-    browser_cockpit_view_with_backend(context, BackendAuthority::HostNative)
-}
-
-pub fn browser_cockpit_view_with_backend<R: Registry>(
-    context: &CommandContext<R>,
-    backend: BackendAuthority,
-) -> BrowserCockpitView {
     let view = commands::rebuild_cockpit_view(context);
     let cards = browser_task_cards(context, view.cards.as_slice());
     BrowserCockpitView {
-        backend: browser_backend(backend),
+        backend: host_native_backend(),
         repos: view.repos,
         cards,
         inbox: view.inbox,
     }
 }
 
-fn browser_backend(backend: BackendAuthority) -> BrowserBackend {
-    match backend {
-        BackendAuthority::HostNative => BrowserBackend {
-            authority: "host-native",
-            control_enabled: true,
-            warning: None,
-        },
-        BackendAuthority::SnapshotOnly => BrowserBackend {
-            authority: "snapshot-only",
-            control_enabled: false,
-            warning: Some(
-                "Live PWA control requires the host-native Ajax web backend with access to SQLite, repo paths, worktrees, tmux sessions, agent CLIs, and host process state.",
-            ),
-        },
+fn host_native_backend() -> BrowserBackend {
+    BrowserBackend {
+        authority: "host-native",
+        control_enabled: true,
+        warning: None,
     }
 }
 
@@ -372,6 +344,8 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["backend"]["authority"], "host-native");
+        assert_eq!(value["backend"]["control_enabled"], true);
     }
 
     #[test]

@@ -1,8 +1,0 @@
-target/
-.git/
-node_modules/
-.ajax-dev/
-ajax.db
-*.log
-Dockerfile*
-compose*.yml
