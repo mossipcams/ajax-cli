@@ -14,7 +14,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use crate::slices::operate::{supported_web_action, web_action_state, WebActionState};
+use crate::action_vocabulary::{supported_web_action, web_action_state, WebActionState};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
