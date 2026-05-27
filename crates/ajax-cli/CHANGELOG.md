@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.3...ajax-cli-v0.7.4) (2026-05-27)
+
+
+### Bug Fixes
+
+* **web:** keep PWA top banners inside iOS safe area ([#95](https://github.com/mossipcams/ajax-cli/issues/95)) ([f60561f](https://github.com/mossipcams/ajax-cli/commit/f60561f4e9d6b485533c32ea288a44d2c551872b))
+* **web:** stabilize PWA drop confirm and modernize action buttons ([#94](https://github.com/mossipcams/ajax-cli/issues/94)) ([20a38a3](https://github.com/mossipcams/ajax-cli/commit/20a38a3f6a537f2dbc22c383e3c52a39a04bc1ef))
+
 ## [0.7.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.2...ajax-cli-v0.7.3) (2026-05-27)
 
 
