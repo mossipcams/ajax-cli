@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.3.0...ajax-cli-v0.4.0) (2026-05-27)
+
+
+### Features
+
+* add Cursor agent support to supervisor for notifications ([#68](https://github.com/mossipcams/ajax-cli/issues/68)) ([9cdcf72](https://github.com/mossipcams/ajax-cli/commit/9cdcf729ff701e80ec6714cd16ea7fe1c1930ef7))
+
+
+### Bug Fixes
+
+* stop web cockpit from reintroducing missing-substrate ghost tasks ([#69](https://github.com/mossipcams/ajax-cli/issues/69)) ([8cabe9f](https://github.com/mossipcams/ajax-cli/commit/8cabe9f3220323b7121f9e923b9dad60307a7e8e))
+
 ## [0.3.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.2.2...ajax-cli-v0.3.0) (2026-05-26)
 
 
