@@ -1380,6 +1380,72 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_registry_store_persists_hard_deleted_tasks() {
+        let mut registry = InMemoryRegistry::default();
+        let deleted_id = TaskId::new("task-1");
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        registry
+            .create_task(task("task-2", "web", "keep-task"))
+            .unwrap();
+        registry
+            .record_event(deleted_id.clone(), RegistryEventKind::UserNote, "ready")
+            .unwrap();
+        registry
+            .record_step_receipt(StepReceipt::succeeded(
+                deleted_id.clone(),
+                TaskOperationKind::Drop,
+                "worktree_absent",
+                "/tmp/worktrees/web-fix-login",
+                "{}",
+            ))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-hard-delete"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+
+        registry.delete_task(&deleted_id).unwrap();
+        store.save(&registry).unwrap();
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let deleted_task_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM registry_tasks WHERE task_id = 'task-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let deleted_event_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM registry_events WHERE task_id = 'task-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let deleted_receipt_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM step_receipts WHERE task_id = 'task-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(deleted_task_count, 0);
+        assert_eq!(deleted_event_count, 0);
+        assert_eq!(deleted_receipt_count, 0);
+        assert!(restored.get_task(&deleted_id).is_none());
+        assert!(restored.get_task(&TaskId::new("task-2")).is_some());
+    }
+
+    #[test]
     fn sqlite_registry_store_prunes_removed_task_ghosts() {
         let mut registry = InMemoryRegistry::default();
         registry

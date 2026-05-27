@@ -1,9 +1,9 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "rust",
-  "plugins": [],
+  "plugins": ["cargo-workspace"],
   "packages": {
-    ".": {
+    "crates/ajax-cli": {
       "package-name": "ajax-cli",
       "release-type": "rust",
       "changelog-path": "CHANGELOG.md"

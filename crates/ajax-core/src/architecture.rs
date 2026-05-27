@@ -7,31 +7,57 @@ mod tests {
         rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
     };
 
-    const FORBIDDEN_SLICE_DEPENDENCIES: [&str; 2] = ["ajax-core::slices", "crate::slices"];
+    const SLICES: [&str; 1] = ["review"];
+
+    const SUBSTRATE_MECHANISMS: [&str; 4] = ["adapters", "registry", "analysis", "runtime"];
 
     #[test]
-    fn substrate_mechanisms_do_not_depend_on_slices() {
-        let project = Project::from_current_crate();
+    fn each_substrate_mechanism_does_not_depend_on_any_slice() {
+        for mechanism in SUBSTRATE_MECHANISMS {
+            let project = Project::from_current_crate();
+            let forbidden = forbidden_paths_for_slices(&SLICES);
+            let forbidden_refs = forbidden.iter().map(String::as_str).collect::<Vec<_>>();
+            let module = format!("ajax-core::{mechanism}");
 
-        #[rustfmt::skip]
-        let rules = ArchitecturalRules::define()
-            .rules_for_module("ajax-core::adapters")
-                .it_must_not_depend_on(&FORBIDDEN_SLICE_DEPENDENCIES)
-            .rules_for_module("ajax-core::registry")
-                .it_must_not_depend_on(&FORBIDDEN_SLICE_DEPENDENCIES)
-            .rules_for_module("ajax-core::analysis")
-                .it_must_not_depend_on(&FORBIDDEN_SLICE_DEPENDENCIES)
-            .rules_for_module("ajax-core::runtime")
-                .it_must_not_depend_on(&FORBIDDEN_SLICE_DEPENDENCIES)
-            .build();
+            let rules = ArchitecturalRules::define()
+                .rules_for_module(module.as_str())
+                .it_must_not_depend_on(&forbidden_refs)
+                .build();
 
-        let result = Arkitect::ensure_that(project).complies_with(rules);
+            let result = Arkitect::ensure_that(project).complies_with(rules);
 
-        assert!(
-            result.is_ok(),
-            "architecture violations: {:#?}",
-            result.err().unwrap_or_default()
-        );
+            assert!(
+                result.is_ok(),
+                "architecture violations in mechanism `{mechanism}`: {:#?}",
+                result.err().unwrap_or_default()
+            );
+        }
+    }
+
+    #[test]
+    fn each_slice_is_isolated_from_sibling_slices() {
+        for slice in SLICES {
+            let project = Project::from_current_crate();
+            let forbidden = forbidden_paths_for_sibling_slices(slice);
+            if forbidden.is_empty() {
+                continue;
+            }
+            let forbidden_refs = forbidden.iter().map(String::as_str).collect::<Vec<_>>();
+            let module = format!("ajax-core::slices::{slice}");
+
+            let rules = ArchitecturalRules::define()
+                .rules_for_module(module.as_str())
+                .it_must_not_depend_on(&forbidden_refs)
+                .build();
+
+            let result = Arkitect::ensure_that(project).complies_with(rules);
+
+            assert!(
+                result.is_ok(),
+                "architecture violations in slice `{slice}`: {:#?}",
+                result.err().unwrap_or_default()
+            );
+        }
     }
 
     #[test]
@@ -43,12 +69,12 @@ mod tests {
         );
         let rule = MustNotDependOnRule::new(
             "ajax-core::adapters".to_string(),
-            forbidden_slice_dependencies(),
+            forbidden_paths_for_slices(&["review"]),
         );
 
         assert!(
             rule.apply(&file).is_err(),
-            "mechanism modules must not be allowed to import crate::slices"
+            "mechanism modules must not be allowed to import specific slice modules"
         );
     }
 
@@ -61,19 +87,33 @@ mod tests {
         );
         let rule = MustNotDependOnRule::new(
             "ajax-core::adapters".to_string(),
-            forbidden_slice_dependencies(),
+            forbidden_paths_for_slices(&["review"]),
         );
 
         assert!(
             rule.apply(&file).is_err(),
-            "mechanism modules must not be allowed to call crate::slices directly"
+            "mechanism modules must not be allowed to call specific slice modules directly"
         );
     }
 
-    fn forbidden_slice_dependencies() -> Vec<String> {
-        FORBIDDEN_SLICE_DEPENDENCIES
+    fn forbidden_paths_for_slices(slices: &[&str]) -> Vec<String> {
+        slices
             .iter()
-            .map(|dependency| (*dependency).to_string())
+            .flat_map(|slice| {
+                [
+                    format!("ajax-core::slices::{slice}"),
+                    format!("crate::slices::{slice}"),
+                ]
+            })
             .collect()
+    }
+
+    fn forbidden_paths_for_sibling_slices(slice: &str) -> Vec<String> {
+        let siblings = SLICES
+            .iter()
+            .copied()
+            .filter(|sibling| *sibling != slice)
+            .collect::<Vec<_>>();
+        forbidden_paths_for_slices(&siblings)
     }
 }

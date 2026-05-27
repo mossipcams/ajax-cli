@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, path::Path, time::SystemTime};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use crate::{
     adapters::{CommandRunner, GitAdapter, TmuxAdapter},
@@ -48,6 +52,18 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
         .map(|task| (task.repo.clone(), task.handle.clone()))
         .collect::<BTreeSet<_>>();
+    let mut registered_runtime_tasks = tasks
+        .iter()
+        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+        .map(|task| {
+            (
+                task.id.clone(),
+                task.repo.clone(),
+                task.branch.clone(),
+                task.worktree_path.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
     drop(tasks);
 
     let mut changed = commands::refresh_git_substrate_evidence(context, runner).unwrap_or_default();
@@ -281,6 +297,7 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
             runner,
             &sessions_output,
             &mut registered_task_handles,
+            &mut registered_runtime_tasks,
         )?;
     }
 
@@ -335,6 +352,7 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
     runner: &mut impl CommandRunner,
     sessions_output: &str,
     registered_tasks: &mut BTreeSet<(String, String)>,
+    registered_runtime_tasks: &mut Vec<(TaskId, String, String, PathBuf)>,
 ) -> Result<bool, CommandError> {
     if context.config.repos.is_empty() {
         return Ok(false);
@@ -420,6 +438,31 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                 );
                 refresh_cached_annotations(&mut task);
             }
+            let stale_task_ids = registered_runtime_tasks
+                .iter()
+                .filter(
+                    |(_, existing_repo, existing_branch, existing_worktree_path)| {
+                        existing_repo == &repo.name
+                            && existing_worktree_path == &task.worktree_path
+                            && existing_branch != &task.branch
+                    },
+                )
+                .map(|(task_id, _, _, _)| task_id.clone())
+                .collect::<Vec<_>>();
+            for stale_task_id in stale_task_ids {
+                context
+                    .registry
+                    .delete_task(&stale_task_id)
+                    .map_err(CommandError::Registry)?;
+                registered_runtime_tasks
+                    .retain(|(existing_task_id, _, _, _)| existing_task_id != &stale_task_id);
+            }
+            registered_runtime_tasks.push((
+                task.id.clone(),
+                task.repo.clone(),
+                task.branch.clone(),
+                task.worktree_path.clone(),
+            ));
             context
                 .registry
                 .create_task(task)
@@ -624,6 +667,10 @@ mod tests {
     impl Registry for CountingRegistry {
         fn create_task(&mut self, task: Task) -> Result<(), RegistryError> {
             self.inner.create_task(task)
+        }
+
+        fn delete_task(&mut self, task_id: &TaskId) -> Result<(), RegistryError> {
+            self.inner.delete_task(task_id)
         }
 
         fn get_task(&self, task_id: &TaskId) -> Option<&Task> {
@@ -900,6 +947,56 @@ mod tests {
             "expected refresh to reuse a task snapshot instead of scanning once per worktree, got {} list_tasks calls",
             context.registry.list_tasks_calls()
         );
+    }
+
+    #[test]
+    fn orphan_recovery_deletes_stale_same_worktree_task_before_insert() {
+        let config = Config {
+            repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut stale = Task::new(
+            TaskId::new("web/stale-task"),
+            REPO_NAME,
+            "stale-task",
+            "Stale task",
+            "ajax/stale-task",
+            BASE_BRANCH,
+            TASK_WORKTREE,
+            "ajax-web-stale-task",
+            TASK_WINDOW,
+            AgentClient::Codex,
+        );
+        stale.lifecycle_status = LifecycleStatus::Active;
+        stale.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/stale-task".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        registry.create_task(stale).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = OrphanRecoveryRunner::default();
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/stale-task"))
+            .is_none());
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_some());
     }
 
     #[test]

@@ -1,8 +1,12 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod action_vocabulary;
 pub mod adapters;
 pub mod runtime;
 pub mod slices;
+
+#[cfg(test)]
+mod architecture;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebError {
@@ -61,5 +65,19 @@ mod tests {
                 "missing ajax-web adapter module: {adapter}"
             );
         }
+    }
+
+    #[test]
+    fn architecture_rules_are_executable() {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
+        let architecture =
+            std::fs::read_to_string(manifest_dir.join("src/architecture.rs")).unwrap();
+
+        assert!(lib.contains("mod architecture;"));
+        assert!(architecture.contains("rust_arkitect::dsl"));
+        assert!(architecture.contains("complies_with"));
+        assert!(architecture.contains("crate::slices"));
+        assert!(architecture.contains("ajax-web::action_vocabulary"));
     }
 }

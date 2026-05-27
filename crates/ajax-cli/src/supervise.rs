@@ -12,11 +12,10 @@ pub(crate) fn supervise_command_output_and_events(
         .get_one::<String>("prompt")
         .cloned()
         .ok_or_else(|| CliError::CommandFailed("supervise prompt is required".to_string()))?;
-    let codex_bin = matches
-        .get_one::<String>("codex-bin")
-        .cloned()
-        .or_else(|| std::env::var("AJAX_CODEX_BIN").ok())
-        .unwrap_or_else(|| "codex".to_string());
+    let agent = matches
+        .get_one::<String>("agent")
+        .map(String::as_str)
+        .unwrap_or("codex");
     let json = matches.get_flag("json");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
@@ -25,8 +24,22 @@ pub(crate) fn supervise_command_output_and_events(
         .map_err(|error| CliError::CommandFailed(format!("failed to start supervisor: {error}")))?;
 
     let (events, output, supervise_result) = runtime.block_on(async move {
-        let mut config = MonitorConfig::codex_exec(prompt);
-        config.codex_bin = codex_bin;
+        let mut config = match agent {
+            "cursor" => MonitorConfig::cursor_exec(prompt),
+            _ => MonitorConfig::codex_exec(prompt),
+        };
+        config.agent_bin = match agent {
+            "cursor" => matches
+                .get_one::<String>("cursor-bin")
+                .cloned()
+                .or_else(|| std::env::var("AJAX_CURSOR_BIN").ok())
+                .unwrap_or_else(|| "cursor".to_string()),
+            _ => matches
+                .get_one::<String>("codex-bin")
+                .cloned()
+                .or_else(|| std::env::var("AJAX_CODEX_BIN").ok())
+                .unwrap_or_else(|| "codex".to_string()),
+        };
         let (handle, mut rx) =
             spawn_monitor(config).map_err(|error| CliError::CommandFailed(error.to_string()))?;
         let mut events = Vec::new();

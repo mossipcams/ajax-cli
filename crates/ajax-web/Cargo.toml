@@ -11,9 +11,17 @@ workspace = true
 
 [dependencies]
 ajax-core = { workspace = true }
+axum = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "time"] }
+tokio-rustls = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+tower-http = { workspace = true, features = ["trace"] }
+tracing = { workspace = true }
 web-push = { workspace = true }
+
+[dev-dependencies]
+rust_arkitect = { workspace = true }

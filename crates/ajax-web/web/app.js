@@ -38,6 +38,11 @@ function titleCase(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
+function requestId() {
+  if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
 function repoOf(handle) {
   const slash = handle.indexOf("/");
   return slash === -1 ? handle : handle.slice(0, slash);
@@ -443,7 +448,7 @@ async function submitNewTask(event) {
     const response = await fetch("/api/tasks", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ repo, title, agent }),
+      body: JSON.stringify({ repo, title, agent, request_id: requestId() }),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -509,10 +514,14 @@ async function runAction(button) {
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;
   try {
-    const response = await fetch("/api/actions", {
+    const response = await fetch("/api/operations", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ task_handle: button.dataset.task, action: button.dataset.action }),
+      body: JSON.stringify({
+        task_handle: button.dataset.task,
+        action: button.dataset.action,
+        request_id: requestId(),
+      }),
     });
     const payload = await response.json().catch(() => ({}));
     if (payload.cockpit) {
