@@ -101,6 +101,8 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         None
     };
 
+    let should_scan_orphans = should_scan_for_orphan_worktrees(&task_snapshots);
+
     for task_snapshot in task_snapshots {
         let task_id = task_snapshot.id.clone();
         let session_status =
@@ -289,6 +291,7 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     }
 
     if should_discover_orphans
+        && should_scan_orphans
         && !sessions_output.trim().is_empty()
         && windows_output.as_ref().is_none_or(|output| output.is_ok())
     {
@@ -302,6 +305,27 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     }
 
     Ok(changed)
+}
+fn should_scan_for_orphan_worktrees(task_snapshots: &[Task]) -> bool {
+    let now = SystemTime::now();
+    if task_snapshots
+        .iter()
+        .any(|task| task.lifecycle_status == LifecycleStatus::Provisioning)
+    {
+        return true;
+    }
+
+    task_snapshots.iter().any(|task| {
+        if !should_probe_live_substrate(task) {
+            return false;
+        }
+
+        task.runtime_projection.source == RuntimeObservationSource::Unknown
+            || task.runtime_projection.health == RuntimeHealth::Unobservable
+            || task
+                .runtime_projection
+                .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
+    })
 }
 
 fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
@@ -949,6 +973,15 @@ mod tests {
         let base = context_with_unchanged_running_task();
         let mut context =
             CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::UNIX_EPOCH,
+            RuntimeObservationSource::TmuxProbe,
+        );
         let mut runner = OrphanRecoveryRunner::default();
 
         let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
