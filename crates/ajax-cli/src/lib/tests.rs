@@ -2719,6 +2719,77 @@ fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
 }
 
 #[test]
+fn release_please_registers_workspace_crates_for_library_only_changes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+    )
+    .unwrap();
+    let packages = config["packages"].as_object().unwrap();
+
+    for package_path in [
+        "crates/ajax-cli",
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web",
+    ] {
+        assert!(
+            packages.contains_key(package_path),
+            "release-please should register {package_path} so library-only commits trigger a release"
+        );
+    }
+
+    let linked_versions = config["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| {
+            plugin.get("type").and_then(serde_json::Value::as_str) == Some("linked-versions")
+        })
+        .expect("linked-versions plugin should group workspace crates with ajax-cli");
+    let components = linked_versions["components"]
+        .as_array()
+        .expect("linked-versions components should be an array");
+
+    for component in [
+        "ajax-cli",
+        "ajax-core",
+        "ajax-supervisor",
+        "ajax-tui",
+        "ajax-web",
+    ] {
+        assert!(
+            components
+                .iter()
+                .any(|value| value.as_str() == Some(component)),
+            "linked-versions should include {component}"
+        );
+    }
+
+    for package_path in [
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web",
+    ] {
+        let package = packages
+            .get(package_path)
+            .unwrap_or_else(|| panic!("missing package config for {package_path}"));
+        assert_eq!(
+            package["skip-github-release"],
+            serde_json::Value::Bool(true),
+            "{package_path} should not publish its own GitHub release"
+        );
+        assert_eq!(
+            package["skip-changelog"],
+            serde_json::Value::Bool(true),
+            "{package_path} should not maintain a separate changelog"
+        );
+    }
+}
+
+#[test]
 fn release_please_rust_packages_point_to_package_manifests() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let config: serde_json::Value = serde_json::from_str(
