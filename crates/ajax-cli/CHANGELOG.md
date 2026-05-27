@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.4.0...ajax-cli-v0.5.0) (2026-05-27)
+
+
+### Features
+
+* expose visible PWA alerts opt-in with environment guidance ([#74](https://github.com/mossipcams/ajax-cli/issues/74)) ([3a68b52](https://github.com/mossipcams/ajax-cli/commit/3a68b52c97d04f847ef4a37ad0a675741b2a542a))
+
+
+### Bug Fixes
+
+* align Cursor supervisor events with task lifecycles ([#72](https://github.com/mossipcams/ajax-cli/issues/72)) ([51a6e0e](https://github.com/mossipcams/ajax-cli/commit/51a6e0ea9376a2a34ed57a72ef617263259bc4c4))
+
 ## [0.4.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.3.0...ajax-cli-v0.4.0) (2026-05-27)
 
 

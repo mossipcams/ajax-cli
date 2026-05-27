@@ -150,7 +150,11 @@ pub(crate) fn render_matches_mut(
         #[cfg(feature = "supervisor")]
         Some(("supervise", subcommand)) => {
             let supervised_task = validate_supervised_task(context, subcommand)?;
-            let (output, events) = supervise_command_output_and_events(subcommand)?;
+            let task_agent = supervised_task
+                .as_ref()
+                .and_then(|task_id| context.registry.get_task(task_id))
+                .map(supervisor_agent_for_task);
+            let (output, events) = supervise_command_output_and_events(subcommand, task_agent)?;
             let mut state_changed = false;
             if let Some(task_id) = supervised_task {
                 for event in &events {
@@ -455,6 +459,17 @@ fn validate_supervised_task(
     }
 
     Ok(Some(task.id.clone()))
+}
+
+#[cfg(feature = "supervisor")]
+fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor::SupervisorAgent {
+    use ajax_core::models::AgentClient;
+    use ajax_supervisor::SupervisorAgent;
+
+    match task.selected_agent {
+        AgentClient::Other => SupervisorAgent::Cursor,
+        AgentClient::Codex | AgentClient::Claude => SupervisorAgent::Codex,
+    }
 }
 
 #[cfg(test)]

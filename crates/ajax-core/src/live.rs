@@ -60,16 +60,24 @@ fn looks_like_active_agent_status(line: &str) -> bool {
         &[
             "codex is working",
             "claude is working",
+            "cursor agent",
+            "cursor is working",
             "background terminal running",
             "thinking",
             "waiting for background terminal",
             "working (",
             "working on your task",
+            "running tool",
+            "using tool",
         ],
     )
 }
 
 fn classify_pane_line(line: &str) -> Option<LiveObservation> {
+    if let Some(observation) = classify_cursor_stream_json_line(line) {
+        return Some(observation);
+    }
+
     let lower = line.to_ascii_lowercase();
 
     if is_completion_line(&lower) {
@@ -228,6 +236,222 @@ fn classify_pane_line(line: &str) -> Option<LiveObservation> {
     }
 
     None
+}
+
+fn classify_cursor_stream_json_line(line: &str) -> Option<LiveObservation> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let event_type = value.get("type")?.as_str()?.to_ascii_lowercase();
+
+    match event_type.as_str() {
+        "system" if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") => {
+            Some(LiveObservation::new(
+                LiveStatusKind::AgentRunning,
+                "agent running",
+            ))
+        }
+        "thinking" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "tool_call" => classify_cursor_tool_call_line(&value),
+        "assistant" => cursor_assistant_observation(&value),
+        "result" => classify_cursor_result_line(&value),
+        "request" => classify_cursor_request_line(&value),
+        "status" => classify_cursor_status_line(&value),
+        _ => None,
+    }
+}
+
+fn classify_cursor_tool_call_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
+        return match status {
+            "running" | "in_progress" => Some(LiveObservation::new(
+                LiveStatusKind::CommandRunning,
+                format!("tool running: {}", cursor_tool_name(value)),
+            )),
+            "error" | "failed" => Some(LiveObservation::new(
+                LiveStatusKind::CommandFailed,
+                "command failed",
+            )),
+            _ => None,
+        };
+    }
+
+    match value.get("subtype").and_then(serde_json::Value::as_str) {
+        Some("started") => value.get("tool_call").map(|tool_call| {
+            LiveObservation::new(
+                LiveStatusKind::CommandRunning,
+                format!("tool running: {}", cursor_nested_tool_name(tool_call)),
+            )
+        }),
+        Some("completed") => None,
+        _ => None,
+    }
+}
+
+fn classify_cursor_result_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    if value.get("is_error").and_then(serde_json::Value::as_bool) == Some(true)
+        || value.get("subtype").and_then(serde_json::Value::as_str) == Some("error")
+    {
+        return Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "command failed",
+        ));
+    }
+
+    if value.get("subtype").and_then(serde_json::Value::as_str) == Some("success")
+        || value.get("is_error").and_then(serde_json::Value::as_bool) == Some(false)
+    {
+        return Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+    }
+
+    None
+}
+
+fn classify_cursor_request_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    let prompt = value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("prompt").and_then(serde_json::Value::as_str))
+        .or_else(|| value.get("text").and_then(serde_json::Value::as_str))
+        .unwrap_or("waiting for operator input");
+
+    if cursor_mentions_approval(prompt) {
+        Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ))
+    } else {
+        Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ))
+    }
+}
+
+fn classify_cursor_status_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    let status = value
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+
+    match status.as_str() {
+        "RUNNING" | "CREATING" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "FINISHED" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
+        "ERROR" | "CANCELLED" | "EXPIRED" => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "command failed",
+        )),
+        _ => None,
+    }
+}
+
+fn cursor_assistant_observation(value: &serde_json::Value) -> Option<LiveObservation> {
+    let text = cursor_assistant_text(value)?;
+    if text.trim_end().ends_with('?') && !cursor_mentions_approval(&text) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+    }
+
+    let observation = classify_pane(&text);
+    if observation.kind == LiveStatusKind::Unknown {
+        Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ))
+    } else {
+        Some(observation)
+    }
+}
+
+fn cursor_assistant_text(value: &serde_json::Value) -> Option<String> {
+    let content = value.get("message")?.get("content")?.as_array()?;
+    let text = content
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+                return None;
+            }
+            block.get("text").and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn cursor_tool_name(value: &serde_json::Value) -> String {
+    value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "tool".to_string())
+}
+
+fn cursor_nested_tool_name(tool_call: &serde_json::Value) -> String {
+    if let Some(read) = tool_call.get("readToolCall") {
+        if let Some(path) = read
+            .get("args")
+            .and_then(|args| args.get("path"))
+            .and_then(serde_json::Value::as_str)
+        {
+            return format!("read {path}");
+        }
+        return "read".to_string();
+    }
+
+    if let Some(shell) = tool_call
+        .get("bashToolCall")
+        .or_else(|| tool_call.get("shellToolCall"))
+    {
+        if let Some(command) = shell
+            .get("args")
+            .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
+            .and_then(serde_json::Value::as_str)
+        {
+            return format!("shell: {command}");
+        }
+        return "shell".to_string();
+    }
+
+    tool_call
+        .as_object()
+        .and_then(|fields| fields.keys().next())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "tool".to_string())
+}
+
+fn cursor_mentions_approval(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "approval required",
+            "requires approval",
+            "waiting for approval",
+            "allow command",
+            "proceed?",
+            "do you want to proceed",
+            "approve to proceed",
+            "y/n",
+            "[y/n]",
+        ],
+    )
 }
 
 fn is_completion_line(lower: &str) -> bool {
@@ -478,6 +702,61 @@ mod tests {
             (
                 "There are failing checks on the PR",
                 LiveStatusKind::CiFailed,
+            ),
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, expected, "{pane}");
+        }
+    }
+
+    #[test]
+    fn pane_classifier_detects_cursor_stream_json_and_activity() {
+        for (pane, expected) in [
+            (
+                r#"{"type":"system","subtype":"init","agent":"cursor"}"#,
+                LiveStatusKind::AgentRunning,
+            ),
+            (r#"{"type":"thinking"}"#, LiveStatusKind::AgentRunning),
+            (
+                r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
+                LiveStatusKind::CommandRunning,
+            ),
+            (
+                r#"{"type":"tool_call","subtype":"started","call_id":"1","tool_call":{"readToolCall":{"args":{"path":"src/lib.rs"}}}}"#,
+                LiveStatusKind::CommandRunning,
+            ),
+            (
+                r#"{"type":"status","status":"RUNNING"}"#,
+                LiveStatusKind::AgentRunning,
+            ),
+            (
+                r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
+                LiveStatusKind::Done,
+            ),
+            (
+                r#"{"type":"result","subtype":"error","is_error":true,"result":"auth failed"}"#,
+                LiveStatusKind::CommandFailed,
+            ),
+            (
+                r#"{"type":"request","request_id":"req-1","message":"Allow command?"}"#,
+                LiveStatusKind::WaitingForApproval,
+            ),
+            (
+                r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Which branch should I use?"}]}}"#,
+                LiveStatusKind::WaitingForInput,
+            ),
+            (
+                "cursor agent --print --output-format stream-json fix tests",
+                LiveStatusKind::AgentRunning,
+            ),
+            (
+                concat!(
+                    r#"{"type":"thinking"}"#,
+                    "\n",
+                    r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
+                ),
+                LiveStatusKind::CommandRunning,
             ),
         ] {
             let observation = classify_pane(pane);
