@@ -14,7 +14,9 @@ mod status;
 mod architecture;
 
 pub use ajax_core::events::{AgentEvent, MonitorEvent, ProcessEvent, RepoEvent};
-pub use runtime::{spawn_monitor, GitSnapshotPolicy, MonitorConfig, MonitorExit, MonitorHandle};
+pub use runtime::{
+    spawn_monitor, GitSnapshotPolicy, MonitorConfig, MonitorExit, MonitorHandle, SupervisorAgent,
+};
 pub use status::SupervisorStatusMachine;
 
 #[derive(Debug)]
@@ -64,7 +66,7 @@ mod tests {
 
     use super::{
         spawn_monitor, AgentEvent, GitSnapshotPolicy, MonitorConfig, MonitorEvent, ProcessEvent,
-        RepoEvent, SupervisorError, SupervisorStatusMachine,
+        RepoEvent, SupervisorAgent, SupervisorError, SupervisorStatusMachine,
     };
 
     #[test]
@@ -78,7 +80,7 @@ mod tests {
     fn monitor_config_builds_codex_exec_defaults() {
         let config = MonitorConfig::codex_exec("fix tests");
 
-        assert_eq!(config.codex_bin, "codex");
+        assert_eq!(config.agent_bin, "codex");
         assert_eq!(config.prompt, "fix tests");
         assert_eq!(config.worktree_path, None);
         assert_eq!(config.channel_capacity, 1024);
@@ -90,7 +92,8 @@ mod tests {
     #[tokio::test]
     async fn spawn_monitor_returns_receiver_and_join_handle() {
         let config = MonitorConfig {
-            codex_bin: "/bin/echo".to_string(),
+            agent: SupervisorAgent::Codex,
+            agent_bin: "/bin/echo".to_string(),
             prompt: "ignored".to_string(),
             worktree_path: None,
             channel_capacity: 8,
@@ -121,7 +124,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.channel_capacity = 16;
         let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
 
@@ -173,7 +176,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.worktree_path = Some(root.clone());
         config.watch_filesystem = true;
         config.channel_capacity = 32;
@@ -225,7 +228,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.worktree_path = Some(root.clone());
         config.watch_filesystem = true;
         config.channel_capacity = 32;
@@ -277,7 +280,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.worktree_path = Some(root.clone());
         config.git_snapshots = GitSnapshotPolicy::OnStartAndExit;
         config.channel_capacity = 32;
@@ -326,7 +329,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.worktree_path = Some(root.clone());
         config.watch_filesystem = true;
         config.git_snapshots = GitSnapshotPolicy::OnFileChange;
@@ -385,7 +388,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.hang_after = Some(Duration::from_millis(100));
         config.channel_capacity = 32;
         let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");

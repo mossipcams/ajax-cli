@@ -2355,6 +2355,43 @@ mod tests {
     }
 
     #[test]
+    fn supervise_command_runs_cursor_stream_json_adapter_and_renders_events() {
+        let fake_cursor =
+            std::env::temp_dir().join(format!("ajax-cli-fake-cursor-{}", std::process::id()));
+        std::fs::write(
+            &fake_cursor,
+            "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc\"}\\n'\nprintf '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Approval required to run cargo test\"}]}}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&fake_cursor).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+        std::fs::set_permissions(&fake_cursor, permissions).unwrap();
+        let matches = build_cli()
+            .try_get_matches_from([
+                "ajax",
+                "supervise",
+                "--agent",
+                "cursor",
+                "--prompt",
+                "fix tests",
+                "--cursor-bin",
+                &fake_cursor.display().to_string(),
+            ])
+            .unwrap();
+        let (_, subcommand) = matches.subcommand().unwrap();
+
+        let (output, _) =
+            crate::supervise::supervise_command_output_and_events(subcommand).unwrap();
+
+        assert!(output.contains("process started"));
+        assert!(output.contains("agent started: cursor"));
+        assert!(output.contains("waiting for approval"));
+        assert!(output.contains("process exited: 0"));
+
+        let _ = std::fs::remove_file(fake_cursor);
+    }
+
+    #[test]
     fn supervise_command_reports_nonzero_agent_exit() {
         let fake_codex = std::env::temp_dir().join(format!(
             "ajax-cli-fake-codex-nonzero-{}",
