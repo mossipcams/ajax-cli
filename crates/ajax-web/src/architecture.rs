@@ -8,11 +8,41 @@ mod tests {
     };
 
     const SLICES: [&str; 4] = ["attention", "cockpit", "install", "operate"];
+    const ADAPTERS: [&str; 4] = ["assets", "http", "push", "tls"];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
 
     #[test]
-    fn web_adapters_do_not_depend_on_any_slice_or_runtime() {
+    fn each_web_adapter_does_not_depend_on_slices_or_runtime() {
+        for adapter in ADAPTERS {
+            let project = Project::from_current_crate();
+            let forbidden_slices = forbidden_paths_for_slices(&SLICES);
+            let forbidden_runtime = forbidden_runtime_dependencies();
+            let forbidden = forbidden_slices
+                .iter()
+                .chain(forbidden_runtime.iter())
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let module = format!("ajax-web::adapters::{adapter}");
+
+            #[rustfmt::skip]
+            let rules = ArchitecturalRules::define()
+                .rules_for_module(module.as_str())
+                    .it_must_not_depend_on(&forbidden)
+                .build();
+
+            let result = Arkitect::ensure_that(project).complies_with(rules);
+
+            assert!(
+                result.is_ok(),
+                "architecture violations in adapter `{adapter}`: {:#?}",
+                result.err().unwrap_or_default()
+            );
+        }
+    }
+
+    #[test]
+    fn action_vocabulary_does_not_depend_on_slices_or_runtime() {
         let project = Project::from_current_crate();
         let forbidden_slices = forbidden_paths_for_slices(&SLICES);
         let forbidden_runtime = forbidden_runtime_dependencies();
@@ -24,7 +54,7 @@ mod tests {
 
         #[rustfmt::skip]
         let rules = ArchitecturalRules::define()
-            .rules_for_module("ajax-web::adapters")
+            .rules_for_module("ajax-web::action_vocabulary")
                 .it_must_not_depend_on(&forbidden)
             .build();
 
@@ -32,7 +62,7 @@ mod tests {
 
         assert!(
             result.is_ok(),
-            "architecture violations: {:#?}",
+            "architecture violations in action_vocabulary: {:#?}",
             result.err().unwrap_or_default()
         );
     }
@@ -91,7 +121,7 @@ mod tests {
             "use crate::slices::install::pwa_shell;",
         );
         let rule = MustNotDependOnRule::new(
-            "ajax-web::adapters".to_string(),
+            "ajax-web::adapters::http".to_string(),
             forbidden_paths_for_slices(&["install"]),
         );
 
