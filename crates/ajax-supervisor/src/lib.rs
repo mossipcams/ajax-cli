@@ -410,6 +410,63 @@ mod tests {
     }
 
     #[test]
+    fn cursor_monitor_events_apply_waiting_and_reviewable_lifecycle() {
+        use ajax_core::{
+            events::apply_monitor_event_to_task,
+            models::{AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, SideFlag},
+        };
+
+        let mut task = task_fixture();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Started {
+                agent: "cursor".to_string(),
+            })
+        ));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::WaitingForApproval { command: None })
+        ));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Completed)
+        ));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    fn task_fixture() -> ajax_core::models::Task {
+        use ajax_core::models::{AgentClient, LifecycleStatus, Task, TaskId};
+
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Other,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
+
+    #[test]
     fn supervisor_errors_have_operator_facing_display() {
         assert_eq!(
             SupervisorError::Process("codex exited".to_string()).to_string(),

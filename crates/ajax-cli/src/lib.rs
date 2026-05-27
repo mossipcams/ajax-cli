@@ -2344,7 +2344,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         let (output, _) =
-            crate::supervise::supervise_command_output_and_events(subcommand).unwrap();
+            crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
 
         assert!(output.contains("process started"));
         assert!(output.contains("agent started: codex"));
@@ -2381,7 +2381,7 @@ mod tests {
         let (_, subcommand) = matches.subcommand().unwrap();
 
         let (output, _) =
-            crate::supervise::supervise_command_output_and_events(subcommand).unwrap();
+            crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap();
 
         assert!(output.contains("process started"));
         assert!(output.contains("agent started: cursor"));
@@ -2417,7 +2417,8 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
+        let error =
+            crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(matches!(error, CliError::CommandFailed(message)
@@ -2448,7 +2449,8 @@ mod tests {
             .unwrap();
         let (_, subcommand) = matches.subcommand().unwrap();
 
-        let error = crate::supervise::supervise_command_output_and_events(subcommand).unwrap_err();
+        let error =
+            crate::supervise::supervise_command_output_and_events(subcommand, None).unwrap_err();
 
         let _ = std::fs::remove_file(fake_codex);
         assert!(error.to_string().contains("codex exited with status 42"));
