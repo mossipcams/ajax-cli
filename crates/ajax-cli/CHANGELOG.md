@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.1...ajax-cli-v0.7.2) (2026-05-27)
+
+
+### Bug Fixes
+
+* stop persisting cockpit-hidden missing-substrate task ghosts ([#88](https://github.com/mossipcams/ajax-cli/issues/88)) ([3b8a81e](https://github.com/mossipcams/ajax-cli/commit/3b8a81e4484b2510570f4842949c1a233097fb6a))
+
 ## [0.7.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.0...ajax-cli-v0.7.1) (2026-05-27)
 
 
