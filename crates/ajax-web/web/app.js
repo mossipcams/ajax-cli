@@ -24,27 +24,8 @@ let lastFingerprint = null;
 let refreshInFlight = false;
 let detailHandle = null;
 let detailInFlight = false;
-let mutationInFlight = 0;
 const expandedCards = new Set();
 const pendingConfirms = new WeakMap();
-const inFlightActions = new Map();
-const actionStates = new Map();
-
-function blockSafariPwaZoomGestures() {
-  const preventGestureZoom = (event) => event.preventDefault();
-  for (const eventName of ["gesturestart", "gesturechange", "gestureend"]) {
-    document.addEventListener(eventName, preventGestureZoom, { passive: false });
-  }
-  document.addEventListener(
-    "touchmove",
-    (event) => {
-      if (event.touches.length > 1) event.preventDefault();
-    },
-    { passive: false },
-  );
-}
-
-blockSafariPwaZoomGestures();
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -60,26 +41,6 @@ function titleCase(value) {
 function requestId() {
   if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function actionKey(handle, action) {
-  return `${handle}\n${action}`;
-}
-
-function matchingActionButtons(handle, action) {
-  return Array.from(document.querySelectorAll("button[data-action]")).filter(
-    (button) => button.dataset.task === handle && button.dataset.action === action,
-  );
-}
-
-function setActionState(handle, action, status, message) {
-  let entry;
-  if (status === "sending") entry = { status: "sending", message };
-  else if (status === "succeeded") entry = { status: "succeeded", message };
-  else if (status === "failed") entry = { status: "failed", message };
-  else entry = { status, message };
-  actionStates.set(actionKey(handle, action), entry);
-  renderActionState(handle, action);
 }
 
 function repoOf(handle) {
@@ -126,37 +87,6 @@ function actionButton(action, handle, isPrimary) {
   button.dataset.task = handle;
   if (DESTRUCTIVE_ACTIONS.has(action)) button.dataset.destructive = "true";
   return button;
-}
-
-function latestActionState(handle) {
-  let latest = null;
-  for (const [key, state] of actionStates.entries()) {
-    if (key.startsWith(`${handle}\n`)) latest = state;
-  }
-  return latest;
-}
-
-function actionMessage(handle) {
-  const state = latestActionState(handle);
-  if (!state) return null;
-  const message = el("p", `action-state ${state.status}`, state.message);
-  message.dataset.actionState = handle;
-  return message;
-}
-
-function renderActionState(handle, action) {
-  const state = actionStates.get(actionKey(handle, action));
-  const text = state ? state.message : "";
-  document.querySelectorAll(`[data-action-state="${handle}"]`).forEach((node) => {
-    node.className = state ? `action-state ${state.status}` : "action-state";
-    node.textContent = text;
-    node.hidden = !state;
-  });
-  for (const button of matchingActionButtons(handle, action)) {
-    button.classList.toggle("is-running", state && state.status === "sending");
-    button.classList.toggle("is-succeeded", state && state.status === "succeeded");
-    button.classList.toggle("is-failed", state && state.status === "failed");
-  }
 }
 
 function appendDetailRow(parent, label, value) {
@@ -210,8 +140,6 @@ function taskCard(card, options) {
     article.append(details);
     article.classList.add("has-details");
   }
-  const message = actionMessage(card.qualified_handle);
-  if (message) article.append(message);
 
   return article;
 }
@@ -311,7 +239,7 @@ function setOnline(online) {
 
 async function loadCockpit(options) {
   const manual = options && options.manual;
-  if (refreshInFlight || document.hidden || mutationInFlight > 0) return;
+  if (refreshInFlight || document.hidden) return;
   refreshInFlight = true;
   if (manual) document.body.classList.add("is-refreshing");
   try {
@@ -416,8 +344,6 @@ function renderDetail(detail) {
     }
     detailContainer.append(actions);
   }
-  const message = actionMessage(detail.qualified_handle);
-  if (message) detailContainer.append(message);
 }
 
 function appendGridRow(grid, label, value) {
@@ -427,7 +353,7 @@ function appendGridRow(grid, label, value) {
 }
 
 async function loadDetail() {
-  if (!detailHandle || detailInFlight || document.hidden || mutationInFlight > 0) return;
+  if (!detailHandle || detailInFlight || document.hidden) return;
   detailInFlight = true;
   try {
     const response = await fetch(`/api/tasks/${detailHandle}`, { cache: "no-store" });
@@ -473,6 +399,7 @@ function openNewTaskSheet() {
   newTaskError.hidden = true;
   newTaskError.textContent = "";
   document.body.classList.add("sheet-open");
+  setTimeout(() => newTaskTitle.focus(), 60);
 }
 
 function closeNewTaskSheet() {
@@ -517,7 +444,6 @@ async function submitNewTask(event) {
   }
   const submit = newTaskForm.querySelector('button[type="submit"]');
   submit.disabled = true;
-  mutationInFlight += 1;
   try {
     const response = await fetch("/api/tasks", {
       method: "POST",
@@ -537,7 +463,6 @@ async function submitNewTask(event) {
     newTaskError.textContent = "Action failed — network error";
     newTaskError.hidden = false;
   } finally {
-    mutationInFlight = Math.max(0, mutationInFlight - 1);
     submit.disabled = false;
   }
 }
@@ -580,15 +505,11 @@ function tryConfirmDestructive(button) {
 }
 
 async function runAction(button) {
-  const handle = button.dataset.task;
-  const action = button.dataset.action;
-  const key = actionKey(handle, action);
-  if (inFlightActions.has(key)) return;
-  const peers = matchingActionButtons(handle, action);
+  const cardEl = button.closest(".card");
+  const peers = cardEl
+    ? Array.from(cardEl.querySelectorAll("button[data-action]"))
+    : [button];
   const originalLabel = button.textContent;
-  inFlightActions.set(key, true);
-  mutationInFlight += 1;
-  setActionState(handle, action, "sending", `${titleCase(action)} sending`);
   button.textContent = `${originalLabel} …`;
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;
@@ -597,35 +518,25 @@ async function runAction(button) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        task_handle: handle,
-        action,
+        task_handle: button.dataset.task,
+        action: button.dataset.action,
         request_id: requestId(),
       }),
     });
     const payload = await response.json().catch(() => ({}));
     if (payload.cockpit) {
       applyData(payload.cockpit);
-    } else if (mutationInFlight <= 1) {
+    } else {
       await loadCockpit();
     }
     if (!response.ok) {
-      const message = payload.error && payload.error.message
-        ? payload.error.message
-        : payload.error || `Action failed (HTTP ${response.status})`;
-      setActionState(handle, action, "failed", message);
-      statusLine.textContent = message;
+      statusLine.textContent = payload.error || `Action failed (HTTP ${response.status})`;
     } else if (detailHandle) {
-      setActionState(handle, action, "succeeded", `${titleCase(action)} succeeded`);
       loadDetail();
-    } else {
-      setActionState(handle, action, "succeeded", `${titleCase(action)} succeeded`);
     }
   } catch (error) {
-    setActionState(handle, action, "failed", "Action failed — network error");
     statusLine.textContent = "Action failed — network error";
   } finally {
-    inFlightActions.delete(key);
-    mutationInFlight = Math.max(0, mutationInFlight - 1);
     if (button.isConnected) {
       button.textContent = originalLabel;
       button.classList.remove("is-running");
@@ -718,7 +629,7 @@ async function enableNotifications() {
     const response = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subscription: subscription.toJSON() }),
+      body: JSON.stringify(subscription),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     notifyButton.hidden = true;

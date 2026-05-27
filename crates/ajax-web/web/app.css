@@ -37,7 +37,6 @@ body {
   width: 100%;
   max-width: 100vw;
   overflow-x: hidden;
-  touch-action: manipulation;
 }
 
 body {
@@ -49,21 +48,15 @@ body {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
-input,
-textarea,
-select,
 button {
   font: inherit;
-  font-size: 16px;
-}
-
-button {
   cursor: pointer;
 }
 
 input,
 textarea,
 select {
+  font: inherit;
   color: var(--ink);
 }
 
@@ -85,8 +78,8 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
-  padding: calc(8px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
-    8px calc(20px + env(safe-area-inset-left));
+  padding: calc(14px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    14px calc(20px + env(safe-area-inset-left));
   background: var(--paper);
   border-bottom: 1px solid var(--rule);
 }
@@ -153,11 +146,11 @@ body.is-offline .live-dot {
   border: 1px solid var(--rule-strong);
   border-radius: 999px;
   color: var(--ink);
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.08em;
-  padding: 5px 12px;
-  min-height: 36px;
+  padding: 6px 12px;
+  min-height: 30px;
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
 }
 
@@ -230,14 +223,14 @@ body.is-refreshing .refresh-glyph {
 main {
   width: min(720px, 100%);
   margin: 0 auto;
-  padding: 6px calc(20px + env(safe-area-inset-right)) 16px
+  padding: 18px calc(20px + env(safe-area-inset-right)) 40px
     calc(20px + env(safe-area-inset-left));
 }
 
 /* SECTION TITLES — small caps with a hairline underline ------------------- */
 .section-title {
-  margin: 12px 0 4px;
-  padding-bottom: 4px;
+  margin: 24px 0 8px;
+  padding-bottom: 6px;
   border-bottom: 1px solid var(--rule);
   font-size: 11px;
   font-weight: 600;
@@ -252,11 +245,11 @@ main {
 }
 
 #repos .section-title:first-of-type {
-  margin-top: 14px;
+  margin-top: 28px;
 }
 
 .group-title {
-  margin: 8px 0 4px;
+  margin: 18px 0 8px;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -276,7 +269,7 @@ main {
 .card {
   position: relative;
   background: var(--paper);
-  padding: 6px 14px 6px 16px;
+  padding: 14px 16px 14px 18px;
   border-left: 3px solid transparent;
   transition: background 140ms ease, border-left-color 140ms ease;
 }
@@ -357,14 +350,16 @@ main {
 }
 
 .summary {
-  margin: 2px 0 0;
+  margin: 4px 0 0;
   padding-left: 24px;
   font-size: 13px;
   color: var(--ink-soft);
 }
 
 .card:not(.expanded) .summary {
-  display: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Card-head action button (primary) -------------------------------------- */
@@ -379,7 +374,7 @@ main {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 6px 12px;
-  min-height: 36px;
+  min-height: 28px;
 }
 
 .card-head .action.primary:hover,
@@ -407,12 +402,12 @@ main {
   border: 1px solid var(--rule-strong);
   border-radius: 2px;
   color: var(--ink);
-  font-size: 16px;
+  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   padding: 6px 12px;
-  min-height: 36px;
+  min-height: 28px;
   transition: border-color 140ms ease, color 140ms ease, background 140ms ease;
 }
 
@@ -442,29 +437,6 @@ main {
 .action.is-running {
   color: var(--ink-muted);
   cursor: progress;
-}
-
-.action.is-succeeded {
-  border-color: var(--teal-bright);
-}
-
-.action.is-failed {
-  border-color: var(--terracotta-bright);
-  color: var(--terracotta-bright);
-}
-
-.action-state {
-  margin: 8px 0 0 24px;
-  font-size: 13px;
-  color: var(--ink-muted);
-}
-
-.action-state.succeeded {
-  color: var(--teal-bright);
-}
-
-.action-state.failed {
-  color: var(--terracotta-bright);
 }
 
 .action.confirming {

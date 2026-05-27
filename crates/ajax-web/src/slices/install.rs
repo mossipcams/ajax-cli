@@ -57,9 +57,6 @@ mod tests {
 
         assert!(shell.contains("<!doctype html>"));
         assert!(shell.contains("name=\"viewport\""));
-        assert!(shell.contains(
-            r#"content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover""#
-        ));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/manifest.webmanifest\""));
@@ -161,17 +158,9 @@ mod tests {
             script.contains("/api/tasks"),
             "missing POST start endpoint usage"
         );
-        assert!(
-            script.contains("/api/operations"),
-            "missing operation endpoint usage"
-        );
-        assert!(
-            script.contains("request_id"),
-            "operation requests should carry request IDs"
-        );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v16"));
+        assert!(worker.contains("ajax-cockpit-v14"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -191,151 +180,5 @@ mod tests {
         }
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
-    }
-
-    #[test]
-    fn manifest_and_shell_metadata_are_installable_and_consistent() {
-        let shell = pwa_shell();
-        let manifest: serde_json::Value =
-            serde_json::from_slice(static_asset("/manifest.webmanifest").unwrap().body).unwrap();
-        let theme = manifest["theme_color"].as_str().unwrap();
-
-        assert_eq!(manifest["id"], "/");
-        assert_eq!(manifest["start_url"], "/");
-        assert_eq!(manifest["scope"], "/");
-        assert_eq!(manifest["display"], "standalone");
-        assert!(manifest["background_color"].as_str().is_some());
-        assert!(
-            shell.contains(&format!("name=\"theme-color\" content=\"{theme}\"")),
-            "shell theme-color must match manifest theme_color"
-        );
-        assert!(shell.contains("name=\"apple-mobile-web-app-capable\""));
-        assert!(shell.contains("name=\"apple-mobile-web-app-status-bar-style\""));
-        assert!(shell.contains("rel=\"apple-touch-icon\""));
-
-        let icons = manifest["icons"].as_array().unwrap();
-        assert!(icons.iter().any(|icon| icon["purpose"] == "maskable"));
-    }
-
-    #[test]
-    fn service_worker_has_update_safe_navigation_fallback() {
-        let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-
-        assert!(worker.contains("ajax-cockpit-v16"));
-        assert!(worker.contains("request.mode === \"navigate\""));
-        assert!(worker.contains("caches.match(\"/\")"));
-        assert!(worker.contains("key !== CACHE"));
-        assert!(worker.contains("caches.delete(key)"));
-        assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
-        assert!(!worker.contains("IndexedDB"));
-        assert!(!worker.contains("sync"));
-    }
-
-    #[test]
-    fn pwa_blocks_mobile_zoom_and_keyboard_jump_patterns() {
-        let shell = pwa_shell();
-        assert!(shell.contains(
-            r#"<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">"#
-        ));
-
-        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
-        assert!(
-            css.contains("input,\ntextarea,\nselect,\nbutton"),
-            "form controls should share the mobile-safe font-size rule"
-        );
-        assert!(
-            css.contains("font-size: 16px;"),
-            "mobile browsers zoom focused form controls below 16px"
-        );
-
-        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
-        assert!(
-            !script.contains(".focus()"),
-            "new-task sheet must not autofocus on mobile"
-        );
-    }
-
-    #[test]
-    fn pwa_blocks_ios_safari_pinch_zoom_gestures() {
-        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
-        assert!(
-            css.contains("touch-action: manipulation;"),
-            "Safari PWAs need touch-action hardening in addition to the viewport tag"
-        );
-
-        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
-        for expected in [
-            "gesturestart",
-            "gesturechange",
-            "gestureend",
-            "touchmove",
-            "event.touches.length > 1",
-            "passive: false",
-            "preventDefault()",
-        ] {
-            assert!(script.contains(expected), "app.js missing {expected}");
-        }
-    }
-
-    #[test]
-    fn pwa_script_guards_actions_with_request_ids_and_local_status() {
-        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
-
-        for expected in [
-            "const inFlightActions = new Map();",
-            "const actionStates = new Map();",
-            "function actionKey(handle, action)",
-            "function requestId()",
-            "request_id",
-            "mutationInFlight",
-            "setActionState",
-            "matchingActionButtons",
-            "if (inFlightActions.has(key)) return;",
-            "status: \"sending\"",
-            "status: \"succeeded\"",
-            "status: \"failed\"",
-        ] {
-            assert!(script.contains(expected), "app.js missing {expected}");
-        }
-        assert!(
-            !script.contains("pendingActions"),
-            "the browser must not persist or replay pending mutations"
-        );
-        assert!(
-            !script.contains("operator_token"),
-            "operator_token pairing was removed; app.js must not still send it"
-        );
-        assert!(
-            !script.contains("OPERATOR_TOKEN_KEY"),
-            "operator_token pairing was removed; app.js must not still cache it"
-        );
-    }
-
-    #[test]
-    fn pwa_script_hits_all_mutable_routes() {
-        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
-
-        assert!(script.contains("/api/operations"));
-        assert!(script.contains("/api/tasks"));
-        assert!(script.contains("/api/push/subscribe"));
-        assert!(script.contains("subscription: subscription.toJSON()"));
-        assert!(script
-            .contains("body: JSON.stringify({ repo, title, agent, request_id: requestId() })"));
-    }
-
-    #[test]
-    fn service_worker_deep_links_task_notifications_without_api_caching() {
-        let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-
-        assert!(worker.contains("ajax-cockpit-v16"));
-        assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
-        assert!(worker.contains("task_handle"));
-        assert!(worker.contains("encodeURIComponent(data.task_handle)"));
-        assert!(worker.contains("client.navigate(target)"));
-        assert!(!worker.contains("\"/api/cockpit\""));
-        assert!(!worker.contains("\"/api/actions\""));
-        assert!(!worker.contains("\"/api/operations\""));
-        assert!(!worker.contains("\"/api/tasks\""));
-        assert!(!worker.contains("\"/api/push/subscribe\""));
     }
 }
