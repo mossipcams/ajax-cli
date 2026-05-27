@@ -27,6 +27,7 @@ use std::{
 use tower_http::trace::TraceLayer;
 
 use crate::{
+    action_vocabulary::{supported_web_action, SYNC_ACTION},
     adapters::{push, tls},
     slices::{attention, cockpit, install},
     WebError,
@@ -105,6 +106,7 @@ where
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks/{*handle}", get(axum_task_detail::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
+        .route("/api/tidy", post(axum_tidy::<C, B>))
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .route("/api/push/config", get(axum_push_config::<C, B>))
@@ -194,17 +196,25 @@ where
     C: CommandRunner + Send + 'static,
     B: RuntimeBridge<C> + Send + 'static,
 {
-    let mut known: BTreeSet<String> = BTreeSet::new();
+    let initial = {
+        let mut guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        refresh_attention_handles(&mut guard)
+    };
+    let mut notifier = attention::AttentionNotifier::seeded_with(initial);
+
     loop {
         tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
         let current = {
-            let guard = state
+            let mut guard = state
                 .shared
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            attention_handles(&commands::rebuild_cockpit_view(&guard.context))
+            refresh_attention_handles(&mut guard)
         };
-        for handle in attention::new_attention_handles(&known, &current) {
+        for handle in notifier.poll(current) {
             let notification = push::PushNotification {
                 title: "Ajax task needs attention".to_string(),
                 body: handle.clone(),
@@ -215,8 +225,23 @@ where
                 eprintln!("Ajax web push notification failed: {error}");
             }
         }
-        known = current;
     }
+}
+
+fn refresh_attention_handles<C, B>(guard: &mut WebSharedState<C, B>) -> BTreeSet<String>
+where
+    C: CommandRunner,
+    B: RuntimeBridge<C>,
+{
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = guard;
+    if let Err(error) = bridge.refresh_cockpit(context, runner) {
+        eprintln!("Ajax web attention refresh failed: {error}");
+    }
+    attention_handles(&commands::rebuild_cockpit_view(context))
 }
 
 async fn axum_pwa_shell() -> AxumResponse {
@@ -306,6 +331,34 @@ where
         bridge,
     } = &mut *guard;
     match handle_start_task_request(
+        &serde_json::to_string(&request).unwrap_or_default(),
+        context,
+        runner,
+        bridge,
+    ) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_tidy<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    Json(request): Json<crate::slices::operate::TidyRequest>,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    match handle_tidy_request(
         &serde_json::to_string(&request).unwrap_or_default(),
         context,
         runner,
@@ -479,20 +532,26 @@ pub trait RuntimeBridge<C: CommandRunner> {
         runner: &mut C,
     ) -> Result<bool, WebError>;
 
-    fn execute_mobile_action(
+    fn execute_operate(
         &mut self,
-        action: OperatorAction,
-        task_handle: &str,
+        request: crate::slices::operate::OperateRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure>;
+    ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
 
     fn execute_start_task(
         &mut self,
         request: crate::slices::operate::StartTaskRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure>;
+    ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
+
+    fn execute_tidy(
+        &mut self,
+        request: crate::slices::operate::TidyRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
 }
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -559,6 +618,7 @@ pub fn route_with_bridge<C: CommandRunner>(
             handle_action_request(request.body, context, runner, bridge)
         }
         ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
+        ("POST", "/api/tidy") => handle_tidy_request(request.body, context, runner, bridge),
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
@@ -589,53 +649,87 @@ fn handle_action_request<C: CommandRunner>(
 ) -> Result<Response, WebError> {
     let request: MobileActionRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-    let Some(action) = OperatorAction::from_label(&request.action) else {
-        return json_response(
-            400,
-            serde_json::json!({
-                "ok": false,
-                "error": format!("unknown action: {}", request.action),
-            }),
-        );
+
+    if let Some(failure) = unsupported_operate_action(&request.action) {
+        return operation_error_response(failure, context);
+    }
+
+    match bridge.execute_operate(
+        crate::slices::operate::OperateRequest {
+            task_handle: request.task_handle,
+            action: request.action,
+        },
+        context,
+        runner,
+    ) {
+        Ok(outcome) => operation_success_response(outcome, context),
+        Err(error) => operation_error_response(error, context),
+    }
+}
+
+fn handle_tidy_request<C: CommandRunner>(
+    body: &str,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut C,
+    bridge: &mut impl RuntimeBridge<C>,
+) -> Result<Response, WebError> {
+    let request: crate::slices::operate::TidyRequest = serde_json::from_str(body)
+        .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
+    match bridge.execute_tidy(request, context, runner) {
+        Ok(outcome) => operation_success_response(outcome, context),
+        Err(error) => operation_error_response(error, context),
+    }
+}
+
+fn operation_success_response(
+    outcome: crate::slices::operate::OperateOutcome,
+    context: &CommandContext<InMemoryRegistry>,
+) -> Result<Response, WebError> {
+    json_response(
+        200,
+        serde_json::json!({
+            "ok": true,
+            "state_changed": outcome.state_changed,
+            "output": outcome.output,
+            "cockpit": cockpit::browser_cockpit_view(context),
+        }),
+    )
+}
+
+fn operation_error_response(
+    error: ActionFailure,
+    context: &CommandContext<InMemoryRegistry>,
+) -> Result<Response, WebError> {
+    json_response(
+        409,
+        serde_json::json!({
+            "ok": false,
+            "error": error.message,
+            "state_changed": error.state_changed,
+            "cockpit": cockpit::browser_cockpit_view(context),
+        }),
+    )
+}
+
+fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
+    if action == SYNC_ACTION {
+        return None;
+    }
+    let operator_action = OperatorAction::from_label(action)?;
+    if supported_web_action(operator_action) {
+        return None;
+    }
+    let message = match operator_action {
+        OperatorAction::Resume => "resume requires native cockpit; use sync instead".to_string(),
+        OperatorAction::Start => {
+            "start uses the dedicated Web Cockpit new-task operation".to_string()
+        }
+        _ => format!("unsupported action: {action}"),
     };
-
-    if action == OperatorAction::Resume {
-        return json_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": "resume requires native cockpit task entry",
-            }),
-        );
-    }
-    if action == OperatorAction::Start {
-        return json_response(
-            400,
-            serde_json::json!({
-                "ok": false,
-                "error": "start requires task title input",
-            }),
-        );
-    }
-
-    match bridge.execute_mobile_action(action, &request.task_handle, context, runner) {
-        Ok(state_changed) => json_response(
-            200,
-            serde_json::json!({
-                "ok": true,
-                "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view(context),
-            }),
-        ),
-        Err(error) => json_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view(context),
-            }),
-        ),
-    }
+    Some(ActionFailure {
+        message,
+        state_changed: false,
+    })
 }
 
 fn handle_start_task_request<C: CommandRunner>(
@@ -647,22 +741,8 @@ fn handle_start_task_request<C: CommandRunner>(
     let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
     match bridge.execute_start_task(request, context, runner) {
-        Ok(state_changed) => json_response(
-            200,
-            serde_json::json!({
-                "ok": true,
-                "state_changed": state_changed,
-                "cockpit": cockpit::browser_cockpit_view(context),
-            }),
-        ),
-        Err(error) => json_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": error.message,
-                "cockpit": cockpit::browser_cockpit_view(context),
-            }),
-        ),
+        Ok(outcome) => operation_success_response(outcome, context),
+        Err(error) => operation_error_response(error, context),
     }
 }
 
@@ -724,11 +804,11 @@ fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
 #[cfg(test)]
 mod tests {
     use super::{route, route_with_bridge, ActionFailure, Request, RuntimeBridge};
+    use crate::slices::operate::{OperateOutcome, OperateRequest};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
         config::Config,
-        models::OperatorAction,
         registry::InMemoryRegistry,
     };
     use axum::{
@@ -740,24 +820,37 @@ mod tests {
 
     struct TestBridge {
         refreshed: bool,
-        action: Option<(OperatorAction, String)>,
-        action_count: usize,
-        action_delay: Duration,
-        action_result: Result<bool, ActionFailure>,
+        operate: Option<OperateRequest>,
+        operate_count: usize,
+        operate_delay: Duration,
+        operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
-        start_result: Result<bool, ActionFailure>,
+        start_result: Result<OperateOutcome, ActionFailure>,
+        tidy: Option<crate::slices::operate::TidyRequest>,
+        tidy_result: Result<OperateOutcome, ActionFailure>,
     }
 
     impl Default for TestBridge {
         fn default() -> Self {
             Self {
                 refreshed: false,
-                action: None,
-                action_count: 0,
-                action_delay: Duration::ZERO,
-                action_result: Ok(true),
+                operate: None,
+                operate_count: 0,
+                operate_delay: Duration::ZERO,
+                operate_result: Ok(OperateOutcome {
+                    state_changed: true,
+                    output: String::new(),
+                }),
                 start: None,
-                start_result: Ok(true),
+                start_result: Ok(OperateOutcome {
+                    state_changed: true,
+                    output: String::new(),
+                }),
+                tidy: None,
+                tidy_result: Ok(OperateOutcome {
+                    state_changed: false,
+                    output: "nothing to tidy".to_string(),
+                }),
             }
         }
     }
@@ -772,17 +865,16 @@ mod tests {
             Ok(false)
         }
 
-        fn execute_mobile_action(
+        fn execute_operate(
             &mut self,
-            action: OperatorAction,
-            task_handle: &str,
+            request: OperateRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
-        ) -> Result<bool, ActionFailure> {
-            self.action_count += 1;
-            std::thread::sleep(self.action_delay);
-            self.action = Some((action, task_handle.to_string()));
-            self.action_result.clone()
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.operate_count += 1;
+            std::thread::sleep(self.operate_delay);
+            self.operate = Some(request);
+            self.operate_result.clone()
         }
 
         fn execute_start_task(
@@ -790,9 +882,19 @@ mod tests {
             request: crate::slices::operate::StartTaskRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
-        ) -> Result<bool, ActionFailure> {
+        ) -> Result<OperateOutcome, ActionFailure> {
             self.start = Some(request);
             self.start_result.clone()
+        }
+
+        fn execute_tidy(
+            &mut self,
+            request: crate::slices::operate::TidyRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut OkRunner,
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.tidy = Some(request);
+            self.tidy_result.clone()
         }
     }
 
@@ -933,7 +1035,7 @@ mod tests {
             .shared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.action_count, 1);
+        assert_eq!(guard.bridge.operate_count, 1);
     }
 
     #[tokio::test]
@@ -974,7 +1076,7 @@ mod tests {
     async fn axum_blocks_conflicting_task_operations() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let bridge = TestBridge {
-            action_delay: Duration::from_millis(150),
+            operate_delay: Duration::from_millis(150),
             ..TestBridge::default()
         };
         let state =
@@ -1028,7 +1130,7 @@ mod tests {
             .shared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.action_count, 1);
+        assert_eq!(guard.bridge.operate_count, 1);
     }
 
     #[test]
@@ -1137,8 +1239,11 @@ mod tests {
         assert_eq!(body["state_changed"], true);
         assert!(body["cockpit"].is_object());
         assert_eq!(
-            bridge.action,
-            Some((OperatorAction::Review, "web/fix-login".to_string()))
+            bridge.operate,
+            Some(OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "review".to_string(),
+            })
         );
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -1262,7 +1367,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        assert_eq!(bridge.action, None);
+        assert_eq!(bridge.operate, None);
         std::fs::remove_dir_all(&dir).ok();
     }
 
