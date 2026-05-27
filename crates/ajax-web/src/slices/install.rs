@@ -123,6 +123,21 @@ mod tests {
     }
 
     #[test]
+    fn pwa_stylesheet_hides_scrollbars_while_preserving_overflow_scrolling() {
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+        let lowered = css.to_ascii_lowercase();
+
+        assert!(
+            lowered.contains("scrollbar-width: none"),
+            "css should hide scrollbars for Firefox and modern Safari"
+        );
+        assert!(
+            lowered.contains("::-webkit-scrollbar"),
+            "css should hide the iOS overlay scrollbar"
+        );
+    }
+
+    #[test]
     fn pwa_stylesheet_uses_mid_century_modern_palette_and_no_monospace_body() {
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
         let lowered = css.to_ascii_lowercase();
