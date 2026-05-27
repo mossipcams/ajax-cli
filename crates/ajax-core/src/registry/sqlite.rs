@@ -367,7 +367,27 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
 }
 
 fn is_registry_ghost_task(task: &Task) -> bool {
-    task.lifecycle_status == LifecycleStatus::Removed || task.has_side_flag(SideFlag::Stale)
+    if task.lifecycle_status == LifecycleStatus::Removed {
+        return true;
+    }
+    if task.has_side_flag(SideFlag::Stale) {
+        return true;
+    }
+    task.has_missing_substrate() && is_operational_missing_substrate_ghost(task)
+}
+
+fn is_operational_missing_substrate_ghost(task: &Task) -> bool {
+    matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Created
+            | LifecycleStatus::Provisioning
+            | LifecycleStatus::Active
+            | LifecycleStatus::Waiting
+            | LifecycleStatus::Reviewable
+            | LifecycleStatus::Mergeable
+            | LifecycleStatus::Orphaned
+            | LifecycleStatus::Error
+    )
 }
 
 fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
@@ -1483,6 +1503,67 @@ mod tests {
             .events_for_task(&TaskId::new("task-removed"))
             .is_empty());
         assert_eq!(restored.list_tasks().len(), 1);
+    }
+
+    #[test]
+    fn sqlite_registry_store_does_not_persist_active_missing_substrate_ghost() {
+        let mut registry = InMemoryRegistry::default();
+        let mut ghost = task("task-ghost", "web", "fix-login");
+        ghost.lifecycle_status = LifecycleStatus::Active;
+        ghost.add_side_flag(SideFlag::TmuxMissing);
+        registry.create_task(ghost).unwrap();
+        registry
+            .create_task(task("task-live", "web", "keep-task"))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-active-missing-substrate-ghost"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let ghost_task_count: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM registry_tasks WHERE task_id = 'task-ghost'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        drop(connection);
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(ghost_task_count, 0);
+        assert!(restored.get_task(&TaskId::new("task-ghost")).is_none());
+        assert!(restored.get_task(&TaskId::new("task-live")).is_some());
+    }
+
+    #[test]
+    fn sqlite_registry_store_persists_cleanable_missing_substrate_for_cleanup_retry() {
+        let mut registry = InMemoryRegistry::default();
+        let mut cleanable = task("task-cleanable", "web", "fix-login");
+        cleanable.lifecycle_status = LifecycleStatus::Cleanable;
+        cleanable.add_side_flag(SideFlag::WorktreeMissing);
+        registry.create_task(cleanable).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-cleanable-missing-substrate"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let task = restored
+            .get_task(&TaskId::new("task-cleanable"))
+            .expect("cleanable task with missing substrate should persist for tidy retry");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Cleanable);
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
     }
 
     #[test]
