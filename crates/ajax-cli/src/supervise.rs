@@ -1,5 +1,5 @@
-use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent, ProcessEvent};
-use clap::ArgMatches;
+use ajax_supervisor::{spawn_monitor, MonitorConfig, MonitorEvent, ProcessEvent, SupervisorAgent};
+use clap::{parser::ValueSource, ArgMatches};
 
 use crate::CliError;
 
@@ -7,15 +7,13 @@ const MAX_RETAINED_SUPERVISOR_EVENTS: usize = 256;
 
 pub(crate) fn supervise_command_output_and_events(
     matches: &ArgMatches,
+    task_agent: Option<SupervisorAgent>,
 ) -> Result<(String, Vec<MonitorEvent>), CliError> {
     let prompt = matches
         .get_one::<String>("prompt")
         .cloned()
         .ok_or_else(|| CliError::CommandFailed("supervise prompt is required".to_string()))?;
-    let agent = matches
-        .get_one::<String>("agent")
-        .map(String::as_str)
-        .unwrap_or("codex");
+    let agent = resolve_supervisor_agent(matches, task_agent);
     let json = matches.get_flag("json");
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_io()
@@ -71,6 +69,23 @@ pub(crate) fn supervise_command_output_and_events(
     }
 
     Ok((output, events))
+}
+
+fn resolve_supervisor_agent(
+    matches: &ArgMatches,
+    task_agent: Option<SupervisorAgent>,
+) -> &'static str {
+    if matches.value_source("agent") != Some(ValueSource::DefaultValue) {
+        return match matches.get_one::<String>("agent").map(String::as_str) {
+            Some("cursor") => "cursor",
+            _ => "codex",
+        };
+    }
+
+    match task_agent {
+        Some(SupervisorAgent::Cursor) => "cursor",
+        Some(SupervisorAgent::Codex) | None => "codex",
+    }
 }
 
 fn retain_supervisor_event(events: &mut Vec<MonitorEvent>, event: MonitorEvent) {
