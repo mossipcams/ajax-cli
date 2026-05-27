@@ -201,6 +201,7 @@ where
                 title: "Ajax task needs attention".to_string(),
                 body: handle.clone(),
                 tag: handle.clone(),
+                task_handle: handle.clone(),
             };
             if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
                 eprintln!("Ajax web push notification failed: {error}");
@@ -771,7 +772,7 @@ fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {
 }
 
 fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let subscription: push::PushSubscription = match serde_json::from_str(body) {
+    let subscription = match parse_push_subscription(body) {
         Ok(subscription) => subscription,
         Err(error) => {
             return json_response(
@@ -782,6 +783,15 @@ fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebEr
     };
     push::add_subscription(state_dir, subscription)?;
     json_response(200, serde_json::json!({ "ok": true }))
+}
+
+fn parse_push_subscription(body: &str) -> Result<push::PushSubscription, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_str(body)?;
+    if let Some(subscription) = value.get("subscription") {
+        serde_json::from_value(subscription.clone())
+    } else {
+        serde_json::from_value(value)
+    }
 }
 
 fn handle_push_unsubscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
@@ -1406,6 +1416,21 @@ mod tests {
         assert_eq!(subscribe.status_code, 200);
         assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 1);
 
+        let wrapped = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/push/subscribe",
+                body: r#"{"subscription":{"endpoint":"https://push.example/y","keys":{"p256dh":"k2","auth":"a2"}}}"#,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(wrapped.status_code, 200);
+        assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 2);
+
         let unsubscribe = route_with_bridge(
             Request {
                 method: "POST",
@@ -1419,6 +1444,21 @@ mod tests {
         )
         .unwrap();
         assert_eq!(unsubscribe.status_code, 200);
+        assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 1);
+
+        let unsubscribe_wrapped = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/push/unsubscribe",
+                body: r#"{"endpoint":"https://push.example/y"}"#,
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        assert_eq!(unsubscribe_wrapped.status_code, 200);
         assert!(crate::adapters::push::load_subscriptions(&dir).is_empty());
 
         std::fs::remove_dir_all(&dir).ok();
