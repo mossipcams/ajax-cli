@@ -13,6 +13,7 @@ pub use sqlite::SqliteRegistryStore;
 
 pub trait Registry {
     fn create_task(&mut self, task: Task) -> Result<(), RegistryError>;
+    fn delete_task(&mut self, task_id: &TaskId) -> Result<(), RegistryError>;
     fn get_task(&self, task_id: &TaskId) -> Option<&Task>;
     fn get_task_mut(&mut self, task_id: &TaskId) -> Option<&mut Task>;
     fn list_tasks(&self) -> Vec<&Task>;
@@ -81,6 +82,18 @@ impl Registry for InMemoryRegistry {
             RegistryEventKind::TaskCreated,
             "task created",
         ));
+
+        Ok(())
+    }
+
+    fn delete_task(&mut self, task_id: &TaskId) -> Result<(), RegistryError> {
+        if self.tasks.remove(task_id).is_none() {
+            return Err(RegistryError::TaskNotFound(task_id.clone()));
+        }
+
+        self.events.retain(|event| &event.task_id != task_id);
+        self.step_receipts
+            .retain(|identity, _| &identity.task_id != task_id);
 
         Ok(())
     }
@@ -356,6 +369,8 @@ pub enum RegistryEventKind {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::{
         InMemoryRegistry, Registry, RegistryError, RegistryEventKind, RegistrySnapshotError,
     };
@@ -795,6 +810,35 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, RegistryError::TaskNotFound(TaskId::new("missing")));
+    }
+
+    #[test]
+    fn delete_task_removes_task_events_and_receipts() {
+        let mut registry = InMemoryRegistry::default();
+        let task_id = TaskId::new("task-1");
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        registry
+            .record_event(task_id.clone(), RegistryEventKind::UserNote, "ready")
+            .unwrap();
+        registry
+            .record_step_receipt(StepReceipt {
+                task_id: task_id.clone(),
+                operation: TaskOperationKind::Drop,
+                step_key: "worktree_absent".to_string(),
+                target: "/tmp/web".to_string(),
+                status: crate::models::StepReceiptStatus::Succeeded,
+                receipt_json: "{}".to_string(),
+                created_at: SystemTime::UNIX_EPOCH,
+            })
+            .unwrap();
+
+        registry.delete_task(&task_id).unwrap();
+
+        assert!(registry.get_task(&task_id).is_none());
+        assert!(registry.events_for_task(&task_id).is_empty());
+        assert!(registry.step_receipts_for_task(&task_id).is_empty());
     }
 
     #[test]

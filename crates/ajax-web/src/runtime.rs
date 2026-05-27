@@ -7,15 +7,24 @@ use ajax_core::{
     output::CockpitView,
     registry::{InMemoryRegistry, Registry},
 };
+use axum::{
+    body::Bytes,
+    extract::{Path as AxumPath, State},
+    http::{header, HeaderValue, StatusCode, Uri},
+    response::{IntoResponse, Response as AxumResponse},
+    routing::{get, post},
+    serve::Listener,
+    Json, Router,
+};
 use serde::Deserialize;
 use std::{
-    collections::BTreeSet,
-    io::{Read, Write},
-    net::{TcpListener, TcpStream},
-    path::Path,
+    collections::{BTreeSet, HashMap},
+    net::{SocketAddr, ToSocketAddrs},
+    path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
 };
+use tower_http::trace::TraceLayer;
 
 use crate::{
     adapters::{push, tls},
@@ -23,16 +32,527 @@ use crate::{
     WebError,
 };
 
+pub struct WebAppState<C, B> {
+    shared: Arc<Mutex<WebSharedState<C, B>>>,
+    operations: Arc<Mutex<OperationCoordinator>>,
+    state_dir: Arc<PathBuf>,
+}
+
+struct WebSharedState<C, B> {
+    context: CommandContext<InMemoryRegistry>,
+    runner: C,
+    bridge: B,
+}
+
+impl<C, B> Clone for WebAppState<C, B> {
+    fn clone(&self) -> Self {
+        Self {
+            shared: Arc::clone(&self.shared),
+            operations: Arc::clone(&self.operations),
+            state_dir: Arc::clone(&self.state_dir),
+        }
+    }
+}
+
+impl<C, B> WebAppState<C, B> {
+    pub fn new(
+        context: CommandContext<InMemoryRegistry>,
+        runner: C,
+        bridge: B,
+        state_dir: PathBuf,
+    ) -> Self {
+        Self {
+            shared: Arc::new(Mutex::new(WebSharedState {
+                context,
+                runner,
+                bridge,
+            })),
+            operations: Arc::new(Mutex::new(OperationCoordinator::default())),
+            state_dir: Arc::new(state_dir),
+        }
+    }
+}
+
+#[derive(Default)]
+struct OperationCoordinator {
+    completed: HashMap<String, Response>,
+    in_flight_requests: BTreeSet<String>,
+    in_flight_tasks: BTreeSet<String>,
+}
+
+pub fn axum_app<C, B>(state: WebAppState<C, B>) -> Router
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    Router::new()
+        .route("/", get(axum_pwa_shell))
+        .route("/index.html", get(axum_pwa_shell))
+        .route("/app.css", get(axum_app_css))
+        .route("/app.js", get(axum_app_js))
+        .route("/manifest.webmanifest", get(axum_manifest))
+        .route("/sw.js", get(axum_service_worker))
+        .route("/icons/{*path}", get(axum_icon))
+        .route("/api/health", get(axum_health))
+        .route("/api/cockpit", get(axum_cockpit::<C, B>))
+        .route("/api/tasks/{*handle}", get(axum_task_detail::<C, B>))
+        .route("/api/tasks", post(axum_start_task::<C, B>))
+        .route("/api/actions", post(axum_action::<C, B>))
+        .route("/api/operations", post(axum_action::<C, B>))
+        .route("/api/push/config", get(axum_push_config::<C, B>))
+        .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
+        .route("/api/push/unsubscribe", post(axum_push_unsubscribe::<C, B>))
+        .fallback(axum_fallback)
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+pub fn serve_axum_web<C, B>(host: &str, port: u16, state: WebAppState<C, B>) -> Result<(), WebError>
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let identity = tls::load_or_create_identity(&state.state_dir)?;
+    let address = resolve_bind_address(host, port)?;
+    eprintln!("Ajax mobile web listening on https://{host}:{port}");
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
+
+    runtime.block_on(async move {
+        let tls_config = tls::tls_server_config(&identity)?;
+        let tcp_listener = tokio::net::TcpListener::bind(address)
+            .await
+            .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
+        let tls_listener = TlsListener {
+            listener: tcp_listener,
+            acceptor: tokio_rustls::TlsAcceptor::from(tls_config),
+        };
+        tokio::spawn(run_attention_poller_for_state(state.clone()));
+        axum::serve(tls_listener, axum_app(state))
+            .await
+            .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
+    })
+}
+
+struct TlsListener {
+    listener: tokio::net::TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+}
+
+impl Listener for TlsListener {
+    type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;
+    type Addr = SocketAddr;
+
+    async fn accept(&mut self) -> (Self::Io, Self::Addr) {
+        loop {
+            let (stream, address) = match self.listener.accept().await {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    eprintln!("Ajax web accept error: {error}");
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            match self.acceptor.accept(stream).await {
+                Ok(stream) => return (stream, address),
+                Err(error) => {
+                    eprintln!("Ajax web TLS handshake error from {address}: {error}");
+                    continue;
+                }
+            }
+        }
+    }
+
+    fn local_addr(&self) -> std::io::Result<Self::Addr> {
+        self.listener.local_addr()
+    }
+}
+
+fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, WebError> {
+    (host, port)
+        .to_socket_addrs()
+        .map_err(|error| WebError::CommandFailed(format!("web bind address failed: {error}")))?
+        .next()
+        .ok_or_else(|| {
+            WebError::CommandFailed(format!("web bind address unresolved: {host}:{port}"))
+        })
+}
+
+async fn run_attention_poller_for_state<C, B>(state: WebAppState<C, B>)
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut known: BTreeSet<String> = BTreeSet::new();
+    loop {
+        tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
+        let current = {
+            let guard = state
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            attention_handles(&commands::rebuild_cockpit_view(&guard.context))
+        };
+        for handle in attention::new_attention_handles(&known, &current) {
+            let notification = push::PushNotification {
+                title: "Ajax task needs attention".to_string(),
+                body: handle.clone(),
+                tag: handle.clone(),
+            };
+            if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
+                eprintln!("Ajax web push notification failed: {error}");
+            }
+        }
+        known = current;
+    }
+}
+
+async fn axum_pwa_shell() -> AxumResponse {
+    html_response(install::pwa_shell().as_bytes().to_vec())
+}
+
+async fn axum_app_css() -> AxumResponse {
+    static_asset_response("/app.css")
+}
+
+async fn axum_app_js() -> AxumResponse {
+    static_asset_response("/app.js")
+}
+
+async fn axum_manifest() -> AxumResponse {
+    static_asset_response("/manifest.webmanifest")
+}
+
+async fn axum_service_worker() -> AxumResponse {
+    static_asset_response("/sw.js")
+}
+
+async fn axum_icon(AxumPath(path): AxumPath<String>) -> AxumResponse {
+    static_asset_response(&format!("/icons/{path}"))
+}
+
+async fn axum_health() -> AxumResponse {
+    json_value_response(200, serde_json::json!({ "ok": true }))
+}
+
+async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    match handle_refreshed_cockpit_request(context, runner, bridge) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_task_detail<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    AxumPath(handle): AxumPath<String>,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match cockpit::browser_task_detail_view(&guard.context, &handle) {
+        Some(detail) => json_value_response(200, serde_json::to_value(detail).unwrap_or_default()),
+        None => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+    }
+}
+
+async fn axum_start_task<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    Json(request): Json<crate::slices::operate::StartTaskRequest>,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    match handle_start_task_request(
+        &serde_json::to_string(&request).unwrap_or_default(),
+        context,
+        runner,
+        bridge,
+    ) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let request: MobileActionRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("json parse failed: {error}"),
+                }),
+            );
+        }
+    };
+    let request_id = request.request_id.clone();
+    let task_key = request.task_handle.clone();
+    {
+        let mut operations = state
+            .operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(request_id) = request_id.as_ref() {
+            if let Some(response) = operations.completed.get(request_id) {
+                return response.clone().into_axum_response();
+            }
+            if !operations.in_flight_requests.insert(request_id.clone()) {
+                return json_value_response(
+                    409,
+                    serde_json::json!({
+                        "ok": false,
+                        "request_id": request_id,
+                        "error": "operation already in progress",
+                    }),
+                );
+            }
+        }
+        if !operations.in_flight_tasks.insert(task_key.clone()) {
+            if let Some(request_id) = request_id.as_ref() {
+                operations.in_flight_requests.remove(request_id);
+            }
+            return json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": "task operation already in progress",
+                }),
+            );
+        }
+    }
+
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        runner,
+        bridge,
+    } = &mut *guard;
+    let response = match handle_action_request(
+        &serde_json::to_string(&request).unwrap_or_default(),
+        context,
+        runner,
+        bridge,
+    ) {
+        Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+        Err(error) => response_from_web_error(error, request_id.as_deref()),
+    };
+    drop(guard);
+
+    let mut operations = state
+        .operations
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    operations.in_flight_tasks.remove(&task_key);
+    if let Some(request_id) = request_id.as_ref() {
+        operations.in_flight_requests.remove(request_id);
+        operations
+            .completed
+            .insert(request_id.clone(), response.clone());
+    }
+
+    response.into_axum_response()
+}
+
+async fn axum_push_config<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_config(&state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_push_subscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: String,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_subscribe(&body, &state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_push_unsubscribe<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: String,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    match handle_push_unsubscribe(&body, &state.state_dir) {
+        Ok(response) => response.into_axum_response(),
+        Err(error) => web_error_response(error),
+    }
+}
+
+async fn axum_fallback(uri: Uri) -> AxumResponse {
+    if uri.path().starts_with("/api/") {
+        return json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "not found" }),
+        );
+    }
+    text_axum_response(404, "not found")
+}
+
+fn static_asset_response(path: &str) -> AxumResponse {
+    match install::static_asset(path) {
+        Some(asset) => bytes_axum_response(200, asset.content_type, asset.body.to_vec()),
+        None => text_axum_response(404, "not found"),
+    }
+}
+
+fn html_response(body: Vec<u8>) -> AxumResponse {
+    bytes_axum_response(200, "text/html; charset=utf-8", body)
+}
+
+fn text_axum_response(status_code: u16, body: &str) -> AxumResponse {
+    bytes_axum_response(
+        status_code,
+        "text/plain; charset=utf-8",
+        body.as_bytes().to_vec(),
+    )
+}
+
+fn json_value_response(status_code: u16, value: serde_json::Value) -> AxumResponse {
+    match serde_json::to_vec(&value) {
+        Ok(body) => bytes_axum_response(status_code, "application/json; charset=utf-8", body),
+        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
+    }
+}
+
+fn bytes_axum_response(
+    status_code: u16,
+    content_type: &'static str,
+    body: Vec<u8>,
+) -> AxumResponse {
+    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let mut response = (status, body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+    apply_no_store(&mut response);
+    response
+}
+
+fn web_error_response(error: WebError) -> AxumResponse {
+    json_value_response(
+        500,
+        serde_json::json!({
+            "ok": false,
+            "error": error.to_string(),
+        }),
+    )
+}
+
+fn response_from_web_error(error: WebError, request_id: Option<&str>) -> Response {
+    let mut value = serde_json::json!({
+        "ok": false,
+        "error": error.to_string(),
+    });
+    if let Some(request_id) = request_id {
+        value["request_id"] = serde_json::Value::String(request_id.to_string());
+    }
+    Response {
+        status_code: 500,
+        content_type: "application/json; charset=utf-8",
+        body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{\"ok\":false}".to_vec()),
+    }
+}
+
+fn operation_response_with_request_id(
+    mut response: Response,
+    request_id: Option<&str>,
+) -> Response {
+    let Some(request_id) = request_id else {
+        return response;
+    };
+    if response.content_type != "application/json; charset=utf-8" {
+        return response;
+    }
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&response.body) else {
+        return response;
+    };
+    value["request_id"] = serde_json::Value::String(request_id.to_string());
+    if let Ok(body) = serde_json::to_vec(&value) {
+        response.body = body;
+    }
+    response
+}
+
+fn apply_no_store(response: &mut AxumResponse) {
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+}
+
 pub struct Request<'a> {
     pub method: &'a str,
     pub path: &'a str,
     pub body: &'a str,
 }
 
+#[derive(Clone)]
 pub struct Response {
     pub status_code: u16,
     pub content_type: &'static str,
     pub body: Vec<u8>,
+}
+
+impl Response {
+    fn into_axum_response(self) -> AxumResponse {
+        bytes_axum_response(self.status_code, self.content_type, self.body)
+    }
 }
 
 #[derive(Debug)]
@@ -69,8 +589,10 @@ pub trait RuntimeBridge<C: CommandRunner> {
     ) -> Result<bool, ActionFailure>;
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, serde::Serialize)]
 struct MobileActionRequest {
+    #[serde(default)]
+    request_id: Option<String>,
     task_handle: String,
     action: String,
 }
@@ -127,7 +649,9 @@ pub fn route_with_bridge<C: CommandRunner>(
     let path = request.path.split('?').next().unwrap_or(request.path);
     match (request.method, path) {
         ("GET", "/api/cockpit") => handle_refreshed_cockpit_request(context, runner, bridge),
-        ("POST", "/api/actions") => handle_action_request(request.body, context, runner, bridge),
+        ("POST", "/api/actions") | ("POST", "/api/operations") => {
+            handle_action_request(request.body, context, runner, bridge)
+        }
         ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
@@ -136,50 +660,6 @@ pub fn route_with_bridge<C: CommandRunner>(
             RouteError::Json(error) => WebError::JsonSerialization(error.to_string()),
         }),
     }
-}
-
-pub fn serve_mobile_web_with_bridge<C: CommandRunner>(
-    host: &str,
-    port: u16,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let identity = tls::load_or_create_identity(state_dir)?;
-    let tls_config = tls::tls_server_config(&identity)?;
-
-    let listener = TcpListener::bind((host, port))
-        .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
-    eprintln!("Ajax mobile web listening on https://{host}:{port}");
-
-    let shared = Mutex::new(context);
-    std::thread::scope(|scope| {
-        let poller_state = &shared;
-        let poller_dir = state_dir.to_path_buf();
-        scope.spawn(move || run_attention_poller(poller_state, &poller_dir));
-
-        for stream in listener.incoming() {
-            let stream = match stream {
-                Ok(stream) => stream,
-                Err(error) => {
-                    eprintln!("Ajax web accept error: {error}");
-                    continue;
-                }
-            };
-            let mut guard = shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let context: &mut CommandContext<InMemoryRegistry> = &mut guard;
-            if let Err(error) =
-                serve_tls_connection(stream, &tls_config, context, runner, bridge, state_dir)
-            {
-                eprintln!("Ajax web connection error: {error}");
-            }
-        }
-    });
-
-    Ok(())
 }
 
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
@@ -318,107 +798,12 @@ fn handle_push_unsubscribe(body: &str, state_dir: &Path) -> Result<Response, Web
 
 const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
-fn run_attention_poller(state: &Mutex<&mut CommandContext<InMemoryRegistry>>, dir: &Path) {
-    let mut known: BTreeSet<String> = BTreeSet::new();
-    loop {
-        std::thread::sleep(ATTENTION_POLL_INTERVAL);
-        let current = {
-            let guard = state
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            attention_handles(&commands::rebuild_cockpit_view(&**guard))
-        };
-        for handle in attention::new_attention_handles(&known, &current) {
-            let notification = push::PushNotification {
-                title: "Ajax task needs attention".to_string(),
-                body: handle.clone(),
-                tag: handle.clone(),
-            };
-            if let Err(error) = push::send_to_all(dir, &notification) {
-                eprintln!("Ajax web push notification failed: {error}");
-            }
-        }
-        known = current;
-    }
-}
-
 fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
     view.inbox
         .items
         .iter()
         .map(|item| item.task_handle.clone())
         .collect()
-}
-
-fn serve_tls_connection<C: CommandRunner>(
-    tcp: TcpStream,
-    tls_config: &Arc<rustls::ServerConfig>,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let connection = rustls::ServerConnection::new(Arc::clone(tls_config))
-        .map_err(|error| WebError::CommandFailed(format!("web tls session failed: {error}")))?;
-    let stream = rustls::StreamOwned::new(connection, tcp);
-    serve_connection(stream, context, runner, bridge, state_dir)
-}
-
-pub fn serve_connection<S: Read + Write, C: CommandRunner>(
-    mut stream: S,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
-) -> Result<(), WebError> {
-    let mut buffer = [0_u8; 8192];
-    let bytes_read = stream
-        .read(&mut buffer)
-        .map_err(|error| WebError::CommandFailed(format!("web request read failed: {error}")))?;
-    let request = String::from_utf8_lossy(&buffer[..bytes_read]);
-    let Some(request_line) = request.lines().next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let mut parts = request_line.split_whitespace();
-    let Some(method) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let Some(path) = parts.next() else {
-        return write_http_response(stream, text_response(400, "bad request"));
-    };
-    let body = request.split("\r\n\r\n").nth(1).unwrap_or("");
-    let response = route_with_bridge(
-        Request { method, path, body },
-        context,
-        runner,
-        bridge,
-        state_dir,
-    )?;
-
-    write_http_response(stream, response)
-}
-
-fn write_http_response<S: Write>(mut stream: S, response: Response) -> Result<(), WebError> {
-    let status_text = match response.status_code {
-        200 => "OK",
-        400 => "Bad Request",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        409 => "Conflict",
-        _ => "Internal Server Error",
-    };
-    let head = format!(
-        "HTTP/1.1 {} {}\r\nContent-Type: {}\r\nCache-Control: no-store\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        response.status_code,
-        status_text,
-        response.content_type,
-        response.body.len()
-    );
-    stream
-        .write_all(head.as_bytes())
-        .and_then(|_| stream.write_all(&response.body))
-        .and_then(|_| stream.flush())
-        .map_err(|error| WebError::CommandFailed(format!("web response write failed: {error}")))
 }
 
 fn text_response(status_code: u16, body: &str) -> Response {
@@ -440,9 +825,7 @@ fn json_response(status_code: u16, value: serde_json::Value) -> Result<Response,
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        route, route_with_bridge, serve_connection, ActionFailure, Request, RuntimeBridge,
-    };
+    use super::{route, route_with_bridge, ActionFailure, Request, RuntimeBridge};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -450,13 +833,18 @@ mod tests {
         models::OperatorAction,
         registry::InMemoryRegistry,
     };
-    use std::cell::RefCell;
-    use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request as AxumRequest, StatusCode},
+    };
+    use std::time::Duration;
+    use tower::ServiceExt;
 
     struct TestBridge {
         refreshed: bool,
         action: Option<(OperatorAction, String)>,
+        action_count: usize,
+        action_delay: Duration,
         action_result: Result<bool, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
         start_result: Result<bool, ActionFailure>,
@@ -467,6 +855,8 @@ mod tests {
             Self {
                 refreshed: false,
                 action: None,
+                action_count: 0,
+                action_delay: Duration::ZERO,
                 action_result: Ok(true),
                 start: None,
                 start_result: Ok(true),
@@ -491,6 +881,8 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
         ) -> Result<bool, ActionFailure> {
+            self.action_count += 1;
+            std::thread::sleep(self.action_delay);
             self.action = Some((action, task_handle.to_string()));
             self.action_result.clone()
         }
@@ -518,28 +910,6 @@ mod tests {
         }
     }
 
-    struct MockStream {
-        input: Cursor<Vec<u8>>,
-        output: Rc<RefCell<Vec<u8>>>,
-    }
-
-    impl Read for MockStream {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.input.read(buf)
-        }
-    }
-
-    impl Write for MockStream {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.output.borrow_mut().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -549,6 +919,237 @@ mod tests {
             "ajax-web-runtime-{tag}-{}-{nanos}",
             std::process::id()
         ))
+    }
+
+    #[tokio::test]
+    async fn axum_router_serves_static_shell_and_cockpit_json() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-static"),
+        );
+        let app = super::axum_app(state);
+
+        let shell = app
+            .clone()
+            .oneshot(AxumRequest::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert_eq!(shell.headers()["content-type"], "text/html; charset=utf-8");
+        let shell_body = to_bytes(shell.into_body(), usize::MAX).await.unwrap();
+        assert!(std::str::from_utf8(&shell_body)
+            .unwrap()
+            .contains("Ajax Cockpit"));
+
+        let cockpit = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(
+            cockpit.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let cockpit_body = to_bytes(cockpit.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&cockpit_body).unwrap()["cards"],
+            serde_json::json!([])
+        );
+
+        let missing_api = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/missing")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            missing_api.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let missing_api_body = to_bytes(missing_api.into_body(), usize::MAX).await.unwrap();
+        assert!(!std::str::from_utf8(&missing_api_body)
+            .unwrap()
+            .contains("Ajax Cockpit"));
+    }
+
+    #[tokio::test]
+    async fn axum_operations_are_idempotent_by_request_id() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-idempotency"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let operation = r#"{"request_id":"req-1","task_handle":"web/fix-login","action":"review"}"#;
+        let first = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(operation))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
+        let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+        assert_eq!(first_json["ok"], true);
+        assert_eq!(first_json["request_id"], "req-1");
+
+        let second = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(operation))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
+        let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+        assert_eq!(second_json, first_json);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.action_count, 1);
+    }
+
+    #[tokio::test]
+    async fn axum_operation_parse_errors_are_json() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-json-error"),
+        );
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{not-json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"].as_str().unwrap_or_default().contains("json"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_blocks_conflicting_task_operations() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let bridge = TestBridge {
+            action_delay: Duration::from_millis(150),
+            ..TestBridge::default()
+        };
+        let state =
+            super::WebAppState::new(context, OkRunner, bridge, scratch_dir("axum-conflict"));
+        let app = super::axum_app(state.clone());
+
+        let first_app = app.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .method("POST")
+                        .uri("/api/operations")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let conflict = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"req-b","task_handle":"web/fix-login","action":"ship"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["request_id"], "req-b");
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("already in progress"));
+
+        assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.action_count, 1);
+    }
+
+    #[test]
+    fn production_server_uses_axum_instead_of_manual_http_loop() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .unwrap();
+        let server_fn = source
+            .split("pub fn serve_axum_web")
+            .nth(1)
+            .and_then(|tail| tail.split("fn resolve_bind_address").next())
+            .unwrap();
+
+        assert!(server_fn.contains("axum::serve"));
+        assert!(server_fn.contains("TlsListener"));
+        assert!(server_fn.contains("axum_app"));
+        assert!(!server_fn.contains("listener.incoming()"));
+        assert!(!server_fn.contains("serve_tls_connection"));
     }
 
     #[test]
@@ -736,6 +1337,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             })
         );
         std::fs::remove_dir_all(&dir).ok();
@@ -823,23 +1425,14 @@ mod tests {
     }
 
     #[test]
-    fn runtime_serves_a_request_over_a_generic_stream() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let mut bridge = TestBridge::default();
-        let dir = scratch_dir("stream");
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let stream = MockStream {
-            input: Cursor::new(b"GET /app.css HTTP/1.1\r\nHost: ajax\r\n\r\n".to_vec()),
-            output: Rc::clone(&output),
-        };
+    fn runtime_keeps_custom_connection_serving_out_of_production() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
+        )
+        .unwrap();
 
-        serve_connection(stream, &mut context, &mut runner, &mut bridge, &dir).unwrap();
-
-        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
-        assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
-        assert!(written.contains("Content-Type: text/css"), "{written}");
-        assert!(written.contains("Cache-Control: no-store"), "{written}");
-        std::fs::remove_dir_all(&dir).ok();
+        assert!(!source.contains(&["pub fn ", "serve_connection"].concat()));
+        assert!(!source.contains(&["fn ", "serve_tls_connection"].concat()));
+        assert!(!source.contains(&["fn ", "write_http_response"].concat()));
     }
 }
