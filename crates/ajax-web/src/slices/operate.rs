@@ -472,4 +472,92 @@ mod tests {
 
         assert_eq!(text, "diff stat");
     }
+
+    #[test]
+    fn start_task_creates_a_new_task_in_the_registry() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let outcome = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        assert!(outcome.state_changed);
+        let tasks = context.registry.list_tasks();
+        assert!(
+            tasks
+                .iter()
+                .any(|task| task.qualified_handle() == "web/fix-login"),
+            "expected new task in registry, got {:?}",
+            tasks
+                .iter()
+                .map(|t| t.qualified_handle())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn start_task_rejects_empty_title() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "   ".to_string(),
+                agent: "codex".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            OperateError::UnsupportedCapability("start requires a non-empty task title")
+        );
+        assert!(runner.commands().is_empty());
+        assert!(context.registry.list_tasks().is_empty());
+    }
+
+    #[test]
+    fn start_task_surfaces_unknown_repo_as_command_error() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "missing".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            matches!(error, OperateError::Command(_, false)),
+            "{error:?}"
+        );
+        assert!(runner.commands().is_empty());
+    }
+
+    fn context_with_managed_repo() -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        CommandContext::new(config, InMemoryRegistry::default())
+    }
 }

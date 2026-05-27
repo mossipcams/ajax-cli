@@ -1,4 +1,5 @@
 /target/
+.ajax-dev-web/
 node_modules/
 __pycache__/
 *.egg-info/
