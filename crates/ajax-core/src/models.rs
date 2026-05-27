@@ -839,8 +839,8 @@ impl Evidence {
                 | LiveStatusKind::CommandRunning
                 | LiveStatusKind::TestsRunning
                 | LiveStatusKind::AgentRunning
-                | LiveStatusKind::CiFailed
-                | LiveStatusKind::Unknown => "live status",
+                | LiveStatusKind::CiFailed => "ci failed",
+                LiveStatusKind::Unknown => "live status",
             },
             Evidence::SideFlag(flag) => match flag {
                 SideFlag::Dirty => "dirty",

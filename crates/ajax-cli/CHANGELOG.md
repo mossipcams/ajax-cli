@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.0...ajax-cli-v0.7.1) (2026-05-27)
+
+
+### Bug Fixes
+
+* surface missing-substrate cockpit tasks ([#83](https://github.com/mossipcams/ajax-cli/issues/83)) ([d649fa1](https://github.com/mossipcams/ajax-cli/commit/d649fa173cfcd091a73af291f66870e110289aad))
+
+## [0.7.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.6.0...ajax-cli-v0.7.0) (2026-05-27)
+
+
+### Features
+
+* surface merge conflicts and CI failures with skill remediation actions ([#82](https://github.com/mossipcams/ajax-cli/issues/82)) ([3dfa937](https://github.com/mossipcams/ajax-cli/commit/3dfa9377ad1f258dd7588215c8dd573da7081486))
+
+
+### Bug Fixes
+
+* restore runtime refresh orphan and git recovery ([#80](https://github.com/mossipcams/ajax-cli/issues/80)) ([8594e7f](https://github.com/mossipcams/ajax-cli/commit/8594e7f7acbf6bc8a93d751fae46b3ca93e313fe))
+
 ## [0.6.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.5.0...ajax-cli-v0.6.0) (2026-05-27)
 
 

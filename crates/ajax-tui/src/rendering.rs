@@ -336,6 +336,16 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                 Style::default().fg(primary_accent()).add_modifier(bold),
             )],
         ),
+        SelectableKind::Remediation { label, .. } => render_row(
+            is_selected,
+            Span::raw("◆"),
+            vec![Span::styled(
+                label.clone(),
+                Style::default()
+                    .fg(crate::palette::accent_warning())
+                    .add_modifier(bold),
+            )],
+        ),
         SelectableKind::TaskAction { action, .. } => render_row(
             is_selected,
             action_glyph(action),
@@ -461,9 +471,16 @@ pub(crate) fn build_feed(app: &App, _width: usize) -> (Vec<ListItem<'static>>, V
             SelectableKind::Inbox(_) => "hot",
             SelectableKind::Project(_) => "projects",
             SelectableKind::Task(_) => "tasks",
-            SelectableKind::TaskAction { .. } => "task-actions",
+            SelectableKind::TaskAction { .. } | SelectableKind::Remediation { .. } => {
+                "task-actions"
+            }
         };
-        if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
+        if prev_group != Some(group)
+            && !matches!(
+                selectable,
+                SelectableKind::TaskAction { .. } | SelectableKind::Remediation { .. }
+            )
+        {
             let label = match group {
                 "hot" => "inbox",
                 "create" => "start",

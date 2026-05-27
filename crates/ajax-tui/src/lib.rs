@@ -300,6 +300,7 @@ mod tests {
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
+            remediations: Vec::new(),
             live_summary: None,
         }
     }

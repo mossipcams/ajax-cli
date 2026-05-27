@@ -5,6 +5,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
     registry::{InMemoryRegistry, Registry},
+    remediation::{self, RemediationError},
     task_operations::drop_task::plan_drop_confirmation,
     task_operations::start::plan_start_task_operation,
     task_operations::task_command::{
@@ -24,11 +25,15 @@ use crate::{
 };
 
 pub(crate) fn handle_pending_cockpit_result(
-    result: Result<(), CliError>,
+    result: Result<Option<String>, CliError>,
     cockpit_flash: &mut Option<String>,
 ) -> bool {
     match result {
-        Ok(()) => true,
+        Ok(Some(message)) => {
+            *cockpit_flash = Some(message);
+            true
+        }
+        Ok(None) => true,
         Err(error) => {
             *cockpit_flash = Some(error.to_string());
             false
@@ -95,6 +100,13 @@ fn tui_cockpit_action_with_confirmation(
                 "{handle}: {task_count} task(s)"
             )))
         }
+        None if remediation::is_remediation_action(&item.action) => {
+            Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
+                task_handle: handle.clone(),
+                action: item.action.clone(),
+                task_title: None,
+            }))
+        }
         None => Ok(ajax_tui::ActionOutcome::Message(format!(
             "cockpit action is not configured: {}",
             item.action
@@ -123,6 +135,19 @@ fn optimistic_drop_snapshot(
         .items
         .retain(|item| item.task_id != task_id && item.task_handle != handle);
     snapshot
+}
+
+fn remediation_cli_error(error: RemediationError) -> CliError {
+    match error {
+        RemediationError::UnknownRemediation(id) => {
+            CliError::CommandFailed(format!("unknown remediation action: {id}"))
+        }
+        RemediationError::TaskNotFound(handle) => command_error(CommandError::TaskNotFound(handle)),
+        RemediationError::UnsupportedCapability(message) => {
+            CliError::CommandFailed(message.to_string())
+        }
+        RemediationError::CommandRun(message) => CliError::CommandFailed(message),
+    }
 }
 
 fn command_error_as_io(error: CommandError) -> std::io::Error {
@@ -188,6 +213,34 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
         )));
     }
 
+    if remediation::is_remediation_action(&pending.action) {
+        let skill_name = match pending.action.as_str() {
+            remediation::FIX_CI => "gh-fix-ci",
+            remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
+            _ => {
+                return Err(CliError::CommandFailed(format!(
+                    "unknown remediation action: {}",
+                    pending.action
+                )));
+            }
+        };
+        let skill_path =
+            ajax_web::adapters::skills::resolve_skill_path(skill_name).ok_or_else(|| {
+                CliError::CommandFailed(
+                    "required agent skill is not installed on this host".to_string(),
+                )
+            })?;
+        let outcome = remediation::execute_remediation(
+            context,
+            runner,
+            &pending.task_handle,
+            &pending.action,
+            &skill_path.display().to_string(),
+        )
+        .map_err(remediation_cli_error)?;
+        return Ok(Some(outcome.output));
+    }
+
     let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
         return Err(CliError::CommandFailed(format!(
             "unknown cockpit action: {}",
@@ -232,7 +285,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
-) -> Result<(), CliError> {
+) -> Result<Option<String>, CliError> {
     let task_entry_open_mode = commands::OpenMode::Attach;
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
@@ -262,7 +315,35 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             }
         })?;
         *state_changed = true;
-        return Ok(());
+        return Ok(None);
+    }
+
+    if remediation::is_remediation_action(&pending.action) {
+        let skill_name = match pending.action.as_str() {
+            remediation::FIX_CI => "gh-fix-ci",
+            remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
+            _ => {
+                return Err(CliError::CommandFailed(format!(
+                    "unknown remediation action: {}",
+                    pending.action
+                )));
+            }
+        };
+        let skill_path =
+            ajax_web::adapters::skills::resolve_skill_path(skill_name).ok_or_else(|| {
+                CliError::CommandFailed(
+                    "required agent skill is not installed on this host".to_string(),
+                )
+            })?;
+        let outcome = remediation::execute_remediation(
+            context,
+            runner,
+            &pending.task_handle,
+            &pending.action,
+            &skill_path.display().to_string(),
+        )
+        .map_err(remediation_cli_error)?;
+        return Ok(Some(outcome.output));
     }
 
     let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
@@ -275,7 +356,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(());
+        return Ok(None);
     }
 
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
@@ -297,13 +378,13 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         )
         .map_err(|error| task_command_cli_error(error, state_changed))?;
         *state_changed |= operation_state_changed;
-        return Ok(());
+        return Ok(None);
     }
 
     execute_task_entry_plan(&plan, runner, task_session)?;
     commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
     *state_changed = true;
-    Ok(())
+    Ok(None)
 }
 
 fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {

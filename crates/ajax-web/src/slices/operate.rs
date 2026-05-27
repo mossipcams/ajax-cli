@@ -5,20 +5,20 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
+    remediation::{self, RemediationError},
     task_operations::{
         drop_task::{
             execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
             DropTaskCompletion,
         },
         start::{execute_start_task_operation, plan_start_task_operation},
-        sweep_cleanup::execute_sweep_cleanup_operation,
         task_command::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
     },
 };
 
-use crate::action_vocabulary::SYNC_ACTION;
+use crate::{action_vocabulary::SYNC_ACTION, adapters::skills::resolve_skill_path};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateRequest {
@@ -33,14 +33,6 @@ pub struct StartTaskRequest {
     pub agent: String,
     #[serde(default)]
     pub request_id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct TidyRequest {
-    #[serde(default)]
-    pub request_id: String,
-    #[serde(default)]
-    pub confirmed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +55,10 @@ pub fn operate<R: Registry>(
 ) -> Result<OperateOutcome, OperateError> {
     if request.action == SYNC_ACTION {
         return sync_task(context, runner, &request.task_handle);
+    }
+
+    if remediation::is_remediation_action(&request.action) {
+        return run_remediation(context, runner, &request.task_handle, &request.action);
     }
 
     let Some(action) = OperatorAction::from_label(&request.action) else {
@@ -90,42 +86,6 @@ pub fn sync_task<R: Registry>(
     task_handle: &str,
 ) -> Result<OperateOutcome, OperateError> {
     execute_task_command(context, runner, TaskCommandKind::Resume, task_handle)
-}
-
-pub fn tidy<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    request: TidyRequest,
-) -> Result<OperateOutcome, OperateError> {
-    let candidates = commands::sweep_cleanup_candidates(context);
-    if candidates.is_empty() {
-        return Ok(OperateOutcome {
-            state_changed: false,
-            output: "nothing to tidy".to_string(),
-        });
-    }
-    if !request.confirmed {
-        return Ok(OperateOutcome {
-            state_changed: false,
-            output: format!(
-                "tidy {} task(s): {}",
-                candidates.len(),
-                candidates.join(", ")
-            ),
-        });
-    }
-
-    let (outputs, state_changed) = execute_sweep_cleanup_operation(context, true, runner)
-        .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
-
-    Ok(OperateOutcome {
-        state_changed,
-        output: if outputs.is_empty() {
-            format!("tidied {} task(s)", candidates.len())
-        } else {
-            format_execution_outputs(&outputs)
-        },
-    })
 }
 
 pub fn start_task<R: Registry>(
@@ -295,6 +255,50 @@ pub fn format_execution_outputs(outputs: &[CommandOutput]) -> String {
         .join("\n\n")
 }
 
+fn run_remediation<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+    remediation_id: &str,
+) -> Result<OperateOutcome, OperateError> {
+    let skill_name = match remediation_id {
+        remediation::FIX_CI => "gh-fix-ci",
+        remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
+        _ => return Err(OperateError::UnknownAction(remediation_id.to_string())),
+    };
+    let skill_path = resolve_skill_path(skill_name).ok_or(OperateError::UnsupportedCapability(
+        "required agent skill is not installed on the companion host",
+    ))?;
+    let outcome = remediation::execute_remediation(
+        context,
+        runner,
+        task_handle,
+        remediation_id,
+        &skill_path.display().to_string(),
+    )
+    .map_err(remediation_error_to_operate)?;
+    Ok(OperateOutcome {
+        state_changed: outcome.state_changed,
+        output: outcome.output,
+    })
+}
+
+fn remediation_error_to_operate(error: RemediationError) -> OperateError {
+    match error {
+        RemediationError::UnknownRemediation(id) => OperateError::UnknownAction(id),
+        RemediationError::TaskNotFound(handle) => {
+            OperateError::Command(CommandError::TaskNotFound(handle), false)
+        }
+        RemediationError::UnsupportedCapability(message) => {
+            OperateError::UnsupportedCapability(message)
+        }
+        RemediationError::CommandRun(message) => OperateError::Command(
+            CommandError::CommandRun(ajax_core::adapters::CommandRunError::SpawnFailed(message)),
+            false,
+        ),
+    }
+}
+
 pub fn format_operate_error(error: &OperateError) -> String {
     match error {
         OperateError::UnknownAction(action) => format!("unknown action: {action}"),
@@ -318,12 +322,15 @@ fn format_command_error(error: &CommandError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_execution_outputs, operate, sync_task, tidy, OperateError, OperateRequest};
+    use super::{format_execution_outputs, operate, sync_task, OperateError, OperateRequest};
+    use ajax_core::remediation;
     use ajax_core::{
         adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{AgentClient, LifecycleStatus, Task, TaskId},
+        models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId, TmuxStatus,
+        },
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -404,22 +411,55 @@ mod tests {
     }
 
     #[test]
-    fn tidy_reports_candidates_before_confirmation() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+    fn operate_slice_runs_fix_ci_remediation_via_tmux() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: task.tmux_session.clone(),
+        });
+        registry.create_task(task).unwrap();
+        let mut context = CommandContext::new(config, registry);
         let mut runner = RecordingCommandRunner::default();
 
-        let outcome = tidy(
+        let home = std::env::temp_dir().join(format!("ajax-skill-{}", std::process::id()));
+        let skill_dir = home.join("gh-fix-ci");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# skill").unwrap();
+        std::env::set_var("AJAX_SKILL_ROOT", &home);
+
+        let outcome = operate(
             &mut context,
             &mut runner,
-            super::TidyRequest {
-                request_id: String::new(),
-                confirmed: false,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: remediation::FIX_CI.to_string(),
             },
         )
         .unwrap();
 
+        std::env::remove_var("AJAX_SKILL_ROOT");
+        let _ = std::fs::remove_dir_all(&home);
+
         assert!(!outcome.state_changed);
-        assert_eq!(outcome.output, "nothing to tidy");
+        assert!(outcome.output.contains("Fix CI"));
+        assert_eq!(runner.commands().len(), 1);
     }
 
     #[test]

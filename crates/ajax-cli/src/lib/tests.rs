@@ -194,21 +194,34 @@ fn cockpit_backend_module_renders_snapshot_frame() {
 }
 
 #[test]
-fn cockpit_snapshot_excludes_stale_and_missing_substrate_menu_ghosts() {
-    for flag in [SideFlag::Stale, SideFlag::WorktreeMissing] {
-        let mut context = sample_context();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap();
-        task.remove_side_flag(SideFlag::NeedsInput);
-        task.add_side_flag(flag);
+fn cockpit_snapshot_excludes_stale_tasks_but_keeps_missing_substrate_tasks_visible() {
+    let mut stale_context = sample_context();
+    let stale_task = stale_context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    stale_task.remove_side_flag(SideFlag::NeedsInput);
+    stale_task.add_side_flag(SideFlag::Stale);
 
-        let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
+    let stale_snapshot = crate::cockpit_backend::build_cockpit_snapshot(&stale_context);
 
-        assert!(snapshot.cards.is_empty(), "{flag:?}");
-        assert!(snapshot.inbox.items.is_empty(), "{flag:?}");
-    }
+    assert!(stale_snapshot.cards.is_empty());
+    assert!(stale_snapshot.inbox.items.is_empty());
+
+    let mut broken_context = sample_context();
+    let broken_task = broken_context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    broken_task.remove_side_flag(SideFlag::NeedsInput);
+    broken_task.add_side_flag(SideFlag::WorktreeMissing);
+
+    let broken_snapshot = crate::cockpit_backend::build_cockpit_snapshot(&broken_context);
+
+    assert_eq!(broken_snapshot.cards.len(), 1);
+    assert_eq!(broken_snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(broken_snapshot.inbox.items.len(), 1);
+    assert_eq!(broken_snapshot.inbox.items[0].task_handle, "web/fix-login");
 }
 
 #[test]
@@ -408,12 +421,12 @@ fn output(status_code: i32, stdout: &str) -> CommandOutput {
 
 fn git_live_outputs() -> Vec<CommandOutput> {
     vec![
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
-            ),
-            output(0, "main\najax/fix-login\n"),
-        ]
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ),
+        output(0, "main\najax/fix-login\n"),
+    ]
 }
 
 fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
@@ -466,6 +479,21 @@ fn command_flow_fixture_records_partial_success_before_failure() {
 
 fn tmux_probe_commands() -> Vec<CommandSpec> {
     tmux_live_commands().into_iter().take(3).collect()
+}
+
+fn tmux_probe_and_orphan_scan_commands() -> Vec<CommandSpec> {
+    let mut commands = tmux_probe_commands();
+    commands.push(CommandSpec::new(
+        "git",
+        [
+            "-C",
+            "/Users/matt/projects/web",
+            "worktree",
+            "list",
+            "--porcelain",
+        ],
+    ));
+    commands
 }
 
 fn tmux_live_commands() -> Vec<CommandSpec> {
@@ -1189,7 +1217,12 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
             );
         }
 
-        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+        let mut outputs = tmux_live_outputs("codex is working\n");
+        outputs.push(output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ));
+        let mut runner = QueuedRunner::new(outputs);
         let output = run_with_context_and_runner(command.clone(), &mut context, &mut runner)
             .unwrap_or_else(|error| panic!("{command:?} failed: {error}"));
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -1201,7 +1234,11 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
 
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
         assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
-        assert_eq!(runner.commands, tmux_probe_commands(), "{command:?}");
+        assert_eq!(
+            runner.commands,
+            tmux_probe_and_orphan_scan_commands(),
+            "{command:?}"
+        );
     }
 }
 
@@ -1457,8 +1494,10 @@ fn live_refresh_clears_stale_tmux_missing_when_session_exists_without_worktrunk(
     assert!(state_changed);
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-    assert!(snapshot.cards.is_empty());
-    assert!(snapshot.inbox.items.is_empty());
+    assert_eq!(snapshot.cards.len(), 1);
+    assert_eq!(snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(snapshot.inbox.items.len(), 1);
+    assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
 }
 
 #[test]

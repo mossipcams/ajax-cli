@@ -7,6 +7,8 @@ pub const SYNC_ACTION: &str = "sync";
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct WebActionState {
     pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
     pub status: String,
     pub reason: Option<&'static str>,
     pub destructive: bool,
@@ -31,6 +33,7 @@ pub fn web_action_state(action: OperatorAction) -> WebActionState {
 
     WebActionState {
         action: action.as_str().to_string(),
+        label: None,
         status: status.to_string(),
         reason,
         destructive: action == OperatorAction::Drop,
@@ -41,6 +44,7 @@ pub fn web_action_state(action: OperatorAction) -> WebActionState {
 pub fn sync_action_state() -> WebActionState {
     WebActionState {
         action: SYNC_ACTION.to_string(),
+        label: None,
         status: "supported".to_string(),
         reason: Some("refresh task runtime without terminal attach"),
         destructive: false,
@@ -48,14 +52,33 @@ pub fn sync_action_state() -> WebActionState {
     }
 }
 
+pub fn remediation_action_state(
+    option: &ajax_core::remediation::RemediationOption,
+) -> WebActionState {
+    WebActionState {
+        action: option.id.clone(),
+        label: Some(option.label.clone()),
+        status: "supported".to_string(),
+        reason: Some("runs the skill brief in the task agent session"),
+        destructive: false,
+        confirmation_required: false,
+    }
+}
+
 pub fn browser_action_states(card: &TaskCard) -> Vec<WebActionState> {
-    let mut states = card
-        .available_actions
+    let mut states: Vec<WebActionState> = card
+        .remediations
         .iter()
-        .copied()
-        .filter(|action| *action != OperatorAction::Start)
-        .map(web_action_state)
-        .collect::<Vec<_>>();
+        .map(remediation_action_state)
+        .collect();
+
+    states.extend(
+        card.available_actions
+            .iter()
+            .copied()
+            .filter(|action| *action != OperatorAction::Start)
+            .map(web_action_state),
+    );
 
     let resume_relevant = card.available_actions.contains(&OperatorAction::Resume)
         || card.primary_action == OperatorAction::Resume;
@@ -71,7 +94,7 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
 }
 
 pub fn supported_browser_action(action: &str) -> bool {
-    if action == SYNC_ACTION {
+    if action == SYNC_ACTION || ajax_core::remediation::is_remediation_action(action) {
         return true;
     }
     OperatorAction::from_label(action).is_some_and(supported_web_action)
@@ -101,8 +124,11 @@ mod tests {
         supported_web_action, web_action_state, SYNC_ACTION,
     };
     use ajax_core::{
-        models::{LifecycleStatus, OperatorAction, TaskId},
+        models::{
+            LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, SideFlag, TaskId,
+        },
         output::TaskCard,
+        remediation::FIX_CI,
         ui_state::UiState,
     };
 
@@ -137,6 +163,7 @@ mod tests {
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume, OperatorAction::Review],
+            remediations: Vec::new(),
             live_summary: None,
         };
 
@@ -146,5 +173,50 @@ mod tests {
         assert!(states.iter().any(|state| state.action == "review"));
         assert_eq!(primary_browser_action(&card), SYNC_ACTION);
         assert!(supported_browser_action(SYNC_ACTION));
+    }
+
+    #[test]
+    fn browser_action_states_surface_remediation_buttons_as_supported() {
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            ui_state: UiState::Blocked,
+            status_label: "ci failed".to_string(),
+            lifecycle: LifecycleStatus::Error,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![OperatorAction::Resume],
+            remediations: ajax_core::remediation::remediations_for_task(&blocked_ci_task()),
+            live_summary: Some("ci failed".to_string()),
+        };
+
+        let states = browser_action_states(&card);
+        let fix_ci = states
+            .iter()
+            .find(|state| state.action == FIX_CI)
+            .expect("fix-ci action");
+
+        assert_eq!(fix_ci.status, "supported");
+        assert!(supported_browser_action(FIX_CI));
+    }
+
+    fn blocked_ci_task() -> ajax_core::models::Task {
+        use ajax_core::models::{AgentClient, Task};
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        task.add_side_flag(SideFlag::TestsFailed);
+        task
     }
 }

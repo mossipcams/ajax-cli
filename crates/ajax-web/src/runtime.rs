@@ -106,7 +106,6 @@ where
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks/{*handle}", get(axum_task_detail::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
-        .route("/api/tidy", post(axum_tidy::<C, B>))
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .route("/api/push/config", get(axum_push_config::<C, B>))
@@ -341,34 +340,6 @@ where
     }
 }
 
-async fn axum_tidy<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    Json(request): Json<crate::slices::operate::TidyRequest>,
-) -> AxumResponse
-where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
-{
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        runner,
-        bridge,
-    } = &mut *guard;
-    match handle_tidy_request(
-        &serde_json::to_string(&request).unwrap_or_default(),
-        context,
-        runner,
-        bridge,
-    ) {
-        Ok(response) => response.into_axum_response(),
-        Err(error) => web_error_response(error),
-    }
-}
-
 async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
 where
     C: CommandRunner + Send + 'static,
@@ -545,13 +516,6 @@ pub trait RuntimeBridge<C: CommandRunner> {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
-
-    fn execute_tidy(
-        &mut self,
-        request: crate::slices::operate::TidyRequest,
-        context: &mut CommandContext<InMemoryRegistry>,
-        runner: &mut C,
-    ) -> Result<crate::slices::operate::OperateOutcome, ActionFailure>;
 }
 
 #[derive(Clone, Deserialize, serde::Serialize)]
@@ -618,7 +582,6 @@ pub fn route_with_bridge<C: CommandRunner>(
             handle_action_request(request.body, context, runner, bridge)
         }
         ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
-        ("POST", "/api/tidy") => handle_tidy_request(request.body, context, runner, bridge),
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
@@ -662,20 +625,6 @@ fn handle_action_request<C: CommandRunner>(
         context,
         runner,
     ) {
-        Ok(outcome) => operation_success_response(outcome, context),
-        Err(error) => operation_error_response(error, context),
-    }
-}
-
-fn handle_tidy_request<C: CommandRunner>(
-    body: &str,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-) -> Result<Response, WebError> {
-    let request: crate::slices::operate::TidyRequest = serde_json::from_str(body)
-        .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-    match bridge.execute_tidy(request, context, runner) {
         Ok(outcome) => operation_success_response(outcome, context),
         Err(error) => operation_error_response(error, context),
     }
@@ -826,8 +775,6 @@ mod tests {
         operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
         start_result: Result<OperateOutcome, ActionFailure>,
-        tidy: Option<crate::slices::operate::TidyRequest>,
-        tidy_result: Result<OperateOutcome, ActionFailure>,
     }
 
     impl Default for TestBridge {
@@ -845,11 +792,6 @@ mod tests {
                 start_result: Ok(OperateOutcome {
                     state_changed: true,
                     output: String::new(),
-                }),
-                tidy: None,
-                tidy_result: Ok(OperateOutcome {
-                    state_changed: false,
-                    output: "nothing to tidy".to_string(),
                 }),
             }
         }
@@ -885,16 +827,6 @@ mod tests {
         ) -> Result<OperateOutcome, ActionFailure> {
             self.start = Some(request);
             self.start_result.clone()
-        }
-
-        fn execute_tidy(
-            &mut self,
-            request: crate::slices::operate::TidyRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut OkRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.tidy = Some(request);
-            self.tidy_result.clone()
         }
     }
 

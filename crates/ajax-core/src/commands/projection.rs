@@ -6,6 +6,7 @@ use crate::{
         TaskSummary, TasksResponse,
     },
     recommended::{available_operator_actions, operator_action},
+    remediation::remediations_for_task,
     ui_state::derive_ui_state,
 };
 
@@ -53,12 +54,7 @@ pub(super) fn is_visible_task(task: &Task) -> bool {
 }
 
 pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
-    is_visible_task(task)
-        && !task.has_side_flag(SideFlag::Stale)
-        && (matches!(
-            task.lifecycle_status,
-            LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
-        ) || !task.has_missing_substrate())
+    is_visible_task(task) && !task.has_side_flag(SideFlag::Stale)
 }
 
 pub(super) fn task_summary(task: &Task) -> TaskSummary {
@@ -95,6 +91,7 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
         annotations,
         primary_action: plan.action,
         available_actions: plan.available_actions,
+        remediations: remediations_for_task(task),
         live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
     }
 }
@@ -156,6 +153,7 @@ mod tests {
             LiveStatusKind, OperatorAction, SideFlag, Task, TaskId,
         },
         output::CockpitSummary,
+        remediation::{FIX_CI, RESOLVE_MERGE_CONFLICTS},
     };
 
     fn task(handle: &str) -> Task {
@@ -212,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_projection_filters_stale_and_missing_substrate_ghosts() {
+    fn cockpit_projection_filters_stale_tasks_but_keeps_missing_substrate_tasks_visible() {
         let healthy = task("healthy");
         let mut stale = task("stale");
         stale.add_side_flag(SideFlag::Stale);
@@ -222,8 +220,12 @@ mod tests {
 
         let projection = cockpit_projection(tasks.as_slice(), summary());
 
-        assert_eq!(projection.cards.len(), 1);
-        assert_eq!(projection.cards[0].qualified_handle, "web/healthy");
+        let handles = projection
+            .cards
+            .iter()
+            .map(|card| card.qualified_handle.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(handles, vec!["web/healthy", "web/broken"]);
     }
 
     #[test]
@@ -283,6 +285,33 @@ mod tests {
 
         assert!(annotations.is_empty(), "{annotations:?}");
         assert!(task_card(&task).annotations.is_empty());
+    }
+
+    #[test]
+    fn task_card_includes_remediation_options_for_blocked_task() {
+        let mut task = task("ci");
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        task.add_side_flag(SideFlag::TestsFailed);
+
+        let card = task_card(&task);
+
+        assert_eq!(card.remediations.len(), 1);
+        assert_eq!(card.remediations[0].id, FIX_CI);
+    }
+
+    #[test]
+    fn task_card_includes_resolve_merge_when_conflicted() {
+        let mut task = task("merge");
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::MergeConflict,
+            "merge conflict needs attention",
+        ));
+        task.add_side_flag(SideFlag::Conflicted);
+
+        let card = task_card(&task);
+
+        assert_eq!(card.remediations.len(), 1);
+        assert_eq!(card.remediations[0].id, RESOLVE_MERGE_CONFLICTS);
     }
 
     #[test]

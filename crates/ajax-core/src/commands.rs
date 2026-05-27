@@ -364,7 +364,11 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
         .list_tasks()
         .into_iter()
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
-        .filter(|task| task.git_status.is_some())
+        .filter(|task| {
+            task.git_status.is_some()
+                || task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
+                || task.has_side_flag(crate::models::SideFlag::BranchMissing)
+        })
         .cloned()
         .collect::<Vec<_>>();
     if tasks.is_empty() {
@@ -1154,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_attention_count_excludes_hidden_missing_substrate_tasks() {
+    fn repo_attention_count_includes_visible_missing_substrate_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1166,11 +1170,11 @@ mod tests {
 
         let response = list_repos(&context);
 
-        assert_eq!(response.repos[0].attention_items, 0);
+        assert_eq!(response.repos[0].attention_items, 1);
     }
 
     #[test]
-    fn cockpit_summary_attention_excludes_hidden_missing_substrate_tasks() {
+    fn cockpit_summary_attention_includes_visible_missing_substrate_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1182,7 +1186,7 @@ mod tests {
 
         let response = cockpit(&context);
 
-        assert_eq!(response.summary.attention_items, 0);
+        assert_eq!(response.summary.attention_items, 1);
     }
 
     #[test]
@@ -1313,6 +1317,7 @@ mod tests {
     #[case(LiveStatusKind::CommandFailed, "command_failed")]
     #[case(LiveStatusKind::Blocked, "blocked")]
     #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
+    #[case(LiveStatusKind::CiFailed, "ci_failed")]
     fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
         #[case] live_status: LiveStatusKind,
         #[case] expected_reason: &str,
@@ -1545,6 +1550,24 @@ mod tests {
         assert!(view.inbox.items.is_empty());
         assert_eq!(view.cards.len(), 1);
         assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
+    }
+
+    #[test]
+    fn cockpit_view_includes_missing_substrate_tasks_as_drop_only_cards() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let view = super::cockpit_view(&context);
+
+        assert_eq!(view.cards.len(), 1);
+        assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
+        assert_eq!(view.cards[0].primary_action, OperatorAction::Drop);
+        assert_eq!(view.cards[0].available_actions, vec![OperatorAction::Drop]);
     }
 
     #[test]

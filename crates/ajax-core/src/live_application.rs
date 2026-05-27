@@ -53,22 +53,25 @@ fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
         LiveStatusKind::AuthRequired
         | LiveStatusKind::RateLimited
         | LiveStatusKind::ContextLimit
-        | LiveStatusKind::CiFailed
         | LiveStatusKind::CommandFailed
         | LiveStatusKind::Blocked => {
             task.agent_status = AgentRuntimeStatus::Blocked;
             update_live_lifecycle(task, LifecycleStatus::Error);
-            if observation.kind == LiveStatusKind::CiFailed {
-                task.add_side_flag(SideFlag::TestsFailed);
-            }
             task.add_side_flag(SideFlag::NeedsInput);
+            task.remove_side_flag(SideFlag::AgentRunning);
+        }
+        LiveStatusKind::CiFailed => {
+            task.agent_status = AgentRuntimeStatus::Blocked;
+            update_live_lifecycle(task, LifecycleStatus::Error);
+            task.add_side_flag(SideFlag::TestsFailed);
+            task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::MergeConflict => {
             task.agent_status = AgentRuntimeStatus::Blocked;
             update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::Conflicted);
-            task.add_side_flag(SideFlag::NeedsInput);
+            task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::ShellIdle => {

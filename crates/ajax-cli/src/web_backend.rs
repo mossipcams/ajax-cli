@@ -11,8 +11,8 @@ use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
     slices::operate::{
-        format_operate_error, operate, start_task, tidy, OperateError, OperateOutcome,
-        OperateRequest, StartTaskRequest, TidyRequest,
+        format_operate_error, operate, start_task, OperateError, OperateOutcome, OperateRequest,
+        StartTaskRequest,
     },
     WebError,
 };
@@ -151,15 +151,6 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
     ) -> Result<OperateOutcome, ActionFailure> {
         self.persist_operate(start_task(context, runner, request), context)
     }
-
-    fn execute_tidy(
-        &mut self,
-        request: TidyRequest,
-        context: &mut CommandContext<InMemoryRegistry>,
-        runner: &mut C,
-    ) -> Result<OperateOutcome, ActionFailure> {
-        self.persist_operate(tidy(context, runner, request), context)
-    }
 }
 
 impl CliRuntimeBridge {
@@ -248,10 +239,8 @@ mod tests {
 
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
-        assert!(html.contains("id=\"offline-banner\""));
-        assert!(html.contains("id=\"refresh-button\""));
-        assert!(html.contains("id=\"tidy-button\""));
-        assert!(html.contains("id=\"help-button\""));
+        assert!(html.contains("id=\"alerts-banner\""));
+        assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
     }
 
@@ -365,7 +354,6 @@ mod tests {
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/operations"));
-        assert!(script.contains("/api/tidy"));
         assert!(script.contains("request_id"));
         assert!(script.contains("structureFingerprint"));
         assert!(script.contains("updateLiveSummaries"));
@@ -378,7 +366,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v17"));
+        assert!(sw_text.contains("ajax-cockpit-v18"));
         assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
@@ -511,27 +499,6 @@ mod tests {
             body["error"]
         );
         assert!(body["cockpit"].is_object());
-    }
-
-    #[test]
-    fn tidy_endpoint_returns_preview_before_confirmation() {
-        let mut context = reviewable_context();
-        let mut runner = OkRunner;
-
-        let response = handle_http_request_with_runner_and_paths(
-            "POST",
-            "/api/tidy",
-            r#"{"request_id":"tidy-1","confirmed":false}"#,
-            &mut context,
-            &mut runner,
-            None,
-        )
-        .unwrap();
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-
-        assert_eq!(response.status_code, 200);
-        assert_eq!(body["ok"], true);
-        assert!(body["output"].is_string());
     }
 
     #[test]

@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_cockpit_excludes_missing_substrate_ghosts() {
+    fn browser_cockpit_surfaces_missing_substrate_tasks() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
             TaskId::new("web/fix-login"),
@@ -271,8 +271,15 @@ mod tests {
         let json = browser_cockpit_json(&context).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(value["cards"], serde_json::json!([]));
-        assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["cards"].as_array().unwrap().len(), 1);
+        assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(value["cards"][0]["primary_action"], "drop");
+        assert_eq!(
+            value["cards"][0]["available_actions"],
+            serde_json::json!(["drop"])
+        );
+        assert_eq!(value["inbox"]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(value["inbox"]["items"][0]["task_handle"], "web/fix-login");
     }
 
     #[test]
@@ -309,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn task_detail_returns_none_for_missing_substrate_ghost() {
+    fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
             TaskId::new("web/fix-login"),
@@ -328,9 +335,12 @@ mod tests {
         registry.create_task(task).unwrap();
         let context = CommandContext::new(Config::default(), registry);
 
-        let detail = super::browser_task_detail_view(&context, "web/fix-login");
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
-        assert!(detail.is_none());
+        assert_eq!(detail.qualified_handle, "web/fix-login");
+        assert_eq!(detail.primary_action, "drop");
+        assert_eq!(detail.available_actions, vec!["drop".to_string()]);
+        assert_eq!(detail.status_label, "failed");
     }
 
     #[test]
@@ -413,6 +423,7 @@ mod tests {
                 OperatorAction::Ship,
             ],
             live_summary: Some("waiting for review".to_string()),
+            remediations: Vec::new(),
         };
 
         let browser = browser_task_card(&card);
@@ -424,6 +435,53 @@ mod tests {
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
         assert_eq!(browser.primary_action, "sync");
         assert_eq!(browser.available_actions, ["review", "ship", "sync"]);
+    }
+
+    #[test]
+    fn browser_task_card_surfaces_supported_fix_ci_remediation_button() {
+        use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag, Task};
+        use ajax_core::remediation::FIX_CI;
+
+        let mut source = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        source.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        source.add_side_flag(SideFlag::TestsFailed);
+        let card = TaskCard {
+            id: source.id.clone(),
+            qualified_handle: source.qualified_handle(),
+            title: source.title.clone(),
+            ui_state: UiState::Blocked,
+            status_label: "ci failed".to_string(),
+            lifecycle: LifecycleStatus::Error,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![OperatorAction::Resume],
+            remediations: ajax_core::remediation::remediations_for_task(&source),
+            live_summary: Some("ci failed".to_string()),
+        };
+
+        let browser = browser_task_card(&card);
+        let fix_ci = browser
+            .action_states
+            .iter()
+            .find(|state| state.action == FIX_CI)
+            .expect("fix-ci button");
+
+        assert_eq!(fix_ci.status, "supported");
+        assert!(browser
+            .available_actions
+            .iter()
+            .any(|action| action == FIX_CI));
     }
 
     #[test]
@@ -442,6 +500,7 @@ mod tests {
                 OperatorAction::Review,
                 OperatorAction::Drop,
             ],
+            remediations: Vec::new(),
             live_summary: None,
         };
 
