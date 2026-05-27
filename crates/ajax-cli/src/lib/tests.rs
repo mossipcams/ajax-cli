@@ -589,14 +589,13 @@ fn binary_prints_cli_errors_with_display_formatting() {
 fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
     let directory =
         std::env::temp_dir().join(format!("ajax-cli-selected-db-{}", std::process::id()));
-    let home = directory.join("home");
     let stable_paths = CliContextPaths::from_runtime_paths(
-        RuntimePathRequest::new(&home)
+        RuntimePathRequest::new(directory.join("stable-home"))
             .with_cli_profile("stable")
             .resolve(),
     );
     let dev_paths = CliContextPaths::from_runtime_paths(
-        RuntimePathRequest::new(&home)
+        RuntimePathRequest::new(directory.join("dev-home"))
             .with_cli_profile("dev")
             .resolve(),
     );
@@ -768,7 +767,7 @@ fn registry_with_task(handle: &str) -> InMemoryRegistry {
         "worktrunk",
         AgentClient::Codex,
     );
-    task.lifecycle_status = LifecycleStatus::Reviewable;
+    task.lifecycle_status = LifecycleStatus::Cleanable;
     registry.create_task(task).unwrap();
     registry
 }
@@ -6385,16 +6384,6 @@ fn drop_execute_hard_removes_task_from_sqlite_state_file() {
             },
         )
         .unwrap();
-    context
-        .registry
-        .update_tmux_status(
-            &task_id,
-            Some(TmuxStatus {
-                exists: false,
-                session_name: "ajax-web-fix-login".to_string(),
-            }),
-        )
-        .unwrap();
     SqliteRegistryStore::new(&state_file)
         .save(&context.registry)
         .unwrap();
@@ -6424,6 +6413,87 @@ fn drop_execute_hard_removes_task_from_sqlite_state_file() {
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
     assert_eq!(output, "removed task: web/fix-login");
     assert!(restored.get_task(&task_id).is_none());
+}
+
+#[test]
+fn drop_execute_hard_remove_survives_subsequent_tasks_read() {
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-drop-tasks-read-{}-{}",
+        std::process::id(),
+        "hard-delete"
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config_file = directory.join("config.toml");
+    let state_file = directory.join("state.db");
+    std::fs::write(
+        &config_file,
+        r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+    )
+    .unwrap();
+    let mut context = sample_context();
+    let task_id = TaskId::new("task-1");
+    context
+        .registry
+        .update_git_status(
+            &task_id,
+            GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some("ajax/fix-login".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            },
+        )
+        .unwrap();
+    SqliteRegistryStore::new(&state_file)
+        .save(&context.registry)
+        .unwrap();
+    let paths = CliContextPaths::new(&config_file, &state_file);
+    let mut drop_runner = QueuedRunner::new(vec![
+        output(0, ""),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+        ),
+        output(0, "main\n"),
+        output(0, ""),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+        ),
+        output(0, "main\n"),
+    ]);
+
+    run_with_context_paths_and_runner(
+        ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+        &paths,
+        &mut drop_runner,
+    )
+    .unwrap();
+
+    let tasks_output = run_with_context_paths_and_runner(
+        ["ajax", "tasks"],
+        &paths,
+        &mut QueuedRunner::new(vec![]),
+    )
+    .unwrap();
+    let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+    std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+    assert!(!tasks_output.contains("web/fix-login"));
+    assert!(restored.get_task(&task_id).is_none());
+    assert!(restored.list_tasks().is_empty());
 }
 
 #[test]
