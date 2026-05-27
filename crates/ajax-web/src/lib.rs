@@ -1,8 +1,12 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod action_vocabulary;
 pub mod adapters;
 pub mod runtime;
 pub mod slices;
+
+#[cfg(test)]
+mod architecture;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebError {

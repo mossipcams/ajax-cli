@@ -115,8 +115,8 @@ pub fn run_with_args(
         );
     }
 
-    let mut context = load_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
+    let mut context = load_context_for_matches(&paths, &matches)?;
     let rendered =
         match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
             Ok(rendered) => rendered,
@@ -3081,6 +3081,38 @@ mod tests {
     }
 
     #[test]
+    fn release_please_rust_packages_point_to_package_manifests() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let config: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+        )
+        .unwrap();
+        let default_release_type = config["release-type"].as_str();
+
+        for (package_path, package_config) in config["packages"].as_object().unwrap() {
+            let release_type = package_config["release-type"]
+                .as_str()
+                .or(default_release_type);
+            if release_type != Some("rust") {
+                continue;
+            }
+
+            let manifest = std::fs::read_to_string(root.join(package_path).join("Cargo.toml"))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "Release Please Rust package {package_path} must point to a Cargo.toml: {error}"
+                    )
+                });
+            let has_package_table = manifest.lines().any(|line| line.trim() == "[package]");
+
+            assert!(
+                has_package_table,
+                "Release Please Rust package {package_path} must point to a Cargo package manifest, not a virtual workspace manifest"
+            );
+        }
+    }
+
+    #[test]
     fn workspace_members_inherit_metadata_lints_and_dependencies() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
@@ -4299,7 +4331,7 @@ mod tests {
     }
 
     #[test]
-    fn clean_execute_marks_task_removed() {
+    fn clean_execute_hard_removes_task() {
         let mut context = cleanable_context();
         let mut runner = RecordingCommandRunner::default();
 
@@ -4310,14 +4342,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -4420,12 +4445,7 @@ mod tests {
                 )
             ]
         );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -4509,8 +4529,7 @@ mod tests {
                 )
             ]
         );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -4605,14 +4624,7 @@ mod tests {
                 )
             ]
         );
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -4755,14 +4767,7 @@ mod tests {
                 )
             ]
         );
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -4901,14 +4906,7 @@ mod tests {
                 )
             ]
         );
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5012,16 +5010,7 @@ mod tests {
                 )
             ]
         );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists));
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5126,12 +5115,7 @@ mod tests {
                 ),
             ]
         );
-        let task = context.registry.get_task(&task_id).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists));
+        assert!(context.registry.get_task(&task_id).is_none());
     }
 
     #[test]
@@ -5215,12 +5199,7 @@ mod tests {
                 )
             ]
         );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5304,12 +5283,7 @@ mod tests {
                 )
             ]
         );
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5357,16 +5331,7 @@ mod tests {
         )
         .unwrap();
 
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists));
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5400,12 +5365,7 @@ mod tests {
         )
         .unwrap();
 
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -5525,12 +5485,7 @@ mod tests {
         )
         .unwrap();
 
-        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Removed);
-        assert!(task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
     }
 
     #[test]
@@ -6772,14 +6727,89 @@ mod tests {
         let rendered = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap();
 
         assert_eq!(rendered.output, "removed task: web/fix-login");
-        assert_eq!(
-            context
-                .registry
-                .get_task(&task_id)
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&task_id).is_none());
+    }
+
+    #[test]
+    fn drop_execute_hard_removes_task_from_sqlite_state_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "ajax-cli-drop-execute-{}-{}",
+            std::process::id(),
+            "hard-delete"
+        ));
+        std::fs::create_dir_all(&directory).unwrap();
+        let config_file = directory.join("config.toml");
+        let state_file = directory.join("state.db");
+        std::fs::write(
+            &config_file,
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+        )
+        .unwrap();
+        let mut context = sample_context();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: true,
+                    branch_exists: true,
+                    current_branch: Some("ajax/fix-login".to_string()),
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: None,
+                },
+            )
+            .unwrap();
+        context
+            .registry
+            .update_tmux_status(
+                &task_id,
+                Some(TmuxStatus {
+                    exists: false,
+                    session_name: "ajax-web-fix-login".to_string(),
+                }),
+            )
+            .unwrap();
+        SqliteRegistryStore::new(&state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+            output(0, ""),
+            output(
+                0,
+                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
+            ),
+            output(0, "main\n"),
+        ]);
+
+        let output = run_with_context_paths_and_runner(
+            ["ajax", "drop", "web/fix-login", "--execute", "--yes"],
+            &CliContextPaths::new(&config_file, &state_file),
+            &mut runner,
+        )
+        .unwrap();
+        let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
+
+        std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+        assert_eq!(output, "removed task: web/fix-login");
+        assert!(restored.get_task(&task_id).is_none());
     }
 
     #[test]
@@ -7082,14 +7112,7 @@ mod tests {
 
         assert_eq!(outcome, None);
         assert_eq!(runner.commands, missing_drop_observation_commands());
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
         assert!(state_changed);
     }
 
@@ -7137,14 +7160,7 @@ mod tests {
 
         assert_eq!(runner.commands, missing_drop_observation_commands());
         assert!(task_session.commands.is_empty());
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
         assert!(state_changed);
     }
 
@@ -7779,14 +7795,7 @@ mod tests {
 
         assert_eq!(output, None);
         assert_eq!(runner.commands, present_cleanable_drop_commands());
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
         assert!(state_changed);
     }
 

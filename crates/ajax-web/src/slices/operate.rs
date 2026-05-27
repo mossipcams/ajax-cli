@@ -24,6 +24,8 @@ pub struct StartTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    #[serde(default)]
+    pub request_id: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -205,6 +207,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap();
@@ -235,6 +238,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "   ".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap_err();
@@ -259,6 +263,7 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap_err();
