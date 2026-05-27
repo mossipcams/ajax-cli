@@ -354,7 +354,7 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
 pub(crate) fn build_cockpit_snapshot(
     context: &CommandContext<InMemoryRegistry>,
 ) -> CockpitSnapshot {
-    let view = commands::rebuild_cockpit_view(context);
+    let view = commands::cockpit_view(context);
     CockpitSnapshot {
         repos: view.repos,
         cards: view.cards,
@@ -565,8 +565,8 @@ mod tests {
             .unwrap();
         let implicit_view_read = ["commands::", "cockpit_view"].concat();
 
-        assert!(build_cockpit_snapshot.contains("rebuild_cockpit_view"));
-        assert!(!build_cockpit_snapshot.contains(&implicit_view_read));
+        assert!(build_cockpit_snapshot.contains(&implicit_view_read));
+        assert!(!build_cockpit_snapshot.contains("rebuild_cockpit_view"));
     }
 
     #[test]

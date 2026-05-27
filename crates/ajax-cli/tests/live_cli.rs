@@ -41,15 +41,29 @@ impl IsolatedAjaxHome {
         }
     }
 
-    fn ajax<I, S>(&self, args: I) -> Output
+    fn base_command<I, S>(&self, args: I) -> Command
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
         let mut command = Command::new(ajax_binary());
-        command.args(args);
-        self.isolate_ajax_env(&mut command);
         command
+            .args(args)
+            .env("HOME", &self.root)
+            .env("AJAX_CONFIG", &self.config_file)
+            .env("AJAX_STATE", &self.state_file)
+            .env("AJAX_PROFILE", "stable")
+            .env_remove("AJAX_HOME")
+            .env_remove("AJAX_WORKTREE_ROOT");
+        command
+    }
+
+    fn ajax<I, S>(&self, args: I) -> Output
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.base_command(args)
             .output()
             .unwrap_or_else(|error| panic!("failed to run live ajax binary: {error}"))
     }
@@ -65,24 +79,11 @@ impl IsolatedAjaxHome {
             std::env::var("PATH").unwrap_or_default()
         );
 
-        let mut command = Command::new(ajax_binary());
-        command.args(args);
-        self.isolate_ajax_env(&mut command);
-        command
+        self.base_command(args)
             .env("AJAX_FAKE_LIFECYCLE_LOG", self.fake_lifecycle_log())
             .env("PATH", path)
             .output()
             .unwrap_or_else(|error| panic!("failed to run live ajax binary: {error}"))
-    }
-
-    fn isolate_ajax_env(&self, command: &mut Command) {
-        command
-            .env_remove("AJAX_PROFILE")
-            .env_remove("AJAX_HOME")
-            .env_remove("AJAX_WORKTREE_ROOT")
-            .env("HOME", &self.root)
-            .env("AJAX_CONFIG", &self.config_file)
-            .env("AJAX_STATE", &self.state_file);
     }
 
     fn create_managed_repo(&self, name: &str) -> PathBuf {

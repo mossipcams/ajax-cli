@@ -297,10 +297,6 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
     }
 }
 
-pub fn rebuild_cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
-    cockpit_view(context)
-}
-
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
     let task_ids = context
         .registry
