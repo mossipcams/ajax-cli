@@ -3,8 +3,8 @@ use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
     lifecycle::force_mark_removed,
     models::{
-        AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, Task, TmuxStatus,
-        WorktrunkStatus,
+        AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
+        StepReceiptStatus, Task, TaskOperationKind, TmuxStatus, WorktrunkStatus,
     },
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     policy::cleanup_safety,
@@ -50,12 +50,6 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
                 }),
             )
             .map_err(CommandError::Registry)?;
-        let task = context
-            .registry
-            .get_task_mut(&task.id)
-            .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-        task.remove_side_flag(SideFlag::TmuxMissing);
-        task.remove_side_flag(SideFlag::WorktrunkMissing);
         return Ok(true);
     }
 
@@ -186,11 +180,57 @@ pub fn mark_task_removing<R: Registry>(
     update_task_lifecycle(context, qualified_handle, LifecycleStatus::Removing)
 }
 
+pub fn drop_op_label(op: DropOp) -> &'static str {
+    match op {
+        DropOp::EnsureAgentStopped => "stop agent",
+        DropOp::EnsureWorktreeAbsent => "remove worktree",
+        DropOp::EnsureBranchAbsent => "delete branch",
+        DropOp::EnsureTmuxSessionAbsent => "kill tmux session",
+    }
+}
+
+pub fn format_drop_remaining_resources_detail(observation: &DropObservation) -> String {
+    let mut remaining = Vec::new();
+    if observation.agent == ResourceState::Present {
+        remaining.push("agent still running");
+    }
+    if observation.tmux_session == ResourceState::Present {
+        remaining.push("tmux session still present");
+    }
+    if observation.worktree == ResourceState::Present {
+        remaining.push("worktree still present");
+    }
+    if observation.branch == ResourceState::Present {
+        remaining.push("branch still present");
+    }
+    if remaining.is_empty() {
+        "external resources still present after teardown attempt".to_string()
+    } else {
+        remaining.join(", ")
+    }
+}
+
+pub fn format_drop_teardown_incomplete_message(
+    task_handle: &str,
+    failed_step: DropOp,
+    detail: &str,
+) -> String {
+    let step = drop_op_label(failed_step);
+    let detail = detail.trim();
+    let core = if detail.is_empty() {
+        format!("drop incomplete for {task_handle} at {step}")
+    } else {
+        format!("drop incomplete for {task_handle} at {step}: {detail}")
+    };
+    format!("{core}; retry with `ajax drop {task_handle} --execute`")
+}
+
 pub fn mark_task_teardown_incomplete<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
     failed_step: DropOp,
     observation: &DropObservation,
+    failure_detail: Option<&str>,
 ) -> Result<(), CommandError> {
     let task_id = find_task(context, qualified_handle)?.id.clone();
     context
@@ -201,8 +241,21 @@ pub fn mark_task_teardown_incomplete<R: Registry>(
         .registry
         .get_task_mut(&task_id)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-    task.metadata
-        .insert("drop_failed_step".to_string(), format!("{failed_step:?}"));
+    task.metadata.insert(
+        "drop_failed_step".to_string(),
+        drop_op_label(failed_step).to_string(),
+    );
+    task.metadata.insert(
+        "drop_failed_step_key".to_string(),
+        drop_op_step_key(failed_step).to_string(),
+    );
+    if let Some(detail) = failure_detail
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+    {
+        task.metadata
+            .insert("drop_failed_detail".to_string(), detail.to_string());
+    }
     task.metadata.insert(
         "drop_latest_observation".to_string(),
         format!(
@@ -210,12 +263,20 @@ pub fn mark_task_teardown_incomplete<R: Registry>(
             observation.agent, observation.tmux_session, observation.worktree, observation.branch
         ),
     );
+    let event_detail = failure_detail
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format_drop_remaining_resources_detail(observation));
     context
         .registry
         .record_event(
             task_id,
             RegistryEventKind::LifecycleChanged,
-            format!("drop teardown incomplete at {failed_step:?}"),
+            format!(
+                "drop teardown incomplete at {}: {event_detail}",
+                drop_op_label(failed_step)
+            ),
         )
         .map_err(CommandError::Registry)
 }
@@ -334,14 +395,22 @@ pub enum DropOp {
     EnsureBranchAbsent,
 }
 
+pub fn drop_op_step_key(op: DropOp) -> &'static str {
+    match op {
+        DropOp::EnsureAgentStopped => "agent_stopped",
+        DropOp::EnsureTmuxSessionAbsent => "tmux_session_absent",
+        DropOp::EnsureWorktreeAbsent => "worktree_absent",
+        DropOp::EnsureBranchAbsent => "branch_absent",
+    }
+}
+
+/// Tear down git resources before killing tmux so a failed drop can be retried while the
+/// session is still attachable.
 pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> {
     let mut ops = Vec::new();
 
     if observation.agent != ResourceState::Absent {
         ops.push(DropOp::EnsureAgentStopped);
-    }
-    if observation.tmux_session != ResourceState::Absent {
-        ops.push(DropOp::EnsureTmuxSessionAbsent);
     }
     if observation.worktree != ResourceState::Absent {
         ops.push(DropOp::EnsureWorktreeAbsent);
@@ -349,8 +418,33 @@ pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> 
     if observation.branch != ResourceState::Absent {
         ops.push(DropOp::EnsureBranchAbsent);
     }
+    if observation.tmux_session != ResourceState::Absent {
+        ops.push(DropOp::EnsureTmuxSessionAbsent);
+    }
 
     ops
+}
+
+pub fn plan_drop_from_observation_for_task(
+    observation: &DropObservation,
+    receipts: &[StepReceipt],
+) -> Vec<DropOp> {
+    let completed = receipts
+        .iter()
+        .filter(|receipt| receipt.operation == TaskOperationKind::Drop)
+        .filter(|receipt| {
+            matches!(
+                receipt.status,
+                StepReceiptStatus::Succeeded | StepReceiptStatus::SkippedObserved
+            )
+        })
+        .map(|receipt| receipt.step_key.as_str())
+        .collect::<BTreeSet<_>>();
+
+    plan_drop_from_observation(observation)
+        .into_iter()
+        .filter(|op| !completed.contains(drop_op_step_key(*op)))
+        .collect()
 }
 
 pub fn observe_drop_resources<R: Registry>(

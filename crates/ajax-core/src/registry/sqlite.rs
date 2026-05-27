@@ -373,7 +373,22 @@ fn is_registry_ghost_task(task: &Task) -> bool {
     if task.has_side_flag(SideFlag::Stale) {
         return true;
     }
-    task.has_missing_substrate() && is_operational_missing_substrate_ghost(task)
+    if task.has_missing_substrate() && is_operational_missing_substrate_ghost(task) {
+        return true;
+    }
+    is_orphaned_drop_failure_ghost(task)
+}
+
+fn is_orphaned_drop_failure_ghost(task: &Task) -> bool {
+    task.lifecycle_status == LifecycleStatus::TeardownIncomplete
+        && task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists)
+        && task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists)
 }
 
 fn is_operational_missing_substrate_ghost(task: &Task) -> bool {
@@ -1539,6 +1554,43 @@ mod tests {
         assert_eq!(ghost_task_count, 0);
         assert!(restored.get_task(&TaskId::new("task-ghost")).is_none());
         assert!(restored.get_task(&TaskId::new("task-live")).is_some());
+    }
+
+    #[test]
+    fn sqlite_registry_store_prunes_orphaned_drop_failure_ghosts() {
+        let mut registry = InMemoryRegistry::default();
+        let mut ghost = task("task-ghost", "web", "fix-login");
+        ghost.lifecycle_status = LifecycleStatus::TeardownIncomplete;
+        ghost.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        ghost.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        registry.create_task(ghost).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-orphaned-drop-failure"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(restored.get_task(&TaskId::new("task-ghost")).is_none());
     }
 
     #[test]

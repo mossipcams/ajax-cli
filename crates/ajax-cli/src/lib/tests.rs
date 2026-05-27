@@ -4356,7 +4356,6 @@ fn remove_execute_force_removes_task_resources() {
                     "--format=%(refname:short)"
                 ]
             ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             CommandSpec::new(
                 "git",
                 [
@@ -4378,6 +4377,7 @@ fn remove_execute_force_removes_task_resources() {
                     "ajax/fix-login"
                 ]
             ),
+            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
             CommandSpec::new(
                 "git",
@@ -4935,11 +4935,6 @@ fn drop_execute_treats_missing_resource_stderr_variants_as_already_absent() {
             ),
             output(0, "main\najax/fix-login\n"),
             CommandOutput {
-                status_code: 1,
-                stdout: String::new(),
-                stderr: "no server running on /tmp/tmux-501/default".to_string(),
-            },
-            CommandOutput {
                 status_code: 128,
                 stdout: String::new(),
                 stderr: "fatal: '/tmp/worktrees/web-fix-login' is not a worktree".to_string(),
@@ -4948,6 +4943,11 @@ fn drop_execute_treats_missing_resource_stderr_variants_as_already_absent() {
                 status_code: 1,
                 stdout: String::new(),
                 stderr: "error: branch 'ajax/fix-login' not found.".to_string(),
+            },
+            CommandOutput {
+                status_code: 1,
+                stdout: String::new(),
+                stderr: "no server running on /tmp/tmux-501/default".to_string(),
             },
             output(0, ""),
             output(
@@ -5002,6 +5002,64 @@ fn drop_execute_treats_no_such_branch_as_already_absent() {
 }
 
 #[test]
+fn drop_execute_keeps_task_when_worktree_remove_fails_before_tmux_session_kill() {
+    let mut context = cleanable_context();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+    task.worktrunk_status = Some(WorktrunkStatus::present(
+        "worktrunk",
+        "/tmp/worktrees/web-fix-login",
+    ));
+    let mut runner = QueuedRunner::new(vec![
+        output(0, "ajax-web-fix-login\n"),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ),
+        output(0, "main\najax/fix-login\n"),
+        CommandOutput {
+            status_code: 2,
+            stdout: String::new(),
+            stderr: "error: failed to remove worktree: permission denied".to_string(),
+        },
+        output(0, "ajax-web-fix-login\n"),
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ),
+        output(0, "main\najax/fix-login\n"),
+    ]);
+
+    run_with_context_and_runner(
+        ["ajax", "drop", "web/fix-login", "--execute"],
+        &mut context,
+        &mut runner,
+    )
+    .unwrap_err();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+    assert_eq!(
+        task.metadata.get("drop_failed_step").map(String::as_str),
+        Some("remove worktree")
+    );
+    assert!(task
+        .metadata
+        .get("drop_failed_detail")
+        .is_some_and(|detail| detail.contains("permission denied")));
+    assert!(task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists));
+    assert!(!runner.commands.iter().any(|command| {
+        command.program == "tmux" && command.args.iter().any(|arg| arg == "kill-session")
+    }));
+}
+
+#[test]
 fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete() {
     let mut context = cleanable_context();
     let task = context
@@ -5021,13 +5079,12 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
             ),
             output(0, "main\najax/fix-login\n"),
             output(0, ""),
-            output(0, ""),
             CommandOutput {
                 status_code: 2,
                 stdout: String::new(),
                 stderr: "branch delete failed".to_string(),
             },
-            output(0, ""),
+            output(0, "ajax-web-fix-login\n"),
             output(
                 0,
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
@@ -5044,22 +5101,27 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
 
     assert!(
         matches!(error, super::CliError::CommandFailedAfterStateChange(message)
-                if message == "command failed: git exited with status 2: branch delete failed")
+                if message.contains("drop incomplete for web/fix-login at delete branch")
+                    && message.contains("branch delete failed")
+                    && message.contains("retry with `ajax drop web/fix-login --execute`"))
     );
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
     assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
     assert_eq!(
         task.metadata.get("drop_failed_step").map(String::as_str),
-        Some("EnsureBranchAbsent")
+        Some("delete branch")
     );
     assert!(task
         .tmux_status
         .as_ref()
-        .is_some_and(|status| !status.exists));
+        .is_some_and(|status| status.exists));
     assert!(task
         .git_status
         .as_ref()
         .is_some_and(|status| { !status.worktree_exists && status.branch_exists }));
+    assert!(!runner.commands.iter().any(|command| {
+        command.program == "tmux" && command.args.iter().any(|arg| arg == "kill-session")
+    }));
     assert!(!ajax_core::commands::list_tasks(&context, None)
         .tasks
         .is_empty());
@@ -5081,7 +5143,7 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
                 stdout: String::new(),
                 stderr: "branch delete failed".to_string(),
             },
-            output(0, ""),
+            output(0, "ajax-web-fix-login\n"),
             output(
                 0,
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
@@ -5096,7 +5158,7 @@ fn drop_execute_second_run_after_partial_failure_resumes_and_removes_task() {
     )
     .unwrap_err();
     let mut resume_runner = QueuedRunner::new(vec![
-        output(0, ""),
+        output(0, "ajax-web-fix-login\n"),
         output(
             0,
             "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\n",
@@ -6238,11 +6300,11 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
 
     let error = super::render_drop_command(subcommand, &mut context, &mut runner).unwrap_err();
 
-    assert!(matches!(
-        error,
-        super::CliError::CommandFailedAfterStateChange(message)
-            if message == "drop teardown incomplete"
-    ));
+    assert!(
+        matches!(error, super::CliError::CommandFailedAfterStateChange(message)
+                if message.contains("drop incomplete for web/fix-login")
+                    && message.contains("retry with `ajax drop web/fix-login --execute`"))
+    );
     assert_eq!(
         runner.commands,
         vec![
