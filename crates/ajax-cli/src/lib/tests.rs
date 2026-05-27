@@ -194,21 +194,34 @@ fn cockpit_backend_module_renders_snapshot_frame() {
 }
 
 #[test]
-fn cockpit_snapshot_excludes_stale_and_missing_substrate_menu_ghosts() {
-    for flag in [SideFlag::Stale, SideFlag::WorktreeMissing] {
-        let mut context = sample_context();
-        let task = context
-            .registry
-            .get_task_mut(&TaskId::new("task-1"))
-            .unwrap();
-        task.remove_side_flag(SideFlag::NeedsInput);
-        task.add_side_flag(flag);
+fn cockpit_snapshot_excludes_stale_tasks_but_keeps_missing_substrate_tasks_visible() {
+    let mut stale_context = sample_context();
+    let stale_task = stale_context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    stale_task.remove_side_flag(SideFlag::NeedsInput);
+    stale_task.add_side_flag(SideFlag::Stale);
 
-        let snapshot = crate::cockpit_backend::build_cockpit_snapshot(&context);
+    let stale_snapshot = crate::cockpit_backend::build_cockpit_snapshot(&stale_context);
 
-        assert!(snapshot.cards.is_empty(), "{flag:?}");
-        assert!(snapshot.inbox.items.is_empty(), "{flag:?}");
-    }
+    assert!(stale_snapshot.cards.is_empty());
+    assert!(stale_snapshot.inbox.items.is_empty());
+
+    let mut broken_context = sample_context();
+    let broken_task = broken_context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    broken_task.remove_side_flag(SideFlag::NeedsInput);
+    broken_task.add_side_flag(SideFlag::WorktreeMissing);
+
+    let broken_snapshot = crate::cockpit_backend::build_cockpit_snapshot(&broken_context);
+
+    assert_eq!(broken_snapshot.cards.len(), 1);
+    assert_eq!(broken_snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(broken_snapshot.inbox.items.len(), 1);
+    assert_eq!(broken_snapshot.inbox.items[0].task_handle, "web/fix-login");
 }
 
 #[test]
@@ -1481,8 +1494,10 @@ fn live_refresh_clears_stale_tmux_missing_when_session_exists_without_worktrunk(
     assert!(state_changed);
     assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
-    assert!(snapshot.cards.is_empty());
-    assert!(snapshot.inbox.items.is_empty());
+    assert_eq!(snapshot.cards.len(), 1);
+    assert_eq!(snapshot.cards[0].qualified_handle, "web/fix-login");
+    assert_eq!(snapshot.inbox.items.len(), 1);
+    assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
 }
 
 #[test]

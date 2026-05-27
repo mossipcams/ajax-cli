@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_cockpit_excludes_missing_substrate_ghosts() {
+    fn browser_cockpit_surfaces_missing_substrate_tasks() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
             TaskId::new("web/fix-login"),
@@ -271,8 +271,15 @@ mod tests {
         let json = browser_cockpit_json(&context).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(value["cards"], serde_json::json!([]));
-        assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["cards"].as_array().unwrap().len(), 1);
+        assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
+        assert_eq!(value["cards"][0]["primary_action"], "drop");
+        assert_eq!(
+            value["cards"][0]["available_actions"],
+            serde_json::json!(["drop"])
+        );
+        assert_eq!(value["inbox"]["items"].as_array().unwrap().len(), 1);
+        assert_eq!(value["inbox"]["items"][0]["task_handle"], "web/fix-login");
     }
 
     #[test]
@@ -309,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn task_detail_returns_none_for_missing_substrate_ghost() {
+    fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
             TaskId::new("web/fix-login"),
@@ -328,9 +335,12 @@ mod tests {
         registry.create_task(task).unwrap();
         let context = CommandContext::new(Config::default(), registry);
 
-        let detail = super::browser_task_detail_view(&context, "web/fix-login");
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
-        assert!(detail.is_none());
+        assert_eq!(detail.qualified_handle, "web/fix-login");
+        assert_eq!(detail.primary_action, "drop");
+        assert_eq!(detail.available_actions, vec!["drop".to_string()]);
+        assert_eq!(detail.status_label, "failed");
     }
 
     #[test]
