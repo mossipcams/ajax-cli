@@ -156,6 +156,14 @@ tmux still own live substrate reality; Ajax reconciles their observations into
 SQLite so Cockpit, command planning, and JSON output can read one coherent task
 record.
 
+Registry ghosts are tasks that should not survive SQLite save/load and should
+not appear in Cockpit. `ajax-core::ghost_task` is the single classifier for that
+decision. Persistence (`registry/sqlite`), Cockpit projection, and visibility
+all consult the same rule. Recoverable missing-substrate tasks in operational
+lifecycles remain persisted with their events and step receipts. Only
+`Removed`, `Stale`, or abandoned provisioning records with no recoverable Git
+substrate are pruned as ghosts.
+
 ### Lifecycle
 
 Lifecycle state is modeled in `ajax-core::lifecycle`. Commands and live-status

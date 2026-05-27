@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+* unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
+
 ## [0.7.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.3...ajax-cli-v0.7.4) (2026-05-27)
 
 
