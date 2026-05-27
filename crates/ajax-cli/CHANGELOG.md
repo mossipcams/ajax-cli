@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.2...ajax-cli-v0.7.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* resilient drop teardown, failure surfacing, and ghost task pruning ([#91](https://github.com/mossipcams/ajax-cli/issues/91)) ([cb29bcc](https://github.com/mossipcams/ajax-cli/commit/cb29bcc13312e122801ef9d1c8bf709e4b60af67))
+
 ## [0.7.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.1...ajax-cli-v0.7.2) (2026-05-27)
 
 
