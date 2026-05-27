@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.5.0...ajax-cli-v0.6.0) (2026-05-27)
+
+
+### Features
+
+* complete mobile cockpit operator parity and fix alert spam ([#77](https://github.com/mossipcams/ajax-cli/issues/77)) ([099bf83](https://github.com/mossipcams/ajax-cli/commit/099bf83b9d2677e6ddcae17b5a3a35a4ce848e9f))
+
+
+### Performance Improvements
+
+* optimize runtime refresh and improve reliability ([#79](https://github.com/mossipcams/ajax-cli/issues/79)) ([474d8d3](https://github.com/mossipcams/ajax-cli/commit/474d8d3a1f4c816771845bb16bb12f034583cdfd))
+
 ## [0.5.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.4.0...ajax-cli-v0.5.0) (2026-05-27)
 
 
