@@ -528,4 +528,126 @@ mod tests {
 
         let _ = fs::remove_file(script);
     }
+
+    #[tokio::test]
+    async fn runtime_cursor_shell_test_commands_reduce_to_tests_running() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-runtime-cursor-tests-{}", std::process::id()));
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc\"}\\n'\nprintf '{\"type\":\"tool_call\",\"call_id\":\"1\",\"name\":\"shell\",\"status\":\"running\",\"args\":{\"command\":\"cargo nextest run --all-features\"}}\\n'\nprintf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::cursor_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        config.channel_capacity = 16;
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let exit = handle.wait().await.expect("monitor should complete");
+        let mut machine = crate::SupervisorStatusMachine::default();
+        let mut observations = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            if let Some(observation) = machine.apply(&event).cloned() {
+                observations.push(observation.kind);
+            }
+        }
+
+        assert_eq!(exit.status_code, Some(0));
+        assert!(observations.contains(&ajax_core::models::LiveStatusKind::TestsRunning));
+        assert_eq!(
+            observations.last().copied(),
+            Some(ajax_core::models::LiveStatusKind::Done)
+        );
+
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn runtime_cursor_fake_run_reduces_full_supervisor_lifecycle() {
+        let script = std::env::temp_dir().join(format!(
+            "ajax-runtime-cursor-lifecycle-{}",
+            std::process::id()
+        ));
+        fs::write(
+            &script,
+            "#!/bin/sh\n\
+printf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc\"}\\n'\n\
+printf '{\"type\":\"thinking\",\"text\":\"planning\"}\\n'\n\
+printf '{\"type\":\"tool_call\",\"subtype\":\"started\",\"call_id\":\"1\",\"tool_call\":{\"readToolCall\":{\"args\":{\"path\":\"README.md\"}}}}\\n'\n\
+printf '{\"type\":\"tool_call\",\"call_id\":\"2\",\"name\":\"shell\",\"status\":\"running\",\"args\":{\"command\":\"cargo nextest run --all-features\"}}\\n'\n\
+printf '{\"type\":\"request\",\"request_id\":\"req-1\",\"message\":\"Approve to proceed?\"}\\n'\n\
+printf '{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"done\"}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::cursor_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        config.channel_capacity = 32;
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let exit = handle.wait().await.expect("monitor should complete");
+        let mut machine = crate::SupervisorStatusMachine::default();
+        let mut observations = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            if let Some(observation) = machine.apply(&event).cloned() {
+                observations.push(observation.kind);
+            }
+        }
+
+        assert_eq!(exit.status_code, Some(0));
+        assert!(observations.contains(&ajax_core::models::LiveStatusKind::AgentRunning));
+        assert!(observations.contains(&ajax_core::models::LiveStatusKind::TestsRunning));
+        assert!(observations.contains(&ajax_core::models::LiveStatusKind::WaitingForApproval));
+        assert_eq!(
+            observations.last().copied(),
+            Some(ajax_core::models::LiveStatusKind::Done)
+        );
+
+        let _ = fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn runtime_cursor_hung_process_reduces_to_blocked() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-runtime-cursor-hung-{}", std::process::id()));
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc\"}\\n'\nsleep 5\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::cursor_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        config.hang_after = Some(Duration::from_millis(100));
+        config.channel_capacity = 32;
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let mut machine = crate::SupervisorStatusMachine::default();
+        let mut saw_blocked = false;
+        while let Some(event) = tokio::time::timeout(Duration::from_secs(3), receiver.recv())
+            .await
+            .expect("cursor hung event should arrive before timeout")
+        {
+            if machine.apply(&event).is_some_and(|observation| {
+                observation.kind == ajax_core::models::LiveStatusKind::Blocked
+            }) {
+                saw_blocked = true;
+                break;
+            }
+        }
+
+        assert!(saw_blocked);
+        let _ = handle.wait().await;
+        let _ = fs::remove_file(script);
+    }
 }

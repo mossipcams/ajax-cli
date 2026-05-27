@@ -59,4 +59,59 @@ mod tests {
             Some(LiveStatusKind::Done)
         );
     }
+
+    #[test]
+    fn status_machine_preserves_tests_running_over_generic_activity() {
+        let events = [
+            MonitorEvent::Agent(AgentEvent::ToolCall {
+                name: "shell: cargo test --all-features".to_string(),
+            }),
+            MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "Compiling ajax-core v0.1.0".to_string(),
+            }),
+        ];
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply_all(&events);
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::TestsRunning)
+        );
+    }
+
+    #[test]
+    fn status_machine_preserves_blocked_over_late_output() {
+        let events = [
+            MonitorEvent::Agent(AgentEvent::Failed {
+                message: "manual intervention required; blocked".to_string(),
+            }),
+            MonitorEvent::Process(ProcessEvent::Stdout {
+                line: "still streaming logs".to_string(),
+            }),
+        ];
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply_all(&events);
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::Blocked)
+        );
+    }
+
+    #[test]
+    fn status_machine_maps_hung_process_to_blocked() {
+        let events = [MonitorEvent::Process(ProcessEvent::Hung {
+            quiet_for: std::time::Duration::from_secs(30),
+        })];
+        let mut status = SupervisorStatusMachine::default();
+
+        status.apply_all(&events);
+
+        assert_eq!(
+            status.observation().map(|observation| observation.kind),
+            Some(LiveStatusKind::Blocked)
+        );
+    }
 }
