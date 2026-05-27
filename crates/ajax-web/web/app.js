@@ -598,26 +598,102 @@ document.addEventListener("visibilitychange", () => {
 
 // PUSH NOTIFICATIONS --------------------------------------------------------
 
-function pushSupported() {
-  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+function isStandalonePwa() {
+  return (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true
+  );
 }
 
-async function refreshNotifyButton() {
-  if (!pushSupported() || Notification.permission === "denied") {
-    notifyButton.hidden = true;
+function isIosBrowser() {
+  return /iPad|iPhone|iPod/.test(window.navigator.userAgent);
+}
+
+function notificationEnvironment() {
+  if (!("serviceWorker" in navigator) || !("Notification" in window)) {
+    return {
+      status: "unsupported",
+      reason: "This browser cannot receive alerts.",
+    };
+  }
+  if (!("PushManager" in window)) {
+    if (isIosBrowser() && !isStandalonePwa()) {
+      return {
+        status: "unsupported",
+        reason: "Add Ajax to your Home Screen to enable alerts.",
+      };
+    }
+    return {
+      status: "unsupported",
+      reason: "Alerts are not available in this browser.",
+    };
+  }
+  if (Notification.permission === "denied") {
+    return {
+      status: "denied",
+      reason: "Notifications blocked — enable them in browser settings.",
+    };
+  }
+  return { status: "available", reason: null };
+}
+
+async function syncNotificationUi() {
+  const env = notificationEnvironment();
+  notifyButton.hidden = false;
+  notifyButton.removeAttribute("title");
+
+  if (env.status === "unsupported") {
+    notifyButton.disabled = true;
+    notifyButton.textContent = "Alerts";
+    notifyButton.dataset.state = "unsupported";
+    notifyButton.title = env.reason;
     return;
   }
-  const registration = await navigator.serviceWorker.ready;
-  const existing = await registration.pushManager.getSubscription();
-  notifyButton.hidden = Boolean(existing);
+
+  if (env.status === "denied") {
+    notifyButton.disabled = false;
+    notifyButton.textContent = "Alerts blocked";
+    notifyButton.dataset.state = "denied";
+    notifyButton.title = env.reason;
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const existing = await registration.pushManager.getSubscription();
+    if (existing) {
+      notifyButton.disabled = true;
+      notifyButton.textContent = "Alerts on";
+      notifyButton.dataset.state = "enabled";
+      return;
+    }
+    notifyButton.disabled = false;
+    notifyButton.textContent = "Alerts";
+    notifyButton.dataset.state = "off";
+  } catch (error) {
+    notifyButton.disabled = true;
+    notifyButton.textContent = "Alerts…";
+    notifyButton.dataset.state = "pending";
+  }
 }
 
 async function enableNotifications() {
+  const env = notificationEnvironment();
+  if (env.status === "unsupported") {
+    statusLine.textContent = env.reason;
+    return;
+  }
+  if (env.status === "denied") {
+    statusLine.textContent = env.reason;
+    return;
+  }
+
   notifyButton.disabled = true;
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       statusLine.textContent = "Notifications were not allowed";
+      await syncNotificationUi();
       return;
     }
     const registration = await navigator.serviceWorker.ready;
@@ -632,12 +708,11 @@ async function enableNotifications() {
       body: JSON.stringify(subscription),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    notifyButton.hidden = true;
     statusLine.textContent = "Notifications enabled";
+    await syncNotificationUi();
   } catch (error) {
     statusLine.textContent = "Could not enable notifications";
-  } finally {
-    notifyButton.disabled = false;
+    await syncNotificationUi();
   }
 }
 
@@ -645,10 +720,13 @@ notifyButton.addEventListener("click", enableNotifications);
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js")
-    .then(() => refreshNotifyButton())
+    .then(() => syncNotificationUi())
     .catch((error) => {
       console.warn("service worker registration failed", error);
+      syncNotificationUi();
     });
+} else {
+  syncNotificationUi();
 }
 
 if (!navigator.onLine) setOnline(false);
