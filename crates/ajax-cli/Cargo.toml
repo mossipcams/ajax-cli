@@ -19,10 +19,10 @@ name = "ajax-cli"
 path = "src/main.rs"
 
 [dependencies]
-ajax-core = { workspace = true }
-ajax-supervisor = { workspace = true, optional = true }
-ajax-tui = { workspace = true, optional = true }
-ajax-web = { workspace = true }
+ajax-core = { path = "../ajax-core", version = "0.1.0" }
+ajax-supervisor = { path = "../ajax-supervisor", version = "0.1.0", optional = true }
+ajax-tui = { path = "../ajax-tui", version = "0.1.0", optional = true }
+ajax-web = { path = "../ajax-web", version = "0.1.0" }
 clap = { workspace = true }
 nix = { workspace = true, optional = true }
 serde = { workspace = true }

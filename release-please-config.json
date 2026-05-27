@@ -1,8 +1,12 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "240bb9954c7f7d761207e9ea9d470f6aab31852a",
   "release-type": "rust",
   "plugins": [
-    "cargo-workspace",
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    },
     {
       "type": "linked-versions",
       "groupName": "ajax-cli",

@@ -109,7 +109,7 @@ fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
     assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
     assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
     assert!(
-        manifest.contains("ajax-web = { workspace = true }"),
+        manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
         "ajax-web is the always-compiled PWA boundary used by the web companion"
     );
 }
@@ -123,7 +123,7 @@ fn web_companion_stays_out_of_cli_backend() {
     let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
 
     assert!(
-        manifest.contains("ajax-web = { workspace = true }"),
+        manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
         "ajax-cli should integrate the PWA through the ajax-web crate boundary"
     );
     assert!(
@@ -2726,6 +2726,10 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
     )
     .unwrap();
     let packages = config["packages"].as_object().unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join(".release-please-manifest.json")).unwrap(),
+    )
+    .unwrap();
 
     for package_path in [
         "crates/ajax-cli",
@@ -2739,6 +2743,29 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
             "release-please should register {package_path} so library-only commits trigger a release"
         );
     }
+
+    let bootstrap_sha = config["bootstrap-sha"]
+        .as_str()
+        .expect("release-please should pin bootstrap-sha for the first grouped workspace release");
+    assert_eq!(
+        bootstrap_sha.len(),
+        40,
+        "bootstrap-sha should be a full commit sha"
+    );
+
+    let cargo_workspace = config["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|plugin| {
+            plugin.get("type").and_then(serde_json::Value::as_str) == Some("cargo-workspace")
+        })
+        .expect("cargo-workspace plugin should be configured explicitly");
+    assert_eq!(
+        cargo_workspace["merge"],
+        serde_json::Value::Bool(false),
+        "cargo-workspace should disable its internal merge when linked-versions is active"
+    );
 
     let linked_versions = config["plugins"]
         .as_array()
@@ -2767,6 +2794,18 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         );
     }
 
+    for crate_path in [
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web",
+    ] {
+        assert_eq!(
+            manifest[crate_path],
+            serde_json::Value::String("0.7.4".to_string()),
+            "{crate_path} should be seeded from the current ajax-cli release line instead of 0.1.0"
+        );
+    }
     for package_path in [
         "crates/ajax-core",
         "crates/ajax-supervisor",
@@ -2785,6 +2824,59 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
             package["skip-changelog"],
             serde_json::Value::Bool(true),
             "{package_path} should not maintain a separate changelog"
+        );
+    }
+}
+
+#[test]
+fn release_please_updates_internal_crate_versions_in_package_manifests() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+    for dependency in ["ajax-core", "ajax-supervisor", "ajax-tui", "ajax-web"] {
+        assert!(
+            !workspace_manifest.contains(&format!("{dependency} = {{ version = ")),
+            "{dependency} should be versioned in package manifests so release-please can rewrite it"
+        );
+    }
+
+    for (manifest_path, dependency_name, expected_path) in [
+        ("crates/ajax-cli/Cargo.toml", "ajax-core", "../ajax-core"),
+        (
+            "crates/ajax-cli/Cargo.toml",
+            "ajax-supervisor",
+            "../ajax-supervisor",
+        ),
+        ("crates/ajax-cli/Cargo.toml", "ajax-tui", "../ajax-tui"),
+        ("crates/ajax-cli/Cargo.toml", "ajax-web", "../ajax-web"),
+        (
+            "crates/ajax-supervisor/Cargo.toml",
+            "ajax-core",
+            "../ajax-core",
+        ),
+        ("crates/ajax-tui/Cargo.toml", "ajax-core", "../ajax-core"),
+        ("crates/ajax-web/Cargo.toml", "ajax-core", "../ajax-core"),
+    ] {
+        let manifest = std::fs::read_to_string(root.join(manifest_path)).unwrap();
+        let dependency_line = manifest
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with(&format!("{dependency_name} ="))
+            })
+            .unwrap_or_else(|| panic!("{manifest_path} should declare {dependency_name}"));
+
+        assert!(
+            dependency_line.contains(&format!("path = \"{expected_path}\"")),
+            "{manifest_path} should point {dependency_name} at {expected_path}"
+        );
+        assert!(
+            dependency_line.contains("version = \""),
+            "{manifest_path} should pin a releasable version for {dependency_name}"
+        );
+        assert!(
+            !dependency_line.contains("workspace = true"),
+            "{manifest_path} should not inherit {dependency_name} via workspace = true"
         );
     }
 }
@@ -2827,15 +2919,7 @@ fn workspace_members_inherit_metadata_lints_and_dependencies() {
     let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
 
     assert!(workspace_manifest.contains("[workspace.dependencies]"));
-    for dependency in [
-        "ajax-core",
-        "ajax-supervisor",
-        "ajax-tui",
-        "serde",
-        "serde_json",
-        "tokio",
-        "rstest",
-    ] {
+    for dependency in ["serde", "serde_json", "tokio", "rstest"] {
         assert!(
             workspace_manifest.contains(&format!("{dependency} = ")),
             "workspace manifest should centralize {dependency}"
@@ -2846,7 +2930,11 @@ fn workspace_members_inherit_metadata_lints_and_dependencies() {
         let manifest =
             std::fs::read_to_string(root.join(format!("crates/{crate_name}/Cargo.toml"))).unwrap();
 
-        assert!(manifest.contains("version.workspace = true"));
+        assert!(manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("version = \"")));
+        assert!(!manifest.contains("\nversion.workspace = true"));
+        assert!(manifest.contains("edition.workspace = true"));
         assert!(manifest.contains("[lints]"));
         assert!(manifest.contains("workspace = true"));
 

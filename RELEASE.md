@@ -14,6 +14,18 @@ workflow's built-in token) and release automation still runs.
 Use `RELEASE_PLEASE_TOKEN` if you need the PR lifecycle behavior you get from
 a PAT/GitHub App token (for example, downstream CI expectations).
 
+Release Please manages this repo as a Rust workspace with linked crate
+versions. Keep internal Ajax crate dependencies declared in package manifests
+with explicit `path` + `version` fields instead of routing them through root
+`[workspace.dependencies]` entries, because the release PR needs those fields
+in each crate manifest to rewrite inter-crate version links.
+
+When adding a newly tracked workspace crate to the release group, seed its
+current version in `.release-please-manifest.json` and set or update
+`bootstrap-sha` in `release-please-config.json` so the first grouped release
+starts from the right historical boundary instead of replaying the crate's full
+history from `0.1.0`.
+
 ## Release Checklist
 
 1. Confirm install and first-run docs in `README.md` still match the command
@@ -59,6 +71,9 @@ scripts/smoke.sh
    Library-only changes under `crates/ajax-core`, `crates/ajax-supervisor`,
    `crates/ajax-tui`, or `crates/ajax-web` still count toward the grouped
    `ajax-cli` release.
+   If the release group starts tracking a new workspace crate, update
+   `.release-please-manifest.json` and `bootstrap-sha` before expecting the
+   next Release Please PR to produce correct changelog ranges.
 7. Wait for the Release Please PR to open or update.
 8. Confirm the Release Please PR has green remote CI checks.
 9. Merge the Release Please PR. Release Please will create the tag, changelog

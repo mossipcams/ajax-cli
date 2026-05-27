@@ -14,7 +14,7 @@ name = "ajax_supervisor"
 path = "src/lib.rs"
 
 [dependencies]
-ajax-core = { workspace = true }
+ajax-core = { path = "../ajax-core", version = "0.1.0" }
 notify = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["process", "io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }

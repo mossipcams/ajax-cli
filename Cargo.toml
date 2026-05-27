@@ -16,10 +16,6 @@ license = "MIT"
 repository = "https://github.com/mossipcams/ajax-cli"
 
 [workspace.dependencies]
-ajax-core = { version = "0.1.0", path = "crates/ajax-core" }
-ajax-supervisor = { version = "0.1.0", path = "crates/ajax-supervisor" }
-ajax-tui = { version = "0.1.0", path = "crates/ajax-tui" }
-ajax-web = { version = "0.1.0", path = "crates/ajax-web" }
 axum = "0.8"
 clap = "4.5"
 crossterm = "0.29"
