@@ -49,7 +49,7 @@ pub fn browser_cockpit_json<R: Registry>(
 }
 
 pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> BrowserCockpitView {
-    let view = commands::rebuild_cockpit_view(context);
+    let view = commands::cockpit_view(context);
     BrowserCockpitView {
         backend: host_native_backend(),
         repos: view.repos,
@@ -142,7 +142,7 @@ pub fn browser_task_detail_view<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Option<BrowserTaskDetail> {
-    let view = commands::rebuild_cockpit_view(context);
+    let view = commands::cockpit_view(context);
     let card = view
         .cards
         .iter()

@@ -241,7 +241,7 @@ where
     if let Err(error) = bridge.refresh_cockpit(context, runner) {
         eprintln!("Ajax web attention refresh failed: {error}");
     }
-    attention_handles(&commands::rebuild_cockpit_view(context))
+    attention_handles(&commands::cockpit_view(context))
 }
 
 async fn axum_pwa_shell() -> AxumResponse {
