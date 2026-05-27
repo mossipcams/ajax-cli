@@ -1,6 +1,6 @@
 [package]
 name = "ajax-supervisor"
-version = "0.1.0"
+version = "0.8.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -14,7 +14,7 @@ name = "ajax_supervisor"
 path = "src/lib.rs"
 
 [dependencies]
-ajax-core = { path = "../ajax-core", version = "0.1.0" }
+ajax-core = { path = "../ajax-core", version = "0.8.0" }
 notify = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["process", "io-util", "macros", "rt", "rt-multi-thread", "sync", "time"] }

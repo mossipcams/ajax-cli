@@ -6,6 +6,25 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.8.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.4...ajax-cli-v0.8.0) (2026-05-27)
+
+
+### Bug Fixes
+
+* register workspace crates in release please ([#98](https://github.com/mossipcams/ajax-cli/issues/98)) ([b4f083e](https://github.com/mossipcams/ajax-cli/commit/b4f083e0718dcf8c131e1f7d8ba64aec61574af6))
+* stabilize release please workspace version rewrites ([#102](https://github.com/mossipcams/ajax-cli/issues/102)) ([160eafa](https://github.com/mossipcams/ajax-cli/commit/160eaface52cc633156fb3e9d2613f4359f61879))
+* unify ghost-task classification across persistence and Cockpit ([#99](https://github.com/mossipcams/ajax-cli/issues/99)) ([142c2fd](https://github.com/mossipcams/ajax-cli/commit/142c2fdb5dc8a9c30c5b73cc7c58049bebbd8c7a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.1.0 to 0.8.0
+    * ajax-supervisor bumped from 0.1.0 to 0.8.0
+    * ajax-tui bumped from 0.1.0 to 0.8.0
+    * ajax-web bumped from 0.1.0 to 0.8.0
+
 ## [0.7.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.3...ajax-cli-v0.7.4) (2026-05-27)
 
 
