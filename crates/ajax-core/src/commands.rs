@@ -1158,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_attention_count_excludes_hidden_missing_substrate_tasks() {
+    fn repo_attention_count_includes_visible_missing_substrate_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1170,11 +1170,11 @@ mod tests {
 
         let response = list_repos(&context);
 
-        assert_eq!(response.repos[0].attention_items, 0);
+        assert_eq!(response.repos[0].attention_items, 1);
     }
 
     #[test]
-    fn cockpit_summary_attention_excludes_hidden_missing_substrate_tasks() {
+    fn cockpit_summary_attention_includes_visible_missing_substrate_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1186,7 +1186,7 @@ mod tests {
 
         let response = cockpit(&context);
 
-        assert_eq!(response.summary.attention_items, 0);
+        assert_eq!(response.summary.attention_items, 1);
     }
 
     #[test]
@@ -1550,6 +1550,24 @@ mod tests {
         assert!(view.inbox.items.is_empty());
         assert_eq!(view.cards.len(), 1);
         assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
+    }
+
+    #[test]
+    fn cockpit_view_includes_missing_substrate_tasks_as_drop_only_cards() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let view = super::cockpit_view(&context);
+
+        assert_eq!(view.cards.len(), 1);
+        assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
+        assert_eq!(view.cards[0].primary_action, OperatorAction::Drop);
+        assert_eq!(view.cards[0].available_actions, vec![OperatorAction::Drop]);
     }
 
     #[test]

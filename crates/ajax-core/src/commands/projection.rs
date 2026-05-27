@@ -54,12 +54,7 @@ pub(super) fn is_visible_task(task: &Task) -> bool {
 }
 
 pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
-    is_visible_task(task)
-        && !task.has_side_flag(SideFlag::Stale)
-        && (matches!(
-            task.lifecycle_status,
-            LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
-        ) || !task.has_missing_substrate())
+    is_visible_task(task) && !task.has_side_flag(SideFlag::Stale)
 }
 
 pub(super) fn task_summary(task: &Task) -> TaskSummary {
@@ -215,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_projection_filters_stale_and_missing_substrate_ghosts() {
+    fn cockpit_projection_filters_stale_tasks_but_keeps_missing_substrate_tasks_visible() {
         let healthy = task("healthy");
         let mut stale = task("stale");
         stale.add_side_flag(SideFlag::Stale);
@@ -225,8 +220,12 @@ mod tests {
 
         let projection = cockpit_projection(tasks.as_slice(), summary());
 
-        assert_eq!(projection.cards.len(), 1);
-        assert_eq!(projection.cards[0].qualified_handle, "web/healthy");
+        let handles = projection
+            .cards
+            .iter()
+            .map(|card| card.qualified_handle.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(handles, vec!["web/healthy", "web/broken"]);
     }
 
     #[test]

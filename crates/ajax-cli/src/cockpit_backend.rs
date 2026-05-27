@@ -872,11 +872,21 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::TmuxMissing)
         );
-        assert!(!snapshot
+        let card = snapshot
             .cards
             .iter()
-            .any(|card| card.qualified_handle == "web/fix-login"));
-        assert!(snapshot.inbox.items.is_empty());
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("invalid task should stay visible in cockpit");
+        assert_eq!(card.primary_action, OperatorAction::Drop);
+        assert_eq!(card.available_actions, vec![OperatorAction::Drop]);
+        assert!(
+            snapshot
+                .inbox
+                .items
+                .iter()
+                .any(|item| item.task_handle == "web/fix-login"
+                    && item.action == OperatorAction::Drop)
+        );
         assert!(ajax_core::commands::inbox(&context)
             .items
             .iter()
