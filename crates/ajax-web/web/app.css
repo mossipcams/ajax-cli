@@ -60,19 +60,6 @@ select {
   color: var(--ink);
 }
 
-/* OFFLINE BANNER --------------------------------------------------------- */
-.banner {
-  margin: 0;
-  padding: 8px 16px;
-  font-size: 11px;
-  letter-spacing: var(--label-tracking);
-  font-weight: 600;
-  text-transform: uppercase;
-  text-align: center;
-  color: var(--ink);
-  background: var(--terracotta);
-}
-
 /* RESULT PANEL ----------------------------------------------------------- */
 .result-panel {
   margin: 0;
@@ -151,6 +138,105 @@ select {
   color: var(--ink);
 }
 
+/* ALERTS BANNER ---------------------------------------------------------- */
+.alerts-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.alerts-banner::after {
+  content: "›";
+  flex: none;
+  color: var(--ink-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.alerts-banner:hover:not(:disabled),
+.alerts-banner:focus-visible:not(:disabled) {
+  border-color: var(--ink);
+  background: var(--paper-tint);
+  outline: none;
+}
+
+.alerts-banner:disabled {
+  cursor: default;
+  color: var(--ink-muted);
+}
+
+.alerts-banner:disabled::after {
+  display: none;
+}
+
+/* NEW TASK ROW ----------------------------------------------------------- */
+.new-task-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px 12px 18px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 140ms ease;
+}
+
+.new-task-row:hover,
+.new-task-row:focus-visible {
+  background: var(--paper-tint);
+  outline: none;
+}
+
+.new-task-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--teal);
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.new-task-label {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+body.is-offline .new-task-row,
+body.is-offline .alerts-banner {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 /* HEADER ----------------------------------------------------------------- */
 header {
   position: sticky;
@@ -206,13 +292,6 @@ body.is-offline .live-dot {
   animation: none;
 }
 
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex: none;
-}
-
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
@@ -262,39 +341,9 @@ body.is-offline .live-dot {
   border-color: var(--terracotta-bright);
 }
 
-.pill.icon {
-  width: 32px;
-  min-height: 32px;
-  padding: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 16px;
-}
-
-.pill.is-running {
-  color: var(--ink-muted);
-  cursor: progress;
-}
-
-.pill.is-confirming {
-  background: var(--terracotta);
-  border-color: var(--terracotta);
-  color: var(--ink);
-  animation: pulse 700ms steps(2, jump-none) infinite;
-}
-
 body.is-offline .pill {
   opacity: 0.4;
   pointer-events: none;
-}
-
-body.is-refreshing .refresh-glyph {
-  animation: spin 700ms linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 /* LAYOUT ----------------------------------------------------------------- */
@@ -608,6 +657,9 @@ body.view-detail #task-detail {
   display: block;
 }
 
+body.view-detail #project-nav,
+body.view-detail #alerts-banner,
+body.view-detail #new-task-row,
 body.view-detail #inbox,
 body.view-detail #repos,
 body.view-detail #empty-state {
@@ -759,43 +811,6 @@ body.view-detail #empty-state {
 
 body.sheet-open #new-task-sheet {
   display: flex;
-}
-
-#help-sheet {
-  display: none;
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-  background: rgba(0, 0, 0, 0.6);
-  padding: 24px;
-  align-items: center;
-  justify-content: center;
-}
-
-body.help-open #help-sheet {
-  display: flex;
-}
-
-.help-lead {
-  margin: 0 0 12px;
-  font-size: 14px;
-  color: var(--ink-soft);
-}
-
-.help-list {
-  margin: 0;
-  font-size: 13px;
-}
-
-.help-list dt {
-  margin-top: 10px;
-  font-weight: 600;
-  color: var(--ink);
-}
-
-.help-list dd {
-  margin: 2px 0 0;
-  color: var(--ink-muted);
 }
 
 .sheet-card {

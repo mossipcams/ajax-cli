@@ -4,14 +4,10 @@ const repos = document.getElementById("repos");
 const projectNav = document.getElementById("project-nav");
 const emptyState = document.getElementById("empty-state");
 const statusLine = document.getElementById("status-line");
-const offlineBanner = document.getElementById("offline-banner");
-const refreshButton = document.getElementById("refresh-button");
-const notifyButton = document.getElementById("notify-button");
-const newTaskButton = document.getElementById("new-task-button");
-const tidyButton = document.getElementById("tidy-button");
-const helpButton = document.getElementById("help-button");
+const alertsBanner = document.getElementById("alerts-banner");
+const newTaskRow = document.getElementById("new-task-row");
+const newTaskRowLabel = document.getElementById("new-task-row-label");
 const newTaskSheet = document.getElementById("new-task-sheet");
-const helpSheet = document.getElementById("help-sheet");
 const newTaskForm = document.getElementById("new-task-form");
 const newTaskRepo = document.getElementById("new-task-repo");
 const newTaskTitle = document.getElementById("new-task-title-input");
@@ -26,6 +22,7 @@ const resultDismiss = document.getElementById("result-dismiss");
 const REFRESH_INTERVAL_MS = 1000;
 const CONFIRM_TIMEOUT_MS = 3000;
 const RESULT_AUTO_DISMISS_MS = 12000;
+const OFFLINE_STATUS = "Offline — last known state";
 
 let lastCockpit = null;
 let lastFingerprint = null;
@@ -33,7 +30,6 @@ let refreshInFlight = false;
 let detailHandle = null;
 let detailInFlight = false;
 let selectedProject = null;
-let tidyConfirmPending = false;
 const expandedCards = new Set();
 const pendingConfirms = new WeakMap();
 
@@ -396,15 +392,15 @@ function applyData(data) {
 }
 
 function setOnline(online) {
-  offlineBanner.hidden = online;
   document.body.classList.toggle("is-offline", !online);
+  if (!online) {
+    statusLine.textContent = OFFLINE_STATUS;
+  }
 }
 
-async function loadCockpit(options) {
-  const manual = options && options.manual;
+async function loadCockpit() {
   if (refreshInFlight || document.hidden) return;
   refreshInFlight = true;
-  if (manual) document.body.classList.add("is-refreshing");
   try {
     const response = await fetch("/api/cockpit", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -414,7 +410,6 @@ async function loadCockpit(options) {
     setOnline(false);
   } finally {
     refreshInFlight = false;
-    document.body.classList.remove("is-refreshing");
   }
 }
 
@@ -550,6 +545,12 @@ async function loadDetail() {
 
 // HASH ROUTER ---------------------------------------------------------------
 
+function updateNewTaskRowLabel() {
+  newTaskRowLabel.textContent = selectedProject
+    ? `New task in ${selectedProject}`
+    : "New task";
+}
+
 function applyRoute() {
   const hash = window.location.hash || "#/";
   if (hash.startsWith("#/t/")) {
@@ -563,6 +564,7 @@ function applyRoute() {
     detailHandle = null;
     document.body.classList.remove("view-detail");
     lastFingerprint = null;
+    updateNewTaskRowLabel();
     if (lastCockpit) applyData(lastCockpit);
     else loadCockpit();
     return;
@@ -570,6 +572,7 @@ function applyRoute() {
   selectedProject = null;
   detailHandle = null;
   document.body.classList.remove("view-detail");
+  updateNewTaskRowLabel();
   loadCockpit();
 }
 
@@ -595,14 +598,6 @@ function openNewTaskSheet() {
 
 function closeSheets() {
   document.body.classList.remove("sheet-open");
-}
-
-function openHelpSheet() {
-  document.body.classList.add("help-open");
-}
-
-function closeHelpSheet() {
-  document.body.classList.remove("help-open");
 }
 
 function populateRepoOptions() {
@@ -671,20 +666,13 @@ async function submitNewTask(event) {
   }
 }
 
-newTaskButton.addEventListener("click", openNewTaskSheet);
-helpButton.addEventListener("click", openHelpSheet);
+newTaskRow.addEventListener("click", openNewTaskSheet);
 newTaskForm.addEventListener("submit", submitNewTask);
 newTaskSheet.addEventListener("click", (event) => {
   if (event.target === newTaskSheet) closeSheets();
 });
-helpSheet.addEventListener("click", (event) => {
-  if (event.target === helpSheet) closeHelpSheet();
-});
 document.querySelectorAll("[data-sheet-cancel]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    closeSheets();
-    closeHelpSheet();
-  });
+  btn.addEventListener("click", closeSheets);
 });
 
 // ACTIONS -------------------------------------------------------------------
@@ -753,54 +741,6 @@ async function runAction(button) {
   }
 }
 
-async function runTidy() {
-  const confirmed = tidyConfirmPending;
-  tidyButton.disabled = true;
-  try {
-    const response = await fetch("/api/tidy", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        request_id: requestId(),
-        confirmed,
-      }),
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (payload.cockpit) applyData(payload.cockpit);
-
-    if (!response.ok) {
-      showResult(payload.error || "Tidy failed", payload.output, true);
-      tidyConfirmPending = false;
-      tidyButton.classList.remove("is-confirming");
-      tidyButton.textContent = "Tidy";
-      return;
-    }
-
-    const output = payload.output || "";
-    if (!confirmed) {
-      tidyConfirmPending = true;
-      tidyButton.classList.add("is-confirming");
-      tidyButton.textContent = "Confirm tidy";
-      showResult("Review tidy preview", output, false);
-      return;
-    }
-
-    tidyConfirmPending = false;
-    tidyButton.classList.remove("is-confirming");
-    tidyButton.textContent = "Tidy";
-    showResult("Tidy complete", output, false);
-  } catch (error) {
-    showResult("Tidy failed — network error", null, true);
-    tidyConfirmPending = false;
-    tidyButton.classList.remove("is-confirming");
-    tidyButton.textContent = "Tidy";
-  } finally {
-    tidyButton.disabled = false;
-  }
-}
-
-tidyButton.addEventListener("click", runTidy);
-
 function toggleCardExpansion(cardEl) {
   const handle = cardEl.dataset.handle;
   if (!handle) return;
@@ -828,11 +768,6 @@ document.addEventListener("click", (event) => {
       window.location.hash = `#/t/${encodeURIComponent(handle)}`;
     }
   }
-});
-
-refreshButton.addEventListener("click", () => {
-  if (detailHandle) loadDetail();
-  else loadCockpit({ manual: true });
 });
 
 window.addEventListener("online", () => {
@@ -886,24 +821,32 @@ function notificationEnvironment() {
   return { status: "available", reason: null };
 }
 
-async function syncNotificationUi() {
+function showAlertsBanner(text, actionable) {
+  alertsBanner.textContent = text;
+  alertsBanner.disabled = !actionable;
+  alertsBanner.hidden = false;
+}
+
+function hideAlertsBanner() {
+  alertsBanner.hidden = true;
+  alertsBanner.disabled = false;
+  alertsBanner.textContent = "";
+}
+
+async function syncAlertsBanner() {
   const env = notificationEnvironment();
-  notifyButton.hidden = false;
-  notifyButton.removeAttribute("title");
 
   if (env.status === "unsupported") {
-    notifyButton.disabled = true;
-    notifyButton.textContent = "Alerts";
-    notifyButton.dataset.state = "unsupported";
-    notifyButton.title = env.reason;
+    if (isIosBrowser() && !isStandalonePwa()) {
+      showAlertsBanner("Add Ajax to your Home Screen to enable alerts", false);
+    } else {
+      hideAlertsBanner();
+    }
     return;
   }
 
   if (env.status === "denied") {
-    notifyButton.disabled = false;
-    notifyButton.textContent = "Alerts blocked";
-    notifyButton.dataset.state = "denied";
-    notifyButton.title = env.reason;
+    showAlertsBanner("Alerts blocked — enable in browser settings", false);
     return;
   }
 
@@ -911,38 +854,28 @@ async function syncNotificationUi() {
     const registration = await navigator.serviceWorker.ready;
     const existing = await registration.pushManager.getSubscription();
     if (existing) {
-      notifyButton.disabled = true;
-      notifyButton.textContent = "Alerts on";
-      notifyButton.dataset.state = "enabled";
+      hideAlertsBanner();
       return;
     }
-    notifyButton.disabled = false;
-    notifyButton.textContent = "Alerts";
-    notifyButton.dataset.state = "off";
+    showAlertsBanner("Turn on alerts", true);
   } catch (error) {
-    notifyButton.disabled = true;
-    notifyButton.textContent = "Alerts…";
-    notifyButton.dataset.state = "pending";
+    hideAlertsBanner();
   }
 }
 
 async function enableNotifications() {
   const env = notificationEnvironment();
-  if (env.status === "unsupported") {
-    statusLine.textContent = env.reason;
-    return;
-  }
-  if (env.status === "denied") {
-    statusLine.textContent = env.reason;
+  if (env.status !== "available") {
+    await syncAlertsBanner();
     return;
   }
 
-  notifyButton.disabled = true;
+  alertsBanner.disabled = true;
   try {
     const permission = await Notification.requestPermission();
     if (permission !== "granted") {
       showResult("Notifications were not allowed", null, true);
-      await syncNotificationUi();
+      await syncAlertsBanner();
       return;
     }
     const registration = await navigator.serviceWorker.ready;
@@ -958,26 +891,27 @@ async function enableNotifications() {
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     showResult("Notifications enabled", null, false);
-    await syncNotificationUi();
+    await syncAlertsBanner();
   } catch (error) {
     showResult("Could not enable notifications", null, true);
-    await syncNotificationUi();
-  } finally {
-    notifyButton.disabled = false;
+    await syncAlertsBanner();
   }
 }
 
-notifyButton.addEventListener("click", enableNotifications);
+alertsBanner.addEventListener("click", () => {
+  if (alertsBanner.disabled) return;
+  enableNotifications();
+});
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js")
-    .then(() => syncNotificationUi())
+    .then(() => syncAlertsBanner())
     .catch((error) => {
       console.warn("service worker registration failed", error);
-      syncNotificationUi();
+      syncAlertsBanner();
     });
 } else {
-  syncNotificationUi();
+  syncAlertsBanner();
 }
 
 if (!navigator.onLine) setOnline(false);
