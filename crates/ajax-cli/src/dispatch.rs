@@ -165,7 +165,8 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
             CommandError::ConfirmationRequired | CommandError::PlanBlocked(_) => {
                 command_error(error)
             }
-            error => command_error(error).after_state_change(),
+            error => enrich_drop_failure_message(context, task_handle, command_error(error))
+                .after_state_change(),
         })?;
     match completion {
         DropTaskCompletion::Removed => {
@@ -179,10 +180,58 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
                 state_changed: true,
             })
         }
-        DropTaskCompletion::TeardownIncomplete => Err(CliError::CommandFailedAfterStateChange(
-            "drop teardown incomplete".to_string(),
+        DropTaskCompletion::TeardownIncomplete {
+            failed_step,
+            detail,
+        } => Err(CliError::CommandFailedAfterStateChange(
+            ajax_core::commands::format_drop_teardown_incomplete_message(
+                task_handle,
+                failed_step,
+                &detail,
+            ),
         )),
     }
+}
+
+fn enrich_drop_failure_message<R: Registry>(
+    context: &CommandContext<R>,
+    task_handle: &str,
+    error: CliError,
+) -> CliError {
+    let CliError::CommandFailed(message) = error else {
+        return error;
+    };
+    let Some(task) = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+    else {
+        return CliError::CommandFailed(message);
+    };
+    if task.lifecycle_status != LifecycleStatus::TeardownIncomplete {
+        return CliError::CommandFailed(message);
+    }
+    let Some(step_key) = task.metadata.get("drop_failed_step_key") else {
+        return CliError::CommandFailed(message);
+    };
+    let failed_step = match step_key.as_str() {
+        "agent_stopped" => ajax_core::commands::DropOp::EnsureAgentStopped,
+        "worktree_absent" => ajax_core::commands::DropOp::EnsureWorktreeAbsent,
+        "branch_absent" => ajax_core::commands::DropOp::EnsureBranchAbsent,
+        "tmux_session_absent" => ajax_core::commands::DropOp::EnsureTmuxSessionAbsent,
+        _ => return CliError::CommandFailed(message),
+    };
+    CliError::CommandFailed(
+        ajax_core::commands::format_drop_teardown_incomplete_message(
+            task_handle,
+            failed_step,
+            task.metadata
+                .get("drop_failed_detail")
+                .map(String::as_str)
+                .unwrap_or(message.as_str()),
+        ),
+    )
 }
 
 fn cli_task<'a>(

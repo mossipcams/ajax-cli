@@ -24,11 +24,12 @@ pub use new_task::{
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
-    clean_task_plan, ensure_cleanup_git_status, mark_drop_agent_stopped,
-    mark_task_cleanup_step_completed, mark_task_force_removed, mark_task_removed,
-    mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
-    plan_drop_from_observation, remove_task_plan, sweep_cleanup_candidates, sweep_cleanup_plan,
-    DropObservation, DropOp, ResourceState,
+    clean_task_plan, drop_op_label, ensure_cleanup_git_status,
+    format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
+    mark_drop_agent_stopped, mark_task_cleanup_step_completed, mark_task_force_removed,
+    mark_task_removed, mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
+    plan_drop_from_observation, plan_drop_from_observation_for_task, remove_task_plan,
+    sweep_cleanup_candidates, sweep_cleanup_plan, DropObservation, DropOp, ResourceState,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
@@ -541,10 +542,10 @@ mod tests {
         check_task_plan, clean_task_plan, cockpit, cockpit_inbox, diff_task_plan,
         doctor_with_environment, inbox, inspect_task, list_repos, list_tasks, mark_stale_tasks,
         merge_task_plan, new_task_plan, next, observe_drop_resources, open_task_plan,
-        plan_drop_from_observation, refresh_git_substrate_evidence, remove_task_plan, review_queue,
-        status, sweep_cleanup_plan, task_from_new_request, trunk_task_plan, CommandContext,
-        CommandError, DoctorEnvironment, DropObservation, DropOp, NewTaskRequest, OpenMode,
-        ResourceState,
+        plan_drop_from_observation, plan_drop_from_observation_for_task,
+        refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
+        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
+        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
     };
     use crate::{
         adapters::{
@@ -3231,6 +3232,60 @@ mod tests {
     }
 
     #[test]
+    fn drop_plan_from_observation_tears_down_git_before_tmux() {
+        let observation = DropObservation {
+            agent: ResourceState::Present,
+            tmux_session: ResourceState::Present,
+            worktree: ResourceState::Present,
+            branch: ResourceState::Present,
+        };
+
+        let ops = plan_drop_from_observation(&observation);
+
+        assert_eq!(
+            ops,
+            vec![
+                DropOp::EnsureAgentStopped,
+                DropOp::EnsureWorktreeAbsent,
+                DropOp::EnsureBranchAbsent,
+                DropOp::EnsureTmuxSessionAbsent,
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_plan_from_observation_for_task_skips_receipted_steps() {
+        use crate::models::{StepReceipt, TaskId, TaskOperationKind};
+
+        let observation = DropObservation {
+            agent: ResourceState::Absent,
+            tmux_session: ResourceState::Present,
+            worktree: ResourceState::Present,
+            branch: ResourceState::Present,
+        };
+        let receipts = vec![
+            StepReceipt::succeeded(
+                TaskId::new("web/fix-login"),
+                TaskOperationKind::Drop,
+                "worktree_absent",
+                "/repo/web__worktrees/ajax-fix-login",
+                "{}",
+            ),
+            StepReceipt::succeeded(
+                TaskId::new("web/fix-login"),
+                TaskOperationKind::Drop,
+                "branch_absent",
+                "ajax/fix-login",
+                "{}",
+            ),
+        ];
+
+        let ops = plan_drop_from_observation_for_task(&observation, &receipts);
+
+        assert_eq!(ops, vec![DropOp::EnsureTmuxSessionAbsent]);
+    }
+
+    #[test]
     fn observe_drop_resources_prefers_live_tmux_and_git_state_over_registry_cache() {
         let mut context = context_with_cleanable_task();
         let task_id = TaskId::new("task-1");
@@ -3446,8 +3501,14 @@ mod tests {
                 && !status.points_at_expected_path
                 && status.current_path == task.worktree_path
         }));
-        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert!(
+            task.has_side_flag(SideFlag::TmuxMissing),
+            "missing-substrate flags stay until drop completes so retries stay visible"
+        );
+        assert!(
+            task.has_side_flag(SideFlag::WorktrunkMissing),
+            "missing-substrate flags stay until drop completes so retries stay visible"
+        );
     }
 
     #[test]

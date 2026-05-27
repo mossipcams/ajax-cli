@@ -1,7 +1,7 @@
 //! Browser-submitted operator actions.
 
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunner},
+    adapters::{CommandOutput, CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
@@ -215,8 +215,23 @@ fn execute_drop<R: Registry>(
                 format_execution_outputs(&outputs)
             }
         }
-        DropTaskCompletion::TeardownIncomplete => {
-            format!("teardown incomplete for task: {task_handle}")
+        DropTaskCompletion::TeardownIncomplete {
+            failed_step,
+            detail,
+        } => {
+            return Err(OperateError::Command(
+                CommandError::CommandRun(CommandRunError::NonZeroExit {
+                    program: "drop".to_string(),
+                    status_code: 1,
+                    stderr: ajax_core::commands::format_drop_teardown_incomplete_message(
+                        task_handle,
+                        failed_step,
+                        &detail,
+                    ),
+                    cwd: None,
+                }),
+                true,
+            ));
         }
     };
 
