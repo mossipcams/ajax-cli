@@ -42,8 +42,8 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     runner: &mut impl CommandRunner,
     agent_status_cache: &impl AgentStatusCache,
 ) -> Result<bool, CommandError> {
-    let tasks = context.registry.list_tasks();
-    let should_probe_tasks = tasks.iter().any(|task| should_probe_live_substrate(task));
+    let tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
+    let should_probe_tasks = tasks.iter().any(should_probe_live_substrate);
     if !should_probe_tasks {
         return Ok(false);
     }
@@ -52,6 +52,11 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
         .map(|task| (task.repo.clone(), task.handle.clone()))
         .collect::<BTreeSet<_>>();
+    let probe_task_ids: Vec<TaskId> = tasks
+        .iter()
+        .filter(|task| should_probe_live_substrate(task))
+        .map(|task| task.id.clone())
+        .collect();
     let mut registered_runtime_tasks = tasks
         .iter()
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
@@ -76,17 +81,10 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         Err(_error) => return Ok(false),
     };
 
-    let task_ids = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .filter(|task| should_probe_live_substrate(task))
-        .map(|task| task.id.clone())
-        .collect::<Vec<_>>();
-    let task_snapshots = task_ids
+    let task_snapshots: Vec<Task> = probe_task_ids
         .iter()
         .filter_map(|task_id| context.registry.get_task(task_id).cloned())
-        .collect::<Vec<_>>();
+        .collect();
     let should_discover_orphans = task_snapshots.iter().any(should_probe_live_substrate);
     let windows_output = if task_snapshots
         .iter()
@@ -942,9 +940,10 @@ mod tests {
         assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
         assert!(context.registry.get_task(&TaskId::new("web/b")).is_some());
         assert!(context.registry.get_task(&TaskId::new("web/c")).is_some());
-        assert!(
-            context.registry.list_tasks_calls() <= 3,
-            "expected refresh to reuse a task snapshot instead of scanning once per worktree, got {} list_tasks calls",
+        assert_eq!(
+            context.registry.list_tasks_calls(),
+            2,
+            "expected refresh to reuse the initial task snapshot plus one git refresh scan, got {} list_tasks calls",
             context.registry.list_tasks_calls()
         );
     }
