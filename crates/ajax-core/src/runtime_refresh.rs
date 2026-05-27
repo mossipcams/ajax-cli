@@ -101,8 +101,6 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         None
     };
 
-    let should_scan_orphans = should_scan_for_orphan_worktrees(&task_snapshots);
-
     for task_snapshot in task_snapshots {
         let task_id = task_snapshot.id.clone();
         let session_status =
@@ -291,7 +289,6 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     }
 
     if should_discover_orphans
-        && should_scan_orphans
         && !sessions_output.trim().is_empty()
         && windows_output.as_ref().is_none_or(|output| output.is_ok())
     {
@@ -306,40 +303,22 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
 
     Ok(changed)
 }
-fn should_scan_for_orphan_worktrees(task_snapshots: &[Task]) -> bool {
-    let now = SystemTime::now();
-    if task_snapshots
-        .iter()
-        .any(|task| task.lifecycle_status == LifecycleStatus::Provisioning)
-    {
-        return true;
-    }
-
-    task_snapshots.iter().any(|task| {
-        if !should_probe_live_substrate(task) {
-            return false;
-        }
-
-        task.runtime_projection.source == RuntimeObservationSource::Unknown
-            || task.runtime_projection.health == RuntimeHealth::Unobservable
-            || task
-                .runtime_projection
-                .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
-    })
-}
 
 fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
     let now = SystemTime::now();
     tasks.iter().any(|task| {
-        task.lifecycle_status != LifecycleStatus::Removed
-            && task.git_status.is_some()
-            && (task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
-                || task.has_side_flag(crate::models::SideFlag::BranchMissing)
-                || task.runtime_projection.source == RuntimeObservationSource::Unknown
+        let has_missing_git_substrate = task
+            .has_side_flag(crate::models::SideFlag::WorktreeMissing)
+            || task.has_side_flag(crate::models::SideFlag::BranchMissing);
+        let has_stale_cached_git_status = task.git_status.is_some()
+            && (task.runtime_projection.source == RuntimeObservationSource::Unknown
                 || task.runtime_projection.health == RuntimeHealth::Unobservable
                 || task
                     .runtime_projection
-                    .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR))
+                    .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR));
+
+        task.lifecycle_status != LifecycleStatus::Removed
+            && (has_missing_git_substrate || has_stale_cached_git_status)
     })
 }
 
@@ -998,6 +977,21 @@ mod tests {
         );
     }
 
+    #[test]
+    fn steady_state_refresh_recovers_orphan_worktrees() {
+        let base = context_with_unchanged_running_task();
+        let mut context =
+            CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
+        let mut runner = OrphanRecoveryRunner::default();
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
+        assert!(context.registry.get_task(&TaskId::new("web/b")).is_some());
+        assert!(context.registry.get_task(&TaskId::new("web/c")).is_some());
+    }
+
     #[derive(Default)]
     struct GitSkippingRunner {
         commands: Vec<CommandSpec>,
@@ -1020,7 +1014,7 @@ mod tests {
     }
 
     #[test]
-    fn steady_state_refresh_skips_git_substrate_commands() {
+    fn steady_state_refresh_skips_branch_refresh_when_git_state_is_fresh() {
         let mut context = context_with_unchanged_running_task();
         let mut runner = GitSkippingRunner::default();
 
@@ -1031,10 +1025,39 @@ mod tests {
             !runner
                 .commands
                 .iter()
-                .any(|command| git_worktree_list(&command.args) || git_branch_list(&command.args)),
-            "fresh runtime refresh should not probe git substrate: {:?}",
+                .any(|command| git_branch_list(&command.args)),
+            "fresh runtime refresh should not list repo branches: {:?}",
             runner.commands
         );
+    }
+
+    #[test]
+    fn missing_git_status_with_missing_flags_still_refreshes_git_substrate() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.git_status = None;
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        task.add_side_flag(SideFlag::BranchMissing);
+        let mut runner = HealthyRefreshRunner::default();
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.git_status.as_ref(), Some(&clean_git_status()));
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
+        assert!(runner
+            .commands
+            .iter()
+            .any(|command| git_worktree_list(&command.args)));
+        assert!(runner
+            .commands
+            .iter()
+            .any(|command| git_branch_list(&command.args)));
     }
 
     #[test]

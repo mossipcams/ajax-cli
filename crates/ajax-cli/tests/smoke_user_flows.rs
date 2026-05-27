@@ -413,6 +413,7 @@ case "$*" in
     ;;
   *" worktree list --porcelain"*)
     repo="${2:-}"
+    repo_slug="$(basename "$repo")"
     printf 'worktree %s\nHEAD 1111111\nbranch refs/heads/main\n\n' "$repo"
     worktrees_root="$(dirname "$repo")/$(basename "$repo")__worktrees"
     if [[ -d "$worktrees_root" ]]; then
@@ -423,7 +424,7 @@ case "$*" in
       done
     fi
     if [[ -d "$HOME/worktrees" ]]; then
-      for repo_dir in "$HOME/worktrees"/*; do
+      for repo_dir in "$HOME/worktrees"/"$repo_slug"-*; do
         [[ -d "$repo_dir" ]] || continue
         for dir in "$repo_dir"/*; do
           [[ -d "$dir" ]] || continue
@@ -435,6 +436,7 @@ case "$*" in
     ;;
   *" branch --format=%(refname:short)"*)
     repo="${2:-}"
+    repo_slug="$(basename "$repo")"
     printf 'main\n'
     worktrees_root="$(dirname "$repo")/$(basename "$repo")__worktrees"
     if [[ -d "$worktrees_root" ]]; then
@@ -445,7 +447,7 @@ case "$*" in
       done
     fi
     if [[ -d "$HOME/worktrees" ]]; then
-      for repo_dir in "$HOME/worktrees"/*; do
+      for repo_dir in "$HOME/worktrees"/"$repo_slug"-*; do
         [[ -d "$repo_dir" ]] || continue
         for dir in "$repo_dir"/*; do
           [[ -d "$dir" ]] || continue
@@ -1301,6 +1303,32 @@ fn smoke_multi_repo_attention_routing() {
         .unwrap()
         .iter()
         .any(|item| item["task_handle"] == "api/break-cache"));
+}
+
+#[test]
+fn smoke_rooted_orphan_recovery_stays_scoped_to_its_repo() {
+    let sandbox = SmokeSandbox::new("rooted-orphan-repo-scope");
+    sandbox.create_repo("web");
+    sandbox.create_repo("api");
+    sandbox.write_config(&["web", "api"]);
+
+    create_active_web_task(&sandbox);
+    let api_orphan = sandbox.expected_worktree_path("api", "ghost-task");
+    fs::create_dir_all(&api_orphan).unwrap_or_else(|error| {
+        panic!("failed to create orphan {}: {error}", api_orphan.display())
+    });
+
+    let tasks = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
+    let handles = tasks["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|task| task["qualified_handle"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+
+    assert!(handles.contains(&"web/fix-login"));
+    assert!(handles.contains(&"api/ghost-task"));
+    assert!(!handles.contains(&"web/ghost-task"));
 }
 
 #[test]
