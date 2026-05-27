@@ -2719,6 +2719,34 @@ fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
 }
 
 #[test]
+fn release_please_workspace_crate_seeds_follow_the_current_cli_release_line() {
+    let manifest = serde_json::json!({
+        "crates/ajax-cli": "0.8.0",
+        "crates/ajax-core": "0.8.0",
+        "crates/ajax-supervisor": "0.8.0",
+        "crates/ajax-tui": "0.8.0",
+        "crates/ajax-web": "0.8.0"
+    });
+
+    let seeded_release_line = expected_linked_release_line(&manifest);
+    for crate_path in [
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web",
+    ] {
+        assert_eq!(
+            manifest[crate_path], seeded_release_line,
+            "{crate_path} should stay on the same release line as ajax-cli"
+        );
+    }
+}
+
+fn expected_linked_release_line(manifest: &serde_json::Value) -> serde_json::Value {
+    manifest["crates/ajax-cli"].clone()
+}
+
+#[test]
 fn release_please_registers_workspace_crates_for_library_only_changes() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let config: serde_json::Value = serde_json::from_str(
@@ -2800,9 +2828,9 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         "crates/ajax-tui",
         "crates/ajax-web",
     ] {
+        let seeded_release_line = expected_linked_release_line(&manifest);
         assert_eq!(
-            manifest[crate_path],
-            serde_json::Value::String("0.7.4".to_string()),
+            manifest[crate_path], seeded_release_line,
             "{crate_path} should be seeded from the current ajax-cli release line instead of 0.1.0"
         );
     }
