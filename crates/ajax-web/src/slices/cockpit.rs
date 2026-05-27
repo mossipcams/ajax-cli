@@ -433,8 +433,8 @@ mod tests {
         assert_eq!(browser.status_label, "review ready");
         assert_eq!(browser.lifecycle, "Reviewable");
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
-        assert_eq!(browser.primary_action, "sync");
-        assert_eq!(browser.available_actions, ["review", "ship", "sync"]);
+        assert_eq!(browser.primary_action, "review");
+        assert_eq!(browser.available_actions, ["review", "ship"]);
     }
 
     #[test]
@@ -477,6 +477,7 @@ mod tests {
             .find(|state| state.action == FIX_CI)
             .expect("fix-ci button");
 
+        assert_eq!(browser.primary_action, FIX_CI);
         assert_eq!(fix_ci.status, "supported");
         assert!(browser
             .available_actions
@@ -521,10 +522,8 @@ mod tests {
         assert_eq!(
             states,
             vec![
-                ("resume", "needs_terminal", false, false),
                 ("review", "supported", false, false),
                 ("drop", "supported", true, true),
-                ("sync", "supported", false, false),
             ]
         );
     }

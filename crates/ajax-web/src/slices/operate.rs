@@ -18,7 +18,7 @@ use ajax_core::{
     },
 };
 
-use crate::{action_vocabulary::SYNC_ACTION, adapters::skills::resolve_skill_path};
+use crate::adapters::skills::resolve_skill_path;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateRequest {
@@ -53,10 +53,6 @@ pub fn operate<R: Registry>(
     runner: &mut impl CommandRunner,
     request: OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
-    if request.action == SYNC_ACTION {
-        return sync_task(context, runner, &request.task_handle);
-    }
-
     if remediation::is_remediation_action(&request.action) {
         return run_remediation(context, runner, &request.task_handle, &request.action);
     }
@@ -68,7 +64,7 @@ pub fn operate<R: Registry>(
     match action {
         OperatorAction::Drop => execute_drop(context, runner, &request.task_handle, true),
         OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
-            "resume requires native cockpit; use sync instead",
+            "resume requires native cockpit",
         )),
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
@@ -78,14 +74,6 @@ pub fn operate<R: Registry>(
             execute_task_command(context, runner, kind, &request.task_handle)
         }
     }
-}
-
-pub fn sync_task<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    task_handle: &str,
-) -> Result<OperateOutcome, OperateError> {
-    execute_task_command(context, runner, TaskCommandKind::Resume, task_handle)
 }
 
 pub fn start_task<R: Registry>(
@@ -322,7 +310,7 @@ fn format_command_error(error: &CommandError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_execution_outputs, operate, sync_task, OperateError, OperateRequest};
+    use super::{format_execution_outputs, operate, OperateError, OperateRequest};
     use ajax_core::remediation;
     use ajax_core::{
         adapters::{CommandOutput, RecordingCommandRunner},
@@ -373,7 +361,7 @@ mod tests {
 
         assert_eq!(
             error,
-            OperateError::UnsupportedCapability("resume requires native cockpit; use sync instead")
+            OperateError::UnsupportedCapability("resume requires native cockpit")
         );
         assert!(runner.commands().is_empty());
     }
@@ -395,19 +383,6 @@ mod tests {
         assert!(!outcome.state_changed);
         assert!(outcome.output.is_empty());
         assert_eq!(runner.commands().len(), 1);
-    }
-
-    #[test]
-    fn sync_task_runs_resume_without_attach() {
-        let mut context = context_with_reviewable_task();
-        let mut runner = RecordingCommandRunner::default();
-        let outcome = sync_task(&mut context, &mut runner, "web/fix-login").unwrap();
-
-        assert!(outcome.state_changed);
-        assert!(!runner.commands().iter().any(|command| command
-            .args
-            .first()
-            .is_some_and(|arg| arg == "attach-session")));
     }
 
     #[test]

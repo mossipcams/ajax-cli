@@ -45,7 +45,6 @@ function titleCase(value) {
 }
 
 const ACTION_LABELS = {
-  sync: "Sync",
   "fix-ci": "Fix CI",
   "resolve-merge-conflicts": "Resolve conflicts",
 };
