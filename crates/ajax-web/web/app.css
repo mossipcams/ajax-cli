@@ -787,6 +787,288 @@ body.view-detail #empty-state {
   color: var(--ink-soft);
 }
 
+/* INTERACT PANEL — cockpit-style agent interaction ----------------------- */
+.interact-panel {
+  margin-top: 18px;
+  padding: 14px 16px 12px;
+  background: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.interact-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.interact-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--rule-strong);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.interact-pill.tone-running {
+  background: var(--teal-deep);
+  border-color: var(--teal);
+  color: var(--ink);
+}
+
+.interact-pill.tone-running::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--teal-bright);
+  animation: pulse 2.4s ease-in-out infinite;
+}
+
+.interact-pill.tone-attention {
+  background: rgba(201, 162, 74, 0.18);
+  border-color: var(--mustard);
+  color: var(--mustard-bright);
+}
+
+.interact-pill.tone-danger {
+  background: rgba(183, 85, 58, 0.18);
+  border-color: var(--terracotta);
+  color: var(--terracotta-bright);
+}
+
+.interact-pill.tone-success {
+  background: rgba(46, 94, 90, 0.25);
+  border-color: var(--teal);
+  color: var(--ink);
+}
+
+.interact-pill.tone-muted {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink-muted);
+}
+
+.interact-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.interact-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
+.interact-card {
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+}
+
+.interact-card-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+}
+
+.interact-card-body {
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+code.interact-card-body {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--mustard-bright);
+}
+
+.interact-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+/* Activity log card — list rows, not a terminal. ----------------------- */
+.interact-log-wrap {
+  position: relative;
+  margin-top: 12px;
+}
+
+.interact-log {
+  max-height: 32vh;
+  min-height: 80px;
+  padding: 4px 0;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  overflow-y: auto;
+  font-size: 12.5px;
+}
+
+.interact-log-empty {
+  padding: 16px 14px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+}
+
+.interact-log-entry {
+  display: flex;
+  gap: 10px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--rule);
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.interact-log-entry:last-child {
+  border-bottom: none;
+}
+
+.interact-log-glyph {
+  flex: none;
+  width: 14px;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.interact-log-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.interact-log-entry.is-echo {
+  background: rgba(46, 94, 90, 0.08);
+  color: var(--ink);
+}
+
+.interact-log-entry.is-echo .interact-log-glyph {
+  color: var(--teal-bright);
+}
+
+.interact-log-entry.is-echo.is-unconfirmed {
+  background: rgba(201, 162, 74, 0.10);
+}
+
+.interact-log-entry.is-echo.is-unconfirmed .interact-log-glyph {
+  color: var(--mustard-bright);
+}
+
+.interact-log-tag {
+  flex: none;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mustard-bright);
+  align-self: center;
+}
+
+.interact-pin {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: var(--paper-tint);
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.interact-pin:hover,
+.interact-pin:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+  outline: none;
+}
+
+/* Input bar -------------------------------------------------------------- */
+.interact-input {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+
+.interact-input-field {
+  flex: 1 1 200px;
+  min-width: 0;
+  padding: 8px 12px;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  color: var(--ink);
+  font-size: 14px;
+  font-feature-settings: "tnum";
+}
+
+.interact-input-field:focus {
+  outline: none;
+  border-color: var(--ink);
+}
+
+.interact-input .interact-send {
+  flex: 0 0 auto;
+}
+
+.interact-input .interact-key {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 6px 10px;
+  min-height: 0;
+}
+
+body.is-offline .interact-input-field {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+@media (max-width: 380px) {
+  .interact-panel {
+    padding: 12px 14px 10px;
+  }
+  .interact-log {
+    max-height: 38vh;
+  }
+  .interact-input-field {
+    font-size: 16px;
+  }
+}
+
 .attempt-list {
   list-style: none;
   margin: 0;
