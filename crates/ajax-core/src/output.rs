@@ -2,6 +2,7 @@ use crate::{
     config::{Config, ManagedRepo},
     models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
+    remediation::RemediationOption,
     ui_state::UiState,
 };
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,7 @@ pub struct TaskCard {
     pub annotations: Vec<Annotation>,
     pub primary_action: OperatorAction,
     pub available_actions: Vec<OperatorAction>,
+    pub remediations: Vec<RemediationOption>,
     pub live_summary: Option<String>,
 }
 

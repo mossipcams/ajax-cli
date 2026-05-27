@@ -15,6 +15,7 @@ pub mod output;
 pub mod policy;
 pub mod recommended;
 pub mod registry;
+pub mod remediation;
 pub mod runtime;
 pub mod runtime_refresh;
 pub mod slices;

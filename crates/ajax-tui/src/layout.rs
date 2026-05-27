@@ -27,9 +27,16 @@ pub(crate) fn selectable_row_layout(app: &App) -> Vec<Range<usize>> {
             SelectableKind::Inbox(_) => "hot",
             SelectableKind::Project(_) => "projects",
             SelectableKind::Task(_) => "tasks",
-            SelectableKind::TaskAction { .. } => "task-actions",
+            SelectableKind::TaskAction { .. } | SelectableKind::Remediation { .. } => {
+                "task-actions"
+            }
         };
-        if prev_group != Some(group) && !matches!(selectable, SelectableKind::TaskAction { .. }) {
+        if prev_group != Some(group)
+            && !matches!(
+                selectable,
+                SelectableKind::TaskAction { .. } | SelectableKind::Remediation { .. }
+            )
+        {
             row += 1;
         }
 

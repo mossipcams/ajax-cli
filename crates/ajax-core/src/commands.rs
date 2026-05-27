@@ -1317,6 +1317,7 @@ mod tests {
     #[case(LiveStatusKind::CommandFailed, "command_failed")]
     #[case(LiveStatusKind::Blocked, "blocked")]
     #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
+    #[case(LiveStatusKind::CiFailed, "ci_failed")]
     fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
         #[case] live_status: LiveStatusKind,
         #[case] expected_reason: &str,

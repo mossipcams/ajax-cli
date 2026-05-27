@@ -5,6 +5,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
+    remediation::{self, RemediationError},
     task_operations::{
         drop_task::{
             execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
@@ -18,7 +19,7 @@ use ajax_core::{
     },
 };
 
-use crate::action_vocabulary::SYNC_ACTION;
+use crate::{action_vocabulary::SYNC_ACTION, adapters::skills::resolve_skill_path};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateRequest {
@@ -63,6 +64,10 @@ pub fn operate<R: Registry>(
 ) -> Result<OperateOutcome, OperateError> {
     if request.action == SYNC_ACTION {
         return sync_task(context, runner, &request.task_handle);
+    }
+
+    if remediation::is_remediation_action(&request.action) {
+        return run_remediation(context, runner, &request.task_handle, &request.action);
     }
 
     let Some(action) = OperatorAction::from_label(&request.action) else {
@@ -295,6 +300,50 @@ pub fn format_execution_outputs(outputs: &[CommandOutput]) -> String {
         .join("\n\n")
 }
 
+fn run_remediation<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+    remediation_id: &str,
+) -> Result<OperateOutcome, OperateError> {
+    let skill_name = match remediation_id {
+        remediation::FIX_CI => "gh-fix-ci",
+        remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
+        _ => return Err(OperateError::UnknownAction(remediation_id.to_string())),
+    };
+    let skill_path = resolve_skill_path(skill_name).ok_or(OperateError::UnsupportedCapability(
+        "required agent skill is not installed on the companion host",
+    ))?;
+    let outcome = remediation::execute_remediation(
+        context,
+        runner,
+        task_handle,
+        remediation_id,
+        &skill_path.display().to_string(),
+    )
+    .map_err(remediation_error_to_operate)?;
+    Ok(OperateOutcome {
+        state_changed: outcome.state_changed,
+        output: outcome.output,
+    })
+}
+
+fn remediation_error_to_operate(error: RemediationError) -> OperateError {
+    match error {
+        RemediationError::UnknownRemediation(id) => OperateError::UnknownAction(id),
+        RemediationError::TaskNotFound(handle) => {
+            OperateError::Command(CommandError::TaskNotFound(handle), false)
+        }
+        RemediationError::UnsupportedCapability(message) => {
+            OperateError::UnsupportedCapability(message)
+        }
+        RemediationError::CommandRun(message) => OperateError::Command(
+            CommandError::CommandRun(ajax_core::adapters::CommandRunError::SpawnFailed(message)),
+            false,
+        ),
+    }
+}
+
 pub fn format_operate_error(error: &OperateError) -> String {
     match error {
         OperateError::UnknownAction(action) => format!("unknown action: {action}"),
@@ -319,11 +368,14 @@ fn format_command_error(error: &CommandError) -> String {
 #[cfg(test)]
 mod tests {
     use super::{format_execution_outputs, operate, sync_task, tidy, OperateError, OperateRequest};
+    use ajax_core::remediation;
     use ajax_core::{
         adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{AgentClient, LifecycleStatus, Task, TaskId},
+        models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId, TmuxStatus,
+        },
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -420,6 +472,58 @@ mod tests {
 
         assert!(!outcome.state_changed);
         assert_eq!(outcome.output, "nothing to tidy");
+    }
+
+    #[test]
+    fn operate_slice_runs_fix_ci_remediation_via_tmux() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
+        task.tmux_status = Some(TmuxStatus {
+            exists: true,
+            session_name: task.tmux_session.clone(),
+        });
+        registry.create_task(task).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = RecordingCommandRunner::default();
+
+        let home = std::env::temp_dir().join(format!("ajax-skill-{}", std::process::id()));
+        let skill_dir = home.join("gh-fix-ci");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# skill").unwrap();
+        std::env::set_var("AJAX_SKILL_ROOT", &home);
+
+        let outcome = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: remediation::FIX_CI.to_string(),
+            },
+        )
+        .unwrap();
+
+        std::env::remove_var("AJAX_SKILL_ROOT");
+        let _ = std::fs::remove_dir_all(&home);
+
+        assert!(!outcome.state_changed);
+        assert!(outcome.output.contains("Fix CI"));
+        assert_eq!(runner.commands().len(), 1);
     }
 
     #[test]
