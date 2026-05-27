@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v15";
+const CACHE = "ajax-cockpit-v17";
 const SHELL = [
   "/",
   "/app.css",
@@ -49,6 +49,12 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+function taskDeepLink(data) {
+  const handle = data && (data.task_handle || data.handle);
+  if (handle) return `#/t/${encodeURIComponent(handle)}`;
+  return "/";
+}
+
 // Web Push: show a notification when the companion reports a task needs
 // attention, and focus the cockpit when the operator taps it.
 self.addEventListener("push", (event) => {
@@ -60,14 +66,24 @@ self.addEventListener("push", (event) => {
       data.body = event.data.text();
     }
   }
+  const url = taskDeepLink(data);
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      tag: data.tag,
-      icon: "/icons/icon-192.png",
-      badge: "/icons/icon-192.png",
-      data: { url: "/" },
-    }),
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        // Skip the system notification flash when the operator already has Cockpit open.
+        if (clients.some((client) => client.visibilityState === "visible")) {
+          return undefined;
+        }
+        return self.registration.showNotification(data.title, {
+          body: data.body,
+          tag: data.tag || "ajax",
+          renotify: false,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          data: { url },
+        });
+      }),
   );
 });
 
@@ -79,9 +95,14 @@ self.addEventListener("notificationclick", (event) => {
       .matchAll({ type: "window", includeUncontrolled: true })
       .then((clients) => {
         for (const client of clients) {
-          if ("focus" in client) return client.focus();
+          if ("focus" in client) {
+            if ("navigate" in client && target.startsWith("#")) {
+              return client.focus().then(() => client.navigate(target));
+            }
+            return client.focus();
+          }
         }
-        return self.clients.openWindow(target);
+        return self.clients.openWindow(target.startsWith("#") ? `/${target}` : target);
       }),
   );
 });

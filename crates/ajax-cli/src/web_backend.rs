@@ -1,12 +1,8 @@
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
-    commands::{self, CommandContext},
-    models::OperatorAction,
+    commands::CommandContext,
     registry::InMemoryRegistry,
     runtime_refresh::refresh_runtime_context,
-    task_operations::task_command::{
-        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-    },
 };
 #[cfg(test)]
 use ajax_web::runtime::Request;
@@ -14,7 +10,10 @@ use ajax_web::runtime::Request;
 use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
-    slices::operate::{start_task, StartTaskRequest},
+    slices::operate::{
+        format_operate_error, operate, start_task, tidy, OperateError, OperateOutcome,
+        OperateRequest, StartTaskRequest, TidyRequest,
+    },
     WebError,
 };
 use std::path::{Path, PathBuf};
@@ -22,7 +21,6 @@ use std::path::{Path, PathBuf};
 use crate::{
     command_error,
     context::{load_context, save_context},
-    dispatch::execute_observed_drop,
     CliContextPaths, CliError,
 };
 
@@ -100,9 +98,6 @@ pub(crate) fn serve_mobile_web_with_paths(
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
 
-/// Resolves the directory the companion persists its files in (TLS identity,
-/// VAPID keys, push subscriptions): the directory holding the Ajax state
-/// database.
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
     let state_file = match paths {
         Some(paths) => paths.state_file.clone(),
@@ -139,35 +134,13 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         Ok(state_changed)
     }
 
-    fn execute_mobile_action(
+    fn execute_operate(
         &mut self,
-        action: OperatorAction,
-        task_handle: &str,
+        request: OperateRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure> {
-        match execute_mobile_action(action, task_handle, context, runner) {
-            Ok(state_changed) => {
-                if state_changed {
-                    if let Some(paths) = self.paths.as_ref() {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
-                    }
-                }
-                Ok(state_changed)
-            }
-            Err(error) => {
-                let state_changed = error.state_changed();
-                if state_changed {
-                    if let Some(paths) = self.paths.as_ref() {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
-                    }
-                }
-                Err(ActionFailure {
-                    message: error.to_string(),
-                    state_changed,
-                })
-            }
-        }
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(operate(context, runner, request), context)
     }
 
     fn execute_start_task(
@@ -175,41 +148,48 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         request: StartTaskRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure> {
-        match start_task(context, runner, request) {
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(start_task(context, runner, request), context)
+    }
+
+    fn execute_tidy(
+        &mut self,
+        request: TidyRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(tidy(context, runner, request), context)
+    }
+}
+
+impl CliRuntimeBridge {
+    fn persist_operate(
+        &self,
+        result: Result<OperateOutcome, OperateError>,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        match result {
             Ok(outcome) => {
                 if outcome.state_changed {
                     if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
-                Ok(outcome.state_changed)
+                Ok(outcome)
             }
             Err(error) => {
-                let state_changed = matches!(
-                    error,
-                    ajax_web::slices::operate::OperateError::Command(_, true)
-                );
+                let state_changed = matches!(error, OperateError::Command(_, true));
                 if state_changed {
                     if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
                 Err(ActionFailure {
-                    message: format_start_error(&error),
+                    message: format_operate_error(&error),
                     state_changed,
                 })
             }
         }
-    }
-}
-
-fn format_start_error(error: &ajax_web::slices::operate::OperateError) -> String {
-    use ajax_web::slices::operate::OperateError;
-    match error {
-        OperateError::UnknownAction(action) => format!("unknown action: {action}"),
-        OperateError::UnsupportedCapability(message) => (*message).to_string(),
-        OperateError::Command(error, _) => command_error(error.clone()).to_string(),
     }
 }
 
@@ -232,43 +212,6 @@ fn action_failure_from_cli(error: CliError) -> ActionFailure {
         message: error.to_string(),
         state_changed: error.state_changed(),
     }
-}
-
-fn execute_mobile_action(
-    action: OperatorAction,
-    task_handle: &str,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-) -> Result<bool, CliError> {
-    if action == OperatorAction::Drop {
-        return execute_observed_drop(context, task_handle, true, runner)
-            .map(|rendered| rendered.state_changed);
-    }
-
-    let kind = match action {
-        OperatorAction::Review => TaskCommandKind::Review,
-        OperatorAction::Ship => TaskCommandKind::Ship,
-        OperatorAction::Repair => TaskCommandKind::Repair,
-        OperatorAction::Start | OperatorAction::Resume | OperatorAction::Drop => {
-            return Err(CliError::CommandFailed(format!(
-                "unsupported mobile action: {}",
-                action.as_str()
-            )));
-        }
-    };
-    let plan = plan_task_command_operation(context, kind, task_handle, commands::OpenMode::Attach)
-        .map_err(command_error)?;
-    let confirmed = !plan.requires_confirmation;
-    execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
-        .map(|(_outputs, state_changed)| state_changed)
-        .map_err(|(error, state_changed)| {
-            let error = command_error(error);
-            if state_changed {
-                error.after_state_change()
-            } else {
-                error
-            }
-        })
 }
 
 #[cfg(test)]
@@ -307,6 +250,9 @@ mod tests {
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("id=\"offline-banner\""));
         assert!(html.contains("id=\"refresh-button\""));
+        assert!(html.contains("id=\"tidy-button\""));
+        assert!(html.contains("id=\"help-button\""));
+        assert!(html.contains("id=\"result-panel\""));
     }
 
     #[test]
@@ -331,6 +277,7 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["backend"]["authority"], "host-native");
     }
 
     #[test]
@@ -418,7 +365,11 @@ mod tests {
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
         assert!(script.contains("/api/operations"));
+        assert!(script.contains("/api/tidy"));
         assert!(script.contains("request_id"));
+        assert!(script.contains("structureFingerprint"));
+        assert!(script.contains("updateLiveSummaries"));
+        assert!(script.contains("action_states"));
     }
 
     #[test]
@@ -427,10 +378,12 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v15"));
+        assert!(sw_text.contains("ajax-cockpit-v17"));
+        assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
+        assert!(sw_text.contains("#/t/"));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
@@ -517,6 +470,7 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
+        assert!(body["output"].is_string());
         assert_eq!(
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
@@ -560,11 +514,32 @@ mod tests {
     }
 
     #[test]
+    fn tidy_endpoint_returns_preview_before_confirmation() {
+        let mut context = reviewable_context();
+        let mut runner = OkRunner;
+
+        let response = handle_http_request_with_runner_and_paths(
+            "POST",
+            "/api/tidy",
+            r#"{"request_id":"tidy-1","confirmed":false}"#,
+            &mut context,
+            &mut runner,
+            None,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["ok"], true);
+        assert!(body["output"].is_string());
+    }
+
+    #[test]
     fn cockpit_api_refreshes_live_task_status_before_rendering() {
         let mut context = reviewable_context();
         let task = context
             .registry
-            .get_task_mut(&TaskId::new("task-1"))
+            .get_task_mut(&TaskId::new("web/fix-login"))
             .unwrap();
         task.lifecycle_status = LifecycleStatus::Active;
         let mut runner = LiveRefreshRunner;
@@ -583,6 +558,7 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["live_summary"], "agent running");
+        assert!(body["cards"][0]["action_states"].is_array());
     }
 
     #[test]
@@ -706,10 +682,29 @@ mod tests {
     struct OkRunner;
 
     impl CommandRunner for OkRunner {
-        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, action, flag]
+                    if repo == "/repo/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /repo/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/repo/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
+                _ => "diff stat",
+            };
+
             Ok(CommandOutput {
                 status_code: 0,
-                stdout: "diff stat".to_string(),
+                stdout: stdout.to_string(),
                 stderr: String::new(),
             })
         }
@@ -760,7 +755,7 @@ mod tests {
             InMemoryRegistry::default(),
         );
         let mut task = Task::new(
-            TaskId::new("task-1"),
+            TaskId::new("web/fix-login"),
             "web",
             "fix-login",
             "Fix login",

@@ -9,7 +9,9 @@ use ajax_core::{
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::action_vocabulary::{supported_web_action, web_action_state, WebActionState};
+use crate::action_vocabulary::{
+    browser_action_states, primary_browser_action, supported_web_action, WebActionState,
+};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
@@ -65,17 +67,13 @@ fn host_native_backend() -> BrowserBackend {
 }
 
 fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
-    let available: Vec<OperatorAction> = card
-        .available_actions
+    let action_states = browser_action_states(card);
+    let available: Vec<String> = action_states
         .iter()
-        .copied()
-        .filter(|action| is_web_supported(*action))
+        .filter(|state| state.status == "supported")
+        .map(|state| state.action.clone())
         .collect();
-    let primary = if is_web_supported(card.primary_action) {
-        card.primary_action
-    } else {
-        available.first().copied().unwrap_or(card.primary_action)
-    };
+    let primary = primary_browser_action(card);
 
     BrowserTaskCard {
         id: card.id.as_str().to_string(),
@@ -84,17 +82,9 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         ui_state: card.ui_state.as_str().to_string(),
         status_label: card.status_label.clone(),
         lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: primary.as_str().to_string(),
-        available_actions: available
-            .iter()
-            .map(|action| action.as_str().to_string())
-            .collect(),
-        action_states: card
-            .available_actions
-            .iter()
-            .copied()
-            .map(web_action_state)
-            .collect(),
+        primary_action: primary,
+        available_actions: available,
+        action_states,
         live_summary: card.live_summary.clone(),
     }
 }
@@ -102,6 +92,7 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
 // Resume drops the operator into a native tmux pane and Start needs an
 // interactive title prompt; both are rejected by web action handling, so the
 // browser Cockpit should not surface them as buttons.
+#[allow(dead_code)]
 fn is_web_supported(action: OperatorAction) -> bool {
     supported_web_action(action)
 }
@@ -124,6 +115,7 @@ pub struct BrowserTaskDetail {
     pub action_states: Vec<WebActionState>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
+    pub agent_activity: Option<String>,
     pub git: Option<GitStatus>,
     pub tmux: Option<TmuxStatus>,
     pub annotations: Vec<String>,
@@ -156,29 +148,17 @@ pub fn browser_task_detail_view<R: Registry>(
         .iter()
         .find(|card| card.qualified_handle == qualified_handle)?;
     let task = context.registry.get_task(&card.id)?.clone();
-    let available_actions = card
-        .available_actions
+    let action_states = browser_action_states(card);
+    let available_actions = action_states
         .iter()
-        .copied()
-        .filter(|action| is_web_supported(*action))
-        .map(|action| action.as_str().to_string())
+        .filter(|state| state.status == "supported")
+        .map(|state| state.action.clone())
         .collect();
-    let action_states = card
-        .available_actions
-        .iter()
-        .copied()
-        .map(web_action_state)
-        .collect();
-    let primary_action = if is_web_supported(card.primary_action) {
-        card.primary_action.as_str().to_string()
-    } else {
-        card.available_actions
-            .iter()
-            .copied()
-            .find(|action| is_web_supported(*action))
-            .map(|action| action.as_str().to_string())
-            .unwrap_or_else(|| card.primary_action.as_str().to_string())
-    };
+    let primary_action = primary_browser_action(card);
+    let agent_activity = card
+        .live_summary
+        .clone()
+        .or_else(|| task.live_status.as_ref().map(|live| live.summary.clone()));
 
     Some(BrowserTaskDetail {
         qualified_handle: task.qualified_handle(),
@@ -200,6 +180,7 @@ pub fn browser_task_detail_view<R: Registry>(
             .as_ref()
             .map(|live| format!("{:?}", live.kind)),
         live_status_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
+        agent_activity,
         git: task.git_status.clone(),
         tmux: task.tmux_status.clone(),
         annotations: task
@@ -441,8 +422,8 @@ mod tests {
         assert_eq!(browser.status_label, "review ready");
         assert_eq!(browser.lifecycle, "Reviewable");
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
-        assert_eq!(browser.primary_action, "review");
-        assert_eq!(browser.available_actions, ["review", "ship"]);
+        assert_eq!(browser.primary_action, "sync");
+        assert_eq!(browser.available_actions, ["review", "ship", "sync"]);
     }
 
     #[test]
@@ -484,6 +465,7 @@ mod tests {
                 ("resume", "needs_terminal", false, false),
                 ("review", "supported", false, false),
                 ("drop", "supported", true, true),
+                ("sync", "supported", false, false),
             ]
         );
     }
