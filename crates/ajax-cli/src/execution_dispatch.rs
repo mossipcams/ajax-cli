@@ -461,6 +461,7 @@ fn validate_supervised_task(
     Ok(Some(task.id.clone()))
 }
 
+#[cfg(feature = "supervisor")]
 fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor::SupervisorAgent {
     use ajax_core::models::AgentClient;
     use ajax_supervisor::SupervisorAgent;
