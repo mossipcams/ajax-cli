@@ -408,12 +408,12 @@ fn output(status_code: i32, stdout: &str) -> CommandOutput {
 
 fn git_live_outputs() -> Vec<CommandOutput> {
     vec![
-            output(
-                0,
-                "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
-            ),
-            output(0, "main\najax/fix-login\n"),
-        ]
+        output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ),
+        output(0, "main\najax/fix-login\n"),
+    ]
 }
 
 fn tmux_live_outputs(pane: &str) -> Vec<CommandOutput> {
@@ -466,6 +466,21 @@ fn command_flow_fixture_records_partial_success_before_failure() {
 
 fn tmux_probe_commands() -> Vec<CommandSpec> {
     tmux_live_commands().into_iter().take(3).collect()
+}
+
+fn tmux_probe_and_orphan_scan_commands() -> Vec<CommandSpec> {
+    let mut commands = tmux_probe_commands();
+    commands.push(CommandSpec::new(
+        "git",
+        [
+            "-C",
+            "/Users/matt/projects/web",
+            "worktree",
+            "list",
+            "--porcelain",
+        ],
+    ));
+    commands
 }
 
 fn tmux_live_commands() -> Vec<CommandSpec> {
@@ -1189,7 +1204,12 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
             );
         }
 
-        let mut runner = QueuedRunner::new(tmux_live_outputs("codex is working\n"));
+        let mut outputs = tmux_live_outputs("codex is working\n");
+        outputs.push(output(
+            0,
+            "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n",
+        ));
+        let mut runner = QueuedRunner::new(outputs);
         let output = run_with_context_and_runner(command.clone(), &mut context, &mut runner)
             .unwrap_or_else(|error| panic!("{command:?} failed: {error}"));
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
@@ -1201,7 +1221,11 @@ fn read_json_commands_refresh_live_state_even_when_projection_is_fresh() {
 
         assert_eq!(task_json[0]["qualified_handle"], "web/fix-login");
         assert_eq!(task_json[0]["live_status"]["summary"], "agent running");
-        assert_eq!(runner.commands, tmux_probe_commands(), "{command:?}");
+        assert_eq!(
+            runner.commands,
+            tmux_probe_and_orphan_scan_commands(),
+            "{command:?}"
+        );
     }
 }
 

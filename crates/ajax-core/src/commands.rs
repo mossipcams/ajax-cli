@@ -364,7 +364,11 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
         .list_tasks()
         .into_iter()
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
-        .filter(|task| task.git_status.is_some())
+        .filter(|task| {
+            task.git_status.is_some()
+                || task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
+                || task.has_side_flag(crate::models::SideFlag::BranchMissing)
+        })
         .cloned()
         .collect::<Vec<_>>();
     if tasks.is_empty() {
