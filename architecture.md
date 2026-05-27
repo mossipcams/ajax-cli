@@ -249,6 +249,7 @@ task-operation commands or separate operator domains.
 - `runtime.rs` owns monitor wiring, cancellation, channels, event logging, and
   monitor handles.
 - `agent/codex.rs` owns Codex command construction and JSONL parsing.
+- `agent/cursor.rs` owns Cursor CLI command construction and stream-json parsing.
 - `repo_observer.rs` owns repository file-change observation and Git snapshots.
 - `process_observer.rs` owns child process output, exit status, and hang
   detection.

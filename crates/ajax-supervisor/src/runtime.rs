@@ -10,15 +10,25 @@ use tokio::{
 };
 
 use crate::{
-    agent::codex::CodexAdapter, event_log::EventLog,
-    process_observer::supervise_process_with_cancellation, repo_observer, SupervisorError,
+    agent::{codex::CodexAdapter, cursor::CursorAdapter},
+    event_log::EventLog,
+    process_observer::supervise_process_with_cancellation,
+    repo_observer, SupervisorError,
 };
 
 const GIT_SNAPSHOT_MIN_INTERVAL: Duration = Duration::from_millis(500);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum SupervisorAgent {
+    #[default]
+    Codex,
+    Cursor,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MonitorConfig {
-    pub codex_bin: String,
+    pub agent: SupervisorAgent,
+    pub agent_bin: String,
     pub prompt: String,
     pub worktree_path: Option<PathBuf>,
     pub channel_capacity: usize,
@@ -31,7 +41,22 @@ pub struct MonitorConfig {
 impl MonitorConfig {
     pub fn codex_exec(prompt: impl Into<String>) -> Self {
         Self {
-            codex_bin: "codex".to_string(),
+            agent: SupervisorAgent::Codex,
+            agent_bin: "codex".to_string(),
+            prompt: prompt.into(),
+            worktree_path: None,
+            channel_capacity: 1024,
+            watch_filesystem: false,
+            git_snapshots: GitSnapshotPolicy::Disabled,
+            hang_after: None,
+            event_log_path: None,
+        }
+    }
+
+    pub fn cursor_exec(prompt: impl Into<String>) -> Self {
+        Self {
+            agent: SupervisorAgent::Cursor,
+            agent_bin: "cursor".to_string(),
             prompt: prompt.into(),
             worktree_path: None,
             channel_capacity: 1024,
@@ -102,15 +127,30 @@ pub fn spawn_monitor(
             repo_observer::send_git_snapshot(&raw_events, worktree_path).await?;
         }
 
-        let adapter = CodexAdapter::new(config.codex_bin);
-        let result = supervise_process_with_cancellation(
-            &adapter,
-            &config.prompt,
-            raw_events.clone(),
-            config.hang_after,
-            cancel_rx,
-        )
-        .await;
+        let codex = CodexAdapter::new(config.agent_bin.clone());
+        let cursor = CursorAdapter::new(config.agent_bin);
+        let result = match config.agent {
+            SupervisorAgent::Codex => {
+                supervise_process_with_cancellation(
+                    &codex,
+                    &config.prompt,
+                    raw_events.clone(),
+                    config.hang_after,
+                    cancel_rx,
+                )
+                .await
+            }
+            SupervisorAgent::Cursor => {
+                supervise_process_with_cancellation(
+                    &cursor,
+                    &config.prompt,
+                    raw_events.clone(),
+                    config.hang_after,
+                    cancel_rx,
+                )
+                .await
+            }
+        };
 
         if config.git_snapshots == GitSnapshotPolicy::OnStartAndExit {
             let worktree_path = config.worktree_path.as_ref().ok_or_else(|| {
@@ -244,14 +284,15 @@ mod tests {
 
     use super::{
         should_snapshot_file_change, spawn_monitor, GitSnapshotPolicy, MonitorConfig,
-        GIT_SNAPSHOT_MIN_INTERVAL,
+        SupervisorAgent, GIT_SNAPSHOT_MIN_INTERVAL,
     };
 
     #[test]
     fn monitor_config_builds_codex_exec_defaults() {
         let config = MonitorConfig::codex_exec("fix tests");
 
-        assert_eq!(config.codex_bin, "codex");
+        assert_eq!(config.agent, SupervisorAgent::Codex);
+        assert_eq!(config.agent_bin, "codex");
         assert_eq!(config.prompt, "fix tests");
         assert_eq!(config.worktree_path, None);
         assert_eq!(config.channel_capacity, 1024);
@@ -259,6 +300,15 @@ mod tests {
         assert_eq!(config.git_snapshots, GitSnapshotPolicy::Disabled);
         assert_eq!(config.hang_after, None);
         assert_eq!(config.event_log_path, None);
+    }
+
+    #[test]
+    fn monitor_config_builds_cursor_exec_defaults() {
+        let config = MonitorConfig::cursor_exec("fix tests");
+
+        assert_eq!(config.agent, SupervisorAgent::Cursor);
+        assert_eq!(config.agent_bin, "cursor");
+        assert_eq!(config.prompt, "fix tests");
     }
 
     #[test]
@@ -297,7 +347,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.channel_capacity = 16;
         let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
 
@@ -339,7 +389,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
 
         let started = tokio::time::timeout(Duration::from_secs(2), receiver.recv())
@@ -414,7 +464,7 @@ mod tests {
         fs::set_permissions(&script, permissions).unwrap();
 
         let mut config = MonitorConfig::codex_exec("ignored");
-        config.codex_bin = script.display().to_string();
+        config.agent_bin = script.display().to_string();
         config.event_log_path = Some(root.join("monitor/events.jsonl"));
         let (handle, mut receiver) = spawn_monitor(config.clone()).expect("monitor should spawn");
 
@@ -432,5 +482,50 @@ mod tests {
         assert!(contents.contains(r#""Exited":{"code":0}"#));
 
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn runtime_spawn_monitor_streams_cursor_process_events() {
+        let script =
+            std::env::temp_dir().join(format!("ajax-runtime-cursor-{}", std::process::id()));
+        fs::write(
+            &script,
+            "#!/bin/sh\nprintf '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"abc\"}\\n'\nprintf '{\"type\":\"tool_call\",\"subtype\":\"started\",\"call_id\":\"1\",\"tool_call\":{\"readToolCall\":{\"args\":{\"path\":\"README.md\"}}}}\\n'\nprintf '{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"Approval required to run cargo test\"}]}}\\n'\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&script).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script, permissions).unwrap();
+
+        let mut config = MonitorConfig::cursor_exec("ignored");
+        config.agent_bin = script.display().to_string();
+        config.channel_capacity = 16;
+        let (handle, mut receiver) = spawn_monitor(config).expect("monitor should spawn");
+
+        let exit = handle.wait().await.expect("monitor should complete");
+        let mut events = Vec::new();
+        while let Ok(event) = receiver.try_recv() {
+            events.push(event);
+        }
+
+        assert_eq!(exit.status_code, Some(0));
+        assert!(events.contains(&MonitorEvent::Agent(AgentEvent::Started {
+            agent: "cursor".to_string()
+        })));
+        assert!(events.contains(&MonitorEvent::Agent(AgentEvent::ToolCall {
+            name: "read README.md".to_string()
+        })));
+        assert!(
+            events.contains(&MonitorEvent::Agent(AgentEvent::WaitingForApproval {
+                command: None
+            }))
+        );
+        assert!(
+            events.contains(&MonitorEvent::Process(ProcessEvent::Exited {
+                code: Some(0)
+            }))
+        );
+
+        let _ = fs::remove_file(script);
     }
 }
