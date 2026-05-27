@@ -10,8 +10,8 @@ use crate::{
     config::WorktreePlacement,
     live::{self, LiveObservation, LiveStatusKind},
     models::{
-        AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, Task, TaskId,
-        WorktrunkStatus,
+        AgentClient, GitStatus, LifecycleStatus, RuntimeHealth, RuntimeObservationSource, Task,
+        TaskId, WorktrunkStatus,
     },
     registry::{Registry, RegistryError},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
@@ -69,9 +69,11 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
             )
         })
         .collect::<Vec<_>>();
-    drop(tasks);
-
-    let mut changed = commands::refresh_git_substrate_evidence(context, runner).unwrap_or_default();
+    let mut changed = if needs_git_substrate_refresh(&tasks) {
+        commands::refresh_git_substrate_evidence(context, runner)?
+    } else {
+        false
+    };
 
     let tmux = TmuxAdapter::new("tmux");
     let sessions_command = tmux.list_sessions();
@@ -300,6 +302,21 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     }
 
     Ok(changed)
+}
+
+fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
+    let now = SystemTime::now();
+    tasks.iter().any(|task| {
+        task.lifecycle_status != LifecycleStatus::Removed
+            && task.git_status.is_some()
+            && (task.has_side_flag(crate::models::SideFlag::WorktreeMissing)
+                || task.has_side_flag(crate::models::SideFlag::BranchMissing)
+                || task.runtime_projection.source == RuntimeObservationSource::Unknown
+                || task.runtime_projection.health == RuntimeHealth::Unobservable
+                || task
+                    .runtime_projection
+                    .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR))
+    })
 }
 
 fn should_probe_live_substrate(task: &Task) -> bool {
@@ -768,7 +785,7 @@ mod tests {
         task.worktrunk_status = Some(WorktrunkStatus::present(TASK_WINDOW, TASK_WORKTREE));
         task.runtime_projection = RuntimeProjection::new(
             RuntimeHealth::Healthy,
-            SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+            SystemTime::now(),
             RuntimeObservationSource::TmuxProbe,
         );
         task.last_activity_at = SystemTime::UNIX_EPOCH + Duration::from_secs(2);
@@ -947,6 +964,80 @@ mod tests {
             context.registry.list_tasks_calls()
         );
     }
+
+    #[derive(Default)]
+    struct GitSkippingRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for GitSkippingRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[test]
+    fn steady_state_refresh_skips_git_substrate_commands() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = GitSkippingRunner::default();
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(!changed);
+        assert!(
+            !runner
+                .commands
+                .iter()
+                .any(|command| git_worktree_list(&command.args) || git_branch_list(&command.args)),
+            "fresh runtime refresh should not probe git substrate: {:?}",
+            runner.commands
+        );
+    }
+
+    #[test]
+    fn tmux_probe_failure_marks_missing_session() {
+        struct FailingTmuxRunner {
+            inner: MissingSessionRunner,
+        }
+
+        impl CommandRunner for FailingTmuxRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                if command
+                    .args
+                    .first()
+                    .is_some_and(|arg| arg == "list-sessions")
+                {
+                    return Err(CommandRunError::SpawnFailed("tmux unavailable".to_string()));
+                }
+                self.inner.run(command)
+            }
+        }
+
+        let mut context = context_with_task_for_missing_session();
+        let mut runner = FailingTmuxRunner {
+            inner: MissingSessionRunner::default(),
+        };
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
+    }
+
 
     #[test]
     fn orphan_recovery_deletes_stale_same_worktree_task_before_insert() {
