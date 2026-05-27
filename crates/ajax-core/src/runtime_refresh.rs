@@ -79,8 +79,8 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     let sessions_command = tmux.list_sessions();
     let sessions_output = match runner.run(&sessions_command) {
         Ok(output) if output.status_code == 0 => output.stdout,
-        Ok(_output) => return Ok(false),
-        Err(_error) => return Ok(false),
+        Ok(_) => return Ok(changed),
+        Err(_) => String::new(),
     };
 
     let task_snapshots: Vec<Task> = probe_task_ids
@@ -1070,7 +1070,6 @@ mod tests {
             Some(LiveStatusKind::TmuxMissing)
         );
     }
-
 
     #[test]
     fn orphan_recovery_deletes_stale_same_worktree_task_before_insert() {
