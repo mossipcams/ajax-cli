@@ -69,6 +69,7 @@ mod tests {
             "id=\"empty-state\"",
             "id=\"new-task-button\"",
             "id=\"new-task-sheet\"",
+            "value=\"cursor\"",
             "id=\"task-detail\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
