@@ -1,55 +1,30 @@
 //! Installable PWA shell.
 
-pub struct StaticAsset {
-    pub content_type: &'static str,
-    pub body: &'static [u8],
-}
+use crate::adapters::assets;
+
+pub use crate::adapters::assets::StaticAsset;
 
 pub fn pwa_shell() -> &'static str {
-    include_str!("../../web/index.html")
+    assets::pwa_shell_html()
 }
 
 pub fn static_asset(path: &str) -> Option<StaticAsset> {
-    match path {
-        "/app.css" => Some(StaticAsset {
-            content_type: "text/css; charset=utf-8",
-            body: include_bytes!("../../web/app.css"),
-        }),
-        "/app.js" => Some(StaticAsset {
-            content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/app.js"),
-        }),
-        "/manifest.webmanifest" => Some(StaticAsset {
-            content_type: "application/manifest+json; charset=utf-8",
-            body: include_bytes!("../../web/manifest.webmanifest"),
-        }),
-        "/sw.js" => Some(StaticAsset {
-            content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/sw.js"),
-        }),
-        "/icons/icon-192.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-192.png"),
-        }),
-        "/icons/icon-512.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-512.png"),
-        }),
-        "/icons/icon-maskable-512.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-maskable-512.png"),
-        }),
-        "/icons/apple-touch-icon.png" => Some(StaticAsset {
-            content_type: "image/png",
-            body: include_bytes!("../../web/icons/apple-touch-icon.png"),
-        }),
-        _ => None,
-    }
+    assets::static_asset(path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{pwa_shell, static_asset};
+    use crate::adapters::assets as asset_adapter;
+
+    #[test]
+    fn install_slice_delegates_to_assets_adapter() {
+        let from_install = static_asset("/app.css").unwrap();
+        let from_assets = asset_adapter::static_asset("/app.css").unwrap();
+
+        assert_eq!(from_install.content_type, from_assets.content_type);
+        assert_eq!(from_install.body, from_assets.body);
+    }
 
     #[test]
     fn install_slice_serves_pwa_shell_and_assets() {
@@ -94,6 +69,7 @@ mod tests {
             "id=\"empty-state\"",
             "id=\"new-task-button\"",
             "id=\"new-task-sheet\"",
+            "value=\"cursor\"",
             "id=\"task-detail\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
@@ -122,10 +98,6 @@ mod tests {
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
         let lowered = css.to_ascii_lowercase();
 
-        // Eames/Braun palette tokens — these aren't enforced as exact-value
-        // checks; they confirm the cream/walnut/mustard/teal/terracotta family
-        // is present in the stylesheet rather than the prior dark terminal
-        // hex set.
         for hex in ["#f2ebdc", "#2a2522", "#c9a24a", "#2e5e5a", "#b7553a"] {
             assert!(
                 lowered.contains(hex),
@@ -133,8 +105,6 @@ mod tests {
             );
         }
 
-        // Body text must read as a geometric/grotesk sans, not the prior
-        // mono-only stack.
         assert!(
             !lowered.contains("jetbrains mono"),
             "body should no longer rely on JetBrains Mono"
@@ -160,7 +130,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v14"));
+        assert!(worker.contains("ajax-cockpit-v17"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -180,5 +150,30 @@ mod tests {
         }
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
+    }
+
+    #[test]
+    fn pwa_exposes_visible_notification_opt_in_with_environment_guidance() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        assert!(
+            shell.contains("id=\"notify-button\""),
+            "shell must include the alerts control"
+        );
+        assert!(
+            !shell.contains("id=\"notify-button\" type=\"button\" class=\"pill\" hidden>Alerts"),
+            "alerts control must not start permanently hidden in the shell"
+        );
+
+        for expected in [
+            "function notificationEnvironment()",
+            "function syncNotificationUi()",
+            "Add Ajax to your Home Screen to enable alerts.",
+            "Alerts on",
+            "Alerts blocked",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
     }
 }

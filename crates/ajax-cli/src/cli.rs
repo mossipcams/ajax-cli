@@ -102,7 +102,7 @@ fn executable_command(command: Command) -> Command {
 
 fn supervise_command() -> Command {
     json_command("supervise")
-        .about("Run Codex under the Ajax live supervisor")
+        .about("Run an agent under the Ajax live supervisor")
         .arg(Arg::new("task").long("task").value_name("REPO/HANDLE"))
         .arg(
             Arg::new("prompt")
@@ -111,8 +111,21 @@ fn supervise_command() -> Command {
                 .required(true),
         )
         .arg(
+            Arg::new("agent")
+                .long("agent")
+                .value_name("AGENT")
+                .help("Agent CLI to supervise: codex or cursor")
+                .default_value("codex"),
+        )
+        .arg(
             Arg::new("codex-bin")
                 .long("codex-bin")
+                .value_name("PATH")
+                .hide(true),
+        )
+        .arg(
+            Arg::new("cursor-bin")
+                .long("cursor-bin")
                 .value_name("PATH")
                 .hide(true),
         )

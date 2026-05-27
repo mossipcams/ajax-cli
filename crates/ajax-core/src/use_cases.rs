@@ -4,6 +4,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone)]
 pub struct CommandContext<R> {
     pub config: crate::config::Config,
     pub registry: R,

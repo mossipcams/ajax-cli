@@ -21,3 +21,4 @@ tokio = { workspace = true, features = ["process", "io-util", "macros", "rt", "r
 
 [dev-dependencies]
 rstest = { workspace = true }
+rust_arkitect = { workspace = true }

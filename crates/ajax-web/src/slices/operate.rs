@@ -1,17 +1,24 @@
 //! Browser-submitted operator actions.
 
 use ajax_core::{
-    adapters::CommandRunner,
-    commands::{CommandContext, CommandError, NewTaskRequest, OpenMode},
-    models::OperatorAction,
+    adapters::{CommandOutput, CommandRunner},
+    commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
+    models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
     task_operations::{
+        drop_task::{
+            execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
+            DropTaskCompletion,
+        },
         start::{execute_start_task_operation, plan_start_task_operation},
+        sweep_cleanup::execute_sweep_cleanup_operation,
         task_command::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
     },
 };
+
+use crate::action_vocabulary::SYNC_ACTION;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateRequest {
@@ -24,11 +31,22 @@ pub struct StartTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+    #[serde(default)]
+    pub request_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct TidyRequest {
+    #[serde(default)]
+    pub request_id: String,
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperateOutcome {
     pub state_changed: bool,
+    pub output: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,25 +61,71 @@ pub fn operate<R: Registry>(
     runner: &mut impl CommandRunner,
     request: OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
+    if request.action == SYNC_ACTION {
+        return sync_task(context, runner, &request.task_handle);
+    }
+
     let Some(action) = OperatorAction::from_label(&request.action) else {
         return Err(OperateError::UnknownAction(request.action));
     };
 
-    let kind = task_command_kind(action)?;
-    let plan = plan_task_command_operation(context, kind, &request.task_handle, OpenMode::Attach)
-        .map_err(|error| OperateError::Command(error, false))?;
-    let confirmed = !plan.requires_confirmation;
-    let (_outputs, state_changed) = execute_task_command_operation(
-        context,
-        kind,
-        &request.task_handle,
-        &plan,
-        confirmed,
-        runner,
-    )
-    .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
+    match action {
+        OperatorAction::Drop => execute_drop(context, runner, &request.task_handle, true),
+        OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
+            "resume requires native cockpit; use sync instead",
+        )),
+        OperatorAction::Start => Err(OperateError::UnsupportedCapability(
+            "start uses the dedicated Web Cockpit new-task operation",
+        )),
+        OperatorAction::Review | OperatorAction::Ship | OperatorAction::Repair => {
+            let kind = task_command_kind(action)?;
+            execute_task_command(context, runner, kind, &request.task_handle)
+        }
+    }
+}
 
-    Ok(OperateOutcome { state_changed })
+pub fn sync_task<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+) -> Result<OperateOutcome, OperateError> {
+    execute_task_command(context, runner, TaskCommandKind::Resume, task_handle)
+}
+
+pub fn tidy<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    request: TidyRequest,
+) -> Result<OperateOutcome, OperateError> {
+    let candidates = commands::sweep_cleanup_candidates(context);
+    if candidates.is_empty() {
+        return Ok(OperateOutcome {
+            state_changed: false,
+            output: "nothing to tidy".to_string(),
+        });
+    }
+    if !request.confirmed {
+        return Ok(OperateOutcome {
+            state_changed: false,
+            output: format!(
+                "tidy {} task(s): {}",
+                candidates.len(),
+                candidates.join(", ")
+            ),
+        });
+    }
+
+    let (outputs, state_changed) = execute_sweep_cleanup_operation(context, true, runner)
+        .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
+
+    Ok(OperateOutcome {
+        state_changed,
+        output: if outputs.is_empty() {
+            format!("tidied {} task(s)", candidates.len())
+        } else {
+            format_execution_outputs(&outputs)
+        },
+    })
 }
 
 pub fn start_task<R: Registry>(
@@ -95,6 +159,110 @@ pub fn start_task<R: Registry>(
 
     Ok(OperateOutcome {
         state_changed: true,
+        output: format!("started task: {}", core_request.title),
+    })
+}
+
+fn execute_task_command<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    kind: TaskCommandKind,
+    task_handle: &str,
+) -> Result<OperateOutcome, OperateError> {
+    if matches!(
+        kind,
+        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
+    ) {
+        let _ = commands::refresh_git_substrate_evidence(context, runner);
+    }
+
+    let open_mode = if matches!(kind, TaskCommandKind::Resume | TaskCommandKind::Repair) {
+        OpenMode::NoAttach
+    } else {
+        OpenMode::Attach
+    };
+    let plan = plan_task_command_operation(context, kind, task_handle, open_mode)
+        .map_err(|error| OperateError::Command(error, false))?;
+    let confirmed = !plan.requires_confirmation;
+    let (outputs, state_changed) =
+        execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
+            .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
+
+    Ok(OperateOutcome {
+        state_changed,
+        output: format_execution_outputs(&outputs),
+    })
+}
+
+fn execute_drop<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    task_handle: &str,
+    confirmed: bool,
+) -> Result<OperateOutcome, OperateError> {
+    let confirmation_plan = plan_drop_confirmation(context, task_handle)
+        .map_err(|error| OperateError::Command(error, false))?;
+    if !confirmation_plan.blocked_reasons.is_empty() {
+        return Err(OperateError::Command(
+            CommandError::PlanBlocked(confirmation_plan.blocked_reasons),
+            false,
+        ));
+    }
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+        .ok_or_else(|| {
+            OperateError::Command(CommandError::TaskNotFound(task_handle.to_string()), false)
+        })?;
+
+    let resuming_incomplete = task.lifecycle_status == LifecycleStatus::TeardownIncomplete;
+    let can_observe_before_confirmation = matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Merged | LifecycleStatus::Cleanable
+    ) && !task.has_side_flag(SideFlag::Dirty)
+        && !task.has_side_flag(SideFlag::Conflicted)
+        && !task.has_side_flag(SideFlag::Unpushed)
+        && task.git_status.as_ref().is_none_or(|status| {
+            !status.dirty && !status.conflicted && status.unpushed_commits == 0
+        });
+
+    if confirmation_plan.requires_confirmation
+        && !confirmed
+        && !resuming_incomplete
+        && !can_observe_before_confirmation
+    {
+        return Err(OperateError::Command(
+            CommandError::ConfirmationRequired,
+            false,
+        ));
+    }
+
+    let operation = plan_drop_task_operation(context, task_handle, runner)
+        .map_err(|error| OperateError::Command(error, false))?;
+    let operation_confirmed = confirmed || resuming_incomplete || can_observe_before_confirmation;
+    let (outputs, completion) =
+        execute_drop_task_operation(context, task_handle, operation, operation_confirmed, runner)
+            .map_err(|error| OperateError::Command(error, true))?;
+
+    let output = match completion {
+        DropTaskCompletion::Removed => {
+            if outputs.is_empty() {
+                format!("removed task: {task_handle}")
+            } else {
+                format_execution_outputs(&outputs)
+            }
+        }
+        DropTaskCompletion::TeardownIncomplete => {
+            format!("teardown incomplete for task: {task_handle}")
+        }
+    };
+
+    Ok(OperateOutcome {
+        state_changed: true,
+        output,
     })
 }
 
@@ -102,26 +270,57 @@ fn task_command_kind(action: OperatorAction) -> Result<TaskCommandKind, OperateE
     match action {
         OperatorAction::Review => Ok(TaskCommandKind::Review),
         OperatorAction::Ship => Ok(TaskCommandKind::Ship),
-        OperatorAction::Repair => Err(OperateError::UnsupportedCapability(
-            "repair requires native cockpit terminal attach",
+        OperatorAction::Repair => Ok(TaskCommandKind::Repair),
+        OperatorAction::Resume => Ok(TaskCommandKind::Resume),
+        OperatorAction::Start | OperatorAction::Drop => Err(OperateError::UnsupportedCapability(
+            "action is handled by a dedicated web operation",
         )),
-        OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
-            "terminal attach requires native cockpit",
-        )),
-        OperatorAction::Start => Err(OperateError::UnsupportedCapability(
-            "task title input requires native cockpit",
-        )),
-        OperatorAction::Drop => Err(OperateError::UnsupportedCapability(
-            "drop confirmation is not enabled for mobile web",
-        )),
+    }
+}
+
+pub fn format_execution_outputs(outputs: &[CommandOutput]) -> String {
+    outputs
+        .iter()
+        .filter_map(|output| {
+            let stdout = output.stdout.trim();
+            let stderr = output.stderr.trim();
+            match (stdout.is_empty(), stderr.is_empty()) {
+                (true, true) => None,
+                (false, true) => Some(stdout.to_string()),
+                (true, false) => Some(stderr.to_string()),
+                (false, false) => Some(format!("{stdout}\n{stderr}")),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+pub fn format_operate_error(error: &OperateError) -> String {
+    match error {
+        OperateError::UnknownAction(action) => format!("unknown action: {action}"),
+        OperateError::UnsupportedCapability(message) => (*message).to_string(),
+        OperateError::Command(error, _) => format_command_error(error),
+    }
+}
+
+fn format_command_error(error: &CommandError) -> String {
+    match error {
+        CommandError::ConfirmationRequired => {
+            "confirmation required — tap again to confirm".to_string()
+        }
+        CommandError::PlanBlocked(reasons) => reasons.join("; "),
+        CommandError::TaskNotFound(handle) => format!("task not found: {handle}"),
+        CommandError::RepoNotFound(repo) => format!("repo not found: {repo}"),
+        CommandError::Registry(error) => error.to_string(),
+        CommandError::CommandRun(error) => error.to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{operate, OperateError, OperateRequest};
+    use super::{format_execution_outputs, operate, sync_task, tidy, OperateError, OperateRequest};
     use ajax_core::{
-        adapters::RecordingCommandRunner,
+        adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{AgentClient, LifecycleStatus, Task, TaskId},
@@ -152,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn operate_slice_rejects_terminal_attach() {
+    fn operate_slice_rejects_resume_in_favor_of_sync() {
         let mut context = context_with_reviewable_task();
         let mut runner = RecordingCommandRunner::default();
         let error = operate(
@@ -167,30 +366,71 @@ mod tests {
 
         assert_eq!(
             error,
-            OperateError::UnsupportedCapability("terminal attach requires native cockpit")
+            OperateError::UnsupportedCapability("resume requires native cockpit; use sync instead")
         );
         assert!(runner.commands().is_empty());
     }
 
     #[test]
-    fn operate_slice_rejects_repair_terminal_attach() {
+    fn operate_slice_delegates_review_to_core_operation_and_returns_output() {
         let mut context = context_with_reviewable_task();
         let mut runner = RecordingCommandRunner::default();
-        let error = operate(
+        let outcome = operate(
             &mut context,
             &mut runner,
             OperateRequest {
                 task_handle: "web/fix-login".to_string(),
-                action: "repair".to_string(),
+                action: "review".to_string(),
             },
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(
-            error,
-            OperateError::UnsupportedCapability("repair requires native cockpit terminal attach")
-        );
-        assert!(runner.commands().is_empty());
+        assert!(!outcome.state_changed);
+        assert!(outcome.output.is_empty());
+        assert_eq!(runner.commands().len(), 1);
+    }
+
+    #[test]
+    fn sync_task_runs_resume_without_attach() {
+        let mut context = context_with_reviewable_task();
+        let mut runner = RecordingCommandRunner::default();
+        let outcome = sync_task(&mut context, &mut runner, "web/fix-login").unwrap();
+
+        assert!(outcome.state_changed);
+        assert!(!runner.commands().iter().any(|command| command
+            .args
+            .first()
+            .is_some_and(|arg| arg == "attach-session")));
+    }
+
+    #[test]
+    fn tidy_reports_candidates_before_confirmation() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = RecordingCommandRunner::default();
+
+        let outcome = tidy(
+            &mut context,
+            &mut runner,
+            super::TidyRequest {
+                request_id: String::new(),
+                confirmed: false,
+            },
+        )
+        .unwrap();
+
+        assert!(!outcome.state_changed);
+        assert_eq!(outcome.output, "nothing to tidy");
+    }
+
+    #[test]
+    fn format_execution_outputs_prefers_stdout() {
+        let text = format_execution_outputs(&[CommandOutput {
+            status_code: 0,
+            stdout: " diff stat\n".to_string(),
+            stderr: String::new(),
+        }]);
+
+        assert_eq!(text, "diff stat");
     }
 
     #[test]
@@ -205,6 +445,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap();
@@ -235,6 +476,7 @@ mod tests {
                 repo: "web".to_string(),
                 title: "   ".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap_err();
@@ -259,6 +501,7 @@ mod tests {
                 repo: "missing".to_string(),
                 title: "Fix login".to_string(),
                 agent: "codex".to_string(),
+                request_id: String::new(),
             },
         )
         .unwrap_err();
@@ -276,28 +519,5 @@ mod tests {
             ..Config::default()
         };
         CommandContext::new(config, InMemoryRegistry::default())
-    }
-
-    #[test]
-    fn operate_slice_delegates_review_to_core_operation() {
-        let mut context = context_with_reviewable_task();
-        let mut runner = RecordingCommandRunner::default();
-        let outcome = operate(
-            &mut context,
-            &mut runner,
-            OperateRequest {
-                task_handle: "web/fix-login".to_string(),
-                action: "review".to_string(),
-            },
-        )
-        .unwrap();
-
-        assert!(!outcome.state_changed);
-        assert_eq!(runner.commands().len(), 1);
-        assert_eq!(runner.commands()[0].program, "git");
-        assert_eq!(
-            runner.commands()[0].args,
-            ["diff", "--stat", "main...ajax/fix-login"]
-        );
     }
 }

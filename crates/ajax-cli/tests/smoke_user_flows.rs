@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::{
+    collections::hash_map::DefaultHasher,
     ffi::OsStr,
     fs,
+    hash::{Hash, Hasher},
     io::{Read, Write},
     os::fd::AsFd,
     os::unix::fs::PermissionsExt,
@@ -145,9 +147,16 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         let mut command = Command::new(ajax_binary());
         command
             .args(args)
+            .env_remove("AJAX_PROFILE")
+            .env_remove("AJAX_HOME")
+            .env_remove("AJAX_WORKTREE_ROOT")
             .env("HOME", &self.root)
+            .env("AJAX_PROFILE", "dev")
             .env("AJAX_CONFIG", &self.config_file)
             .env("AJAX_STATE", &self.state_file)
+            .env("AJAX_PROFILE", "dev")
+            .env("AJAX_HOME", &self.root)
+            .env_remove("AJAX_WORKTREE_ROOT")
             .env("AJAX_SMOKE_COMMAND_LOG", &self.command_log)
             .env("AJAX_SMOKE_SUBSTRATE_DIR", &self.substrate_dir)
             .env("PATH", path);
@@ -155,6 +164,18 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
             command.env(key, value);
         }
         command
+    }
+
+    fn repo_path(&self, name: &str) -> PathBuf {
+        self.root.join("repos").join(name)
+    }
+
+    fn expected_worktree_path(&self, repo_name: &str, handle: &str) -> PathBuf {
+        let repo_path = self.repo_path(repo_name);
+        self.root
+            .join("worktrees")
+            .join(rooted_repo_dir(repo_name, &repo_path))
+            .join(handle)
     }
 
     fn install_fake_tools(&self) {
@@ -350,6 +371,17 @@ fn read_pty_available(master: &mut fs::File, stdout: &mut Vec<u8>) {
     }
 }
 
+fn rooted_repo_dir(repo_name: &str, repo_path: &Path) -> String {
+    let slug = repo_name.to_ascii_lowercase();
+    format!("{slug}-{:08x}", short_path_hash(repo_path))
+}
+
+fn short_path_hash(path: &Path) -> u32 {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    (hasher.finish() & 0xffff_ffff) as u32
+}
+
 const FAKE_GIT: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 printf 'git %s\n' "$*" >> "$AJAX_SMOKE_COMMAND_LOG"
@@ -378,6 +410,49 @@ case "$*" in
     ;;
   *" merge --ff-only ajax/"*)
     touch "$AJAX_SMOKE_SUBSTRATE_DIR/merged"
+    ;;
+  *" worktree list --porcelain"*)
+    repo="${2:-}"
+    printf 'worktree %s\nHEAD 1111111\nbranch refs/heads/main\n\n' "$repo"
+    worktrees_root="$(dirname "$repo")/$(basename "$repo")__worktrees"
+    if [[ -d "$worktrees_root" ]]; then
+      for dir in "$worktrees_root"/ajax-*; do
+        [[ -d "$dir" ]] || continue
+        branch_suffix="${dir##*/ajax-}"
+        printf 'worktree %s\nHEAD 2222222\nbranch refs/heads/ajax/%s\n\n' "$dir" "$branch_suffix"
+      done
+    fi
+    if [[ -d "$HOME/worktrees" ]]; then
+      for repo_dir in "$HOME/worktrees"/*; do
+        [[ -d "$repo_dir" ]] || continue
+        for dir in "$repo_dir"/*; do
+          [[ -d "$dir" ]] || continue
+          handle="$(basename "$dir")"
+          printf 'worktree %s\nHEAD 2222222\nbranch refs/heads/ajax/%s\n\n' "$dir" "$handle"
+        done
+      done
+    fi
+    ;;
+  *" branch --format=%(refname:short)"*)
+    repo="${2:-}"
+    printf 'main\n'
+    worktrees_root="$(dirname "$repo")/$(basename "$repo")__worktrees"
+    if [[ -d "$worktrees_root" ]]; then
+      for dir in "$worktrees_root"/ajax-*; do
+        [[ -d "$dir" ]] || continue
+        branch_suffix="${dir##*/ajax-}"
+        printf 'ajax/%s\n' "$branch_suffix"
+      done
+    fi
+    if [[ -d "$HOME/worktrees" ]]; then
+      for repo_dir in "$HOME/worktrees"/*; do
+        [[ -d "$repo_dir" ]] || continue
+        for dir in "$repo_dir"/*; do
+          [[ -d "$dir" ]] || continue
+          printf 'ajax/%s\n' "$(basename "$dir")"
+        done
+      done
+    fi
     ;;
   *" status --porcelain=v1 --branch"*)
     cwd="${2:-}"
@@ -683,10 +758,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     let sandbox = SmokeSandbox::new("new-execute-active");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.expected_worktree_path("web", "fix-login");
 
     create_active_web_task(&sandbox);
 
@@ -707,7 +779,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     assert!(inspect["worktree_path"]
         .as_str()
         .expect("worktree path should be a string")
-        .contains("web__worktrees/ajax-fix-login"));
+        .contains("/fix-login"));
 
     let log = sandbox.command_log();
     assert!(
@@ -737,12 +809,9 @@ fn smoke_new_execute_creates_active_task_environment() {
 #[test]
 fn smoke_open_and_trunk_are_idempotent_repairs() {
     let sandbox = SmokeSandbox::new("open-trunk-idempotent");
-    let repo = sandbox.create_repo("web");
+    sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.expected_worktree_path("web", "fix-login");
     create_active_web_task(&sandbox);
 
     for command in [
@@ -922,10 +991,7 @@ fn smoke_merge_and_clean_completed_task() {
     let sandbox = SmokeSandbox::new("merge-clean");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.expected_worktree_path("web", "fix-login");
     complete_web_task_to_reviewable(&sandbox);
 
     let check = sandbox.ajax(["repair", "web/fix-login", "--execute"]);
@@ -1025,10 +1091,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     let sandbox = SmokeSandbox::new("partial-new-failure");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.expected_worktree_path("web", "fix-login");
 
     let failed = sandbox.ajax_with_env(
         [

@@ -1,12 +1,8 @@
 use ajax_core::{
-    adapters::CommandRunner,
-    commands::{self, CommandContext},
-    models::OperatorAction,
+    adapters::{CommandRunner, ProcessCommandRunner},
+    commands::CommandContext,
     registry::InMemoryRegistry,
     runtime_refresh::refresh_runtime_context,
-    task_operations::task_command::{
-        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-    },
 };
 #[cfg(test)]
 use ajax_web::runtime::Request;
@@ -14,17 +10,17 @@ use ajax_web::runtime::Request;
 use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
-    slices::operate::{start_task, StartTaskRequest},
+    slices::operate::{
+        format_operate_error, operate, start_task, tidy, OperateError, OperateOutcome,
+        OperateRequest, StartTaskRequest, TidyRequest,
+    },
     WebError,
 };
-#[cfg(test)]
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use crate::{
     command_error,
     context::{load_context, save_context},
-    dispatch::execute_observed_drop,
     CliContextPaths, CliError,
 };
 
@@ -65,7 +61,9 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
+    let mut bridge = CliRuntimeBridge {
+        paths: paths.cloned(),
+    };
     runtime::route_with_bridge(
         Request { method, path, body },
         context,
@@ -89,18 +87,17 @@ pub(crate) fn serve_mobile_web_with_paths(
     host: &str,
     port: u16,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
+    _runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
-    runtime::serve_mobile_web_with_bridge(host, port, context, runner, &mut bridge, &state_dir)
-        .map_err(cli_error_from_web)
+    let bridge = CliRuntimeBridge {
+        paths: paths.cloned(),
+    };
+    let state = runtime::WebAppState::new(context.clone(), ProcessCommandRunner, bridge, state_dir);
+    runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
 
-/// Resolves the directory the companion persists its files in (TLS identity,
-/// VAPID keys, push subscriptions): the directory holding the Ajax state
-/// database.
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
     let state_file = match paths {
         Some(paths) => paths.state_file.clone(),
@@ -112,59 +109,38 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
         .ok_or_else(|| CliError::CommandFailed("web companion directory unresolved".to_string()))
 }
 
-struct CliRuntimeBridge<'a> {
-    paths: Option<&'a CliContextPaths>,
+#[derive(Clone)]
+struct CliRuntimeBridge {
+    paths: Option<CliContextPaths>,
 }
 
-impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
+impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
     fn refresh_cockpit(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<bool, WebError> {
-        if let Some(paths) = self.paths {
+        if let Some(paths) = self.paths.as_ref() {
             *context = load_context(paths).map_err(web_error_from_cli)?;
         }
         let state_changed = refresh_runtime_context(context, runner)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
         if state_changed {
-            if let Some(paths) = self.paths {
+            if let Some(paths) = self.paths.as_ref() {
                 save_context(paths, context).map_err(web_error_from_cli)?;
             }
         }
         Ok(state_changed)
     }
 
-    fn execute_mobile_action(
+    fn execute_operate(
         &mut self,
-        action: OperatorAction,
-        task_handle: &str,
+        request: OperateRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure> {
-        match execute_mobile_action(action, task_handle, context, runner) {
-            Ok(state_changed) => {
-                if state_changed {
-                    if let Some(paths) = self.paths {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
-                    }
-                }
-                Ok(state_changed)
-            }
-            Err(error) => {
-                let state_changed = error.state_changed();
-                if state_changed {
-                    if let Some(paths) = self.paths {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
-                    }
-                }
-                Err(ActionFailure {
-                    message: error.to_string(),
-                    state_changed,
-                })
-            }
-        }
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(operate(context, runner, request), context)
     }
 
     fn execute_start_task(
@@ -172,55 +148,49 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge<'_> {
         request: StartTaskRequest,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
-    ) -> Result<bool, ActionFailure> {
-        match start_task(context, runner, request) {
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(start_task(context, runner, request), context)
+    }
+
+    fn execute_tidy(
+        &mut self,
+        request: TidyRequest,
+        context: &mut CommandContext<InMemoryRegistry>,
+        runner: &mut C,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        self.persist_operate(tidy(context, runner, request), context)
+    }
+}
+
+impl CliRuntimeBridge {
+    fn persist_operate(
+        &self,
+        result: Result<OperateOutcome, OperateError>,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<OperateOutcome, ActionFailure> {
+        match result {
             Ok(outcome) => {
                 if outcome.state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
-                Ok(outcome.state_changed)
+                Ok(outcome)
             }
             Err(error) => {
-                let state_changed = matches!(
-                    error,
-                    ajax_web::slices::operate::OperateError::Command(_, true)
-                );
+                let state_changed = matches!(error, OperateError::Command(_, true));
                 if state_changed {
-                    if let Some(paths) = self.paths {
+                    if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
                     }
                 }
                 Err(ActionFailure {
-                    message: format_start_error(&error),
+                    message: format_operate_error(&error),
                     state_changed,
                 })
             }
         }
     }
-}
-
-fn format_start_error(error: &ajax_web::slices::operate::OperateError) -> String {
-    use ajax_web::slices::operate::OperateError;
-    match error {
-        OperateError::UnknownAction(action) => format!("unknown action: {action}"),
-        OperateError::UnsupportedCapability(message) => (*message).to_string(),
-        OperateError::Command(error, _) => command_error(error.clone()).to_string(),
-    }
-}
-
-#[cfg(test)]
-fn serve_connection<S: Read + Write>(
-    stream: S,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-    paths: Option<&CliContextPaths>,
-) -> Result<(), CliError> {
-    let state_dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge { paths };
-    runtime::serve_connection(stream, context, runner, &mut bridge, &state_dir)
-        .map_err(cli_error_from_web)
 }
 
 fn web_error_from_cli(error: CliError) -> WebError {
@@ -244,77 +214,12 @@ fn action_failure_from_cli(error: CliError) -> ActionFailure {
     }
 }
 
-fn execute_mobile_action(
-    action: OperatorAction,
-    task_handle: &str,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
-) -> Result<bool, CliError> {
-    if action == OperatorAction::Drop {
-        return execute_observed_drop(context, task_handle, true, runner)
-            .map(|rendered| rendered.state_changed);
-    }
-
-    let kind = match action {
-        OperatorAction::Review => TaskCommandKind::Review,
-        OperatorAction::Ship => TaskCommandKind::Ship,
-        OperatorAction::Repair => TaskCommandKind::Repair,
-        OperatorAction::Start | OperatorAction::Resume | OperatorAction::Drop => {
-            return Err(CliError::CommandFailed(format!(
-                "unsupported mobile action: {}",
-                action.as_str()
-            )));
-        }
-    };
-    let plan = plan_task_command_operation(context, kind, task_handle, commands::OpenMode::Attach)
-        .map_err(command_error)?;
-    let confirmed = !plan.requires_confirmation;
-    execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
-        .map(|(_outputs, state_changed)| state_changed)
-        .map_err(|(error, state_changed)| {
-            let error = command_error(error);
-            if state_changed {
-                error.after_state_change()
-            } else {
-                error
-            }
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
-        render_mobile_shell, serve_connection,
+        render_mobile_shell,
     };
-    use std::cell::RefCell;
-    use std::collections::BTreeSet;
-    use std::io::{Cursor, Read, Write};
-    use std::rc::Rc;
-
-    /// An in-memory bidirectional stream for exercising the generic connection
-    /// path without binding a socket.
-    struct MockStream {
-        input: Cursor<Vec<u8>>,
-        output: Rc<RefCell<Vec<u8>>>,
-    }
-
-    impl Read for MockStream {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.input.read(buf)
-        }
-    }
-
-    impl Write for MockStream {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.output.borrow_mut().extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -324,6 +229,7 @@ mod tests {
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
+    use std::collections::BTreeSet;
 
     #[test]
     fn mobile_shell_is_responsive_and_loads_cockpit_data() {
@@ -344,6 +250,9 @@ mod tests {
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("id=\"offline-banner\""));
         assert!(html.contains("id=\"refresh-button\""));
+        assert!(html.contains("id=\"tidy-button\""));
+        assert!(html.contains("id=\"help-button\""));
+        assert!(html.contains("id=\"result-panel\""));
     }
 
     #[test]
@@ -368,6 +277,7 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["backend"]["authority"], "host-native");
     }
 
     #[test]
@@ -454,7 +364,12 @@ mod tests {
         assert!(script.contains("cache: \"no-store\""));
         assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
         assert!(script.contains("refreshInFlight"));
-        assert!(script.contains("/api/actions"));
+        assert!(script.contains("/api/operations"));
+        assert!(script.contains("/api/tidy"));
+        assert!(script.contains("request_id"));
+        assert!(script.contains("structureFingerprint"));
+        assert!(script.contains("updateLiveSummaries"));
+        assert!(script.contains("action_states"));
     }
 
     #[test]
@@ -463,10 +378,12 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v14"));
+        assert!(sw_text.contains("ajax-cockpit-v17"));
+        assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
+        assert!(sw_text.contains("#/t/"));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
@@ -553,6 +470,7 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["ok"], true);
+        assert!(body["output"].is_string());
         assert_eq!(
             body["cockpit"]["cards"][0]["qualified_handle"],
             "web/fix-login"
@@ -596,11 +514,32 @@ mod tests {
     }
 
     #[test]
+    fn tidy_endpoint_returns_preview_before_confirmation() {
+        let mut context = reviewable_context();
+        let mut runner = OkRunner;
+
+        let response = handle_http_request_with_runner_and_paths(
+            "POST",
+            "/api/tidy",
+            r#"{"request_id":"tidy-1","confirmed":false}"#,
+            &mut context,
+            &mut runner,
+            None,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["ok"], true);
+        assert!(body["output"].is_string());
+    }
+
+    #[test]
     fn cockpit_api_refreshes_live_task_status_before_rendering() {
         let mut context = reviewable_context();
         let task = context
             .registry
-            .get_task_mut(&TaskId::new("task-1"))
+            .get_task_mut(&TaskId::new("web/fix-login"))
             .unwrap();
         task.lifecycle_status = LifecycleStatus::Active;
         let mut runner = LiveRefreshRunner;
@@ -619,6 +558,7 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["live_summary"], "agent running");
+        assert!(body["cards"][0]["action_states"].is_array());
     }
 
     #[test]
@@ -652,20 +592,16 @@ mod tests {
     }
 
     #[test]
-    fn serve_connection_serves_a_request_over_a_generic_stream() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = OkRunner;
-        let output = Rc::new(RefCell::new(Vec::new()));
-        let stream = MockStream {
-            input: Cursor::new(b"GET /app.css HTTP/1.1\r\nHost: ajax\r\n\r\n".to_vec()),
-            output: Rc::clone(&output),
-        };
+    fn cli_web_backend_uses_axum_runtime_server() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_backend.rs"),
+        )
+        .unwrap();
 
-        serve_connection(stream, &mut context, &mut runner, None).unwrap();
-
-        let written = String::from_utf8_lossy(&output.borrow()).into_owned();
-        assert!(written.starts_with("HTTP/1.1 200 OK"), "{written}");
-        assert!(written.contains("Content-Type: text/css"), "{written}");
+        assert!(source.contains("runtime::serve_axum_web"));
+        assert!(source.contains("runtime::WebAppState::new"));
+        assert!(!source.contains(&["runtime::", "serve_connection"].concat()));
+        assert!(!source.contains(&["runtime::", "serve_mobile_web_with_bridge"].concat()));
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
@@ -746,10 +682,29 @@ mod tests {
     struct OkRunner;
 
     impl CommandRunner for OkRunner {
-        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [_, repo, subcommand, action, flag]
+                    if repo == "/repo/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /repo/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /repo/web__worktrees/ajax-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/repo/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\najax/fix-login\n"
+                }
+                _ => "diff stat",
+            };
+
             Ok(CommandOutput {
                 status_code: 0,
-                stdout: "diff stat".to_string(),
+                stdout: stdout.to_string(),
                 stderr: String::new(),
             })
         }
@@ -800,7 +755,7 @@ mod tests {
             InMemoryRegistry::default(),
         );
         let mut task = Task::new(
-            TaskId::new("task-1"),
+            TaskId::new("web/fix-login"),
             "web",
             "fix-login",
             "Fix login",

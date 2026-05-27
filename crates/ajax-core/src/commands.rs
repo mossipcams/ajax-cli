@@ -297,10 +297,6 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
     }
 }
 
-pub fn rebuild_cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
-    cockpit_view(context)
-}
-
 pub fn mark_stale_tasks<R: Registry>(context: &mut CommandContext<R>, now: SystemTime) -> u32 {
     let task_ids = context
         .registry
@@ -615,6 +611,10 @@ mod tests {
     impl Registry for CountingRegistry {
         fn create_task(&mut self, task: Task) -> Result<(), RegistryError> {
             self.inner.create_task(task)
+        }
+
+        fn delete_task(&mut self, task_id: &TaskId) -> Result<(), RegistryError> {
+            self.inner.delete_task(task_id)
         }
 
         fn get_task(&self, task_id: &TaskId) -> Option<&Task> {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>Ajax Cockpit</title>
   <meta name="theme-color" content="#1F1A17">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -18,14 +18,22 @@
     Offline — last known state
   </div>
 
+  <div id="result-panel" class="result-panel" role="status" aria-live="polite" hidden>
+    <p id="result-message" class="result-message"></p>
+    <pre id="result-output" class="result-output" hidden></pre>
+    <button id="result-dismiss" type="button" class="pill">Dismiss</button>
+  </div>
+
   <header>
     <div class="bar">
       <h1>Ajax</h1>
       <p id="status-line" class="status-line" aria-live="polite">— loading</p>
       <span class="live-dot" aria-hidden="true"></span>
       <div class="header-actions">
+        <button id="help-button" type="button" class="pill" aria-label="Help">?</button>
+        <button id="tidy-button" type="button" class="pill">Tidy</button>
         <button id="new-task-button" type="button" class="pill is-primary" aria-label="New task">+ New</button>
-        <button id="notify-button" type="button" class="pill" hidden>Alerts</button>
+        <button id="notify-button" type="button" class="pill" aria-label="Enable task alerts">Alerts</button>
         <button id="refresh-button" type="button" class="pill icon" aria-label="Refresh">
           <span class="refresh-glyph" aria-hidden="true">↻</span>
         </button>
@@ -34,6 +42,7 @@
   </header>
 
   <main>
+    <nav id="project-nav" class="project-nav" aria-label="Projects" hidden></nav>
     <section id="inbox" class="group" aria-live="polite"></section>
     <section id="repos" class="group" aria-live="polite"></section>
     <p id="empty-state" class="empty" hidden>All quiet</p>
@@ -52,6 +61,7 @@
       <select id="new-task-agent" name="agent">
         <option value="codex">Codex</option>
         <option value="claude">Claude</option>
+        <option value="cursor">Cursor</option>
       </select>
       <p id="new-task-error" class="sheet-error" hidden></p>
       <div class="sheet-actions">
@@ -59,6 +69,25 @@
         <button type="submit" class="pill is-primary">Start</button>
       </div>
     </form>
+  </div>
+
+  <div id="help-sheet" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="sheet-card">
+      <h2 id="help-title">Web Cockpit</h2>
+      <p class="help-lead">Full operator control without terminal attach.</p>
+      <dl class="help-list">
+        <dt>Tap a task</dt><dd>Open detail view with live status and actions</dd>
+        <dt>Tap project pill</dt><dd>Filter tasks by repository</dd>
+        <dt>Sync</dt><dd>Refresh agent runtime without tmux attach</dd>
+        <dt>Review / Ship / Repair</dt><dd>Run the same operations as native Cockpit</dd>
+        <dt>Drop</dt><dd>Tap twice to confirm destructive removal</dd>
+        <dt>Tidy</dt><dd>Preview then confirm cleanup of finished tasks</dd>
+        <dt>Resume</dt><dd>Native Cockpit only — needs live terminal</dd>
+      </dl>
+      <div class="sheet-actions">
+        <button type="button" class="pill is-primary" data-sheet-cancel>Close</button>
+      </div>
+    </div>
   </div>
 
   <script src="/app.js" defer></script>

@@ -9,11 +9,23 @@ use ajax_core::{
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::action_vocabulary::{
+    browser_action_states, primary_browser_action, supported_web_action, WebActionState,
+};
+
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
+    pub backend: BrowserBackend,
     pub repos: ReposResponse,
     pub cards: Vec<BrowserTaskCard>,
     pub inbox: InboxResponse,
+}
+
+#[derive(Serialize)]
+pub struct BrowserBackend {
+    pub authority: &'static str,
+    pub control_enabled: bool,
+    pub warning: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -26,6 +38,7 @@ pub struct BrowserTaskCard {
     pub lifecycle: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_summary: Option<String>,
 }
 
@@ -36,26 +49,31 @@ pub fn browser_cockpit_json<R: Registry>(
 }
 
 pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> BrowserCockpitView {
-    let view = commands::rebuild_cockpit_view(context);
+    let view = commands::cockpit_view(context);
     BrowserCockpitView {
+        backend: host_native_backend(),
         repos: view.repos,
         cards: view.cards.iter().map(browser_task_card).collect(),
         inbox: view.inbox,
     }
 }
 
+fn host_native_backend() -> BrowserBackend {
+    BrowserBackend {
+        authority: "host-native",
+        control_enabled: true,
+        warning: None,
+    }
+}
+
 fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
-    let available: Vec<OperatorAction> = card
-        .available_actions
+    let action_states = browser_action_states(card);
+    let available: Vec<String> = action_states
         .iter()
-        .copied()
-        .filter(|action| is_web_supported(*action))
+        .filter(|state| state.status == "supported")
+        .map(|state| state.action.clone())
         .collect();
-    let primary = if is_web_supported(card.primary_action) {
-        card.primary_action
-    } else {
-        available.first().copied().unwrap_or(card.primary_action)
-    };
+    let primary = primary_browser_action(card);
 
     BrowserTaskCard {
         id: card.id.as_str().to_string(),
@@ -64,11 +82,9 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         ui_state: card.ui_state.as_str().to_string(),
         status_label: card.status_label.clone(),
         lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: primary.as_str().to_string(),
-        available_actions: available
-            .iter()
-            .map(|action| action.as_str().to_string())
-            .collect(),
+        primary_action: primary,
+        available_actions: available,
+        action_states,
         live_summary: card.live_summary.clone(),
     }
 }
@@ -76,8 +92,9 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
 // Resume drops the operator into a native tmux pane and Start needs an
 // interactive title prompt; both are rejected by web action handling, so the
 // browser Cockpit should not surface them as buttons.
+#[allow(dead_code)]
 fn is_web_supported(action: OperatorAction) -> bool {
-    !matches!(action, OperatorAction::Resume | OperatorAction::Start)
+    supported_web_action(action)
 }
 
 #[derive(Serialize)]
@@ -95,8 +112,10 @@ pub struct BrowserTaskDetail {
     pub status_label: String,
     pub primary_action: String,
     pub available_actions: Vec<String>,
+    pub action_states: Vec<WebActionState>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
+    pub agent_activity: Option<String>,
     pub git: Option<GitStatus>,
     pub tmux: Option<TmuxStatus>,
     pub annotations: Vec<String>,
@@ -123,34 +142,23 @@ pub fn browser_task_detail_view<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Option<BrowserTaskDetail> {
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .cloned()?;
-
-    let view = commands::rebuild_cockpit_view(context);
+    let view = commands::cockpit_view(context);
     let card = view
         .cards
         .iter()
-        .find(|card| card.qualified_handle == qualified_handle);
-    let card_clone = card.cloned();
-    let available_actions: Vec<String> = card_clone
-        .as_ref()
-        .map(|card| {
-            card.available_actions
-                .iter()
-                .copied()
-                .filter(|action| is_web_supported(*action))
-                .map(|action| action.as_str().to_string())
-                .collect()
-        })
-        .unwrap_or_default();
-    let primary_action = card_clone
-        .as_ref()
-        .map(|card| card.primary_action.as_str().to_string())
-        .unwrap_or_else(|| OperatorAction::Resume.as_str().to_string());
+        .find(|card| card.qualified_handle == qualified_handle)?;
+    let task = context.registry.get_task(&card.id)?.clone();
+    let action_states = browser_action_states(card);
+    let available_actions = action_states
+        .iter()
+        .filter(|state| state.status == "supported")
+        .map(|state| state.action.clone())
+        .collect();
+    let primary_action = primary_browser_action(card);
+    let agent_activity = card
+        .live_summary
+        .clone()
+        .or_else(|| task.live_status.as_ref().map(|live| live.summary.clone()));
 
     Some(BrowserTaskDetail {
         qualified_handle: task.qualified_handle(),
@@ -162,21 +170,17 @@ pub fn browser_task_detail_view<R: Registry>(
         lifecycle: lifecycle_label(task.lifecycle_status),
         agent: format!("{:?}", task.selected_agent),
         agent_status: format!("{:?}", task.agent_status),
-        ui_state: card_clone
-            .as_ref()
-            .map(|card| card.ui_state.as_str().to_string())
-            .unwrap_or_default(),
-        status_label: card_clone
-            .as_ref()
-            .map(|card| card.status_label.clone())
-            .unwrap_or_default(),
+        ui_state: card.ui_state.as_str().to_string(),
+        status_label: card.status_label.clone(),
         primary_action,
         available_actions,
+        action_states,
         live_status_kind: task
             .live_status
             .as_ref()
             .map(|live| format!("{:?}", live.kind)),
         live_status_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
+        agent_activity,
         git: task.git_status.clone(),
         tmux: task.tmux_status.clone(),
         annotations: task
@@ -218,9 +222,12 @@ mod tests {
     use ajax_core::{
         commands::CommandContext,
         config::Config,
-        models::{LifecycleStatus, OperatorAction, TaskId},
+        models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
+            SideFlag, Task, TaskId,
+        },
         output::TaskCard,
-        registry::InMemoryRegistry,
+        registry::{InMemoryRegistry, Registry as _},
         ui_state::UiState,
     };
 
@@ -233,6 +240,65 @@ mod tests {
         assert_eq!(value["repos"]["repos"], serde_json::json!([]));
         assert_eq!(value["cards"], serde_json::json!([]));
         assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+        assert_eq!(value["backend"]["authority"], "host-native");
+        assert_eq!(value["backend"]["control_enabled"], true);
+    }
+
+    #[test]
+    fn browser_cockpit_excludes_missing_substrate_ghosts() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::TmuxMissing,
+            "tmux session missing",
+        ));
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"], serde_json::json!([]));
+        assert_eq!(value["inbox"]["items"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn browser_cockpit_keeps_removed_tasks_out_of_browser_only_cards() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/old-task"),
+            "web",
+            "old-task",
+            "Old task",
+            "ajax/old-task",
+            "main",
+            "/repo/web__worktrees/ajax-old-task",
+            "ajax-web-old-task",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Removed;
+        task.add_side_flag(SideFlag::TmuxMissing);
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let json = browser_cockpit_json(&context).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["cards"], serde_json::json!([]));
     }
 
     #[test]
@@ -243,10 +309,34 @@ mod tests {
     }
 
     #[test]
+    fn task_detail_returns_none_for_missing_substrate_ghost() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(Config::default(), registry);
+
+        let detail = super::browser_task_detail_view(&context, "web/fix-login");
+
+        assert!(detail.is_none());
+    }
+
+    #[test]
     fn task_detail_surfaces_structured_live_state_for_a_task() {
         use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, GitStatus, LiveObservation, LiveStatusKind, Task};
-        use ajax_core::registry::Registry as _;
+        use ajax_core::models::GitStatus;
 
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
@@ -332,7 +422,51 @@ mod tests {
         assert_eq!(browser.status_label, "review ready");
         assert_eq!(browser.lifecycle, "Reviewable");
         assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
-        assert_eq!(browser.primary_action, "review");
-        assert_eq!(browser.available_actions, ["review", "ship"]);
+        assert_eq!(browser.primary_action, "sync");
+        assert_eq!(browser.available_actions, ["review", "ship", "sync"]);
+    }
+
+    #[test]
+    fn cockpit_cards_expose_backend_web_action_states() {
+        let card = TaskCard {
+            id: TaskId::new("web/fix-login"),
+            qualified_handle: "web/fix-login".to_string(),
+            title: "Fix login".to_string(),
+            ui_state: UiState::ReviewReady,
+            status_label: "review ready".to_string(),
+            lifecycle: LifecycleStatus::Reviewable,
+            annotations: Vec::new(),
+            primary_action: OperatorAction::Resume,
+            available_actions: vec![
+                OperatorAction::Resume,
+                OperatorAction::Review,
+                OperatorAction::Drop,
+            ],
+            live_summary: None,
+        };
+
+        let browser = browser_task_card(&card);
+        let states: Vec<(&str, &str, bool, bool)> = browser
+            .action_states
+            .iter()
+            .map(|state| {
+                (
+                    state.action.as_str(),
+                    state.status.as_str(),
+                    state.destructive,
+                    state.confirmation_required,
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            states,
+            vec![
+                ("resume", "needs_terminal", false, false),
+                ("review", "supported", false, false),
+                ("drop", "supported", true, true),
+                ("sync", "supported", false, false),
+            ]
+        );
     }
 }

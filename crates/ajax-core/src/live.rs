@@ -12,27 +12,220 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
         return LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
     }
 
+    classify_recent_evidence(&lines)
+        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PaneEvidence {
+    Completion,
+    ApprovalPrompt,
+    InputPrompt,
+    AuthRequired,
+    RateLimited,
+    ContextLimit,
+    Blocked,
+    MergeConflict,
+    CiFailed,
+    CommandFailed,
+    CommandRunning,
+    AgentRunning,
+    TestsRunning,
+}
+
+impl PaneEvidence {
+    fn observation(self) -> LiveObservation {
+        match self {
+            Self::Completion => LiveObservation::new(LiveStatusKind::Done, "done"),
+            Self::ApprovalPrompt => {
+                LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval")
+            }
+            Self::InputPrompt => {
+                LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input")
+            }
+            Self::AuthRequired => {
+                LiveObservation::new(LiveStatusKind::AuthRequired, "authentication required")
+            }
+            Self::RateLimited => LiveObservation::new(LiveStatusKind::RateLimited, "rate limited"),
+            Self::ContextLimit => {
+                LiveObservation::new(LiveStatusKind::ContextLimit, "context limit reached")
+            }
+            Self::Blocked => LiveObservation::new(LiveStatusKind::Blocked, "blocked"),
+            Self::MergeConflict => LiveObservation::new(
+                LiveStatusKind::MergeConflict,
+                "merge conflict needs attention",
+            ),
+            Self::CiFailed => LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
+            Self::CommandFailed => {
+                LiveObservation::new(LiveStatusKind::CommandFailed, "command failed")
+            }
+            Self::CommandRunning => {
+                LiveObservation::new(LiveStatusKind::CommandRunning, "command running")
+            }
+            Self::AgentRunning => {
+                LiveObservation::new(LiveStatusKind::AgentRunning, "agent running")
+            }
+            Self::TestsRunning => {
+                LiveObservation::new(LiveStatusKind::TestsRunning, "tests running")
+            }
+        }
+    }
+}
+
+fn classify_recent_evidence(lines: &[&str]) -> Option<LiveObservation> {
     if lines
         .last()
         .is_some_and(|line| looks_like_shell_prompt(line))
     {
-        if let Some(observation) = lines
-            .iter()
-            .rev()
-            .nth(1)
-            .and_then(|line| classify_pane_line(line))
-        {
-            return observation;
+        if let Some(line) = lines.iter().rev().nth(1).copied() {
+            if let Some(observation) = classify_line_evidence(line) {
+                return Some(observation);
+            }
         }
 
-        return LiveObservation::new(LiveStatusKind::ShellIdle, "shell idle");
+        return Some(LiveObservation::new(
+            LiveStatusKind::ShellIdle,
+            "shell idle",
+        ));
     }
 
-    lines
-        .iter()
-        .rev()
-        .find_map(|line| classify_pane_line(line))
-        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
+    lines.iter().rev().copied().find_map(classify_line_evidence)
+}
+
+fn classify_line_evidence(line: &str) -> Option<LiveObservation> {
+    classify_cursor_stream_json_line(line)
+        .or_else(|| pane_evidence(line).map(PaneEvidence::observation))
+}
+
+fn pane_evidence(line: &str) -> Option<PaneEvidence> {
+    let lower = line.to_ascii_lowercase();
+
+    if is_completion_line(&lower) {
+        return Some(PaneEvidence::Completion);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "do you want to proceed",
+            "approve to proceed",
+            "allow command",
+            "approval request",
+            "y/n",
+            "[y/n]",
+        ],
+    ) {
+        return Some(PaneEvidence::ApprovalPrompt);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "please login",
+            "please log in",
+            "log in to",
+            "login to continue",
+            "authenticate",
+            "auth required",
+        ],
+    ) {
+        return Some(PaneEvidence::AuthRequired);
+    }
+
+    if contains_any(
+        &lower,
+        &["rate limit", "too many requests", "try again later"],
+    ) {
+        return Some(PaneEvidence::RateLimited);
+    }
+
+    if contains_any(&lower, &["context limit", "token limit", "context length"]) {
+        return Some(PaneEvidence::ContextLimit);
+    }
+
+    if contains_any(
+        &lower,
+        &["blocked", "cannot continue", "manual intervention required"],
+    ) {
+        return Some(PaneEvidence::Blocked);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "merge conflict",
+            "conflict (",
+            "automatic merge failed",
+            "fix conflicts",
+        ],
+    ) {
+        return Some(PaneEvidence::MergeConflict);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "ci failed",
+            "github actions failed",
+            "check run failed",
+            "workflow failed",
+            "failing checks",
+        ],
+    ) {
+        return Some(PaneEvidence::CiFailed);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "waiting for input",
+            "what kind of ",
+            "what do you want me to",
+            "what you want me to do",
+            "send me the problem",
+            "did you mean",
+            "specific task",
+            "press enter",
+            "continue?",
+            "enter your choice",
+            "select an option",
+        ],
+    ) {
+        return Some(PaneEvidence::InputPrompt);
+    }
+
+    if contains_any(
+        &lower,
+        &[
+            "test result: failed",
+            "command failed",
+            "exit code",
+            "nonzeroexit",
+            "failed with",
+        ],
+    ) {
+        return Some(PaneEvidence::CommandFailed);
+    }
+
+    if contains_any(
+        &lower,
+        &["running command", "executing command", "$ cargo", "$ npm"],
+    ) {
+        return Some(PaneEvidence::CommandRunning);
+    }
+
+    if looks_like_active_agent_status(line) {
+        return Some(PaneEvidence::AgentRunning);
+    }
+
+    if contains_any(
+        &lower,
+        &["cargo test", "running test", "running 0 tests", "running "],
+    ) {
+        return Some(PaneEvidence::TestsRunning);
+    }
+
+    None
 }
 
 fn meaningful_lines(text: &str) -> Vec<&str> {
@@ -60,174 +253,233 @@ fn looks_like_active_agent_status(line: &str) -> bool {
         &[
             "codex is working",
             "claude is working",
+            "cursor agent",
+            "cursor is working",
             "background terminal running",
             "thinking",
             "waiting for background terminal",
             "working (",
             "working on your task",
+            "running tool",
+            "using tool",
         ],
     )
 }
 
-fn classify_pane_line(line: &str) -> Option<LiveObservation> {
-    let lower = line.to_ascii_lowercase();
-
-    if is_completion_line(&lower) {
-        return Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+fn classify_cursor_stream_json_line(line: &str) -> Option<LiveObservation> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('{') {
+        return None;
     }
 
-    if contains_any(
-        &lower,
-        &[
-            "do you want to proceed",
-            "approve to proceed",
-            "allow command",
-            "approval request",
-            "y/n",
-            "[y/n]",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForApproval,
-            "waiting for approval",
-        ));
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let event_type = value.get("type")?.as_str()?.to_ascii_lowercase();
+
+    match event_type.as_str() {
+        "system" if value.get("subtype").and_then(serde_json::Value::as_str) == Some("init") => {
+            Some(LiveObservation::new(
+                LiveStatusKind::AgentRunning,
+                "agent running",
+            ))
+        }
+        "thinking" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "tool_call" => classify_cursor_tool_call_line(&value),
+        "assistant" => cursor_assistant_observation(&value),
+        "result" => classify_cursor_result_line(&value),
+        "request" => classify_cursor_request_line(&value),
+        "status" => classify_cursor_status_line(&value),
+        _ => None,
+    }
+}
+
+fn classify_cursor_tool_call_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
+        return match status {
+            "running" | "in_progress" => Some(LiveObservation::new(
+                LiveStatusKind::CommandRunning,
+                format!("tool running: {}", cursor_tool_name(value)),
+            )),
+            "error" | "failed" => Some(LiveObservation::new(
+                LiveStatusKind::CommandFailed,
+                "command failed",
+            )),
+            _ => None,
+        };
     }
 
-    if contains_any(
-        &lower,
-        &[
-            "please login",
-            "please log in",
-            "log in to",
-            "login to continue",
-            "authenticate",
-            "auth required",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::AuthRequired,
-            "authentication required",
-        ));
+    match value.get("subtype").and_then(serde_json::Value::as_str) {
+        Some("started") => value.get("tool_call").map(|tool_call| {
+            LiveObservation::new(
+                LiveStatusKind::CommandRunning,
+                format!("tool running: {}", cursor_nested_tool_name(tool_call)),
+            )
+        }),
+        Some("completed") => None,
+        _ => None,
     }
+}
 
-    if contains_any(
-        &lower,
-        &["rate limit", "too many requests", "try again later"],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::RateLimited,
-            "rate limited",
-        ));
-    }
-
-    if contains_any(&lower, &["context limit", "token limit", "context length"]) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::ContextLimit,
-            "context limit reached",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &["blocked", "cannot continue", "manual intervention required"],
-    ) {
-        return Some(LiveObservation::new(LiveStatusKind::Blocked, "blocked"));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "merge conflict",
-            "conflict (",
-            "automatic merge failed",
-            "fix conflicts",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::MergeConflict,
-            "merge conflict needs attention",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "ci failed",
-            "github actions failed",
-            "check run failed",
-            "workflow failed",
-            "failing checks",
-        ],
-    ) {
-        return Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "waiting for input",
-            "what kind of ",
-            "what do you want me to",
-            "what you want me to do",
-            "send me the problem",
-            "did you mean",
-            "specific task",
-            "press enter",
-            "continue?",
-            "enter your choice",
-            "select an option",
-        ],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &[
-            "test result: failed",
-            "command failed",
-            "exit code",
-            "nonzeroexit",
-            "failed with",
-        ],
-    ) {
+fn classify_cursor_result_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    if value.get("is_error").and_then(serde_json::Value::as_bool) == Some(true)
+        || value.get("subtype").and_then(serde_json::Value::as_str) == Some("error")
+    {
         return Some(LiveObservation::new(
             LiveStatusKind::CommandFailed,
             "command failed",
         ));
     }
 
-    if contains_any(
-        &lower,
-        &["running command", "executing command", "$ cargo", "$ npm"],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::CommandRunning,
-            "command running",
-        ));
-    }
-
-    if looks_like_active_agent_status(line) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::AgentRunning,
-            "agent running",
-        ));
-    }
-
-    if contains_any(
-        &lower,
-        &["cargo test", "running test", "running 0 tests", "running "],
-    ) {
-        return Some(LiveObservation::new(
-            LiveStatusKind::TestsRunning,
-            "tests running",
-        ));
+    if value.get("subtype").and_then(serde_json::Value::as_str) == Some("success")
+        || value.get("is_error").and_then(serde_json::Value::as_bool) == Some(false)
+    {
+        return Some(LiveObservation::new(LiveStatusKind::Done, "done"));
     }
 
     None
+}
+
+fn classify_cursor_request_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    let prompt = value
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("prompt").and_then(serde_json::Value::as_str))
+        .or_else(|| value.get("text").and_then(serde_json::Value::as_str))
+        .unwrap_or("waiting for operator input");
+
+    if cursor_mentions_approval(prompt) {
+        Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ))
+    } else {
+        Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ))
+    }
+}
+
+fn classify_cursor_status_line(value: &serde_json::Value) -> Option<LiveObservation> {
+    let status = value
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+
+    match status.as_str() {
+        "RUNNING" | "CREATING" => Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        )),
+        "FINISHED" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
+        "ERROR" | "CANCELLED" | "EXPIRED" => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "command failed",
+        )),
+        _ => None,
+    }
+}
+
+fn cursor_assistant_observation(value: &serde_json::Value) -> Option<LiveObservation> {
+    let text = cursor_assistant_text(value)?;
+    if text.trim_end().ends_with('?') && !cursor_mentions_approval(&text) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+    }
+
+    let observation = classify_pane(&text);
+    if observation.kind == LiveStatusKind::Unknown {
+        Some(LiveObservation::new(
+            LiveStatusKind::AgentRunning,
+            "agent running",
+        ))
+    } else {
+        Some(observation)
+    }
+}
+
+fn cursor_assistant_text(value: &serde_json::Value) -> Option<String> {
+    let content = value.get("message")?.get("content")?.as_array()?;
+    let text = content
+        .iter()
+        .filter_map(|block| {
+            if block.get("type").and_then(serde_json::Value::as_str) != Some("text") {
+                return None;
+            }
+            block.get("text").and_then(serde_json::Value::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn cursor_tool_name(value: &serde_json::Value) -> String {
+    value
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| "tool".to_string())
+}
+
+fn cursor_nested_tool_name(tool_call: &serde_json::Value) -> String {
+    if let Some(read) = tool_call.get("readToolCall") {
+        if let Some(path) = read
+            .get("args")
+            .and_then(|args| args.get("path"))
+            .and_then(serde_json::Value::as_str)
+        {
+            return format!("read {path}");
+        }
+        return "read".to_string();
+    }
+
+    if let Some(shell) = tool_call
+        .get("bashToolCall")
+        .or_else(|| tool_call.get("shellToolCall"))
+    {
+        if let Some(command) = shell
+            .get("args")
+            .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
+            .and_then(serde_json::Value::as_str)
+        {
+            return format!("shell: {command}");
+        }
+        return "shell".to_string();
+    }
+
+    tool_call
+        .as_object()
+        .and_then(|fields| fields.keys().next())
+        .map(|name| name.to_string())
+        .unwrap_or_else(|| "tool".to_string())
+}
+
+fn cursor_mentions_approval(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    contains_any(
+        &lower,
+        &[
+            "approval required",
+            "requires approval",
+            "waiting for approval",
+            "allow command",
+            "proceed?",
+            "do you want to proceed",
+            "approve to proceed",
+            "y/n",
+            "[y/n]",
+        ],
+    )
 }
 
 fn is_completion_line(lower: &str) -> bool {
@@ -478,6 +730,61 @@ mod tests {
             (
                 "There are failing checks on the PR",
                 LiveStatusKind::CiFailed,
+            ),
+        ] {
+            let observation = classify_pane(pane);
+
+            assert_eq!(observation.kind, expected, "{pane}");
+        }
+    }
+
+    #[test]
+    fn pane_classifier_detects_cursor_stream_json_and_activity() {
+        for (pane, expected) in [
+            (
+                r#"{"type":"system","subtype":"init","agent":"cursor"}"#,
+                LiveStatusKind::AgentRunning,
+            ),
+            (r#"{"type":"thinking"}"#, LiveStatusKind::AgentRunning),
+            (
+                r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
+                LiveStatusKind::CommandRunning,
+            ),
+            (
+                r#"{"type":"tool_call","subtype":"started","call_id":"1","tool_call":{"readToolCall":{"args":{"path":"src/lib.rs"}}}}"#,
+                LiveStatusKind::CommandRunning,
+            ),
+            (
+                r#"{"type":"status","status":"RUNNING"}"#,
+                LiveStatusKind::AgentRunning,
+            ),
+            (
+                r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
+                LiveStatusKind::Done,
+            ),
+            (
+                r#"{"type":"result","subtype":"error","is_error":true,"result":"auth failed"}"#,
+                LiveStatusKind::CommandFailed,
+            ),
+            (
+                r#"{"type":"request","request_id":"req-1","message":"Allow command?"}"#,
+                LiveStatusKind::WaitingForApproval,
+            ),
+            (
+                r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Which branch should I use?"}]}}"#,
+                LiveStatusKind::WaitingForInput,
+            ),
+            (
+                "cursor agent --print --output-format stream-json fix tests",
+                LiveStatusKind::AgentRunning,
+            ),
+            (
+                concat!(
+                    r#"{"type":"thinking"}"#,
+                    "\n",
+                    r#"{"type":"tool_call","call_id":"1","name":"grep","status":"running"}"#,
+                ),
+                LiveStatusKind::CommandRunning,
             ),
         ] {
             let observation = classify_pane(pane);
