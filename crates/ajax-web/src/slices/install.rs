@@ -60,6 +60,8 @@ mod tests {
         let shell = pwa_shell();
 
         for expected in [
+            "class=\"cockpit-chrome\"",
+            "class=\"page-lead\"",
             "id=\"status-line\"",
             "id=\"alerts-banner\"",
             "id=\"new-task-row\"",
@@ -106,6 +108,21 @@ mod tests {
     }
 
     #[test]
+    fn pwa_stylesheet_pins_top_banners_inside_safe_area_chrome() {
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+        let lowered = css.to_ascii_lowercase();
+
+        assert!(
+            lowered.contains(".cockpit-chrome"),
+            "css must group top banners with the header chrome"
+        );
+        assert!(
+            lowered.contains(".cockpit-chrome") && lowered.contains("env(safe-area-inset-top)"),
+            "sticky cockpit chrome must respect the iOS status-bar inset"
+        );
+    }
+
+    #[test]
     fn pwa_stylesheet_uses_mid_century_modern_palette_and_no_monospace_body() {
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
         let lowered = css.to_ascii_lowercase();
@@ -142,7 +159,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v18"));
+        assert!(worker.contains("ajax-cockpit-v19"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -162,6 +179,37 @@ mod tests {
         }
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
+    }
+
+    #[test]
+    fn pwa_destructive_confirm_stays_stable_without_flashy_animation() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+
+        assert!(
+            script.contains("const CONFIRM_TIMEOUT_MS = 8000"),
+            "drop confirm window should stay open long enough on mobile"
+        );
+        assert!(
+            script.contains("pendingConfirmByKey"),
+            "confirm state must survive cockpit refresh re-renders"
+        );
+        assert!(
+            script.contains("function applyPendingConfirm"),
+            "rebuilt action buttons must restore an in-flight confirm"
+        );
+        assert!(
+            !css.contains(".action.confirming {\n  background: var(--terracotta);\n  border-color: var(--terracotta);\n  color: var(--ink);\n  animation: pulse"),
+            "confirming destructive actions should not flash"
+        );
+        assert!(
+            css.contains(".action {\n  flex: 0 0 auto;\n  background: transparent;\n  border: 1px solid var(--rule-strong);\n  border-radius: 999px;"),
+            "task action buttons should use pill geometry"
+        );
+        assert!(
+            css.contains(".card-head .action.primary {\n  flex: none;\n  background: var(--teal);\n  border: 1px solid var(--teal);\n  border-radius: 999px;"),
+            "primary card actions should use pill geometry"
+        );
     }
 
     #[test]

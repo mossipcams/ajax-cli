@@ -20,7 +20,7 @@ const resultOutput = document.getElementById("result-output");
 const resultDismiss = document.getElementById("result-dismiss");
 
 const REFRESH_INTERVAL_MS = 1000;
-const CONFIRM_TIMEOUT_MS = 3000;
+const CONFIRM_TIMEOUT_MS = 8000;
 const RESULT_AUTO_DISMISS_MS = 12000;
 const OFFLINE_STATUS = "Offline — last known state";
 
@@ -31,7 +31,8 @@ let detailHandle = null;
 let detailInFlight = false;
 let selectedProject = null;
 const expandedCards = new Set();
-const pendingConfirms = new WeakMap();
+/** @type {Map<string, { originalLabel: string, expiresAt: number, timer: ReturnType<typeof setTimeout> }>} */
+const pendingConfirmByKey = new Map();
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -45,7 +46,6 @@ function titleCase(value) {
 }
 
 const ACTION_LABELS = {
-  sync: "Sync",
   "fix-ci": "Fix CI",
   "resolve-merge-conflicts": "Resolve conflicts",
 };
@@ -150,6 +150,7 @@ function actionButtonFromState(state, handle, isPrimary) {
     button.classList.add("is-disabled");
     if (state.reason) button.title = state.reason;
   }
+  applyPendingConfirm(button);
   return button;
 }
 
@@ -311,14 +312,19 @@ function summarize(data) {
     : `${total} ${taskWord} · ${attention} need attention`;
 }
 
+function actionStructureSignature(card) {
+  const states = card.action_states || card.available_actions || [];
+  return states.map((state) => {
+    if (typeof state === "string") return [state, "supported"];
+    return [state.action, state.status];
+  });
+}
+
 function structureFingerprint(data) {
   const cards = data.cards.map((c) => [
     c.qualified_handle,
-    c.ui_state,
-    c.status_label,
-    c.lifecycle,
     c.primary_action,
-    JSON.stringify(c.action_states || c.available_actions || []),
+    JSON.stringify(actionStructureSignature(c)),
   ]);
   const items = (data.inbox && data.inbox.items) || [];
   return JSON.stringify({
@@ -677,34 +683,71 @@ document.querySelectorAll("[data-sheet-cancel]").forEach((btn) => {
 
 // ACTIONS -------------------------------------------------------------------
 
+function confirmKey(handle, action) {
+  return `${handle}:${action}`;
+}
+
+function clearPendingConfirm(key) {
+  const entry = pendingConfirmByKey.get(key);
+  if (entry?.timer) clearTimeout(entry.timer);
+  pendingConfirmByKey.delete(key);
+}
+
+function resetConfirmButton(button) {
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  clearPendingConfirm(key);
+  button.classList.remove("confirming");
+  if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
+}
+
+function applyPendingConfirm(button) {
+  if (!button.dataset.destructive && !button.dataset.confirmRequired) return;
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  const entry = pendingConfirmByKey.get(key);
+  if (!entry || Date.now() > entry.expiresAt) {
+    if (entry) clearPendingConfirm(key);
+    return;
+  }
+  button.dataset.originalLabel = entry.originalLabel;
+  button.textContent = "Tap to confirm";
+  button.classList.add("confirming");
+}
+
+function beginPendingConfirm(button) {
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  const originalLabel = button.textContent;
+  clearPendingConfirm(key);
+  const expiresAt = Date.now() + CONFIRM_TIMEOUT_MS;
+  const timer = setTimeout(() => {
+    clearPendingConfirm(key);
+    if (button.isConnected) resetConfirmButton(button);
+  }, CONFIRM_TIMEOUT_MS);
+  pendingConfirmByKey.set(key, { originalLabel, expiresAt, timer });
+  button.dataset.originalLabel = originalLabel;
+  button.textContent = "Tap to confirm";
+  button.classList.add("confirming");
+}
+
 function tryConfirmDestructive(button) {
   if (!button.dataset.destructive && !button.dataset.confirmRequired) return false;
+  const key = confirmKey(button.dataset.task, button.dataset.action);
   if (button.classList.contains("confirming")) {
-    const timer = pendingConfirms.get(button);
-    if (timer) clearTimeout(timer);
-    pendingConfirms.delete(button);
+    clearPendingConfirm(key);
     button.classList.remove("confirming");
     if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
     return false;
   }
-  button.dataset.originalLabel = button.textContent;
-  button.textContent = "Tap to confirm";
-  button.classList.add("confirming");
-  const timer = setTimeout(() => {
-    button.classList.remove("confirming");
-    if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
-    pendingConfirms.delete(button);
-  }, CONFIRM_TIMEOUT_MS);
-  pendingConfirms.set(button, timer);
+  beginPendingConfirm(button);
   return true;
 }
 
 async function runAction(button) {
+  resetConfirmButton(button);
   const cardEl = button.closest(".card, #task-detail");
   const peers = cardEl
     ? Array.from(cardEl.querySelectorAll("button[data-action]:not([disabled])"))
     : [button];
-  const originalLabel = button.textContent;
+  const originalLabel = button.dataset.originalLabel || button.textContent;
   button.textContent = `${originalLabel} …`;
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;

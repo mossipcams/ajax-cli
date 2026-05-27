@@ -6,6 +6,21 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.7.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.3...ajax-cli-v0.7.4) (2026-05-27)
+
+
+### Bug Fixes
+
+* **web:** keep PWA top banners inside iOS safe area ([#95](https://github.com/mossipcams/ajax-cli/issues/95)) ([f60561f](https://github.com/mossipcams/ajax-cli/commit/f60561f4e9d6b485533c32ea288a44d2c551872b))
+* **web:** stabilize PWA drop confirm and modernize action buttons ([#94](https://github.com/mossipcams/ajax-cli/issues/94)) ([20a38a3](https://github.com/mossipcams/ajax-cli/commit/20a38a3f6a537f2dbc22c383e3c52a39a04bc1ef))
+
+## [0.7.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.2...ajax-cli-v0.7.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* resilient drop teardown, failure surfacing, and ghost task pruning ([#91](https://github.com/mossipcams/ajax-cli/issues/91)) ([cb29bcc](https://github.com/mossipcams/ajax-cli/commit/cb29bcc13312e122801ef9d1c8bf709e4b60af67))
+
 ## [0.7.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.1...ajax-cli-v0.7.2) (2026-05-27)
 
 

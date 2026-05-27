@@ -27,7 +27,7 @@ use std::{
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    action_vocabulary::{supported_web_action, SYNC_ACTION},
+    action_vocabulary::supported_web_action,
     adapters::{push, tls},
     slices::{attention, cockpit, install},
     WebError,
@@ -661,15 +661,12 @@ fn operation_error_response(
 }
 
 fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
-    if action == SYNC_ACTION {
-        return None;
-    }
     let operator_action = OperatorAction::from_label(action)?;
     if supported_web_action(operator_action) {
         return None;
     }
     let message = match operator_action {
-        OperatorAction::Resume => "resume requires native cockpit; use sync instead".to_string(),
+        OperatorAction::Resume => "resume requires native cockpit".to_string(),
         OperatorAction::Start => {
             "start uses the dedicated Web Cockpit new-task operation".to_string()
         }

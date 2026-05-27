@@ -239,6 +239,7 @@ mod tests {
 
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
+        assert!(html.contains("class=\"cockpit-chrome\""));
         assert!(html.contains("id=\"alerts-banner\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
@@ -366,7 +367,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v18"));
+        assert!(sw_text.contains("ajax-cockpit-v19"));
         assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));

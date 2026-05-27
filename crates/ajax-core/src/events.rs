@@ -59,9 +59,12 @@ pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservati
             text,
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         )),
-        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(LiveObservation::new(
-            LiveStatusKind::CommandRunning,
-            format!("tool running: {name}"),
+        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(classify_text_or_else(
+            name,
+            LiveObservation::new(
+                LiveStatusKind::CommandRunning,
+                format!("tool running: {name}"),
+            ),
         )),
         MonitorEvent::Agent(AgentEvent::WaitingForApproval { .. }) => Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
@@ -74,9 +77,12 @@ pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservati
         MonitorEvent::Agent(AgentEvent::Completed) => {
             Some(LiveObservation::new(LiveStatusKind::Done, "done"))
         }
-        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
-            format!("agent failed: {message}"),
+        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(classify_text_or_else(
+            message,
+            LiveObservation::new(
+                LiveStatusKind::CommandFailed,
+                format!("agent failed: {message}"),
+            ),
         )),
         MonitorEvent::Process(ProcessEvent::Started { .. }) => Some(LiveObservation::new(
             LiveStatusKind::CommandRunning,
@@ -208,6 +214,12 @@ mod tests {
                 LiveStatusKind::CommandRunning,
             ),
             (
+                MonitorEvent::Agent(AgentEvent::ToolCall {
+                    name: "shell: cargo test --all-features".to_string(),
+                }),
+                LiveStatusKind::TestsRunning,
+            ),
+            (
                 MonitorEvent::Process(ProcessEvent::Exited { code: Some(1) }),
                 LiveStatusKind::CommandFailed,
             ),
@@ -244,6 +256,24 @@ mod tests {
                     line: "CONFLICT (content): merge conflict in src/lib.rs".to_string(),
                 }),
                 LiveStatusKind::MergeConflict,
+            ),
+            (
+                MonitorEvent::Agent(AgentEvent::Failed {
+                    message: "please login to continue".to_string(),
+                }),
+                LiveStatusKind::AuthRequired,
+            ),
+            (
+                MonitorEvent::Agent(AgentEvent::Failed {
+                    message: "rate limit exceeded; try again later".to_string(),
+                }),
+                LiveStatusKind::RateLimited,
+            ),
+            (
+                MonitorEvent::Agent(AgentEvent::Failed {
+                    message: "manual intervention required; blocked".to_string(),
+                }),
+                LiveStatusKind::Blocked,
             ),
         ] {
             let observation = live_observation_from_event(&event)

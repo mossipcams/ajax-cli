@@ -220,7 +220,18 @@ fn pane_evidence(line: &str) -> Option<PaneEvidence> {
 
     if contains_any(
         &lower,
-        &["cargo test", "running test", "running 0 tests", "running "],
+        &[
+            "cargo test",
+            "cargo nextest",
+            "npm test",
+            "pnpm test",
+            "yarn test",
+            "pytest",
+            "rspec",
+            "running test",
+            "running 0 tests",
+            "running ",
+        ],
     ) {
         return Some(PaneEvidence::TestsRunning);
     }
@@ -298,10 +309,7 @@ fn classify_cursor_stream_json_line(line: &str) -> Option<LiveObservation> {
 fn classify_cursor_tool_call_line(value: &serde_json::Value) -> Option<LiveObservation> {
     if let Some(status) = value.get("status").and_then(serde_json::Value::as_str) {
         return match status {
-            "running" | "in_progress" => Some(LiveObservation::new(
-                LiveStatusKind::CommandRunning,
-                format!("tool running: {}", cursor_tool_name(value)),
-            )),
+            "running" | "in_progress" => Some(cursor_tool_observation(&cursor_tool_name(value))),
             "error" | "failed" => Some(LiveObservation::new(
                 LiveStatusKind::CommandFailed,
                 "command failed",
@@ -311,14 +319,24 @@ fn classify_cursor_tool_call_line(value: &serde_json::Value) -> Option<LiveObser
     }
 
     match value.get("subtype").and_then(serde_json::Value::as_str) {
-        Some("started") => value.get("tool_call").map(|tool_call| {
-            LiveObservation::new(
-                LiveStatusKind::CommandRunning,
-                format!("tool running: {}", cursor_nested_tool_name(tool_call)),
-            )
-        }),
+        Some("started") => value
+            .get("tool_call")
+            .map(|tool_call| cursor_tool_observation(&cursor_nested_tool_name(tool_call))),
         Some("completed") => None,
         _ => None,
+    }
+}
+
+fn cursor_tool_observation(label: &str) -> LiveObservation {
+    let fallback = LiveObservation::new(
+        LiveStatusKind::CommandRunning,
+        format!("tool running: {label}"),
+    );
+    let observation = classify_pane(label);
+    if observation.kind == LiveStatusKind::Unknown {
+        fallback
+    } else {
+        observation
     }
 }
 
@@ -424,11 +442,28 @@ fn cursor_assistant_text(value: &serde_json::Value) -> Option<String> {
 }
 
 fn cursor_tool_name(value: &serde_json::Value) -> String {
-    value
+    let name = value
         .get("name")
         .and_then(serde_json::Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| "tool".to_string())
+        .unwrap_or("tool");
+
+    if let Some(command) = value
+        .get("args")
+        .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
+        .and_then(serde_json::Value::as_str)
+    {
+        return format!("{name}: {command}");
+    }
+
+    if let Some(path) = value
+        .get("args")
+        .and_then(|args| args.get("path"))
+        .and_then(serde_json::Value::as_str)
+    {
+        return format!("{name} {path}");
+    }
+
+    name.to_string()
 }
 
 fn cursor_nested_tool_name(tool_call: &serde_json::Value) -> String {
@@ -566,6 +601,13 @@ pub fn reduce_live_observation(
 fn should_keep_current_status(current: LiveStatusKind, next: LiveStatusKind) -> bool {
     if current == LiveStatusKind::Done {
         return is_incidental_observation(next);
+    }
+
+    if current == LiveStatusKind::TestsRunning {
+        return matches!(
+            next,
+            LiveStatusKind::AgentRunning | LiveStatusKind::CommandRunning
+        );
     }
 
     if is_waiting_status(current) {
@@ -1153,6 +1195,19 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CommandFailed)
         );
+    }
+
+    #[test]
+    fn blocked_observation_is_not_downgraded_by_later_output() {
+        let reduced = super::reduce_live_observation(
+            Some(&LiveObservation::new(
+                LiveStatusKind::Blocked,
+                "manual intervention required",
+            )),
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(reduced.kind, LiveStatusKind::Blocked);
     }
 
     #[test]

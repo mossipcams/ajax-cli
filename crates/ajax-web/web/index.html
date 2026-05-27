@@ -14,24 +14,28 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div id="result-panel" class="result-panel" role="status" aria-live="polite" hidden>
-    <p id="result-message" class="result-message"></p>
-    <pre id="result-output" class="result-output" hidden></pre>
-    <button id="result-dismiss" type="button" class="pill">Dismiss</button>
-  </div>
-
-  <header>
-    <div class="bar">
-      <h1>Ajax</h1>
-      <p id="status-line" class="status-line" aria-live="polite">— loading</p>
-      <span class="live-dot" aria-hidden="true"></span>
+  <div class="cockpit-chrome">
+    <div id="result-panel" class="result-panel" role="status" aria-live="polite" hidden>
+      <p id="result-message" class="result-message"></p>
+      <pre id="result-output" class="result-output" hidden></pre>
+      <button id="result-dismiss" type="button" class="pill">Dismiss</button>
     </div>
-  </header>
+
+    <header>
+      <div class="bar">
+        <h1>Ajax</h1>
+        <p id="status-line" class="status-line" aria-live="polite">— loading</p>
+        <span class="live-dot" aria-hidden="true"></span>
+      </div>
+    </header>
+
+    <div class="page-lead">
+      <button id="alerts-banner" class="alerts-banner" type="button" hidden></button>
+    </div>
+  </div>
 
   <main>
     <nav id="project-nav" class="project-nav" aria-label="Projects" hidden></nav>
-
-    <button id="alerts-banner" class="alerts-banner" type="button" hidden></button>
 
     <button id="new-task-row" class="new-task-row" type="button">
       <span class="new-task-glyph" aria-hidden="true">+</span>
