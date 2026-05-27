@@ -60,14 +60,12 @@ mod tests {
         let shell = pwa_shell();
 
         for expected in [
-            "id=\"offline-banner\"",
             "id=\"status-line\"",
-            "id=\"notify-button\"",
-            "id=\"refresh-button\"",
+            "id=\"alerts-banner\"",
+            "id=\"new-task-row\"",
             "id=\"inbox\"",
             "id=\"repos\"",
             "id=\"empty-state\"",
-            "id=\"new-task-button\"",
             "id=\"new-task-sheet\"",
             "value=\"cursor\"",
             "id=\"task-detail\"",
@@ -75,6 +73,20 @@ mod tests {
             "href=\"/icons/icon-192.png\"",
         ] {
             assert!(shell.contains(expected), "shell missing {expected}");
+        }
+        for removed in [
+            "id=\"offline-banner\"",
+            "id=\"notify-button\"",
+            "id=\"refresh-button\"",
+            "id=\"new-task-button\"",
+            "id=\"tidy-button\"",
+            "id=\"help-button\"",
+            "id=\"help-sheet\"",
+        ] {
+            assert!(
+                !shell.contains(removed),
+                "shell should no longer contain {removed}"
+            );
         }
 
         for path in [
@@ -130,7 +142,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v17"));
+        assert!(worker.contains("ajax-cockpit-v18"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -158,20 +170,16 @@ mod tests {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
         assert!(
-            shell.contains("id=\"notify-button\""),
+            shell.contains("id=\"alerts-banner\""),
             "shell must include the alerts control"
-        );
-        assert!(
-            !shell.contains("id=\"notify-button\" type=\"button\" class=\"pill\" hidden>Alerts"),
-            "alerts control must not start permanently hidden in the shell"
         );
 
         for expected in [
             "function notificationEnvironment()",
-            "function syncNotificationUi()",
-            "Add Ajax to your Home Screen to enable alerts.",
-            "Alerts on",
+            "function syncAlertsBanner()",
+            "Add Ajax to your Home Screen to enable alerts",
             "Alerts blocked",
+            "Turn on alerts",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }

@@ -12,7 +12,6 @@ use ajax_core::{
             DropTaskCompletion,
         },
         start::{execute_start_task_operation, plan_start_task_operation},
-        sweep_cleanup::execute_sweep_cleanup_operation,
         task_command::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
@@ -34,14 +33,6 @@ pub struct StartTaskRequest {
     pub agent: String,
     #[serde(default)]
     pub request_id: String,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub struct TidyRequest {
-    #[serde(default)]
-    pub request_id: String,
-    #[serde(default)]
-    pub confirmed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,42 +86,6 @@ pub fn sync_task<R: Registry>(
     task_handle: &str,
 ) -> Result<OperateOutcome, OperateError> {
     execute_task_command(context, runner, TaskCommandKind::Resume, task_handle)
-}
-
-pub fn tidy<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    request: TidyRequest,
-) -> Result<OperateOutcome, OperateError> {
-    let candidates = commands::sweep_cleanup_candidates(context);
-    if candidates.is_empty() {
-        return Ok(OperateOutcome {
-            state_changed: false,
-            output: "nothing to tidy".to_string(),
-        });
-    }
-    if !request.confirmed {
-        return Ok(OperateOutcome {
-            state_changed: false,
-            output: format!(
-                "tidy {} task(s): {}",
-                candidates.len(),
-                candidates.join(", ")
-            ),
-        });
-    }
-
-    let (outputs, state_changed) = execute_sweep_cleanup_operation(context, true, runner)
-        .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
-
-    Ok(OperateOutcome {
-        state_changed,
-        output: if outputs.is_empty() {
-            format!("tidied {} task(s)", candidates.len())
-        } else {
-            format_execution_outputs(&outputs)
-        },
-    })
 }
 
 pub fn start_task<R: Registry>(
@@ -367,7 +322,7 @@ fn format_command_error(error: &CommandError) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_execution_outputs, operate, sync_task, tidy, OperateError, OperateRequest};
+    use super::{format_execution_outputs, operate, sync_task, OperateError, OperateRequest};
     use ajax_core::remediation;
     use ajax_core::{
         adapters::{CommandOutput, RecordingCommandRunner},
@@ -453,25 +408,6 @@ mod tests {
             .args
             .first()
             .is_some_and(|arg| arg == "attach-session")));
-    }
-
-    #[test]
-    fn tidy_reports_candidates_before_confirmation() {
-        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = RecordingCommandRunner::default();
-
-        let outcome = tidy(
-            &mut context,
-            &mut runner,
-            super::TidyRequest {
-                request_id: String::new(),
-                confirmed: false,
-            },
-        )
-        .unwrap();
-
-        assert!(!outcome.state_changed);
-        assert_eq!(outcome.output, "nothing to tidy");
     }
 
     #[test]
