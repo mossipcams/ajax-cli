@@ -8,6 +8,7 @@ use crate::{adapters::tls::write_private, WebError};
 
 const VAPID_FILE: &str = "web-push-vapid.pem";
 const SUBSCRIPTIONS_FILE: &str = "web-push-subscriptions.json";
+const VAPID_SUBJECT: &str = "mailto:ajax-cockpit@example.invalid";
 
 /// A browser push subscription, matching the JSON shape of the browser's
 /// `PushSubscription.toJSON()`.
@@ -129,14 +130,6 @@ fn is_gone(error: &web_push::WebPushError) -> bool {
     matches!(
         error,
         web_push::WebPushError::EndpointNotValid(_) | web_push::WebPushError::EndpointNotFound(_)
-    ) || is_bad_jwt_token(error)
-}
-
-fn is_bad_jwt_token(error: &web_push::WebPushError) -> bool {
-    matches!(
-        error,
-        web_push::WebPushError::Other(info)
-            if info.code == 403 && info.message.contains(r#""reason":"BadJwtToken""#)
     )
 }
 
@@ -155,7 +148,7 @@ fn build_push_message(
             .map_err(|error| {
                 WebError::CommandFailed(format!("web push signature setup failed: {error}"))
             })?;
-    signature_builder.add_claim("sub", "mailto:ajax-cockpit@localhost");
+    signature_builder.add_claim("sub", vapid_subject());
     let signature = signature_builder.build().map_err(|error| {
         WebError::CommandFailed(format!("web push signature build failed: {error}"))
     })?;
@@ -166,6 +159,10 @@ fn build_push_message(
     message_builder
         .build()
         .map_err(|error| WebError::CommandFailed(format!("web push message build failed: {error}")))
+}
+
+fn vapid_subject() -> &'static str {
+    VAPID_SUBJECT
 }
 
 /// Sends `notification` to every stored subscription, pruning any the push
@@ -218,8 +215,8 @@ pub fn send_to_all(dir: &Path, notification: &PushNotification) -> Result<usize,
 mod tests {
     use super::{
         add_subscription, build_push_message, is_gone, load_or_create_vapid_keys,
-        load_subscriptions, notification_payload, remove_subscription, send_to_all, PushKeys,
-        PushNotification, PushSubscription,
+        load_subscriptions, notification_payload, remove_subscription, send_to_all, vapid_subject,
+        PushKeys, PushNotification, PushSubscription,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -287,14 +284,14 @@ mod tests {
     }
 
     #[test]
-    fn bad_jwt_token_errors_are_classified_as_gone() {
+    fn bad_jwt_token_errors_are_not_classified_as_gone() {
         let error = web_push::request_builder::parse_response(
             403.try_into().unwrap(),
             br#"{"reason":"BadJwtToken"}"#.to_vec(),
         )
         .unwrap_err();
 
-        assert!(is_gone(&error));
+        assert!(!is_gone(&error));
     }
 
     #[test]
@@ -310,6 +307,11 @@ mod tests {
         assert_eq!(value["body"], "web/fix-login");
         assert_eq!(value["tag"], "web/fix-login");
         assert_eq!(value["task_handle"], "web/fix-login");
+    }
+
+    #[test]
+    fn vapid_subject_uses_a_standards_safe_contact() {
+        assert_eq!(vapid_subject(), "mailto:ajax-cockpit@example.invalid");
     }
 
     #[test]
