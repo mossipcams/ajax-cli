@@ -9,6 +9,9 @@ mod palette;
 mod rendering;
 mod runtime;
 
+#[cfg(test)]
+mod architecture;
+
 use ajax_core::{
     models::CockpitActionItem,
     output::{InboxResponse, ReposResponse, TaskCard},

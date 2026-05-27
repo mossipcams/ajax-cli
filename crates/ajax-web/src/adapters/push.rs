@@ -112,6 +112,7 @@ pub struct PushNotification {
     pub title: String,
     pub body: String,
     pub tag: String,
+    pub task_handle: String,
 }
 
 fn notification_payload(notification: &PushNotification) -> Vec<u8> {
@@ -119,6 +120,7 @@ fn notification_payload(notification: &PushNotification) -> Vec<u8> {
         "title": notification.title,
         "body": notification.body,
         "tag": notification.tag,
+        "task_handle": notification.task_handle,
     }))
     .unwrap_or_default()
 }
@@ -296,16 +298,18 @@ mod tests {
     }
 
     #[test]
-    fn notification_payload_is_json_with_title_and_body() {
+    fn notification_payload_is_json_with_title_body_and_task_handle() {
         let payload = notification_payload(&PushNotification {
             title: "Task needs review".to_string(),
             body: "web/fix-login".to_string(),
             tag: "web/fix-login".to_string(),
+            task_handle: "web/fix-login".to_string(),
         });
         let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(value["title"], "Task needs review");
         assert_eq!(value["body"], "web/fix-login");
         assert_eq!(value["tag"], "web/fix-login");
+        assert_eq!(value["task_handle"], "web/fix-login");
     }
 
     #[test]
@@ -332,6 +336,7 @@ mod tests {
                 title: "ignored".to_string(),
                 body: "ignored".to_string(),
                 tag: "ignored".to_string(),
+                task_handle: "ignored".to_string(),
             },
         )
         .unwrap();

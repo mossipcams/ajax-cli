@@ -1,7 +1,9 @@
 use serde_json::Value;
 use std::{
+    collections::hash_map::DefaultHasher,
     ffi::OsStr,
     fs,
+    hash::{Hash, Hasher},
     io::{Read, Write},
     os::fd::AsFd,
     os::unix::fs::PermissionsExt,
@@ -77,6 +79,18 @@ impl SmokeSandbox {
         repo
     }
 
+    fn dev_worktree_path(&self, repo_name: &str, handle: &str) -> PathBuf {
+        let repo_path = self.root.join("repos").join(repo_name);
+        let mut hasher = DefaultHasher::new();
+        repo_path.hash(&mut hasher);
+        let hash = (hasher.finish() & 0xffff_ffff) as u32;
+        let repo_dir = format!("{repo_name}-{hash:08x}");
+        self.root
+            .join(".ajax-dev/worktrees")
+            .join(repo_dir)
+            .join(handle)
+    }
+
     fn write_config(&self, repos: &[&str]) {
         let mut config = String::new();
         for repo in repos {
@@ -145,7 +159,11 @@ command = 'printf checked-api >> "$AJAX_SMOKE_COMMAND_LOG"'
         let mut command = Command::new(ajax_binary());
         command
             .args(args)
+            .env_remove("AJAX_PROFILE")
+            .env_remove("AJAX_HOME")
+            .env_remove("AJAX_WORKTREE_ROOT")
             .env("HOME", &self.root)
+            .env("AJAX_PROFILE", "dev")
             .env("AJAX_CONFIG", &self.config_file)
             .env("AJAX_STATE", &self.state_file)
             .env("AJAX_SMOKE_COMMAND_LOG", &self.command_log)
@@ -683,10 +701,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     let sandbox = SmokeSandbox::new("new-execute-active");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.dev_worktree_path("web", "fix-login");
 
     create_active_web_task(&sandbox);
 
@@ -707,7 +722,7 @@ fn smoke_new_execute_creates_active_task_environment() {
     assert!(inspect["worktree_path"]
         .as_str()
         .expect("worktree path should be a string")
-        .contains("web__worktrees/ajax-fix-login"));
+        .contains(".ajax-dev/worktrees/"));
 
     let log = sandbox.command_log();
     assert!(
@@ -737,12 +752,9 @@ fn smoke_new_execute_creates_active_task_environment() {
 #[test]
 fn smoke_open_and_trunk_are_idempotent_repairs() {
     let sandbox = SmokeSandbox::new("open-trunk-idempotent");
-    let repo = sandbox.create_repo("web");
+    sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.dev_worktree_path("web", "fix-login");
     create_active_web_task(&sandbox);
 
     for command in [
@@ -922,10 +934,7 @@ fn smoke_merge_and_clean_completed_task() {
     let sandbox = SmokeSandbox::new("merge-clean");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.dev_worktree_path("web", "fix-login");
     complete_web_task_to_reviewable(&sandbox);
 
     let check = sandbox.ajax(["repair", "web/fix-login", "--execute"]);
@@ -1025,10 +1034,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     let sandbox = SmokeSandbox::new("partial-new-failure");
     let repo = sandbox.create_repo("web");
     sandbox.write_config(&["web"]);
-    let worktree = repo
-        .parent()
-        .expect("repo should have parent")
-        .join("web__worktrees/ajax-fix-login");
+    let worktree = sandbox.dev_worktree_path("web", "fix-login");
 
     let failed = sandbox.ajax_with_env(
         [
