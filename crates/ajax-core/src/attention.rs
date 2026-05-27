@@ -105,8 +105,8 @@ fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationK
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning
         | LiveStatusKind::AgentRunning
-        | LiveStatusKind::CiFailed
         | LiveStatusKind::Unknown => None,
+        LiveStatusKind::CiFailed => Some(AnnotationKind::Broken),
     }
 }
 
@@ -118,19 +118,15 @@ fn annotation_kind_for_side_flag(flag: SideFlag) -> Option<AnnotationKind> {
         | SideFlag::WorktrunkMissing
         | SideFlag::BranchMissing
         | SideFlag::Conflicted => Some(AnnotationKind::Broken),
-        SideFlag::Dirty
-        | SideFlag::AgentRunning
-        | SideFlag::TestsFailed
-        | SideFlag::Stale
-        | SideFlag::Unpushed => None,
+        SideFlag::TestsFailed => Some(AnnotationKind::Broken),
+        SideFlag::Dirty | SideFlag::AgentRunning | SideFlag::Stale | SideFlag::Unpushed => None,
     }
 }
 
 fn annotation_kind_for_agent_status(status: AgentRuntimeStatus) -> Option<AnnotationKind> {
     match status {
-        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked | AgentRuntimeStatus::Dead => {
-            Some(AnnotationKind::NeedsMe)
-        }
+        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Dead => Some(AnnotationKind::NeedsMe),
+        AgentRuntimeStatus::Blocked => None,
         AgentRuntimeStatus::NotStarted
         | AgentRuntimeStatus::Running
         | AgentRuntimeStatus::Done

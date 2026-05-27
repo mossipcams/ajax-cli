@@ -60,12 +60,12 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             LiveStatusKind::TmuxMissing => "tmux_missing",
             LiveStatusKind::WorktrunkMissing => "worktrunk_missing",
             LiveStatusKind::MergeConflict => "merge_conflict",
+            LiveStatusKind::CiFailed => "ci_failed",
             LiveStatusKind::Done => "done",
             LiveStatusKind::ShellIdle
             | LiveStatusKind::CommandRunning
             | LiveStatusKind::TestsRunning
             | LiveStatusKind::AgentRunning
-            | LiveStatusKind::CiFailed
             | LiveStatusKind::Unknown => "live_status",
         },
         Evidence::SideFlag(flag) => match flag {

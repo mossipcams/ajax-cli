@@ -48,6 +48,17 @@ function titleCase(value) {
   return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
 }
 
+const ACTION_LABELS = {
+  sync: "Sync",
+  "fix-ci": "Fix CI",
+  "resolve-merge-conflicts": "Resolve conflicts",
+};
+
+function actionLabel(action, state) {
+  if (state && state.label) return state.label;
+  return ACTION_LABELS[action] || titleCase(action);
+}
+
 function requestId() {
   if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -128,8 +139,11 @@ function actionButtonFromState(state, handle, isPrimary) {
   const button = el(
     "button",
     isPrimary ? "action primary" : "action",
-    titleCase(state.action),
+    actionLabel(state.action, state),
   );
+  if (state.action === "fix-ci" || state.action === "resolve-merge-conflicts") {
+    button.classList.add("remediation-action");
+  }
   button.type = "button";
   button.dataset.action = state.action;
   button.dataset.task = handle;

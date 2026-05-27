@@ -57,6 +57,12 @@ pub(crate) enum SelectableKind {
         task: TaskCard,
         action: String,
     },
+    /// Skill-backed remediation row (fix CI, resolve merge conflicts).
+    Remediation {
+        task: TaskCard,
+        action: String,
+        label: String,
+    },
 }
 
 #[derive(Clone)]
@@ -108,6 +114,13 @@ impl SelectableKind {
                 priority: 50,
                 action: action.clone(),
             },
+            SelectableKind::Remediation { task, action, .. } => CockpitActionItem {
+                task_id: task.id.clone(),
+                task_handle: task.qualified_handle.clone(),
+                reason: card_action_reason(task),
+                priority: 40,
+                action: action.clone(),
+            },
         }
     }
 }
@@ -139,6 +152,13 @@ fn build_selectables(
                 if !actions.contains(&action) {
                     actions.push(action);
                 }
+            }
+            for remediation in &drawer_task.remediations {
+                out.push(SelectableKind::Remediation {
+                    task: drawer_task.clone(),
+                    action: remediation.id.clone(),
+                    label: remediation.label.clone(),
+                });
             }
             for action in &actions {
                 out.push(SelectableKind::TaskAction {

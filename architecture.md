@@ -166,6 +166,13 @@ flags, and substrate evidence. Operator actions are projected from those
 annotations and from task state; Cockpit no longer consumes a separate parallel
 attention list.
 
+Tasks blocked by merge conflicts or CI failures also expose skill-backed
+`remediations` on `TaskCard` (for example `fix-ci` and
+`resolve-merge-conflicts`). Core selects remediations from live status and git
+evidence; `ajax-web` resolves skill paths on the companion host and sends the
+skill brief into the task tmux session when the operator runs a remediation
+from native Cockpit or the mobile PWA.
+
 ### Substrate Evidence
 
 Substrate evidence records observed external facts from Git, tmux, worktrees,

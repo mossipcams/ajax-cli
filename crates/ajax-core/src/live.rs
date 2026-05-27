@@ -1209,7 +1209,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         );
 
         assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
         assert!(task.has_side_flag(SideFlag::TestsFailed));
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
         assert_eq!(
