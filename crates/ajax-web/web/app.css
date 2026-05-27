@@ -496,7 +496,7 @@ main {
   flex: none;
   background: var(--teal);
   border: 1px solid var(--teal);
-  border-radius: 2px;
+  border-radius: 999px;
   color: var(--ink);
   font-size: 12px;
   font-weight: 600;
@@ -554,7 +554,7 @@ main {
   flex: 0 0 auto;
   background: transparent;
   border: 1px solid var(--rule-strong);
-  border-radius: 2px;
+  border-radius: 999px;
   color: var(--ink);
   font-size: 12px;
   font-weight: 500;
@@ -595,9 +595,8 @@ main {
 
 .action.confirming {
   background: var(--terracotta);
-  border-color: var(--terracotta);
+  border-color: var(--terracotta-bright);
   color: var(--ink);
-  animation: pulse 700ms steps(2, jump-none) infinite;
 }
 
 body.is-offline .action,
