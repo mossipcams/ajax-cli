@@ -129,7 +129,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v14"));
+        assert!(worker.contains("ajax-cockpit-v15"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
@@ -149,5 +149,30 @@ mod tests {
         }
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
+    }
+
+    #[test]
+    fn pwa_exposes_visible_notification_opt_in_with_environment_guidance() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        assert!(
+            shell.contains("id=\"notify-button\""),
+            "shell must include the alerts control"
+        );
+        assert!(
+            !shell.contains("id=\"notify-button\" type=\"button\" class=\"pill\" hidden>Alerts"),
+            "alerts control must not start permanently hidden in the shell"
+        );
+
+        for expected in [
+            "function notificationEnvironment()",
+            "function syncNotificationUi()",
+            "Add Ajax to your Home Screen to enable alerts.",
+            "Alerts on",
+            "Alerts blocked",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
     }
 }
