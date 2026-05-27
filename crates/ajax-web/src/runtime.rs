@@ -10,8 +10,8 @@ use ajax_core::{
 use axum::{
     body::Bytes,
     extract::{Path as AxumPath, State},
-    http::{header, HeaderValue, StatusCode, Uri},
-    response::{IntoResponse, Response as AxumResponse},
+    http::Uri,
+    response::Response as AxumResponse,
     routing::{get, post},
     serve::Listener,
     Json, Router,
@@ -30,6 +30,14 @@ use crate::{
     adapters::{push, tls},
     slices::{attention, cockpit, install},
     WebError,
+};
+
+pub use crate::adapters::http::{Request, Response};
+
+use crate::adapters::http::{
+    bytes_axum_response, html_response, json_response, json_value_response,
+    operation_response_with_request_id, response_from_web_error, text_axum_response, text_response,
+    web_error_response,
 };
 
 pub struct WebAppState<C, B> {
@@ -453,109 +461,6 @@ fn static_asset_response(path: &str) -> AxumResponse {
     }
 }
 
-fn html_response(body: Vec<u8>) -> AxumResponse {
-    bytes_axum_response(200, "text/html; charset=utf-8", body)
-}
-
-fn text_axum_response(status_code: u16, body: &str) -> AxumResponse {
-    bytes_axum_response(
-        status_code,
-        "text/plain; charset=utf-8",
-        body.as_bytes().to_vec(),
-    )
-}
-
-fn json_value_response(status_code: u16, value: serde_json::Value) -> AxumResponse {
-    match serde_json::to_vec(&value) {
-        Ok(body) => bytes_axum_response(status_code, "application/json; charset=utf-8", body),
-        Err(error) => web_error_response(WebError::JsonSerialization(error.to_string())),
-    }
-}
-
-fn bytes_axum_response(
-    status_code: u16,
-    content_type: &'static str,
-    body: Vec<u8>,
-) -> AxumResponse {
-    let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let mut response = (status, body).into_response();
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-    apply_no_store(&mut response);
-    response
-}
-
-fn web_error_response(error: WebError) -> AxumResponse {
-    json_value_response(
-        500,
-        serde_json::json!({
-            "ok": false,
-            "error": error.to_string(),
-        }),
-    )
-}
-
-fn response_from_web_error(error: WebError, request_id: Option<&str>) -> Response {
-    let mut value = serde_json::json!({
-        "ok": false,
-        "error": error.to_string(),
-    });
-    if let Some(request_id) = request_id {
-        value["request_id"] = serde_json::Value::String(request_id.to_string());
-    }
-    Response {
-        status_code: 500,
-        content_type: "application/json; charset=utf-8",
-        body: serde_json::to_vec(&value).unwrap_or_else(|_| b"{\"ok\":false}".to_vec()),
-    }
-}
-
-fn operation_response_with_request_id(
-    mut response: Response,
-    request_id: Option<&str>,
-) -> Response {
-    let Some(request_id) = request_id else {
-        return response;
-    };
-    if response.content_type != "application/json; charset=utf-8" {
-        return response;
-    }
-    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&response.body) else {
-        return response;
-    };
-    value["request_id"] = serde_json::Value::String(request_id.to_string());
-    if let Ok(body) = serde_json::to_vec(&value) {
-        response.body = body;
-    }
-    response
-}
-
-fn apply_no_store(response: &mut AxumResponse) {
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-}
-
-pub struct Request<'a> {
-    pub method: &'a str,
-    pub path: &'a str,
-    pub body: &'a str,
-}
-
-#[derive(Clone)]
-pub struct Response {
-    pub status_code: u16,
-    pub content_type: &'static str,
-    pub body: Vec<u8>,
-}
-
-impl Response {
-    fn into_axum_response(self) -> AxumResponse {
-        bytes_axum_response(self.status_code, self.content_type, self.body)
-    }
-}
-
 #[derive(Debug)]
 pub enum RouteError {
     Json(serde_json::Error),
@@ -814,23 +719,6 @@ fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
         .iter()
         .map(|item| item.task_handle.clone())
         .collect()
-}
-
-fn text_response(status_code: u16, body: &str) -> Response {
-    Response {
-        status_code,
-        content_type: "text/plain; charset=utf-8",
-        body: body.as_bytes().to_vec(),
-    }
-}
-
-fn json_response(status_code: u16, value: serde_json::Value) -> Result<Response, WebError> {
-    Ok(Response {
-        status_code,
-        content_type: "application/json; charset=utf-8",
-        body: serde_json::to_vec(&value)
-            .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
-    })
 }
 
 #[cfg(test)]
