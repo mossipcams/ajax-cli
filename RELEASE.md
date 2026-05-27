@@ -56,6 +56,9 @@ scripts/smoke.sh
 
 6. Merge normal feature and fix PRs into `main` with conventional commit
    titles such as `feat: ...`, `fix: ...`, or `chore: ...`.
+   Library-only changes under `crates/ajax-core`, `crates/ajax-supervisor`,
+   `crates/ajax-tui`, or `crates/ajax-web` still count toward the grouped
+   `ajax-cli` release.
 7. Wait for the Release Please PR to open or update.
 8. Confirm the Release Please PR has green remote CI checks.
 9. Merge the Release Please PR. Release Please will create the tag, changelog
