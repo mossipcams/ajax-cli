@@ -64,6 +64,25 @@ select {
   color: var(--ink);
 }
 
+/* TOP CHROME — sticky header stack with iOS safe-area -------------------- */
+.cockpit-chrome {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  background: var(--paper);
+}
+
+.page-lead {
+  width: min(720px, 100%);
+  margin: 0 auto;
+  padding: 0 20px 12px;
+}
+
+.page-lead .alerts-banner {
+  margin-bottom: 0;
+}
+
 /* RESULT PANEL ----------------------------------------------------------- */
 .result-panel {
   margin: 0;
@@ -241,12 +260,7 @@ body.is-offline .alerts-banner {
 
 /* HEADER ----------------------------------------------------------------- */
 header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  padding: calc(14px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
-    14px calc(20px + env(safe-area-inset-left));
-  background: var(--paper);
+  padding: 14px 20px;
   border-bottom: 1px solid var(--rule);
 }
 
@@ -894,7 +908,7 @@ body.sheet-open #new-task-sheet {
 
 /* REVEAL — restrained fade-up cascade on first paint only ------------------ */
 @media (prefers-reduced-motion: no-preference) {
-  header { animation: reveal 280ms ease-out backwards; }
+  .cockpit-chrome { animation: reveal 280ms ease-out backwards; }
   body:not(.is-hydrated) .section-title { animation: reveal 320ms ease-out 40ms backwards; }
   body:not(.is-hydrated) .group-title { animation: reveal 320ms ease-out 80ms backwards; }
   body:not(.is-hydrated) .card { animation: reveal 280ms ease-out backwards; }

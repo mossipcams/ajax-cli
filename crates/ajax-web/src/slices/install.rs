@@ -60,6 +60,8 @@ mod tests {
         let shell = pwa_shell();
 
         for expected in [
+            "class=\"cockpit-chrome\"",
+            "class=\"page-lead\"",
             "id=\"status-line\"",
             "id=\"alerts-banner\"",
             "id=\"new-task-row\"",
@@ -103,6 +105,21 @@ mod tests {
                 "{path} is not a PNG"
             );
         }
+    }
+
+    #[test]
+    fn pwa_stylesheet_pins_top_banners_inside_safe_area_chrome() {
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+        let lowered = css.to_ascii_lowercase();
+
+        assert!(
+            lowered.contains(".cockpit-chrome"),
+            "css must group top banners with the header chrome"
+        );
+        assert!(
+            lowered.contains(".cockpit-chrome") && lowered.contains("env(safe-area-inset-top)"),
+            "sticky cockpit chrome must respect the iOS status-bar inset"
+        );
     }
 
     #[test]

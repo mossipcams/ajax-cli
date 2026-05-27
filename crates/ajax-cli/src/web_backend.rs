@@ -239,6 +239,7 @@ mod tests {
 
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
+        assert!(html.contains("class=\"cockpit-chrome\""));
         assert!(html.contains("id=\"alerts-banner\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
