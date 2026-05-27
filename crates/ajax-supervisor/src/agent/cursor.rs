@@ -183,6 +183,12 @@ fn agent_event_from_text(text: &str) -> Option<AgentEvent> {
         });
     }
 
+    if text.trim_end().ends_with('?') {
+        return Some(AgentEvent::WaitingForInput {
+            prompt: text.to_string(),
+        });
+    }
+
     match classify_pane(text).kind {
         LiveStatusKind::WaitingForApproval => Some(AgentEvent::WaitingForApproval {
             command: extract_shell_command(text),
@@ -235,11 +241,25 @@ fn assistant_text(value: &Value) -> Option<String> {
 }
 
 fn sdk_tool_name(value: &Value) -> String {
-    value
-        .get("name")
+    let name = value.get("name").and_then(Value::as_str).unwrap_or("tool");
+
+    if let Some(command) = value
+        .get("args")
+        .and_then(|args| args.get("command").or_else(|| args.get("cmd")))
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .unwrap_or_else(|| "tool".to_string())
+    {
+        return format!("{name}: {command}");
+    }
+
+    if let Some(path) = value
+        .get("args")
+        .and_then(|args| args.get("path"))
+        .and_then(Value::as_str)
+    {
+        return format!("{name} {path}");
+    }
+
+    name.to_string()
 }
 
 fn tool_failure_message(value: &Value, tool_name: &str) -> String {
@@ -420,6 +440,10 @@ mod tests {
         AgentEvent::ToolCall { name: "grep".to_string() }
     )]
     #[case(
+        r#"{"type":"tool_call","call_id":"3","name":"shell","status":"running","args":{"command":"cargo nextest run --all-features"}}"#,
+        AgentEvent::ToolCall { name: "shell: cargo nextest run --all-features".to_string() }
+    )]
+    #[case(
         r#"{"type":"tool_call","call_id":"4","name":"grep","status":"error","error":"denied"}"#,
         AgentEvent::Failed { message: "denied".to_string() }
     )]
@@ -429,7 +453,7 @@ mod tests {
     )]
     #[case(
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Which branch should I use?"}]}}"#,
-        AgentEvent::Message { text: "Which branch should I use?".to_string() }
+        AgentEvent::WaitingForInput { prompt: "Which branch should I use?".to_string() }
     )]
     #[case(
         r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
