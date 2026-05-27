@@ -391,6 +391,8 @@ the crate:
   static asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
+- `ajax-web::action_vocabulary` owns the shared browser action capability
+  vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
 Slices may call adapter facades, but slices are named after capabilities rather
 than mechanisms. New browser features should start as a vertical slice when they

@@ -37,13 +37,7 @@ mod tests {
         );
     }
 
-    // Known violation: `slices::cockpit` imports `WebActionState`,
-    // `supported_web_action`, and `web_action_state` from `slices::operate`.
-    // The shared action vocabulary needs to move to a crate-level module before
-    // this rule can run green; until then keep the rule defined so the
-    // architecture intent stays visible.
     #[test]
-    #[ignore = "cockpit currently imports action vocabulary from operate; see comment above"]
     fn each_web_slice_is_isolated_from_sibling_slices_and_runtime() {
         for slice in SLICES {
             let project = Project::from_current_crate();
