@@ -20,6 +20,14 @@ with explicit `path` + `version` fields instead of routing them through root
 `[workspace.dependencies]` entries, because the release PR needs those fields
 in each crate manifest to rewrite inter-crate version links.
 
+Workspace crates are registered as separate Release Please paths so
+library-only commits under `crates/ajax-core`, `crates/ajax-supervisor`,
+`crates/ajax-tui`, or `crates/ajax-web` still trigger a release. Every path
+shares the `ajax-cli` component name so Release Please closes one commit queue
+and creates one `ajax-cli-v*` tag. Do not give sibling crates their own
+component names with `skip-github-release`; that leaves their commits untagged
+and causes phantom "Synchronize ajax-cli versions" release PRs.
+
 When adding a newly tracked workspace crate to the release group, seed its
 current version in `.release-please-manifest.json` and set or update
 `bootstrap-sha` in `release-please-config.json` so the first grouped release
