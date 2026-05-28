@@ -1,7 +1,8 @@
 use crate::{
     adapters::{CommandRunError, CommandRunner, CommandSpec},
+    agent_prompt::{self, AgentPrompt, ChoiceRole, Confidence, PromptKind},
     live::classify_pane,
-    models::LiveStatusKind,
+    models::{AgentClient, LiveStatusKind},
 };
 
 const DEFAULT_WORKTRUNK_WINDOW: &str = "worktrunk";
@@ -20,6 +21,22 @@ pub struct PaneState {
     pub summary: String,
     pub command: Option<String>,
     pub prompt: Option<String>,
+    /// Answerable choices, in display order. Empty unless a high-confidence
+    /// approval was recognized.
+    pub choices: Vec<PaneChoice>,
+    pub confidence: Option<Confidence>,
+    /// Stale-answer guard fingerprint; present only when there is a structured
+    /// prompt to answer.
+    pub fingerprint: Option<String>,
+}
+
+/// An operator-facing choice. Carries no keystrokes — the answer path resolves
+/// keys through the agent adapter so the wire never carries raw keys.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaneChoice {
+    pub index: usize,
+    pub label: String,
+    pub role: ChoiceRole,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +54,7 @@ pub enum PaneError {
 pub fn snapshot(
     runner: &mut impl CommandRunner,
     session: &str,
+    agent: AgentClient,
     since: Option<&[String]>,
     limit: usize,
 ) -> Result<PaneSnapshot, PaneError> {
@@ -54,7 +72,7 @@ pub fn snapshot(
     );
     let output = runner.run(&command).map_err(map_tmux_error)?;
     let cleaned = clean_pane_lines(&output.stdout);
-    let state = classify_state(&cleaned);
+    let state = classify_state(&cleaned, agent);
     let truncated = cleaned.len() > limit;
     let lines = tail_lines(&cleaned, limit);
 
@@ -181,7 +199,7 @@ fn tail_lines(lines: &[String], limit: usize) -> Vec<String> {
     lines[start..].to_vec()
 }
 
-fn classify_state(lines: &[String]) -> Option<PaneState> {
+fn classify_state(lines: &[String], agent: AgentClient) -> Option<PaneState> {
     if lines.is_empty() {
         return None;
     }
@@ -192,12 +210,52 @@ fn classify_state(lines: &[String]) -> Option<PaneState> {
         observation.kind = LiveStatusKind::AgentRunning;
         observation.summary = "agent running".to_string();
     }
-    Some(PaneState {
+
+    let mut state = PaneState {
         kind: observation.kind,
         summary: observation.summary,
         command: None,
         prompt: None,
-    })
+        choices: Vec::new(),
+        confidence: None,
+        fingerprint: None,
+    };
+
+    if let Some(prompt) = agent_prompt::parse_prompt(agent, lines) {
+        overlay_prompt(&mut state, prompt);
+    }
+
+    Some(state)
+}
+
+/// Fold a structured agent prompt into the pane state. A high-confidence
+/// approval is authoritative over the generic keyword classifier; a free-text
+/// composer only contributes the prompt text (it stays non-answerable).
+fn overlay_prompt(state: &mut PaneState, prompt: AgentPrompt) {
+    state.confidence = Some(prompt.confidence);
+    state.fingerprint = Some(prompt.fingerprint);
+    match prompt.kind {
+        PromptKind::Approval => {
+            if prompt.confidence == Confidence::High {
+                state.kind = LiveStatusKind::WaitingForApproval;
+                state.summary = "waiting for approval".to_string();
+            }
+            state.command = prompt.command;
+            state.choices = prompt
+                .choices
+                .iter()
+                .enumerate()
+                .map(|(index, choice)| PaneChoice {
+                    index,
+                    label: choice.label.clone(),
+                    role: choice.role,
+                })
+                .collect();
+        }
+        PromptKind::FreeText => {
+            state.prompt = Some(prompt.question);
+        }
+    }
 }
 
 fn strip_ansi(line: &str) -> String {
@@ -231,10 +289,11 @@ fn strip_ansi(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{send_keys, snapshot, PaneSnapshot, PaneState, SendKeysOutcome};
+    use super::{send_keys, snapshot, PaneChoice, PaneSnapshot, PaneState, SendKeysOutcome};
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
-        models::LiveStatusKind,
+        agent_prompt::{ChoiceRole, Confidence},
+        models::{AgentClient, LiveStatusKind},
     };
 
     #[derive(Default)]
@@ -274,7 +333,14 @@ Do you want to proceed? [y/n]\n\
 last line\n";
         let mut runner = StubRunner::with_stdout(pane);
 
-        let snapshot = snapshot(&mut runner, "ajax-web-fix-login", None, 3).unwrap();
+        let snapshot = snapshot(
+            &mut runner,
+            "ajax-web-fix-login",
+            AgentClient::Codex,
+            None,
+            3,
+        )
+        .unwrap();
 
         assert_eq!(
             snapshot,
@@ -291,9 +357,28 @@ last line\n";
                     summary: "waiting for approval".to_string(),
                     command: None,
                     prompt: None,
+                    choices: vec![
+                        PaneChoice {
+                            index: 0,
+                            label: "Yes".to_string(),
+                            role: ChoiceRole::Affirm,
+                        },
+                        PaneChoice {
+                            index: 1,
+                            label: "No".to_string(),
+                            role: ChoiceRole::Deny,
+                        },
+                    ],
+                    confidence: Some(Confidence::High),
+                    fingerprint: snapshot.state.as_ref().and_then(|s| s.fingerprint.clone()),
                 }),
             }
         );
+        assert!(snapshot
+            .state
+            .as_ref()
+            .and_then(|s| s.fingerprint.as_ref())
+            .is_some());
         assert_eq!(runner.commands.len(), 1);
         assert_eq!(
             runner.commands[0].args,
@@ -316,6 +401,7 @@ last line\n";
         let snapshot = snapshot(
             &mut runner,
             "ajax-web-fix-login",
+            AgentClient::Codex,
             Some(&["working".to_string(), "still working".to_string()]),
             12,
         )
@@ -332,6 +418,9 @@ last line\n";
                     summary: "agent running".to_string(),
                     command: None,
                     prompt: None,
+                    choices: Vec::new(),
+                    confidence: None,
+                    fingerprint: None,
                 }),
             }
         );

@@ -53,6 +53,26 @@ pub struct BrowserPaneState {
     pub summary: String,
     pub command: Option<String>,
     pub prompt: Option<String>,
+    /// Answerable choices in display order. Empty unless a high-confidence
+    /// approval was recognized for this task's agent.
+    #[serde(default)]
+    pub choices: Vec<BrowserPaneChoice>,
+    /// `"high"` or `"low"` when a structured prompt was recognized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    /// Stale-answer guard token the client echoes back when answering.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    /// Whether this prompt can be answered from the browser (high-confidence
+    /// approval). `false` → the operator must open the terminal.
+    pub answerable: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserPaneChoice {
+    pub index: usize,
+    pub label: String,
+    pub role: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -110,12 +130,18 @@ pub fn browser_task_pane_view<R: Registry>(
         .entries
         .get(qualified_handle)
         .map(|entry| entry.lines.as_slice());
-    let snapshot = core_pane::snapshot(runner, &task.tmux_session, previous_lines, PANE_LINE_LIMIT)
-        .map_err(|error| match error {
-            core_pane::PaneError::SessionMissing => PaneRouteError::SessionMissing,
-            core_pane::PaneError::InvalidKeys(message) => PaneRouteError::Command(message),
-            core_pane::PaneError::CommandRun(inner) => PaneRouteError::Command(inner.to_string()),
-        })?;
+    let snapshot = core_pane::snapshot(
+        runner,
+        &task.tmux_session,
+        task.selected_agent,
+        previous_lines,
+        PANE_LINE_LIMIT,
+    )
+    .map_err(|error| match error {
+        core_pane::PaneError::SessionMissing => PaneRouteError::SessionMissing,
+        core_pane::PaneError::InvalidKeys(message) => PaneRouteError::Command(message),
+        core_pane::PaneError::CommandRun(inner) => PaneRouteError::Command(inner.to_string()),
+    })?;
 
     let entry = sequences
         .entries
@@ -140,13 +166,44 @@ pub fn browser_task_pane_view<R: Registry>(
         lines,
         truncated: snapshot.truncated,
         tmux_exists: true,
-        state: snapshot.state.map(|state| BrowserPaneState {
-            kind: format!("{:?}", state.kind),
-            summary: state.summary,
-            command: state.command,
-            prompt: state.prompt,
-        }),
+        state: snapshot.state.map(browser_pane_state),
     })
+}
+
+fn browser_pane_state(state: core_pane::PaneState) -> BrowserPaneState {
+    use ajax_core::agent_prompt::{ChoiceRole, Confidence};
+
+    let answerable =
+        matches!(state.confidence, Some(Confidence::High)) && !state.choices.is_empty();
+    BrowserPaneState {
+        kind: format!("{:?}", state.kind),
+        summary: state.summary,
+        command: state.command,
+        prompt: state.prompt,
+        choices: state
+            .choices
+            .iter()
+            .map(|choice| BrowserPaneChoice {
+                index: choice.index,
+                label: choice.label.clone(),
+                role: match choice.role {
+                    ChoiceRole::Affirm => "affirm",
+                    ChoiceRole::Deny => "deny",
+                    ChoiceRole::Neutral => "neutral",
+                }
+                .to_string(),
+            })
+            .collect(),
+        confidence: state.confidence.map(|confidence| {
+            match confidence {
+                Confidence::High => "high",
+                Confidence::Low => "low",
+            }
+            .to_string()
+        }),
+        fingerprint: state.fingerprint,
+        answerable,
+    }
 }
 
 pub fn send_task_input<R: Registry>(
