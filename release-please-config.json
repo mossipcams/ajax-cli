@@ -3,7 +3,17 @@
   "bootstrap-sha": "240bb9954c7f7d761207e9ea9d470f6aab31852a",
   "force-tag-creation": true,
   "release-type": "rust",
-  "plugins": ["cargo-workspace"],
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    },
+    {
+      "type": "linked-versions",
+      "groupName": "ajax-cli",
+      "components": ["ajax-cli"]
+    }
+  ],
   "packages": {
     "crates/ajax-cli": {
       "component": "ajax-cli",

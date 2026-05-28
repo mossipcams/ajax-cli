@@ -2787,19 +2787,35 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         "force-tag-creation should ensure ajax-cli tags exist for release boundary detection"
     );
 
-    assert!(
-        plugins.iter().any(|plugin| {
+    let cargo_workspace = plugins
+        .iter()
+        .find(|plugin| {
             plugin.as_str() == Some("cargo-workspace")
                 || plugin.get("type").and_then(serde_json::Value::as_str) == Some("cargo-workspace")
-        }),
-        "cargo-workspace plugin should bump linked workspace crate versions"
+        })
+        .expect("cargo-workspace plugin should bump linked workspace crate versions");
+    assert_eq!(
+        cargo_workspace["merge"],
+        serde_json::Value::Bool(false),
+        "cargo-workspace should disable its internal merge when linked-versions is active"
     );
-    assert!(
-        !plugins.iter().any(|plugin| {
+
+    let linked_versions = plugins
+        .iter()
+        .find(|plugin| {
             plugin.as_str() == Some("linked-versions")
                 || plugin.get("type").and_then(serde_json::Value::as_str) == Some("linked-versions")
-        }),
-        "linked-versions with per-crate components caused phantom sync releases; use a shared ajax-cli component instead"
+        })
+        .expect(
+            "linked-versions should keep all ajax-cli component manifest paths on one release line",
+        );
+    let components = linked_versions["components"]
+        .as_array()
+        .expect("linked-versions components should be an array");
+    assert_eq!(
+        components,
+        &vec![serde_json::Value::String("ajax-cli".to_string())],
+        "linked-versions should only reference the shared ajax-cli component, not per-crate component names"
     );
 
     for package_path in [
