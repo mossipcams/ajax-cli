@@ -442,6 +442,14 @@ Owns browser attention delivery. It compares Cockpit attention projections over
 time, detects newly attention-worthy tasks, and asks the push adapter to notify
 subscribed browsers.
 
+### `ajax-web::slices::pane`
+
+Owns the browser pane and contextual input capability. It turns tmux pane
+captures into cleaned browser snapshots with stable per-task sequences, and it
+accepts structured operator input requests while keeping tmux command delivery,
+input de-duplication, and per-task input rate limiting inside the Web Cockpit
+adapter boundary rather than in `ajax-core`.
+
 ### `ajax-web::runtime`
 
 Owns Web Cockpit runtime wiring and is not itself a slice. It sets up the Axum

@@ -23,6 +23,11 @@ const REFRESH_INTERVAL_MS = 1000;
 const CONFIRM_TIMEOUT_MS = 8000;
 const RESULT_AUTO_DISMISS_MS = 12000;
 const OFFLINE_STATUS = "Offline — last known state";
+const PANE_INTERVAL_DEFAULT_MS = 1000;
+const PANE_INTERVAL_FOCUSED_MS = 250;
+const ECHO_UNCONFIRMED_AFTER_MS = 5000;
+const MAX_ECHO_ENTRIES = 12;
+const MAX_LOG_ENTRIES = 24;
 
 let lastCockpit = null;
 let lastFingerprint = null;
@@ -33,6 +38,19 @@ let selectedProject = null;
 const expandedCards = new Set();
 /** @type {Map<string, { originalLabel: string, expiresAt: number, timer: ReturnType<typeof setTimeout> }>} */
 const pendingConfirmByKey = new Map();
+
+// INTERACT PANEL STATE ------------------------------------------------------
+let lastDetailData = null;
+let lastPaneData = null;
+let paneSequence = 0;
+let paneInFlight = false;
+let paneTimer = null;
+let paneAvailable = false;
+let inputFocused = false;
+let lastInteractKind = null;
+let logPinned = true;
+const interactEchoes = []; // { id, text, label, sentAt, paneSeqAtSend, unconfirmed, timer }
+let echoCounter = 0;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -422,6 +440,7 @@ async function loadCockpit() {
 // DETAIL VIEW ---------------------------------------------------------------
 
 function renderDetail(detail) {
+  lastDetailData = detail;
   detailContainer.replaceChildren();
 
   const header = el("div", "detail-header");
@@ -433,6 +452,8 @@ function renderDetail(detail) {
   header.append(back);
   header.append(el("h1", "detail-title", detail.title || detail.qualified_handle));
   detailContainer.append(header);
+
+  detailContainer.append(renderInteractPanel(detail, lastPaneData));
 
   const liveSection = el("section", "detail-section");
   liveSection.append(el("h2", null, "Live status"));
@@ -446,7 +467,7 @@ function renderDetail(detail) {
   liveSection.append(liveGrid);
   detailContainer.append(liveSection);
 
-  if (detail.agent_activity) {
+  if (detail.agent_activity && !paneAvailable) {
     const activitySection = el("section", "detail-section");
     activitySection.append(el("h2", null, "Agent activity"));
     activitySection.append(el("pre", "activity-excerpt", detail.agent_activity));
@@ -549,6 +570,405 @@ async function loadDetail() {
   }
 }
 
+// INTERACT PANEL ------------------------------------------------------------
+
+const INTERACT_STATE_COPY = {
+  WaitingForApproval: { label: "Needs your approval", tone: "attention" },
+  WaitingForInput: { label: "Asking you", tone: "attention" },
+  AgentRunning: { label: "Working", tone: "running" },
+  CommandRunning: { label: "Running command", tone: "running" },
+  TestsRunning: { label: "Running tests", tone: "running" },
+  Thinking: { label: "Thinking", tone: "running" },
+  Done: { label: "Idle — done", tone: "success" },
+  CommandFailed: { label: "Command failed", tone: "danger" },
+  Blocked: { label: "Blocked", tone: "danger" },
+  AuthRequired: { label: "Needs sign-in", tone: "danger" },
+  RateLimited: { label: "Rate limited", tone: "danger" },
+  MergeConflict: { label: "Merge conflict", tone: "danger" },
+  CiFailed: { label: "CI failed", tone: "danger" },
+  Unknown: { label: "Status unknown", tone: "muted" },
+};
+
+function interactStateCopy(kind) {
+  return INTERACT_STATE_COPY[kind] || { label: kind || "—", tone: "muted" };
+}
+
+function interactCommand(detail, pane) {
+  if (pane && pane.state && pane.state.command) return pane.state.command;
+  if (detail && detail.live_status_kind === "WaitingForApproval" && detail.live_status_summary) {
+    return detail.live_status_summary;
+  }
+  return null;
+}
+
+function interactPrompt(detail, pane) {
+  if (pane && pane.state && pane.state.prompt) return pane.state.prompt;
+  if (detail && detail.live_status_kind === "WaitingForInput" && detail.live_status_summary) {
+    return detail.live_status_summary;
+  }
+  return null;
+}
+
+function buildEchoEntry(text, label) {
+  const id = ++echoCounter;
+  const entry = {
+    id,
+    text,
+    label,
+    sentAt: Date.now(),
+    paneSeqAtSend: paneSequence,
+    unconfirmed: false,
+    timer: null,
+  };
+  entry.timer = setTimeout(() => {
+    entry.unconfirmed = true;
+    entry.timer = null;
+    if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+  }, ECHO_UNCONFIRMED_AFTER_MS);
+  interactEchoes.push(entry);
+  while (interactEchoes.length > MAX_ECHO_ENTRIES) {
+    const dropped = interactEchoes.shift();
+    if (dropped && dropped.timer) clearTimeout(dropped.timer);
+  }
+  return entry;
+}
+
+function clearConfirmedEchoes() {
+  for (let i = interactEchoes.length - 1; i >= 0; i--) {
+    const echo = interactEchoes[i];
+    if (echo.paneSeqAtSend < paneSequence) {
+      if (echo.timer) clearTimeout(echo.timer);
+      interactEchoes.splice(i, 1);
+    }
+  }
+}
+
+function renderInteractPanel(detail, pane) {
+  const panel = el("section", "interact-panel");
+  const tmuxMissing = pane && pane.tmux_exists === false;
+  const kind = detail.live_status_kind || "Unknown";
+  const copy = interactStateCopy(kind);
+  const previousKind = lastInteractKind;
+  lastInteractKind = kind;
+
+  const stateRow = el("div", "interact-state");
+  const pill = el("span", `interact-pill tone-${copy.tone}`, copy.label);
+  stateRow.append(pill);
+  if (detail.live_status_summary && kind !== "WaitingForApproval" && kind !== "WaitingForInput") {
+    stateRow.append(el("span", "interact-summary", detail.live_status_summary));
+  }
+  panel.append(stateRow);
+
+  if (tmuxMissing) {
+    panel.append(el("p", "interact-hint", "Tmux session is missing. Sync the task to recover."));
+    return panel;
+  }
+
+  const command = interactCommand(detail, pane);
+  if (kind === "WaitingForApproval" && command) {
+    const card = el("div", "interact-card");
+    card.append(el("div", "interact-card-label", "Command"));
+    card.append(el("code", "interact-card-body", command));
+    const actions = el("div", "interact-card-actions");
+    const approve = el("button", "pill is-primary", "Approve");
+    approve.type = "button";
+    approve.addEventListener("click", () => sendInput("y", true, "Approve"));
+    const deny = el("button", "pill is-danger", "Deny");
+    deny.type = "button";
+    deny.addEventListener("click", () => sendInput("n", true, "Deny"));
+    actions.append(approve);
+    actions.append(deny);
+    card.append(actions);
+    panel.append(card);
+  }
+
+  const prompt = interactPrompt(detail, pane);
+  if (kind === "WaitingForInput" && prompt) {
+    const card = el("div", "interact-card");
+    card.append(el("div", "interact-card-label", "Prompt"));
+    card.append(el("p", "interact-card-body", prompt));
+    panel.append(card);
+  }
+
+  panel.append(renderInteractLog(pane));
+  panel.append(renderInteractInput(kind, previousKind));
+
+  return panel;
+}
+
+function renderInteractLog(pane) {
+  const wrap = el("div", "interact-log-wrap");
+  const log = el("div", "interact-log");
+  log.dataset.role = "interact-log";
+  const lines = (pane && Array.isArray(pane.lines)) ? pane.lines : [];
+  if (!lines.length && !interactEchoes.length) {
+    log.append(el("div", "interact-log-empty", "Pane is quiet."));
+  } else {
+    for (const line of lines) {
+      const row = el("div", "interact-log-entry is-agent");
+      row.append(el("span", "interact-log-glyph", "·"));
+      row.append(el("span", "interact-log-text", line));
+      log.append(row);
+    }
+    for (const echo of interactEchoes) {
+      const row = el(
+        "div",
+        echo.unconfirmed
+          ? "interact-log-entry is-echo is-unconfirmed"
+          : "interact-log-entry is-echo",
+      );
+      row.append(el("span", "interact-log-glyph", "▸"));
+      const text = el("span", "interact-log-text", `${echo.label}: ${echo.text}`);
+      row.append(text);
+      if (echo.unconfirmed) {
+        row.append(el("span", "interact-log-tag", "unconfirmed"));
+      }
+      log.append(row);
+    }
+  }
+  log.addEventListener("scroll", () => {
+    const atBottom = Math.abs(log.scrollHeight - log.scrollTop - log.clientHeight) < 4;
+    logPinned = atBottom;
+    pinPill.hidden = atBottom;
+  });
+  const pinPill = el("button", "interact-pin", "Pinned to bottom ▾");
+  pinPill.type = "button";
+  pinPill.hidden = true;
+  pinPill.addEventListener("click", () => {
+    logPinned = true;
+    log.scrollTop = log.scrollHeight;
+    pinPill.hidden = true;
+  });
+  wrap.append(log);
+  wrap.append(pinPill);
+  // schedule autoscroll after insertion
+  requestAnimationFrame(() => {
+    if (logPinned) log.scrollTop = log.scrollHeight;
+  });
+  return wrap;
+}
+
+function renderInteractInput(kind, previousKind) {
+  const form = el("form", "interact-input");
+  form.autocomplete = "off";
+
+  const input = el("input", "interact-input-field");
+  input.type = "text";
+  input.name = "keys";
+  input.placeholder = kind === "WaitingForInput" ? "Type your response" : "Send to agent";
+  input.setAttribute("inputmode", "text");
+  input.setAttribute("enterkeyhint", "send");
+  input.setAttribute("autocomplete", "off");
+  input.setAttribute("autocorrect", "off");
+  input.setAttribute("spellcheck", "false");
+  input.setAttribute("autocapitalize", "off");
+  input.addEventListener("focus", () => {
+    inputFocused = true;
+    schedulePaneTick(true);
+  });
+  input.addEventListener("blur", () => {
+    inputFocused = false;
+  });
+  form.append(input);
+
+  const submit = el("button", "pill is-primary interact-send", "Send");
+  submit.type = "submit";
+  form.append(submit);
+
+  const enter = el("button", "pill interact-key", "Enter");
+  enter.type = "button";
+  enter.addEventListener("click", () => sendInput("Enter", false, "Enter"));
+  form.append(enter);
+
+  const ctrlC = el("button", "pill is-danger interact-key", "Ctrl-C");
+  ctrlC.type = "button";
+  const ctrlCOriginalLabel = ctrlC.textContent;
+  let ctrlCConfirmTimer = null;
+  const resetCtrlC = () => {
+    if (ctrlCConfirmTimer) {
+      clearTimeout(ctrlCConfirmTimer);
+      ctrlCConfirmTimer = null;
+    }
+    ctrlC.classList.remove("confirming");
+    ctrlC.textContent = ctrlCOriginalLabel;
+  };
+  ctrlC.addEventListener("click", () => {
+    if (ctrlC.classList.contains("confirming")) {
+      resetCtrlC();
+      sendInput("C-c", false, "Ctrl-C");
+      return;
+    }
+    ctrlC.classList.add("confirming");
+    ctrlC.textContent = "Tap to confirm";
+    ctrlCConfirmTimer = setTimeout(resetCtrlC, CONFIRM_TIMEOUT_MS);
+  });
+  form.append(ctrlC);
+
+  if (kind === "WaitingForInput" && previousKind !== "WaitingForInput") {
+    requestAnimationFrame(() => input.focus());
+  }
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = input.value;
+    if (!value) return;
+    input.value = "";
+    sendInput(value, true, "You");
+  });
+
+  return form;
+}
+
+function renderInteractPanelInto(detail, pane) {
+  const existing = detailContainer.querySelector(".interact-panel");
+  if (!existing) return;
+  const oldInput = existing.querySelector(".interact-input-field");
+  const snapshot = oldInput
+    ? {
+        value: oldInput.value,
+        start: oldInput.selectionStart,
+        end: oldInput.selectionEnd,
+        hadFocus: document.activeElement === oldInput,
+      }
+    : null;
+  const fresh = renderInteractPanel(detail, pane);
+  existing.replaceWith(fresh);
+  if (snapshot) {
+    const newInput = fresh.querySelector(".interact-input-field");
+    if (newInput) {
+      newInput.value = snapshot.value;
+      if (snapshot.hadFocus) {
+        newInput.focus();
+        inputFocused = true;
+        try {
+          newInput.setSelectionRange(snapshot.start ?? snapshot.value.length, snapshot.end ?? snapshot.value.length);
+        } catch (_) {
+          // selection range may fail for some input types — non-fatal
+        }
+      }
+    }
+  }
+}
+
+async function sendInput(keys, submit, label) {
+  if (!detailHandle) return;
+  const echo = buildEchoEntry(keys, label);
+  if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(detailHandle)}/input`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ keys, submit, request_id: requestId() }),
+    });
+    if (response.status === 429) {
+      showResult("Slow down — too many inputs in a short window", null, true);
+      return;
+    }
+    if (response.status === 409) {
+      showResult("Task tmux session is gone — sync to recover", null, true);
+      return;
+    }
+    if (!response.ok) {
+      showResult(`Could not send input (HTTP ${response.status})`, null, true);
+      return;
+    }
+    // Schedule a quick pane refresh so feedback lands fast
+    schedulePaneTick(true);
+  } catch (error) {
+    showResult("Could not send input — network error", null, true);
+  } finally {
+    void echo;
+  }
+}
+
+function paneInterval() {
+  return inputFocused ? PANE_INTERVAL_FOCUSED_MS : PANE_INTERVAL_DEFAULT_MS;
+}
+
+function clearPaneTimer() {
+  if (paneTimer) {
+    clearTimeout(paneTimer);
+    paneTimer = null;
+  }
+}
+
+function schedulePaneTick(immediate) {
+  clearPaneTimer();
+  if (!detailHandle || document.hidden) return;
+  if (immediate) {
+    paneTimer = setTimeout(loadPane, 0);
+  } else {
+    paneTimer = setTimeout(loadPane, paneInterval());
+  }
+}
+
+async function loadPane() {
+  paneTimer = null;
+  if (!detailHandle || paneInFlight || document.hidden) {
+    schedulePaneTick(false);
+    return;
+  }
+  paneInFlight = true;
+  try {
+    const url = `/api/tasks/${encodeURIComponent(detailHandle)}/pane?since=${paneSequence}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (response.status === 404) {
+      // Endpoint not yet wired (backend pending) or task not found — degrade silently
+      paneAvailable = false;
+      lastPaneData = null;
+      return;
+    }
+    if (response.status === 409) {
+      const data = await response.json().catch(() => ({}));
+      paneAvailable = true;
+      lastPaneData = { sequence: paneSequence, lines: [], tmux_exists: false, state: null, ...data };
+      if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+      setOnline(true);
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const incomingSeq = typeof data.sequence === "number" ? data.sequence : paneSequence;
+    const hasNewLines = Array.isArray(data.lines) && data.lines.length > 0;
+    if (incomingSeq > paneSequence && hasNewLines) {
+      // merge new lines into the cached buffer up to MAX_LOG_ENTRIES
+      const previous = lastPaneData && Array.isArray(lastPaneData.lines) ? lastPaneData.lines : [];
+      const merged = previous.concat(data.lines).slice(-MAX_LOG_ENTRIES);
+      lastPaneData = { ...data, lines: merged };
+      paneSequence = incomingSeq;
+      clearConfirmedEchoes();
+    } else if (incomingSeq >= paneSequence) {
+      // unchanged delta — keep existing buffer but refresh state hints
+      lastPaneData = lastPaneData
+        ? { ...lastPaneData, ...data, lines: lastPaneData.lines }
+        : { ...data, lines: Array.isArray(data.lines) ? data.lines : [] };
+      paneSequence = incomingSeq;
+    }
+    paneAvailable = true;
+    if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+    setOnline(true);
+  } catch (error) {
+    setOnline(false);
+  } finally {
+    paneInFlight = false;
+    schedulePaneTick(false);
+  }
+}
+
+function resetInteractState() {
+  clearPaneTimer();
+  lastPaneData = null;
+  paneSequence = 0;
+  paneAvailable = false;
+  inputFocused = false;
+  lastInteractKind = null;
+  logPinned = true;
+  for (const echo of interactEchoes) if (echo.timer) clearTimeout(echo.timer);
+  interactEchoes.length = 0;
+  echoCounter = 0;
+  lastDetailData = null;
+}
+
 // HASH ROUTER ---------------------------------------------------------------
 
 function updateNewTaskRowLabel() {
@@ -560,13 +980,17 @@ function updateNewTaskRowLabel() {
 function applyRoute() {
   const hash = window.location.hash || "#/";
   if (hash.startsWith("#/t/")) {
-    detailHandle = decodeURIComponent(hash.slice("#/t/".length));
+    const incoming = decodeURIComponent(hash.slice("#/t/".length));
+    if (incoming !== detailHandle) resetInteractState();
+    detailHandle = incoming;
     document.body.classList.add("view-detail");
     loadDetail();
+    schedulePaneTick(true);
     return;
   }
   if (hash.startsWith("#/p/")) {
     selectedProject = decodeURIComponent(hash.slice("#/p/".length)) || null;
+    if (detailHandle) resetInteractState();
     detailHandle = null;
     document.body.classList.remove("view-detail");
     lastFingerprint = null;
@@ -575,6 +999,7 @@ function applyRoute() {
     else loadCockpit();
     return;
   }
+  if (detailHandle) resetInteractState();
   selectedProject = null;
   detailHandle = null;
   document.body.classList.remove("view-detail");
@@ -814,13 +1239,25 @@ document.addEventListener("click", (event) => {
 });
 
 window.addEventListener("online", () => {
-  if (detailHandle) loadDetail();
-  else loadCockpit();
+  if (detailHandle) {
+    loadDetail();
+    schedulePaneTick(true);
+  } else {
+    loadCockpit();
+  }
 });
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
-  if (detailHandle) loadDetail();
-  else loadCockpit();
+  if (document.hidden) {
+    clearPaneTimer();
+    return;
+  }
+  if (detailHandle) {
+    loadDetail();
+    schedulePaneTick(true);
+  } else {
+    loadCockpit();
+  }
 });
 
 // PUSH NOTIFICATIONS --------------------------------------------------------
