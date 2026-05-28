@@ -394,10 +394,95 @@ where
     if let Some(task_handle) = handle.strip_suffix("/input") {
         return axum_task_input::<C, B>(State(state), task_handle.to_string(), body).await;
     }
+    if let Some(task_handle) = handle.strip_suffix("/answer") {
+        return axum_task_answer::<C, B>(State(state), task_handle.to_string(), body).await;
+    }
     json_value_response(
         404,
         serde_json::json!({ "ok": false, "error": "not found" }),
     )
+}
+
+async fn axum_task_answer<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Send + 'static,
+    B: RuntimeBridge<C> + Send + 'static,
+{
+    let request: crate::slices::pane::TaskAnswerRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("json parse failed: {error}"),
+                }),
+            );
+        }
+    };
+
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        pane_sequences,
+        pane_inputs,
+        runner,
+        ..
+    } = &mut *guard;
+
+    match crate::slices::pane::answer_task_prompt(
+        context,
+        runner,
+        pane_sequences,
+        pane_inputs,
+        &handle,
+        request,
+        Instant::now(),
+    ) {
+        Ok(response) => {
+            json_value_response(200, serde_json::to_value(response).unwrap_or_default())
+        }
+        Err(crate::slices::pane::TaskAnswerError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::SessionMissing) => json_value_response(
+            409,
+            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::Stale) => json_value_response(
+            409,
+            serde_json::json!({
+                "ok": false,
+                "error": "prompt changed since you answered",
+                "stale": true,
+            }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::NotAnswerable) => json_value_response(
+            422,
+            serde_json::json!({
+                "ok": false,
+                "error": "this prompt cannot be answered from the browser; open the terminal",
+            }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::RateLimited) => json_value_response(
+            429,
+            serde_json::json!({ "ok": false, "error": "too many inputs" }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::InvalidRequest(message)) => {
+            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
+        }
+        Err(crate::slices::pane::TaskAnswerError::Command(message)) => {
+            json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
+        }
+    }
 }
 
 async fn axum_task_input<C, B>(

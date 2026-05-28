@@ -1,7 +1,10 @@
 //! Browser pane snapshot and input surface.
 
 use ajax_core::{
-    adapters::CommandRunner, commands::CommandContext, registry::Registry,
+    adapters::CommandRunner,
+    agent_prompt::{adapter_for, AnswerError, OperatorAnswer},
+    commands::CommandContext,
+    registry::Registry,
     slices::pane as core_pane,
 };
 use serde::{Deserialize, Serialize};
@@ -270,6 +273,129 @@ pub fn send_task_input<R: Registry>(
     Ok(response)
 }
 
+/// A guarded answer to a structured agent prompt. Carries the operator's intent
+/// (`approve` / `deny` / `select`) plus the `fingerprint` of the prompt they were
+/// answering — the server re-captures the live pane and refuses to send keys if
+/// the prompt has changed.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+pub struct TaskAnswerRequest {
+    #[serde(flatten)]
+    pub answer: OperatorAnswer,
+    pub fingerprint: String,
+    pub request_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TaskAnswerError {
+    TaskNotFound,
+    SessionMissing,
+    /// The live pane no longer matches the answered prompt (or there is no
+    /// prompt). The answer is discarded; the client re-surfaces current state.
+    Stale,
+    /// The current prompt is not a high-confidence approval — the operator must
+    /// open the terminal.
+    NotAnswerable,
+    RateLimited,
+    InvalidRequest(String),
+    Command(String),
+}
+
+pub fn answer_task_prompt<R: Registry>(
+    context: &CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    sequences: &PaneSequenceState,
+    inputs: &mut PaneInputState,
+    qualified_handle: &str,
+    request: TaskAnswerRequest,
+    now: Instant,
+) -> Result<TaskInputResponse, TaskAnswerError> {
+    if request.request_id.trim().is_empty() {
+        return Err(TaskAnswerError::InvalidRequest(
+            "request_id is required".to_string(),
+        ));
+    }
+    if request.fingerprint.trim().is_empty() {
+        return Err(TaskAnswerError::InvalidRequest(
+            "fingerprint is required".to_string(),
+        ));
+    }
+
+    prune_expired_inputs(inputs, now);
+    let dedup_key = format!("{qualified_handle}\u{1f}{}", request.request_id);
+    if let Some(cached) = inputs.dedup.get(&dedup_key) {
+        return Ok(cached.response.clone());
+    }
+
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == qualified_handle)
+        .ok_or(TaskAnswerError::TaskNotFound)?;
+
+    {
+        let recent = inputs
+            .recent
+            .entry(qualified_handle.to_string())
+            .or_default();
+        while recent
+            .front()
+            .is_some_and(|instant| now.duration_since(*instant) > INPUT_RATE_WINDOW)
+        {
+            recent.pop_front();
+        }
+        if recent.len() >= INPUT_RATE_LIMIT {
+            return Err(TaskAnswerError::RateLimited);
+        }
+    }
+
+    // Re-capture the live prompt and verify it is still the one the operator
+    // answered. A mismatch (or a vanished prompt) means the answer is stale.
+    let prompt = core_pane::capture_prompt(runner, &task.tmux_session, task.selected_agent)
+        .map_err(map_answer_pane_error)?
+        .ok_or(TaskAnswerError::Stale)?;
+    if prompt.fingerprint != request.fingerprint {
+        return Err(TaskAnswerError::Stale);
+    }
+
+    let keys = adapter_for(task.selected_agent)
+        .answer_keys(&prompt, &request.answer)
+        .map_err(|error| match error {
+            AnswerError::NotAnswerable => TaskAnswerError::NotAnswerable,
+            AnswerError::UnknownChoice => {
+                TaskAnswerError::InvalidRequest("unknown choice".to_string())
+            }
+        })?;
+
+    core_pane::send_keys(runner, &task.tmux_session, &keys.keys, keys.submit)
+        .map_err(map_answer_pane_error)?;
+
+    inputs
+        .recent
+        .entry(qualified_handle.to_string())
+        .or_default()
+        .push_back(now);
+    let response = TaskInputResponse {
+        sequence_hint: sequences.sequence_for(qualified_handle),
+    };
+    inputs.dedup.insert(
+        dedup_key,
+        CachedInputResponse {
+            stored_at: now,
+            response: response.clone(),
+        },
+    );
+    Ok(response)
+}
+
+fn map_answer_pane_error(error: core_pane::PaneError) -> TaskAnswerError {
+    match error {
+        core_pane::PaneError::SessionMissing => TaskAnswerError::SessionMissing,
+        core_pane::PaneError::InvalidKeys(message) => TaskAnswerError::InvalidRequest(message),
+        core_pane::PaneError::CommandRun(inner) => TaskAnswerError::Command(inner.to_string()),
+    }
+}
+
 fn prune_expired_inputs(inputs: &mut PaneInputState, now: Instant) {
     inputs
         .dedup
@@ -385,5 +511,173 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, PaneRouteError::SessionMissing);
+    }
+
+    use super::{
+        answer_task_prompt, PaneInputState, TaskAnswerError, TaskAnswerRequest,
+    };
+    use ajax_core::agent_prompt::OperatorAnswer;
+    use std::time::Instant;
+
+    const YES_NO_PANE: &str = "Allow Codex to run this command?\nRun `cargo test`? [y/n]\n";
+
+    /// Records every command and returns the same capture-pane stdout, so the
+    /// `/answer` path sees a stable approval prompt and we can assert the keys
+    /// that were sent.
+    struct RecordingRunner {
+        pane: String,
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for RecordingRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: self.pane.clone(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn answer_request(answer: OperatorAnswer, fingerprint: &str) -> TaskAnswerRequest {
+        TaskAnswerRequest {
+            answer,
+            fingerprint: fingerprint.to_string(),
+            request_id: "req-1".to_string(),
+        }
+    }
+
+    fn current_fingerprint(pane: &str, agent: AgentClient) -> String {
+        let lines: Vec<String> = pane
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+        ajax_core::agent_prompt::parse_prompt(agent, &lines)
+            .expect("prompt")
+            .fingerprint
+    }
+
+    #[test]
+    fn answer_approve_sends_adapter_keys_when_fingerprint_matches() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: YES_NO_PANE.to_string(),
+            commands: Vec::new(),
+        };
+        let fingerprint = current_fingerprint(YES_NO_PANE, AgentClient::Codex);
+
+        answer_task_prompt(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            answer_request(OperatorAnswer::Approve, &fingerprint),
+            Instant::now(),
+        )
+        .expect("approve accepted");
+
+        // First command captures the pane; the send-keys carries "y", not raw input.
+        let send = runner
+            .commands
+            .iter()
+            .find(|command| command.args.first().map(String::as_str) == Some("send-keys"))
+            .expect("send-keys issued");
+        assert!(send.args.contains(&"y".to_string()));
+        assert!(send.args.contains(&"Enter".to_string()));
+    }
+
+    #[test]
+    fn answer_rejects_stale_fingerprint_without_sending_keys() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: YES_NO_PANE.to_string(),
+            commands: Vec::new(),
+        };
+
+        let error = answer_task_prompt(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            answer_request(OperatorAnswer::Approve, "stale-fingerprint"),
+            Instant::now(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, TaskAnswerError::Stale);
+        assert!(
+            !runner
+                .commands
+                .iter()
+                .any(|command| command.args.first().map(String::as_str) == Some("send-keys")),
+            "no keys may be sent for a stale answer"
+        );
+    }
+
+    #[test]
+    fn answer_refuses_non_answerable_free_text_composer() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let composer = "› Write tests for @filename\ngpt-5.4 high · ~/.ajax-dev/x\n";
+        let mut runner = RecordingRunner {
+            pane: composer.to_string(),
+            commands: Vec::new(),
+        };
+        let fingerprint = current_fingerprint(composer, AgentClient::Codex);
+
+        let error = answer_task_prompt(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            answer_request(OperatorAnswer::Approve, &fingerprint),
+            Instant::now(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, TaskAnswerError::NotAnswerable);
+    }
+
+    #[test]
+    fn answer_dedups_repeated_request_id() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: YES_NO_PANE.to_string(),
+            commands: Vec::new(),
+        };
+        let fingerprint = current_fingerprint(YES_NO_PANE, AgentClient::Codex);
+
+        for _ in 0..2 {
+            answer_task_prompt(
+                &context,
+                &mut runner,
+                &sequences,
+                &mut inputs,
+                "web/fix-login",
+                answer_request(OperatorAnswer::Approve, &fingerprint),
+                Instant::now(),
+            )
+            .expect("accepted");
+        }
+
+        let send_count = runner
+            .commands
+            .iter()
+            .filter(|command| command.args.first().map(String::as_str) == Some("send-keys"))
+            .count();
+        assert_eq!(send_count, 1, "the repeat request_id must not resend keys");
     }
 }

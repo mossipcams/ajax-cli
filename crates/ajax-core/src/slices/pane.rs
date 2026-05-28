@@ -58,19 +58,7 @@ pub fn snapshot(
     since: Option<&[String]>,
     limit: usize,
 ) -> Result<PaneSnapshot, PaneError> {
-    let command = CommandSpec::new(
-        "tmux",
-        [
-            "capture-pane",
-            "-p",
-            "-e",
-            "-t",
-            &format!("{session}:{DEFAULT_WORKTRUNK_WINDOW}"),
-            "-S",
-            "-200",
-        ],
-    );
-    let output = runner.run(&command).map_err(map_tmux_error)?;
+    let output = runner.run(&capture_command(session)).map_err(map_tmux_error)?;
     let cleaned = clean_pane_lines(&output.stdout);
     let state = classify_state(&cleaned, agent);
     let truncated = cleaned.len() > limit;
@@ -91,6 +79,34 @@ pub fn snapshot(
         truncated,
         state,
     })
+}
+
+fn capture_command(session: &str) -> CommandSpec {
+    CommandSpec::new(
+        "tmux",
+        [
+            "capture-pane",
+            "-p",
+            "-e",
+            "-t",
+            &format!("{session}:{DEFAULT_WORKTRUNK_WINDOW}"),
+            "-S",
+            "-200",
+        ],
+    )
+}
+
+/// Re-capture the pane and parse the current structured prompt for `agent`,
+/// including the keystrokes each choice maps to. The answer path uses this to
+/// verify a prompt is still live (fingerprint match) before sending keys.
+pub fn capture_prompt(
+    runner: &mut impl CommandRunner,
+    session: &str,
+    agent: AgentClient,
+) -> Result<Option<AgentPrompt>, PaneError> {
+    let output = runner.run(&capture_command(session)).map_err(map_tmux_error)?;
+    let cleaned = clean_pane_lines(&output.stdout);
+    Ok(agent_prompt::parse_prompt(agent, &cleaned))
 }
 
 pub fn send_keys(
@@ -258,30 +274,27 @@ fn overlay_prompt(state: &mut PaneState, prompt: AgentPrompt) {
     }
 }
 
+/// Strip ANSI CSI escape sequences while preserving multibyte UTF-8. Operating
+/// over `chars` (not raw bytes) matters: agent TUIs draw glyphs like `›`/`❯`
+/// that the prompt classifier keys on, and a byte-wise strip mangles them.
 fn strip_ansi(line: &str) -> String {
-    let bytes = line.as_bytes();
     let mut output = String::with_capacity(line.len());
-    let mut index = 0;
+    let mut chars = line.chars().peekable();
 
-    while index < bytes.len() {
-        if bytes[index] == 0x1b {
-            if index + 1 < bytes.len() && bytes[index + 1] == b'[' {
-                index += 2;
-                while index < bytes.len() {
-                    let byte = bytes[index];
-                    index += 1;
-                    if (0x40..=0x7e).contains(&byte) {
+    while let Some(current) = chars.next() {
+        if current == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if ('@'..='~').contains(&next) {
                         break;
                     }
                 }
-                continue;
             }
-            index += 1;
             continue;
         }
-
-        output.push(bytes[index] as char);
-        index += 1;
+        output.push(current);
     }
 
     output
@@ -424,6 +437,24 @@ last line\n";
                 }),
             }
         );
+    }
+
+    #[test]
+    fn snapshot_recognizes_codex_composer_through_ansi_and_unicode() {
+        let pane = "\u{1b}[2m─ Worked for 7m ─\u{1b}[0m\n\
+                    › Write tests for @filename\n\
+                    gpt-5.4 high · ~/projects/web\n";
+        let mut runner = StubRunner::with_stdout(pane);
+
+        let snapshot =
+            snapshot(&mut runner, "ajax-web-fix-login", AgentClient::Codex, None, 12).unwrap();
+        let state = snapshot.state.expect("state");
+
+        assert_eq!(state.kind, LiveStatusKind::WaitingForInput);
+        assert!(state.prompt.is_some());
+        // The composer is low confidence: surfaced but not answerable.
+        assert!(state.choices.is_empty());
+        assert_eq!(state.confidence, Some(Confidence::Low));
     }
 
     #[test]
