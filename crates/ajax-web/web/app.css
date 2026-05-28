@@ -1032,46 +1032,27 @@ code.interact-card-body {
   outline: none;
 }
 
-/* Input bar -------------------------------------------------------------- */
-.interact-input {
+/* Escalation ------------------------------------------------------------- */
+.interact-escalate {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  margin-top: 12px;
-  align-items: stretch;
+  margin-top: 10px;
   flex-wrap: wrap;
 }
 
-.interact-input-field {
-  flex: 1 1 200px;
-  min-width: 0;
-  padding: 8px 12px;
-  background: var(--paper);
-  border: 1px solid var(--rule-strong);
-  border-radius: 2px;
-  color: var(--ink);
-  font-size: 14px;
-  font-feature-settings: "tnum";
+.interact-escalate .interact-hint {
+  margin: 0;
+  flex: 1 1 160px;
 }
 
-.interact-input-field:focus {
-  outline: none;
-  border-color: var(--ink);
-}
-
-.interact-input .interact-send {
-  flex: 0 0 auto;
-}
-
-.interact-input .interact-key {
+.interact-escalate-chip {
   flex: 0 0 auto;
   font-size: 11px;
   padding: 6px 10px;
   min-height: 0;
-}
-
-body.is-offline .interact-input-field {
-  opacity: 0.4;
-  pointer-events: none;
+  cursor: default;
 }
 
 @media (max-width: 380px) {
@@ -1080,9 +1061,6 @@ body.is-offline .interact-input-field {
   }
   .interact-log {
     max-height: 38vh;
-  }
-  .interact-input-field {
-    font-size: 16px;
   }
 }
 

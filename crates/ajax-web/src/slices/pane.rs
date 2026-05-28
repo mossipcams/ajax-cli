@@ -94,25 +94,9 @@ pub enum PaneRouteError {
     Command(String),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct TaskInputRequest {
-    pub keys: String,
-    pub submit: bool,
-    pub request_id: String,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TaskInputResponse {
     pub sequence_hint: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum TaskInputError {
-    TaskNotFound,
-    SessionMissing,
-    RateLimited,
-    InvalidRequest(String),
-    Command(String),
 }
 
 pub fn browser_task_pane_view<R: Registry>(
@@ -207,70 +191,6 @@ fn browser_pane_state(state: core_pane::PaneState) -> BrowserPaneState {
         fingerprint: state.fingerprint,
         answerable,
     }
-}
-
-pub fn send_task_input<R: Registry>(
-    context: &CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    sequences: &PaneSequenceState,
-    inputs: &mut PaneInputState,
-    qualified_handle: &str,
-    request: TaskInputRequest,
-    now: Instant,
-) -> Result<TaskInputResponse, TaskInputError> {
-    if request.request_id.trim().is_empty() {
-        return Err(TaskInputError::InvalidRequest(
-            "request_id is required".to_string(),
-        ));
-    }
-
-    prune_expired_inputs(inputs, now);
-    let dedup_key = format!("{qualified_handle}\u{1f}{}", request.request_id);
-    if let Some(cached) = inputs.dedup.get(&dedup_key) {
-        return Ok(cached.response.clone());
-    }
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .ok_or(TaskInputError::TaskNotFound)?;
-
-    let recent = inputs
-        .recent
-        .entry(qualified_handle.to_string())
-        .or_default();
-    while recent
-        .front()
-        .is_some_and(|instant| now.duration_since(*instant) > INPUT_RATE_WINDOW)
-    {
-        recent.pop_front();
-    }
-    if recent.len() >= INPUT_RATE_LIMIT {
-        return Err(TaskInputError::RateLimited);
-    }
-
-    core_pane::send_keys(runner, &task.tmux_session, &request.keys, request.submit).map_err(
-        |error| match error {
-            core_pane::PaneError::SessionMissing => TaskInputError::SessionMissing,
-            core_pane::PaneError::InvalidKeys(message) => TaskInputError::InvalidRequest(message),
-            core_pane::PaneError::CommandRun(inner) => TaskInputError::Command(inner.to_string()),
-        },
-    )?;
-
-    recent.push_back(now);
-    let response = TaskInputResponse {
-        sequence_hint: sequences.sequence_for(qualified_handle),
-    };
-    inputs.dedup.insert(
-        dedup_key,
-        CachedInputResponse {
-            stored_at: now,
-            response: response.clone(),
-        },
-    );
-    Ok(response)
 }
 
 /// A guarded answer to a structured agent prompt. Carries the operator's intent
@@ -513,9 +433,7 @@ mod tests {
         assert_eq!(error, PaneRouteError::SessionMissing);
     }
 
-    use super::{
-        answer_task_prompt, PaneInputState, TaskAnswerError, TaskAnswerRequest,
-    };
+    use super::{answer_task_prompt, PaneInputState, TaskAnswerError, TaskAnswerRequest};
     use ajax_core::agent_prompt::OperatorAnswer;
     use std::time::Instant;
 
