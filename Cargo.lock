@@ -69,7 +69,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ajax-core",
  "ajax-supervisor",
@@ -84,7 +84,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "proptest",
  "rstest",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-supervisor"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ajax-core",
  "notify",
@@ -109,7 +109,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-tui"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ajax-core",
  "crossterm",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "ajax-web"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "ajax-core",
  "axum",
