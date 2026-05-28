@@ -213,24 +213,80 @@ where
 
     loop {
         tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
-        let current = {
+        let notifications = {
             let mut guard = state
                 .shared
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            refresh_attention_handles(&mut guard)
+            let current = refresh_attention_handles(&mut guard);
+            notifier
+                .poll(current)
+                .into_iter()
+                .map(|handle| build_attention_notification(&mut guard, handle))
+                .collect::<Vec<_>>()
         };
-        for handle in notifier.poll(current) {
-            let notification = push::PushNotification {
-                title: "Ajax task needs attention".to_string(),
-                body: handle.clone(),
-                tag: handle.clone(),
-                task_handle: handle.clone(),
-            };
+        for notification in notifications {
             if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
                 eprintln!("Ajax web push notification failed: {error}");
             }
         }
+    }
+}
+
+/// Enrich a newly-attention handle into a notification. When the task is at a
+/// high-confidence approval, the notification carries the command and a
+/// fingerprint so the operator can answer in one tap from the notification
+/// itself; everything else degrades to a plain "needs attention" alert.
+fn build_attention_notification<C, B>(
+    guard: &mut WebSharedState<C, B>,
+    handle: String,
+) -> push::PushNotification
+where
+    C: CommandRunner,
+    B: RuntimeBridge<C>,
+{
+    use ajax_core::agent_prompt::{Confidence, PromptKind};
+
+    let WebSharedState {
+        context, runner, ..
+    } = guard;
+    let Some(task) = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == handle)
+    else {
+        return push::PushNotification::attention(handle);
+    };
+
+    match crate::slices::pane::core_pane_capture_prompt(runner, task) {
+        Some(prompt)
+            if prompt.kind == PromptKind::Approval && prompt.confidence == Confidence::High =>
+        {
+            let title = match &prompt.command {
+                Some(command) => format!("Approve: {command}"),
+                None => "Approve this action?".to_string(),
+            };
+            push::PushNotification {
+                title,
+                body: handle.clone(),
+                tag: handle.clone(),
+                task_handle: handle,
+                kind: "approval".to_string(),
+                answerable: true,
+                fingerprint: Some(prompt.fingerprint),
+            }
+        }
+        Some(_) => push::PushNotification {
+            title: "An agent is waiting on you".to_string(),
+            body: handle.clone(),
+            tag: handle.clone(),
+            task_handle: handle,
+            kind: "input".to_string(),
+            answerable: false,
+            fingerprint: None,
+        },
+        None => push::PushNotification::attention(handle),
     }
 }
 

@@ -157,6 +157,18 @@ pub fn browser_task_pane_view<R: Registry>(
     })
 }
 
+/// Capture the current structured prompt for a task (or `None` if there is no
+/// prompt, or the tmux session is gone). The attention poller uses this to put
+/// the command + fingerprint into an actionable push notification.
+pub fn core_pane_capture_prompt(
+    runner: &mut impl CommandRunner,
+    task: &ajax_core::models::Task,
+) -> Option<ajax_core::agent_prompt::AgentPrompt> {
+    core_pane::capture_prompt(runner, &task.tmux_session, task.selected_agent)
+        .ok()
+        .flatten()
+}
+
 fn browser_pane_state(state: core_pane::PaneState) -> BrowserPaneState {
     use ajax_core::agent_prompt::{ChoiceRole, Confidence};
 
