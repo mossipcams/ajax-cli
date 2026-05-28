@@ -7,8 +7,8 @@ mod tests {
         rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
     };
 
-    const SLICES: [&str; 4] = ["attention", "cockpit", "install", "operate"];
-    const ADAPTERS: [&str; 4] = ["assets", "http", "push", "tls"];
+    const SLICES: [&str; 5] = ["attention", "cockpit", "install", "operate", "pane"];
+    const ADAPTERS: [&str; 5] = ["assets", "http", "push", "tls", "tmux_input"];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
 
