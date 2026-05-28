@@ -58,7 +58,9 @@ pub fn snapshot(
     since: Option<&[String]>,
     limit: usize,
 ) -> Result<PaneSnapshot, PaneError> {
-    let output = runner.run(&capture_command(session)).map_err(map_tmux_error)?;
+    let output = runner
+        .run(&capture_command(session))
+        .map_err(map_tmux_error)?;
     let cleaned = clean_pane_lines(&output.stdout);
     let state = classify_state(&cleaned, agent);
     let truncated = cleaned.len() > limit;
@@ -104,7 +106,9 @@ pub fn capture_prompt(
     session: &str,
     agent: AgentClient,
 ) -> Result<Option<AgentPrompt>, PaneError> {
-    let output = runner.run(&capture_command(session)).map_err(map_tmux_error)?;
+    let output = runner
+        .run(&capture_command(session))
+        .map_err(map_tmux_error)?;
     let cleaned = clean_pane_lines(&output.stdout);
     Ok(agent_prompt::parse_prompt(agent, &cleaned))
 }
@@ -446,8 +450,14 @@ last line\n";
                     gpt-5.4 high · ~/projects/web\n";
         let mut runner = StubRunner::with_stdout(pane);
 
-        let snapshot =
-            snapshot(&mut runner, "ajax-web-fix-login", AgentClient::Codex, None, 12).unwrap();
+        let snapshot = snapshot(
+            &mut runner,
+            "ajax-web-fix-login",
+            AgentClient::Codex,
+            None,
+            12,
+        )
+        .unwrap();
         let state = snapshot.state.expect("state");
 
         assert_eq!(state.kind, LiveStatusKind::WaitingForInput);
