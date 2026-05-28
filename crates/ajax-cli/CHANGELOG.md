@@ -6,6 +6,24 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.10.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.0...ajax-cli-v0.10.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* stop release please phantom sync release loop ([#107](https://github.com/mossipcams/ajax-cli/issues/107)) ([f5174a3](https://github.com/mossipcams/ajax-cli/commit/f5174a30d629fd6cf3134fa98c76d11633ce1992))
+* sync release please manifest paths on grouped releases ([#108](https://github.com/mossipcams/ajax-cli/issues/108)) ([d582aa2](https://github.com/mossipcams/ajax-cli/commit/d582aa24f264a941dc55116d9745978f29d62321))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.10.0 to 0.10.1
+    * ajax-supervisor bumped from 0.10.0 to 0.10.1
+    * ajax-tui bumped from 0.10.0 to 0.10.1
+    * ajax-web bumped from 0.10.0 to 0.10.1
+
 ## [0.10.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.9.0...ajax-cli-v0.10.0) (2026-05-28)
 
 

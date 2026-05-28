@@ -1,7 +1,7 @@
 {
-  "crates/ajax-cli": "0.10.0",
-  "crates/ajax-core": "0.10.0",
-  "crates/ajax-supervisor": "0.10.0",
-  "crates/ajax-tui": "0.10.0",
-  "crates/ajax-web": "0.10.0"
+  "crates/ajax-cli": "0.10.1",
+  "crates/ajax-core": "0.10.1",
+  "crates/ajax-supervisor": "0.10.1",
+  "crates/ajax-tui": "0.10.1",
+  "crates/ajax-web": "0.10.1"
 }
