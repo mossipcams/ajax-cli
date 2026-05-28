@@ -2,6 +2,15 @@
 
 Branch: `ajax/brainstorming`
 
+**Status: implemented (P1–P5).** Per-agent Codex adapter + confidence floor
+(`ajax-core::agent_prompt`), guarded `/answer` endpoint with stale-fingerprint
+rejection, structured one-tap answering in the PWA with terminal escalation, the
+free-form `/input` surface removed, and actionable approval push notifications.
+A latent UTF-8 bug in pane `strip_ansi` (mangled the Codex `›` glyph) was fixed
+along the way. Codex **approval** pane shapes (numbered / y-n) remain
+fixture-synthetic — confirm against a live approval capture before trusting them
+at high confidence; the composer shape is anchored to a real capture.
+
 ## Goal
 
 Make the Web Cockpit able to **answer a blocked agent in one tap** without ever
