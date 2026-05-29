@@ -444,11 +444,20 @@ subscribed browsers.
 
 ### `ajax-web::slices::pane`
 
-Owns the browser pane and contextual input capability. It turns tmux pane
-captures into cleaned browser snapshots with stable per-task sequences, and it
-accepts structured operator input requests while keeping tmux command delivery,
-input de-duplication, and per-task input rate limiting inside the Web Cockpit
-adapter boundary rather than in `ajax-core`.
+Owns the browser pane and structured answering capability. It turns tmux pane
+captures into cleaned browser snapshots with stable per-task sequences. When the
+task's agent is at a recognized prompt, the snapshot carries a structured,
+confidence-scored `AgentPrompt` (from `ajax-core::agent_prompt`): the command,
+the answerable choices, and a fingerprint.
+
+Answering is triage-only and guarded. `answer_task_prompt` re-captures the live
+pane, refuses to act unless the fingerprint still matches the prompt the operator
+saw (stale answers are rejected, never misfired), resolves the operator's typed
+intent (`approve` / `deny` / `select`) to keystrokes through the agent adapter,
+and only then delivers `send-keys` — with per-task de-duplication and rate
+limiting inside the adapter boundary. There is no free-form browser input
+endpoint; the browser never carries raw keystrokes, and any prompt that cannot
+be structured at high confidence escalates to the terminal.
 
 ### `ajax-web::runtime`
 

@@ -114,6 +114,29 @@ pub struct PushNotification {
     pub body: String,
     pub tag: String,
     pub task_handle: String,
+    /// `"approval"`, `"input"`, or `"attention"` — lets the service worker decide
+    /// whether to render inline answer actions.
+    pub kind: String,
+    /// Whether this prompt can be answered with one tap from the notification.
+    pub answerable: bool,
+    /// Stale-answer guard token forwarded to `/answer` from a notification action.
+    pub fingerprint: Option<String>,
+}
+
+impl PushNotification {
+    /// A plain "needs attention" notification with no inline answer.
+    pub fn attention(task_handle: impl Into<String>) -> Self {
+        let task_handle = task_handle.into();
+        Self {
+            title: "Ajax task needs attention".to_string(),
+            body: task_handle.clone(),
+            tag: task_handle.clone(),
+            task_handle,
+            kind: "attention".to_string(),
+            answerable: false,
+            fingerprint: None,
+        }
+    }
 }
 
 fn notification_payload(notification: &PushNotification) -> Vec<u8> {
@@ -122,6 +145,9 @@ fn notification_payload(notification: &PushNotification) -> Vec<u8> {
         "body": notification.body,
         "tag": notification.tag,
         "task_handle": notification.task_handle,
+        "kind": notification.kind,
+        "answerable": notification.answerable,
+        "fingerprint": notification.fingerprint,
     }))
     .unwrap_or_default()
 }
@@ -301,12 +327,33 @@ mod tests {
             body: "web/fix-login".to_string(),
             tag: "web/fix-login".to_string(),
             task_handle: "web/fix-login".to_string(),
+            kind: "attention".to_string(),
+            answerable: false,
+            fingerprint: None,
         });
         let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(value["title"], "Task needs review");
         assert_eq!(value["body"], "web/fix-login");
         assert_eq!(value["tag"], "web/fix-login");
         assert_eq!(value["task_handle"], "web/fix-login");
+        assert_eq!(value["answerable"], false);
+    }
+
+    #[test]
+    fn notification_payload_carries_answer_affordance_for_approvals() {
+        let payload = notification_payload(&PushNotification {
+            title: "Approve: cargo test".to_string(),
+            body: "web/fix-login".to_string(),
+            tag: "web/fix-login".to_string(),
+            task_handle: "web/fix-login".to_string(),
+            kind: "approval".to_string(),
+            answerable: true,
+            fingerprint: Some("abc123".to_string()),
+        });
+        let value: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(value["kind"], "approval");
+        assert_eq!(value["answerable"], true);
+        assert_eq!(value["fingerprint"], "abc123");
     }
 
     #[test]
@@ -332,16 +379,7 @@ mod tests {
     #[test]
     fn send_to_all_with_no_subscriptions_delivers_nothing() {
         let dir = scratch_dir("empty-send");
-        let delivered = send_to_all(
-            &dir,
-            &PushNotification {
-                title: "ignored".to_string(),
-                body: "ignored".to_string(),
-                tag: "ignored".to_string(),
-                task_handle: "ignored".to_string(),
-            },
-        )
-        .unwrap();
+        let delivered = send_to_all(&dir, &PushNotification::attention("ignored")).unwrap();
         assert_eq!(delivered, 0);
 
         std::fs::remove_dir_all(&dir).ok();

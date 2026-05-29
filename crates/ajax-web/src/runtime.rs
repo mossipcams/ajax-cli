@@ -213,24 +213,80 @@ where
 
     loop {
         tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
-        let current = {
+        let notifications = {
             let mut guard = state
                 .shared
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            refresh_attention_handles(&mut guard)
+            let current = refresh_attention_handles(&mut guard);
+            notifier
+                .poll(current)
+                .into_iter()
+                .map(|handle| build_attention_notification(&mut guard, handle))
+                .collect::<Vec<_>>()
         };
-        for handle in notifier.poll(current) {
-            let notification = push::PushNotification {
-                title: "Ajax task needs attention".to_string(),
-                body: handle.clone(),
-                tag: handle.clone(),
-                task_handle: handle.clone(),
-            };
+        for notification in notifications {
             if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
                 eprintln!("Ajax web push notification failed: {error}");
             }
         }
+    }
+}
+
+/// Enrich a newly-attention handle into a notification. When the task is at a
+/// high-confidence approval, the notification carries the command and a
+/// fingerprint so the operator can answer in one tap from the notification
+/// itself; everything else degrades to a plain "needs attention" alert.
+fn build_attention_notification<C, B>(
+    guard: &mut WebSharedState<C, B>,
+    handle: String,
+) -> push::PushNotification
+where
+    C: CommandRunner,
+    B: RuntimeBridge<C>,
+{
+    use ajax_core::agent_prompt::{Confidence, PromptKind};
+
+    let WebSharedState {
+        context, runner, ..
+    } = guard;
+    let Some(task) = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == handle)
+    else {
+        return push::PushNotification::attention(handle);
+    };
+
+    match crate::slices::pane::core_pane_capture_prompt(runner, task) {
+        Some(prompt)
+            if prompt.kind == PromptKind::Approval && prompt.confidence == Confidence::High =>
+        {
+            let title = match &prompt.command {
+                Some(command) => format!("Approve: {command}"),
+                None => "Approve this action?".to_string(),
+            };
+            push::PushNotification {
+                title,
+                body: handle.clone(),
+                tag: handle.clone(),
+                task_handle: handle,
+                kind: "approval".to_string(),
+                answerable: true,
+                fingerprint: Some(prompt.fingerprint),
+            }
+        }
+        Some(_) => push::PushNotification {
+            title: "An agent is waiting on you".to_string(),
+            body: handle.clone(),
+            tag: handle.clone(),
+            task_handle: handle,
+            kind: "input".to_string(),
+            answerable: false,
+            fingerprint: None,
+        },
+        None => push::PushNotification::attention(handle),
     }
 }
 
@@ -391,8 +447,8 @@ where
     C: CommandRunner + Send + 'static,
     B: RuntimeBridge<C> + Send + 'static,
 {
-    if let Some(task_handle) = handle.strip_suffix("/input") {
-        return axum_task_input::<C, B>(State(state), task_handle.to_string(), body).await;
+    if let Some(task_handle) = handle.strip_suffix("/answer") {
+        return axum_task_answer::<C, B>(State(state), task_handle.to_string(), body).await;
     }
     json_value_response(
         404,
@@ -400,7 +456,7 @@ where
     )
 }
 
-async fn axum_task_input<C, B>(
+async fn axum_task_answer<C, B>(
     State(state): State<WebAppState<C, B>>,
     handle: String,
     body: Bytes,
@@ -409,7 +465,7 @@ where
     C: CommandRunner + Send + 'static,
     B: RuntimeBridge<C> + Send + 'static,
 {
-    let request: crate::slices::pane::TaskInputRequest = match serde_json::from_slice(&body) {
+    let request: crate::slices::pane::TaskAnswerRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(error) => {
             return json_value_response(
@@ -434,7 +490,7 @@ where
         ..
     } = &mut *guard;
 
-    match crate::slices::pane::send_task_input(
+    match crate::slices::pane::answer_task_prompt(
         context,
         runner,
         pane_sequences,
@@ -446,27 +502,37 @@ where
         Ok(response) => {
             json_value_response(200, serde_json::to_value(response).unwrap_or_default())
         }
-        Err(crate::slices::pane::TaskInputError::TaskNotFound) => json_value_response(
+        Err(crate::slices::pane::TaskAnswerError::TaskNotFound) => json_value_response(
             404,
             serde_json::json!({ "ok": false, "error": "task not found" }),
         ),
-        Err(crate::slices::pane::TaskInputError::SessionMissing) => json_value_response(
+        Err(crate::slices::pane::TaskAnswerError::SessionMissing) => json_value_response(
+            409,
+            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::Stale) => json_value_response(
             409,
             serde_json::json!({
-                "tmux_exists": false,
-                "sequence": 0,
-                "lines": [],
-                "state": serde_json::Value::Null,
+                "ok": false,
+                "error": "prompt changed since you answered",
+                "stale": true,
             }),
         ),
-        Err(crate::slices::pane::TaskInputError::RateLimited) => json_value_response(
+        Err(crate::slices::pane::TaskAnswerError::NotAnswerable) => json_value_response(
+            422,
+            serde_json::json!({
+                "ok": false,
+                "error": "this prompt cannot be answered from the browser; open the terminal",
+            }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::RateLimited) => json_value_response(
             429,
             serde_json::json!({ "ok": false, "error": "too many inputs" }),
         ),
-        Err(crate::slices::pane::TaskInputError::InvalidRequest(message)) => {
+        Err(crate::slices::pane::TaskAnswerError::InvalidRequest(message)) => {
             json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
         }
-        Err(crate::slices::pane::TaskInputError::Command(message)) => {
+        Err(crate::slices::pane::TaskAnswerError::Command(message)) => {
             json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
         }
     }
@@ -743,8 +809,8 @@ pub fn route_with_bridge<C: CommandRunner>(
         ("GET", path) if path.starts_with("/api/tasks/") && path.ends_with("/pane") => {
             handle_task_pane_request(request.path, context, runner)
         }
-        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/input") => {
-            handle_task_input_request(request.path, request.body, context, runner)
+        ("POST", path) if path.starts_with("/api/tasks/") && path.ends_with("/answer") => {
+            handle_task_answer_request(request.path, request.body, context, runner)
         }
         ("POST", "/api/actions") | ("POST", "/api/operations") => {
             handle_action_request(request.body, context, runner, bridge)
@@ -809,7 +875,7 @@ fn missing_tmux_payload() -> crate::slices::pane::BrowserPaneSnapshot {
     }
 }
 
-fn handle_task_input_request<C: CommandRunner>(
+fn handle_task_answer_request<C: CommandRunner>(
     raw_path: &str,
     body: &str,
     context: &CommandContext<InMemoryRegistry>,
@@ -818,15 +884,15 @@ fn handle_task_input_request<C: CommandRunner>(
     let (path, _query) = split_path_and_query(raw_path);
     let handle = path
         .strip_prefix("/api/tasks/")
-        .and_then(|tail| tail.strip_suffix("/input"))
+        .and_then(|tail| tail.strip_suffix("/answer"))
         .map(percent_decode)
-        .ok_or_else(|| WebError::CommandFailed("task input path was invalid".to_string()))?;
-    let request: crate::slices::pane::TaskInputRequest = serde_json::from_str(body)
+        .ok_or_else(|| WebError::CommandFailed("task answer path was invalid".to_string()))?;
+    let request: crate::slices::pane::TaskAnswerRequest = serde_json::from_str(body)
         .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
     let sequences = crate::slices::pane::PaneSequenceState::default();
     let mut inputs = crate::slices::pane::PaneInputState::default();
 
-    match crate::slices::pane::send_task_input(
+    match crate::slices::pane::answer_task_prompt(
         context,
         runner,
         &sequences,
@@ -840,27 +906,31 @@ fn handle_task_input_request<C: CommandRunner>(
             serde_json::to_value(response)
                 .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
         ),
-        Err(crate::slices::pane::TaskInputError::TaskNotFound) => json_response(
+        Err(crate::slices::pane::TaskAnswerError::TaskNotFound) => json_response(
             404,
             serde_json::json!({ "ok": false, "error": "task not found" }),
         ),
-        Err(crate::slices::pane::TaskInputError::SessionMissing) => json_response(
+        Err(crate::slices::pane::TaskAnswerError::SessionMissing) => json_response(
             409,
-            serde_json::json!({
-                "tmux_exists": false,
-                "sequence": 0,
-                "lines": [],
-                "state": serde_json::Value::Null,
-            }),
+            serde_json::to_value(missing_tmux_payload())
+                .map_err(|error| WebError::JsonSerialization(error.to_string()))?,
         ),
-        Err(crate::slices::pane::TaskInputError::RateLimited) => json_response(
+        Err(crate::slices::pane::TaskAnswerError::Stale) => json_response(
+            409,
+            serde_json::json!({ "ok": false, "error": "prompt changed since you answered", "stale": true }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::NotAnswerable) => json_response(
+            422,
+            serde_json::json!({ "ok": false, "error": "this prompt cannot be answered from the browser; open the terminal" }),
+        ),
+        Err(crate::slices::pane::TaskAnswerError::RateLimited) => json_response(
             429,
             serde_json::json!({ "ok": false, "error": "too many inputs" }),
         ),
-        Err(crate::slices::pane::TaskInputError::InvalidRequest(message)) => {
+        Err(crate::slices::pane::TaskAnswerError::InvalidRequest(message)) => {
             json_response(400, serde_json::json!({ "ok": false, "error": message }))
         }
-        Err(crate::slices::pane::TaskInputError::Command(message)) => {
+        Err(crate::slices::pane::TaskAnswerError::Command(message)) => {
             json_response(500, serde_json::json!({ "ok": false, "error": message }))
         }
     }
@@ -1746,8 +1816,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[tokio::test]
-    async fn axum_task_input_posts_keys_and_returns_sequence_hint() {
+    fn answer_task_context() -> CommandContext<InMemoryRegistry> {
         use ajax_core::config::ManagedRepo;
         use ajax_core::models::{AgentClient, Task, TaskId};
         use ajax_core::registry::Registry as _;
@@ -1771,268 +1840,79 @@ mod tests {
                 AgentClient::Codex,
             ))
             .unwrap();
-        let context = CommandContext::new(config, registry);
-        let state = super::WebAppState::new(
-            context,
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
-            },
-            TestBridge::default(),
-            scratch_dir("axum-task-input"),
-        );
-        let app = super::axum_app(state.clone());
-
-        let response = app
-            .oneshot(
-                AxumRequest::builder()
-                    .method("POST")
-                    .uri("/api/tasks/web%2Ffix-login/input")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"keys":"approve it","submit":true,"request_id":"req-input-1"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["sequence_hint"], 0);
-
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.runner.run_count, 1);
+        CommandContext::new(config, registry)
     }
 
-    #[tokio::test]
-    async fn axum_task_input_is_idempotent_by_request_id() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
+    #[test]
+    fn answer_endpoint_sends_keys_for_matching_fingerprint() {
+        let mut context = answer_task_context();
+        let mut runner = PaneRunner {
+            response: Ok(CommandOutput {
+                status_code: 0,
+                stdout: "Run `cargo test`? [y/n]\n".to_string(),
+                stderr: String::new(),
+            }),
+            run_count: 0,
         };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
-        let state = super::WebAppState::new(
-            context,
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("answer");
+        let fingerprint = ajax_core::agent_prompt::parse_prompt(
+            ajax_core::models::AgentClient::Codex,
+            &["Run `cargo test`? [y/n]".to_string()],
+        )
+        .unwrap()
+        .fingerprint;
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/tasks/web/fix-login/answer",
+                body: &format!(
+                    r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r1"}}"#
+                ),
             },
-            TestBridge::default(),
-            scratch_dir("axum-task-input-dedup"),
-        );
-        let app = super::axum_app(state.clone());
-        let request_body = r#"{"keys":"approve it","submit":true,"request_id":"req-input-1"}"#;
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
 
-        let first = app
-            .clone()
-            .oneshot(
-                AxumRequest::builder()
-                    .method("POST")
-                    .uri("/api/tasks/web%2Ffix-login/input")
-                    .header("content-type", "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let second = app
-            .oneshot(
-                AxumRequest::builder()
-                    .method("POST")
-                    .uri("/api/tasks/web%2Ffix-login/input")
-                    .header("content-type", "application/json")
-                    .body(Body::from(request_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(first.status(), StatusCode::OK);
-        assert_eq!(second.status(), StatusCode::OK);
-        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
-        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(first_body, second_body);
-
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.runner.run_count, 1);
+        assert_eq!(response.status_code, 200);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
-    #[tokio::test]
-    async fn axum_task_input_rate_limits_after_ten_inputs_per_task() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
+    #[test]
+    fn answer_endpoint_returns_conflict_for_stale_fingerprint() {
+        let mut context = answer_task_context();
+        let mut runner = PaneRunner {
+            response: Ok(CommandOutput {
+                status_code: 0,
+                stdout: "Run `cargo test`? [y/n]\n".to_string(),
+                stderr: String::new(),
+            }),
+            run_count: 0,
         };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
-        let state = super::WebAppState::new(
-            context,
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: String::new(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("answer-stale");
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/tasks/web/fix-login/answer",
+                body: r#"{"answer":"approve","fingerprint":"stale","request_id":"r1"}"#,
             },
-            TestBridge::default(),
-            scratch_dir("axum-task-input-rate-limit"),
-        );
-        let app = super::axum_app(state.clone());
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
 
-        for index in 0..10 {
-            let response = app
-                .clone()
-                .oneshot(
-                    AxumRequest::builder()
-                        .method("POST")
-                        .uri("/api/tasks/web%2Ffix-login/input")
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(
-                            r#"{{"keys":"ping","submit":true,"request_id":"req-{index}"}}"#
-                        )))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-        }
-
-        let limited = app
-            .oneshot(
-                AxumRequest::builder()
-                    .method("POST")
-                    .uri("/api/tasks/web%2Ffix-login/input")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"keys":"ping","submit":true,"request_id":"req-10"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.runner.run_count, 10);
-    }
-
-    #[tokio::test]
-    async fn axum_task_input_returns_conflict_when_tmux_session_is_missing() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
-        let state = super::WebAppState::new(
-            context,
-            PaneRunner {
-                response: Err(CommandRunError::NonZeroExit {
-                    program: "tmux".to_string(),
-                    status_code: 1,
-                    stderr: "can't find session".to_string(),
-                    cwd: None,
-                }),
-                run_count: 0,
-            },
-            TestBridge::default(),
-            scratch_dir("axum-task-input-missing-session"),
-        );
-        let app = super::axum_app(state);
-
-        let response = app
-            .oneshot(
-                AxumRequest::builder()
-                    .method("POST")
-                    .uri("/api/tasks/web%2Ffix-login/input")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"keys":"approve it","submit":true,"request_id":"req-input-1"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["tmux_exists"], false);
+        assert_eq!(response.status_code, 409);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["stale"], true);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

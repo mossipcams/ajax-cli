@@ -78,10 +78,21 @@ General, About, Certificate Trust Settings.
 
 From the installed app you can see every repo's tasks, use the attention inbox,
 and run browser-capable operations such as `review`, `ship`, `repair`, and
-`drop`. Browser `resume` remains `needs_terminal` until the terminal bridge
-exists. Tap Alerts to enable Web Push: the phone is then notified when a task
-newly needs attention, even when the app is closed. Web Push on iOS requires iOS
-16.4 or later and the app installed to the home screen.
+`drop`. Web Cockpit is a triage surface: when an agent stops at a recognized
+approval prompt, it shows the command and structured Approve/Deny (or numbered)
+choices, and a one-tap answer is routed through the agent adapter as the correct
+keystroke. The answer is guarded by a fingerprint of the prompt the operator
+saw, so an answer is rejected if the agent has moved on. Anything Web Cockpit
+cannot safely structure — free-text composers, low-confidence prompts — is not
+given a text box; it escalates to the terminal. Browser `resume` remains
+`needs_terminal`.
+
+Tap Alerts to enable Web Push: the phone is then notified when a task newly
+needs attention, even when the app is closed. When the waiting task is a
+recognized approval, the notification carries Approve/Deny actions you can tap
+without opening the app (on platforms that support notification actions; iOS
+falls back to opening the task). Web Push on iOS requires iOS 16.4 or later and
+the app installed to the home screen.
 
 The PWA renders server-authoritative Cockpit projections and submits typed
 operator intents. It does not own offline task mutation state, persist task
