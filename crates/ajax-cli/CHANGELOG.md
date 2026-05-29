@@ -6,6 +6,23 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.11.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.1...ajax-cli-v0.11.0) (2026-05-29)
+
+
+### Features
+
+* **web:** triage-only structured agent answering with guarded approvals ([#109](https://github.com/mossipcams/ajax-cli/issues/109)) ([b6cbf0a](https://github.com/mossipcams/ajax-cli/commit/b6cbf0a90ffab071e2512265e3b5241fdbc8f295))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.10.1 to 0.11.0
+    * ajax-supervisor bumped from 0.10.1 to 0.11.0
+    * ajax-tui bumped from 0.10.1 to 0.11.0
+    * ajax-web bumped from 0.10.1 to 0.11.0
+
 ## [0.10.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.0...ajax-cli-v0.10.1) (2026-05-28)
 
 
