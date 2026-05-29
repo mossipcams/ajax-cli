@@ -311,10 +311,12 @@ Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
-Web Cockpit is a first-class browser operator surface. It is intended to fully
-control Ajax wherever browser capabilities exist. Native Cockpit and Web
-Cockpit consume shared Cockpit projections and task-operation contracts; neither
-surface owns task truth.
+Web Cockpit is a first-class browser operator surface, but it is intentionally a
+dashboard rather than a terminal mirror. Native Cockpit and Web Cockpit consume
+shared Cockpit projections and task-operation contracts; neither surface owns
+task truth. The browser experience should lead with task state, required
+decisions, and next actions, while raw pane text stays secondary and
+collapsible.
 
 The PWA is not an offline-first Ajax client and must not introduce a second
 browser-side task model. Git, tmux, SQLite, supervised processes, and the Ajax
@@ -444,20 +446,19 @@ subscribed browsers.
 
 ### `ajax-web::slices::pane`
 
-Owns the browser pane and structured answering capability. It turns tmux pane
-captures into cleaned browser snapshots with stable per-task sequences. When the
-task's agent is at a recognized prompt, the snapshot carries a structured,
-confidence-scored `AgentPrompt` (from `ajax-core::agent_prompt`): the command,
-the answerable choices, and a fingerprint.
+Owns the browser pane and guarded approval capability. It turns tmux pane
+captures into cleaned browser snapshots with stable per-task sequences so the
+dashboard can derive current status and optional terminal details without
+centering the UI on a scrolling log.
 
-Answering is triage-only and guarded. `answer_task_prompt` re-captures the live
-pane, refuses to act unless the fingerprint still matches the prompt the operator
-saw (stale answers are rejected, never misfired), resolves the operator's typed
-intent (`approve` / `deny` / `select`) to keystrokes through the agent adapter,
-and only then delivers `send-keys` — with per-task de-duplication and rate
-limiting inside the adapter boundary. There is no free-form browser input
-endpoint; the browser never carries raw keystrokes, and any prompt that cannot
-be structured at high confidence escalates to the terminal.
+When the task's agent is at a recognized prompt, the snapshot can also carry a
+structured, confidence-scored `AgentPrompt` from `ajax-core::agent_prompt`: the
+command, the answerable choices, and a fingerprint. Browser approval actions
+post a typed answer plus that fingerprint; `answer_task_prompt` re-captures the
+live pane, rejects stale answers, resolves the operator intent through the agent
+adapter, and only then delivers `send-keys`, with per-task de-duplication and
+rate limiting inside the adapter boundary. Free-form browser input is outside
+the dashboard scope and remains a terminal escalation path.
 
 ### `ajax-web::runtime`
 
@@ -497,8 +498,10 @@ Web Push is opt-in. Web Cockpit holds a persisted VAPID identity, serves its
 public key at `/api/push/config`, and stores browser subscriptions posted to
 `/api/push/subscribe`. A background attention poller rebuilds the Cockpit view
 on an interval, diffs the attention inbox, and sends a VAPID-signed encrypted
-notification for each task that newly needs attention; subscriptions the push
-service reports as gone are pruned.
+notification for each task that newly needs attention; recognized approval
+prompts may include actionable Approve and Deny buttons backed by the same
+fingerprint guard as the dashboard. Subscriptions the push service reports as
+gone are pruned.
 
 Native Cockpit starts `ajax-cli web` by default and keeps it alive for the
 Cockpit session. `ajax-cli` starts Web Cockpit on port `8787` with the stable

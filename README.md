@@ -46,11 +46,10 @@ environments.
 
 ### Web Cockpit (PWA)
 
-Web Cockpit is a mobile-first Progressive Web App and full browser operator
-surface over Ajax. It runs host-native through `ajax-cli web`, with the same
-host authority as SQLite, configured repos, worktrees, tmux sessions, agent
-CLIs, and host process state. Docker is no longer part of the Web Cockpit
-runtime.
+Web Cockpit is a mobile-first Progressive Web App and operator dashboard over
+Ajax. It runs host-native through `ajax-cli web`, with the same host authority
+as SQLite, configured repos, worktrees, tmux sessions, agent CLIs, and host
+process state. Docker is no longer part of the Web Cockpit runtime.
 
 When Native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
 starts the host-native Web Cockpit server. Stable serves on `0.0.0.0:8787`; dev
@@ -78,21 +77,24 @@ General, About, Certificate Trust Settings.
 
 From the installed app you can see every repo's tasks, use the attention inbox,
 and run browser-capable operations such as `review`, `ship`, `repair`, and
-`drop`. Web Cockpit is a triage surface: when an agent stops at a recognized
-approval prompt, it shows the command and structured Approve/Deny (or numbered)
-choices, and a one-tap answer is routed through the agent adapter as the correct
-keystroke. The answer is guarded by a fingerprint of the prompt the operator
-saw, so an answer is rejected if the agent has moved on. Anything Web Cockpit
-cannot safely structure — free-text composers, low-confidence prompts — is not
-given a text box; it escalates to the terminal. Browser `resume` remains
-`needs_terminal`.
+`drop`. The main task view is dashboard-first: current status, required
+decision, best next action, and recent milestones are primary; live pane text is
+available only as secondary terminal details. Browser `resume` remains
+`needs_terminal` until the terminal bridge exists.
+
+When an agent stops at a recognized approval prompt, Web Cockpit shows guarded
+structured actions such as Approve and Deny. The browser sends a typed answer
+plus a fingerprint of the prompt the operator saw; the server re-captures the
+pane and rejects the answer if the agent has moved on. Anything Web Cockpit
+cannot safely structure — free-text composers, low-confidence prompts, or other
+terminal-only interactions — escalates to the terminal instead of offering a
+browser text box.
 
 Tap Alerts to enable Web Push: the phone is then notified when a task newly
-needs attention, even when the app is closed. When the waiting task is a
-recognized approval, the notification carries Approve/Deny actions you can tap
-without opening the app (on platforms that support notification actions; iOS
-falls back to opening the task). Web Push on iOS requires iOS 16.4 or later and
-the app installed to the home screen.
+needs attention, even when the app is closed. Recognized approval prompts can
+also ship actionable notification buttons on supported platforms; iOS falls back
+to opening the task. Web Push on iOS requires iOS 16.4 or later and the app
+installed to the home screen.
 
 The PWA renders server-authoritative Cockpit projections and submits typed
 operator intents. It does not own offline task mutation state, persist task

@@ -373,12 +373,15 @@ mod tests {
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
         assert!(sw_text.contains("#/t/"));
+        assert!(sw_text.contains("action: \"approve\""));
+        assert!(sw_text.contains("/answer"));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
         assert!(app_text.contains("pushManager.subscribe"));
         assert!(app_text.contains("/api/push/config"));
         assert!(app_text.contains("/api/push/subscribe"));
+        assert!(app_text.contains("/answer"));
     }
 
     #[test]

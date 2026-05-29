@@ -172,10 +172,20 @@ mod tests {
             script.contains("/api/tasks"),
             "missing POST start endpoint usage"
         );
+        assert!(
+            script.contains("/answer"),
+            "dashboard approvals should use the guarded answer endpoint"
+        );
+        assert!(
+            !script.contains("Type your response"),
+            "free-form browser input should stay out of the dashboard"
+        );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
         assert!(worker.contains("ajax-cockpit-v21"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
+        assert!(worker.contains("action: \"approve\""));
+        assert!(worker.contains("/answer"));
         for cached in [
             "\"/\"",
             "\"/app.css\"",
@@ -245,6 +255,33 @@ mod tests {
             "Turn on alerts",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn dashboard_detail_view_uses_operator_cards_instead_of_pane_log() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "Current status",
+            "Needs from you",
+            "Best next step",
+            "Recent milestones",
+            "View terminal details",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+
+        for removed in [
+            "Pane is quiet.",
+            "Pinned to bottom",
+            "Type your response",
+            "Send to agent",
+        ] {
+            assert!(
+                !script.contains(removed),
+                "app.js should not foreground pane UI copy {removed}"
+            );
         }
     }
 }

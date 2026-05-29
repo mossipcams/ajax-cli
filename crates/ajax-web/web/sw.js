@@ -67,9 +67,6 @@ self.addEventListener("push", (event) => {
     }
   }
   const url = taskDeepLink(data);
-  // When the task is at an answerable approval, offer Approve/Deny straight from
-  // the notification (where the platform supports actions; iOS ignores them and
-  // falls back to tap-to-open). The fingerprint pins the answer to this prompt.
   const answerable = !!(data.answerable && data.fingerprint && (data.task_handle || data.handle));
   const actions = answerable
     ? [
@@ -77,12 +74,6 @@ self.addEventListener("push", (event) => {
         { action: "deny", title: "Deny" },
       ]
     : [];
-  const notificationData = {
-    url,
-    handle: data.task_handle || data.handle || null,
-    fingerprint: data.fingerprint || null,
-    answerable,
-  };
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
@@ -98,33 +89,37 @@ self.addEventListener("push", (event) => {
           icon: "/icons/icon-192.png",
           badge: "/icons/icon-192.png",
           actions,
-          data: notificationData,
+          data: {
+            url,
+            handle: data.task_handle || data.handle || null,
+            fingerprint: data.fingerprint || null,
+          },
         });
       }),
   );
 });
-
-function sendNotificationAnswer(data, action) {
-  if (!data || !data.handle || !data.fingerprint) return Promise.resolve();
-  const requestId =
-    self.crypto && self.crypto.randomUUID
-      ? self.crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  return fetch(`/api/tasks/${encodeURIComponent(data.handle)}/answer`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ answer: action, fingerprint: data.fingerprint, request_id: requestId }),
-  }).catch(() => undefined);
-}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const target = data.url || "/";
 
-  // Inline Approve/Deny: answer through the guarded endpoint without opening the app.
   if (event.action === "approve" || event.action === "deny") {
-    event.waitUntil(sendNotificationAnswer(data, event.action));
+    const requestId =
+      self.crypto && self.crypto.randomUUID
+        ? self.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    event.waitUntil(
+      fetch(`/api/tasks/${encodeURIComponent(data.handle)}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          answer: event.action,
+          fingerprint: data.fingerprint,
+          request_id: requestId,
+        }),
+      }).catch(() => undefined),
+    );
     return;
   }
 

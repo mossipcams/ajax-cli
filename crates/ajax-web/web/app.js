@@ -44,7 +44,6 @@ let paneInFlight = false;
 let paneTimer = null;
 let paneAvailable = false;
 let lastInteractKind = null;
-let logPinned = true;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -461,13 +460,6 @@ function renderDetail(detail) {
   liveSection.append(liveGrid);
   detailContainer.append(liveSection);
 
-  if (detail.agent_activity && !paneAvailable) {
-    const activitySection = el("section", "detail-section");
-    activitySection.append(el("h2", null, "Agent activity"));
-    activitySection.append(el("pre", "activity-excerpt", detail.agent_activity));
-    detailContainer.append(activitySection);
-  }
-
   const gitSection = el("section", "detail-section");
   gitSection.append(el("h2", null, "Branch"));
   const gitGrid = el("dl", "detail-grid");
@@ -603,7 +595,6 @@ function interactPrompt(detail, pane) {
   return null;
 }
 
-
 function renderInteractPanel(detail, pane) {
   const panel = el("section", "interact-panel");
   const tmuxMissing = pane && pane.tmux_exists === false;
@@ -612,116 +603,170 @@ function renderInteractPanel(detail, pane) {
   lastInteractKind = kind;
 
   const stateRow = el("div", "interact-state");
-  stateRow.append(el("span", `interact-pill tone-${copy.tone}`, copy.label));
-  if (detail.live_status_summary && kind !== "WaitingForApproval" && kind !== "WaitingForInput") {
+  const pill = el("span", `interact-pill tone-${copy.tone}`, copy.label);
+  stateRow.append(pill);
+  if (detail.live_status_summary) {
     stateRow.append(el("span", "interact-summary", detail.live_status_summary));
   }
   panel.append(stateRow);
 
-  if (tmuxMissing) {
-    panel.append(el("p", "interact-hint", "Tmux session is missing. Sync the task to recover."));
-    return panel;
-  }
+  const cards = el("div", "dashboard-card-grid");
+  cards.append(renderDashboardCard("Current status", renderCurrentStatus(detail, pane)));
+  cards.append(renderDashboardCard("Needs from you", renderNeedsFromYou(detail, pane, tmuxMissing)));
+  cards.append(renderDashboardCard("Best next step", renderBestNextStep(detail)));
+  cards.append(renderDashboardCard("Recent milestones", renderMilestones(detail, pane)));
+  panel.append(cards);
 
-  const state = pane && pane.state ? pane.state : null;
-  const answerable = !!(
-    state && state.answerable && Array.isArray(state.choices) && state.choices.length
-  );
+  panel.append(renderTerminalDetails(detail, pane, tmuxMissing));
 
-  if (kind === "WaitingForApproval" || answerable) {
-    const card = el("div", "interact-card");
-    card.append(el("div", "interact-card-label", "Needs your approval"));
-    const command = interactCommand(detail, pane);
-    if (command) card.append(el("code", "interact-card-body", command));
-    if (answerable) {
-      card.append(renderAnswerActions(state));
-    } else {
-      card.append(renderEscalate("This approval can't be answered here — open the terminal."));
-    }
-    panel.append(card);
-  } else if (kind === "WaitingForInput") {
-    const card = el("div", "interact-card");
-    card.append(el("div", "interact-card-label", "Agent is waiting on you"));
-    const prompt = interactPrompt(detail, pane);
-    if (prompt) card.append(el("p", "interact-card-body", prompt));
-    card.append(renderEscalate("Free-text replies go through the terminal."));
-    panel.append(card);
-  }
-
-  panel.append(renderInteractLog(pane));
   return panel;
 }
 
-// Build answer buttons from the structured choices. The browser sends a typed
-// intent (approve / deny / select) plus the prompt fingerprint; the server
-// resolves the actual keystrokes through the agent adapter.
-function renderAnswerActions(state) {
-  const actions = el("div", "interact-card-actions");
-  const fingerprint = state.fingerprint;
-  for (const choice of state.choices) {
-    let cls = "pill";
-    let answer;
-    if (choice.role === "affirm") {
-      cls = "pill is-primary";
-      answer = { answer: "approve" };
-    } else if (choice.role === "deny") {
-      cls = "pill is-danger";
-      answer = { answer: "deny" };
+function renderDashboardCard(title, body) {
+  const card = el("section", "interact-card dashboard-card");
+  card.append(el("div", "interact-card-label", title));
+  card.append(body);
+  return card;
+}
+
+function renderCurrentStatus(detail, pane) {
+  const wrap = el("div", "dashboard-card-body");
+  wrap.append(el("p", "interact-card-body", detail.live_status_summary || detail.status_label || "No live summary yet."));
+  const meta = el("dl", "dashboard-meta");
+  appendGridRow(meta, "Task", detail.qualified_handle);
+  appendGridRow(meta, "Lifecycle", detail.lifecycle || "—");
+  appendGridRow(meta, "State", detail.ui_state || "—");
+  if (paneAvailable && pane && pane.truncated) {
+    appendGridRow(meta, "Terminal", "Live snapshot available");
+  }
+  wrap.append(meta);
+  return wrap;
+}
+
+function renderNeedsFromYou(detail, pane, tmuxMissing) {
+  const wrap = el("div", "dashboard-card-body");
+  if (tmuxMissing) {
+    wrap.append(el("p", "interact-card-body", "Tmux session is missing. Sync the task to recover."));
+    return wrap;
+  }
+
+  const kind = detail.live_status_kind;
+  const command = interactCommand(detail, pane);
+  if (kind === "WaitingForApproval" && command) {
+    wrap.append(el("p", "interact-card-body", "The agent is blocked on an approval decision."));
+    wrap.append(el("code", "interact-card-body", command));
+    if (pane && pane.state && pane.state.answerable && pane.state.fingerprint) {
+      const actions = el("div", "interact-card-actions");
+      const approve = el("button", "pill is-primary", "Approve");
+      approve.type = "button";
+      approve.addEventListener("click", () => sendAnswer("approve", pane.state.fingerprint));
+      const deny = el("button", "pill is-danger", "Deny");
+      deny.type = "button";
+      deny.addEventListener("click", () => sendAnswer("deny", pane.state.fingerprint));
+      actions.append(approve);
+      actions.append(deny);
+      wrap.append(actions);
     } else {
-      answer = { answer: "select", index: choice.index };
+      wrap.append(el("p", "interact-hint", "Open the terminal for this approval."));
     }
-    const button = el("button", cls, choice.label);
-    button.type = "button";
-    button.addEventListener("click", () => sendAnswer(answer, fingerprint));
-    actions.append(button);
+    return wrap;
   }
-  return actions;
-}
 
-// Triage-only: anything we can't structure as a safe one-tap decision is sent
-// to the terminal rather than offering a free-text box in the browser.
-function renderEscalate(message) {
-  const wrap = el("div", "interact-escalate");
-  wrap.append(el("p", "interact-hint", message));
-  wrap.append(el("span", "pill is-muted interact-escalate-chip", "Open in terminal"));
+  const prompt = interactPrompt(detail, pane);
+  if (kind === "WaitingForInput") {
+    if (prompt) wrap.append(el("p", "interact-card-body", prompt));
+    wrap.append(el("p", "interact-hint", "Open the terminal for free-form replies."));
+    return wrap;
+  }
+
+  wrap.append(el("p", "interact-card-body", "No immediate operator decision is blocking this task."));
   return wrap;
 }
 
-function renderInteractLog(pane) {
-  const wrap = el("div", "interact-log-wrap");
-  const log = el("div", "interact-log");
-  log.dataset.role = "interact-log";
-  const lines = (pane && Array.isArray(pane.lines)) ? pane.lines : [];
-  if (!lines.length) {
-    log.append(el("div", "interact-log-empty", "Pane is quiet."));
+function renderBestNextStep(detail) {
+  const wrap = el("div", "dashboard-card-body");
+  const primary = actionStatesForCard(detail).find((state) => state.action === detail.primary_action);
+  const message = nextStepMessage(detail, primary);
+  wrap.append(el("p", "interact-card-body", message));
+  if (primary && primary.status === "supported") {
+    wrap.append(el("span", "dashboard-chip", actionLabel(primary.action, primary)));
+  }
+  return wrap;
+}
+
+function nextStepMessage(detail, primary) {
+  switch (detail.live_status_kind) {
+    case "WaitingForApproval":
+      return "Clear the approval request, then let the task continue.";
+    case "WaitingForInput":
+      return "Open the terminal to reply directly to the agent.";
+    case "CiFailed":
+      return "Inspect the failing check and run Fix CI if you want Ajax to remediate it.";
+    case "MergeConflict":
+      return "Run Resolve conflicts to repair the branch before reviewing or shipping.";
+    default:
+      if (primary && primary.status === "supported") {
+        return `Use ${actionLabel(primary.action, primary)} when you're ready to move this task forward.`;
+      }
+      return "Monitor the task health and use the action drawer when intervention is needed.";
+  }
+}
+
+function renderMilestones(detail, pane) {
+  const list = el("ul", "milestone-list");
+  for (const entry of milestoneEntries(detail, pane)) {
+    const item = el("li", "milestone-entry");
+    item.append(el("span", "milestone-dot"));
+    item.append(el("span", "milestone-text", entry));
+    list.append(item);
+  }
+  return list;
+}
+
+function milestoneEntries(detail, pane) {
+  const entries = [];
+  entries.push(detail.live_status_summary || detail.status_label || "Task opened in Cockpit.");
+  if (detail.git) {
+    entries.push(
+      `${detail.git.ahead || 0} ahead · ${detail.git.behind || 0} behind · ${detail.git.dirty ? "dirty worktree" : "clean worktree"}`,
+    );
+  }
+  if (detail.agent_attempts && detail.agent_attempts.length) {
+    for (const attempt of detail.agent_attempts.slice(-3).reverse()) {
+      const started = new Date(attempt.started_unix_secs * 1000);
+      entries.push(`${titleCase(attempt.outcome)} at ${started.toLocaleString()}`);
+    }
+  } else if (detail.agent_activity) {
+    entries.push(detail.agent_activity);
+  }
+  if (pane && pane.state && pane.state.command) {
+    entries.push(`Pending command: ${pane.state.command}`);
+  }
+  return entries.slice(0, 4);
+}
+
+function renderTerminalDetails(detail, pane, tmuxMissing) {
+  const details = document.createElement("details");
+  details.className = "terminal-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "View terminal details";
+  details.append(summary);
+
+  if (tmuxMissing) {
+    details.append(el("p", "interact-hint", "Terminal session is unavailable for this task."));
+    return details;
+  }
+
+  const pre = el("pre", "activity-excerpt");
+  if (pane && Array.isArray(pane.lines) && pane.lines.length) {
+    pre.textContent = pane.lines.join("\n");
+  } else if (detail.agent_activity) {
+    pre.textContent = detail.agent_activity;
   } else {
-    for (const line of lines) {
-      const row = el("div", "interact-log-entry is-agent");
-      row.append(el("span", "interact-log-glyph", "·"));
-      row.append(el("span", "interact-log-text", line));
-      log.append(row);
-    }
+    pre.textContent = "No live pane snapshot available.";
   }
-  log.addEventListener("scroll", () => {
-    const atBottom = Math.abs(log.scrollHeight - log.scrollTop - log.clientHeight) < 4;
-    logPinned = atBottom;
-    pinPill.hidden = atBottom;
-  });
-  const pinPill = el("button", "interact-pin", "Pinned to bottom ▾");
-  pinPill.type = "button";
-  pinPill.hidden = true;
-  pinPill.addEventListener("click", () => {
-    logPinned = true;
-    log.scrollTop = log.scrollHeight;
-    pinPill.hidden = true;
-  });
-  wrap.append(log);
-  wrap.append(pinPill);
-  // schedule autoscroll after insertion
-  requestAnimationFrame(() => {
-    if (logPinned) log.scrollTop = log.scrollHeight;
-  });
-  return wrap;
+  details.append(pre);
+  return details;
 }
 
 function renderInteractPanelInto(detail, pane) {
@@ -730,31 +775,29 @@ function renderInteractPanelInto(detail, pane) {
   existing.replaceWith(renderInteractPanel(detail, pane));
 }
 
-// Send a guarded answer to a structured prompt. The fingerprint pins it to the
-// exact prompt the operator saw; a 409 means the agent moved on.
 async function sendAnswer(answer, fingerprint) {
   if (!detailHandle) return;
   if (!fingerprint) {
-    showResult("This prompt isn't answerable yet — refresh", null, true);
+    showResult("This approval is no longer current — refresh the task", null, true);
     return;
   }
   try {
     const response = await fetch(`/api/tasks/${encodeURIComponent(detailHandle)}/answer`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...answer, fingerprint, request_id: requestId() }),
+      body: JSON.stringify({ answer, fingerprint, request_id: requestId() }),
     });
+    if (response.status === 429) {
+      showResult("Slow down — too many actions in a short window", null, true);
+      return;
+    }
     if (response.status === 409) {
-      showResult("The agent moved on — that prompt is no longer current", null, true);
+      showResult("The agent moved on before this approval was sent", null, true);
       schedulePaneTick(true);
       return;
     }
     if (response.status === 422) {
-      showResult("This prompt can't be answered here — open the terminal", null, true);
-      return;
-    }
-    if (response.status === 429) {
-      showResult("Slow down — too many actions in a short window", null, true);
+      showResult("This prompt needs the terminal instead of the dashboard", null, true);
       return;
     }
     if (!response.ok) {
@@ -846,7 +889,6 @@ function resetInteractState() {
   paneSequence = 0;
   paneAvailable = false;
   lastInteractKind = null;
-  logPinned = true;
   lastDetailData = null;
 }
 
