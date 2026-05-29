@@ -2722,27 +2722,18 @@ fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
 fn release_please_workspace_crate_seeds_follow_the_current_cli_release_line() {
     let manifest = serde_json::json!({
         "crates/ajax-cli": "0.8.0",
-        "crates/ajax-core": "0.8.0",
-        "crates/ajax-supervisor": "0.8.0",
-        "crates/ajax-tui": "0.8.0",
-        "crates/ajax-web": "0.8.0"
     });
 
-    let seeded_release_line = expected_linked_release_line(&manifest);
-    for crate_path in [
-        "crates/ajax-core",
-        "crates/ajax-supervisor",
-        "crates/ajax-tui",
-        "crates/ajax-web",
-    ] {
-        assert_eq!(
-            manifest[crate_path], seeded_release_line,
-            "{crate_path} should stay on the same release line as ajax-cli"
-        );
-    }
+    assert_eq!(
+        manifest,
+        serde_json::json!({
+            "crates/ajax-cli": expected_single_release_line(&manifest),
+        }),
+        "the manifest should track one shared release line rooted at ajax-cli"
+    );
 }
 
-fn expected_linked_release_line(manifest: &serde_json::Value) -> serde_json::Value {
+fn expected_single_release_line(manifest: &serde_json::Value) -> serde_json::Value {
     manifest["crates/ajax-cli"].clone()
 }
 
@@ -2759,23 +2750,34 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
     )
     .unwrap();
     let plugins = config["plugins"].as_array().unwrap();
+    let additional_paths = packages["crates/ajax-cli"]["additional-paths"]
+        .as_array()
+        .expect("ajax-cli should define additional-paths so sibling crate changes still trigger the shared release");
 
-    for package_path in [
-        "crates/ajax-cli",
-        "crates/ajax-core",
-        "crates/ajax-supervisor",
-        "crates/ajax-tui",
-        "crates/ajax-web",
-    ] {
-        assert!(
-            packages.contains_key(package_path),
-            "release-please should register {package_path} so library-only commits trigger a release"
-        );
-    }
+    assert_eq!(
+        packages.keys().collect::<Vec<_>>(),
+        vec![&"crates/ajax-cli".to_string()],
+        "release-please should expose one releasable workspace path instead of one path per crate"
+    );
+    assert_eq!(
+        manifest.as_object().unwrap().keys().collect::<Vec<_>>(),
+        vec![&"crates/ajax-cli".to_string()],
+        "the manifest should track only the shared ajax-cli release line"
+    );
+    assert_eq!(
+        additional_paths,
+        &vec![
+            serde_json::Value::String("crates/ajax-core".to_string()),
+            serde_json::Value::String("crates/ajax-supervisor".to_string()),
+            serde_json::Value::String("crates/ajax-tui".to_string()),
+            serde_json::Value::String("crates/ajax-web".to_string()),
+        ],
+        "ajax-cli should treat sibling crate paths as additional release triggers"
+    );
 
     let bootstrap_sha = config["bootstrap-sha"]
         .as_str()
-        .expect("release-please should pin bootstrap-sha for the first grouped workspace release");
+        .expect("release-please should pin bootstrap-sha for the shared workspace release");
     assert_eq!(
         bootstrap_sha.len(),
         40,
@@ -2800,74 +2802,19 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         "cargo-workspace should keep explicit release-please control over grouped updates"
     );
 
-    let linked_versions = plugins
-        .iter()
-        .find(|plugin| {
-            plugin.as_str() == Some("linked-versions")
-                || plugin.get("type").and_then(serde_json::Value::as_str) == Some("linked-versions")
-        })
-        .expect(
-            "linked-versions should keep all ajax-cli component manifest paths on one release line",
-        );
-    let components = linked_versions["components"]
-        .as_array()
-        .expect("linked-versions components should be an array");
-    assert_eq!(
-        components,
-        &vec![serde_json::Value::String("ajax-cli".to_string())],
-        "linked-versions should only reference the shared ajax-cli component, not per-crate component names"
+    assert!(
+        plugins.iter().all(|plugin| {
+            plugin.as_str() != Some("linked-versions")
+                && plugin.get("type").and_then(serde_json::Value::as_str) != Some("linked-versions")
+        }),
+        "linked-versions should be removed once ajax-cli is the only releasable workspace path"
     );
 
-    for package_path in [
-        "crates/ajax-cli",
-        "crates/ajax-core",
-        "crates/ajax-supervisor",
-        "crates/ajax-tui",
-        "crates/ajax-web",
-    ] {
-        let package = packages
-            .get(package_path)
-            .unwrap_or_else(|| panic!("missing package config for {package_path}"));
-        assert_eq!(
-            package["component"],
-            serde_json::Value::String("ajax-cli".to_string()),
-            "{package_path} should share the ajax-cli component so one tag closes all workspace commit queues"
-        );
-    }
-
-    for crate_path in [
-        "crates/ajax-cli",
-        "crates/ajax-core",
-        "crates/ajax-supervisor",
-        "crates/ajax-tui",
-        "crates/ajax-web",
-    ] {
-        let seeded_release_line = expected_linked_release_line(&manifest);
-        assert_eq!(
-            manifest[crate_path], seeded_release_line,
-            "{crate_path} should be seeded from the current ajax-cli release line instead of 0.1.0"
-        );
-    }
-    for package_path in [
-        "crates/ajax-core",
-        "crates/ajax-supervisor",
-        "crates/ajax-tui",
-        "crates/ajax-web",
-    ] {
-        let package = packages
-            .get(package_path)
-            .unwrap_or_else(|| panic!("missing package config for {package_path}"));
-        assert_eq!(
-            package["skip-github-release"],
-            serde_json::Value::Bool(true),
-            "{package_path} should not publish its own GitHub release"
-        );
-        assert_eq!(
-            package["skip-changelog"],
-            serde_json::Value::Bool(true),
-            "{package_path} should not maintain a separate changelog"
-        );
-    }
+    let seeded_release_line = expected_single_release_line(&manifest);
+    assert_eq!(
+        manifest["crates/ajax-cli"], seeded_release_line,
+        "ajax-cli should be seeded from the current shared release line instead of 0.1.0"
+    );
 }
 
 #[test]
