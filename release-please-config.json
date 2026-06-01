@@ -7,43 +7,19 @@
     {
       "type": "cargo-workspace",
       "merge": false
-    },
-    {
-      "type": "linked-versions",
-      "groupName": "ajax-cli",
-      "components": ["ajax-cli"]
     }
   ],
   "packages": {
     "crates/ajax-cli": {
-      "component": "ajax-cli",
       "package-name": "ajax-cli",
       "release-type": "rust",
-      "changelog-path": "CHANGELOG.md"
-    },
-    "crates/ajax-core": {
-      "component": "ajax-cli",
-      "release-type": "rust",
-      "skip-changelog": true,
-      "skip-github-release": true
-    },
-    "crates/ajax-supervisor": {
-      "component": "ajax-cli",
-      "release-type": "rust",
-      "skip-changelog": true,
-      "skip-github-release": true
-    },
-    "crates/ajax-tui": {
-      "component": "ajax-cli",
-      "release-type": "rust",
-      "skip-changelog": true,
-      "skip-github-release": true
-    },
-    "crates/ajax-web": {
-      "component": "ajax-cli",
-      "release-type": "rust",
-      "skip-changelog": true,
-      "skip-github-release": true
+      "changelog-path": "CHANGELOG.md",
+      "additional-paths": [
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web"
+      ]
     }
   }
 }
