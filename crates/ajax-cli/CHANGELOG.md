@@ -6,6 +6,15 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.11.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.11.0...ajax-cli-v0.11.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **release:** collapse workspace to one releasable path ([#114](https://github.com/mossipcams/ajax-cli/issues/114)) ([2d09612](https://github.com/mossipcams/ajax-cli/commit/2d09612811bb07aba1206dd8579008a6a8400324))
+* **release:** keep one shared workspace release line ([#113](https://github.com/mossipcams/ajax-cli/issues/113)) ([2e49262](https://github.com/mossipcams/ajax-cli/commit/2e492625bf5b9837f1b5fae1b162180a1ae04456))
+* **web:** make cockpit dashboard-first and split releases per crate ([#111](https://github.com/mossipcams/ajax-cli/issues/111)) ([89906d9](https://github.com/mossipcams/ajax-cli/commit/89906d92243600694b26cd241d677006070ed7f8))
+
 ## [0.11.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.1...ajax-cli-v0.11.0) (2026-05-29)
 
 
