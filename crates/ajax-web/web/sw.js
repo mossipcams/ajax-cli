@@ -49,41 +49,93 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+function taskDeepLink(data) {
+  const handle = data && (data.task_handle || data.handle);
+  if (handle) return `#/t/${encodeURIComponent(handle)}`;
+  return "/";
+}
+
+// Web Push: show a notification when the companion reports a task needs
+// attention, and focus the cockpit when the operator taps it.
 self.addEventListener("push", (event) => {
-  if (!event.data) return;
-  let payload;
-  try {
-    payload = event.data.json();
-  } catch (error) {
-    return;
+  let data = { title: "Ajax Cockpit", body: "A task needs attention", tag: "ajax" };
+  if (event.data) {
+    try {
+      data = Object.assign(data, event.data.json());
+    } catch (error) {
+      data.body = event.data.text();
+    }
   }
-  const title = payload.title || "Ajax Cockpit";
-  const options = {
-    body: payload.body || "",
-    tag: payload.tag || "ajax-attention",
-    data: payload.data || {},
-    icon: "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
+  const url = taskDeepLink(data);
+  const answerable = !!(data.answerable && data.fingerprint && (data.task_handle || data.handle));
+  const actions = answerable
+    ? [
+        { action: "approve", title: "Approve" },
+        { action: "deny", title: "Deny" },
+      ]
+    : [];
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        // Skip the system notification flash when the operator already has Cockpit open.
+        if (clients.some((client) => client.visibilityState === "visible")) {
+          return undefined;
+        }
+        return self.registration.showNotification(data.title, {
+          body: data.body,
+          tag: data.tag || "ajax",
+          renotify: false,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          actions,
+          data: {
+            url,
+            handle: data.task_handle || data.handle || null,
+            fingerprint: data.fingerprint || null,
+          },
+        });
+      }),
+  );
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
-  const handle = data.task_handle;
-  const target = handle ? `#/t/${encodeURIComponent(handle)}` : "#/";
+  const target = data.url || "/";
+
+  if (event.action === "approve" || event.action === "deny") {
+    const requestId =
+      self.crypto && self.crypto.randomUUID
+        ? self.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    event.waitUntil(
+      fetch(`/api/tasks/${encodeURIComponent(data.handle)}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          answer: event.action,
+          fingerprint: data.fingerprint,
+          request_id: requestId,
+        }),
+      }).catch(() => undefined),
+    );
+    return;
+  }
+
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      for (const client of clients) {
-        if ("focus" in client) {
-          if ("navigate" in client && target.startsWith("#")) {
-            return client.focus().then(() => client.navigate(target));
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clients) => {
+        for (const client of clients) {
+          if ("focus" in client) {
+            if ("navigate" in client && target.startsWith("#")) {
+              return client.focus().then(() => client.navigate(target));
+            }
+            return client.focus();
           }
-          return client.focus();
         }
-      }
-      return self.clients.openWindow(target.startsWith("#") ? `/${target}` : target);
-    }),
+        return self.clients.openWindow(target.startsWith("#") ? `/${target}` : target);
+      }),
   );
 });

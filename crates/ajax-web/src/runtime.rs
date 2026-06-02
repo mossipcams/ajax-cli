@@ -28,7 +28,7 @@ use std::{
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    action_vocabulary::{supported_web_action, SYNC_ACTION},
+    action_vocabulary::supported_web_action,
     adapters::{push, server, tls},
     slices::{attention, cockpit, install},
     WebError,
