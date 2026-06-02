@@ -250,9 +250,11 @@ inbox first so work that needs the operator does not disappear inside one repo.
 
 When Cockpit opens a task, Ajax runs a foreground bridge to the task's tmux
 session. Normal input is forwarded to tmux. Press `Ctrl+Q` from that bridge to
-detach the foreground task client and return to Cockpit. Ajax does not install a
-global tmux key binding for this; outside the Cockpit task bridge, tmux keeps
-its normal key handling.
+detach the foreground task client and return to Cockpit. Press `Ctrl+T` from the
+bridge or from Cockpit itself to open create-task for the current project (from
+inside a task, that is the task's repo). Ajax does not install a global tmux key
+binding for these shortcuts; outside the Cockpit task bridge, tmux keeps its
+normal key handling.
 
 Use watch mode when you want repeated cockpit frames:
 

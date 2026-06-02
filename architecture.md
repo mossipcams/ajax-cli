@@ -295,8 +295,9 @@ task-operation commands or separate operator domains.
   such as `tmux-agent-status`; core owns the status value interpretation.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
-  filters Cockpit-owned shortcuts such as Ctrl-Q without installing tmux
-  bindings, and resumes Cockpit when the task attach client detaches.
+  filters Cockpit-owned shortcuts such as Ctrl-Q and Ctrl-T without installing
+  tmux bindings, and resumes Cockpit when the task attach client detaches.
+  Ctrl-T returns to Cockpit on the create-task screen for the task's project.
 
 Startup behavior should stay inside normal CLI parsing and dispatch. Bare
 invocations may choose a default operator surface, and flags may select runtime

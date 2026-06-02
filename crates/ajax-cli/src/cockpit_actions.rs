@@ -19,10 +19,18 @@ use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
     dispatch::execute_observed_drop,
-    execution_dispatch::execute_new_task_plan_with_task_session,
-    task_session::{execute_task_entry_plan, TaskSessionRunner},
+    execution_dispatch::{execute_new_task_plan_with_task_session, ExecuteNewTaskWithSession},
+    task_session::{
+        execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
+    },
     CliError,
 };
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum PendingCockpitExecution {
+    Continue(Option<String>),
+    OpenNewTask { repo: String },
+}
 
 pub(crate) fn handle_pending_cockpit_result(
     result: Result<Option<String>, CliError>,
@@ -285,7 +293,8 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     runner: &mut R,
     state_changed: &mut bool,
     task_session: &mut S,
-) -> Result<Option<String>, CliError> {
+) -> Result<PendingCockpitExecution, CliError> {
+    let session_context = TaskSessionContext::from_task_handle(&pending.task_handle);
     let task_entry_open_mode = commands::OpenMode::Attach;
     if pending.action == OperatorAction::Start.as_str() {
         let title = pending.task_title.clone().ok_or_else(|| {
@@ -300,22 +309,32 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         };
         let (_intent, plan) =
             plan_start_task_operation(context, request.clone()).map_err(command_error)?;
-        execute_new_task_plan_with_task_session(
+        match execute_new_task_plan_with_task_session(
             context,
             runner,
             task_session,
-            &request,
-            &plan,
-            true,
-            task_entry_open_mode,
+            &ExecuteNewTaskWithSession {
+                request: &request,
+                plan: &plan,
+                session_context: &session_context,
+                confirmed: true,
+                open_mode: task_entry_open_mode,
+            },
         )
         .inspect_err(|error| {
             if error.state_changed() {
                 *state_changed = true;
             }
-        })?;
-        *state_changed = true;
-        return Ok(None);
+        })? {
+            TaskEntryPlanOutcome::Completed(_) => {
+                *state_changed = true;
+                return Ok(PendingCockpitExecution::Continue(None));
+            }
+            TaskEntryPlanOutcome::OpenNewTask => {
+                *state_changed = true;
+                return open_new_task_after_task_session(&session_context);
+            }
+        }
     }
 
     if remediation::is_remediation_action(&pending.action) {
@@ -343,7 +362,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             &skill_path.display().to_string(),
         )
         .map_err(remediation_cli_error)?;
-        return Ok(Some(outcome.output));
+        return Ok(PendingCockpitExecution::Continue(Some(outcome.output)));
     }
 
     let Some(action) = OperatorAction::from_label(pending.action.as_str()) else {
@@ -356,7 +375,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     if action == OperatorAction::Drop {
         let rendered = execute_observed_drop(context, &pending.task_handle, true, runner)?;
         *state_changed |= rendered.state_changed;
-        return Ok(None);
+        return Ok(PendingCockpitExecution::Continue(None));
     }
 
     let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
@@ -378,13 +397,30 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         )
         .map_err(|error| task_command_cli_error(error, state_changed))?;
         *state_changed |= operation_state_changed;
-        return Ok(None);
+        return Ok(PendingCockpitExecution::Continue(None));
     }
 
-    execute_task_entry_plan(&plan, runner, task_session)?;
-    commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
-    *state_changed = true;
-    Ok(None)
+    match execute_task_entry_plan(&plan, runner, task_session, &session_context)? {
+        TaskEntryPlanOutcome::Completed(_) => {
+            commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
+            *state_changed = true;
+            Ok(PendingCockpitExecution::Continue(None))
+        }
+        TaskEntryPlanOutcome::OpenNewTask => {
+            commands::mark_task_opened(context, &pending.task_handle).map_err(command_error)?;
+            *state_changed = true;
+            open_new_task_after_task_session(&session_context)
+        }
+    }
+}
+
+fn open_new_task_after_task_session(
+    session_context: &TaskSessionContext,
+) -> Result<PendingCockpitExecution, CliError> {
+    let repo = session_context.new_task_repo.clone().ok_or_else(|| {
+        CliError::CommandFailed("task handle did not include a repo for create-task".to_string())
+    })?;
+    Ok(PendingCockpitExecution::OpenNewTask { repo })
 }
 
 fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {

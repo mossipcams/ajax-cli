@@ -215,6 +215,22 @@ fn inbox_task_ids<'a>(items: impl Iterator<Item = &'a AnnotationItem>) -> HashSe
     items.map(|item| item.task_id.clone()).collect()
 }
 
+fn repo_from_view(view: &AppView) -> Option<String> {
+    match view {
+        AppView::Project { repo } => Some(repo.clone()),
+        AppView::NewTaskInput { repo, .. } => Some(repo.clone()),
+        AppView::Help { previous } => repo_from_view(previous),
+        AppView::Projects => None,
+    }
+}
+
+fn repo_from_qualified_handle(handle: &str) -> Option<String> {
+    handle
+        .split_once('/')
+        .map(|(repo, _)| repo.to_string())
+        .or_else(|| (!handle.is_empty()).then(|| handle.to_string()))
+}
+
 pub struct App {
     pub(crate) repos: ReposResponse,
     pub(crate) cards: Vec<TaskCard>,
@@ -329,6 +345,39 @@ impl App {
     /// The action that Enter would dispatch right now, or None if nothing is selectable.
     pub fn selected_action(&self) -> Option<CockpitActionItem> {
         self.selectables.get(self.selected).map(|s| s.as_action())
+    }
+
+    /// Repo to use for Ctrl+T / create-task, from the current view or selection.
+    pub fn repo_for_new_task(&self) -> Option<String> {
+        if let Some(repo) = repo_from_view(&self.view) {
+            return Some(repo);
+        }
+
+        let selected = self.selectables.get(self.selected)?;
+        Some(match selected {
+            SelectableKind::Project(repo) => repo.name.clone(),
+            SelectableKind::NewTask { repo } => repo.clone(),
+            SelectableKind::Task(card)
+            | SelectableKind::TaskAction { task: card, .. }
+            | SelectableKind::Remediation { task: card, .. } => {
+                repo_from_qualified_handle(&card.qualified_handle)?
+            }
+            SelectableKind::Inbox(item) => repo_from_qualified_handle(&item.task_handle)?,
+        })
+    }
+
+    /// Open the create-task screen for `repo`, clearing any in-progress title.
+    pub fn open_new_task(&mut self, repo: String) {
+        self.view = AppView::NewTaskInput {
+            repo,
+            title: String::new(),
+        };
+        self.selected = 0;
+        self.viewport_scroll = 0;
+        self.expanded_task = None;
+        self.system_notice = None;
+        self.invalidate_pending_confirmation();
+        self.rebuild_selectables();
     }
 
     /// Return to the cockpit's main project list. Returns false at the top

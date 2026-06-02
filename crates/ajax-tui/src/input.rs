@@ -75,6 +75,17 @@ fn handle_key_event<H: CockpitEventHandler + ?Sized>(
         KeyCode::Char('q') if modifiers.contains(KeyModifiers::CONTROL) => {
             app.go_home();
         }
+        KeyCode::Char('t') if modifiers.contains(KeyModifiers::CONTROL) => {
+            if let Some(repo) = app.repo_for_new_task() {
+                app.open_new_task(repo);
+            } else {
+                app.notify_system(
+                    "select a project or task first".to_string(),
+                    Severity::Hint,
+                    Origin::UserAction,
+                );
+            }
+        }
         KeyCode::Char('q') if modifiers.is_empty() => return Ok(EventLoopAction::Quit),
         code if navigation::is_back_key_event(code, modifiers) => {
             app.go_back();

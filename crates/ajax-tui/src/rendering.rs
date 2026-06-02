@@ -182,6 +182,9 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
     let nested = !matches!(app.view, AppView::Projects);
     push_hint(&mut parts, "up/down", "select", false);
     push_hint(&mut parts, "enter", enter_label, false);
+    if !matches!(app.view, AppView::NewTaskInput { .. }) {
+        push_hint(&mut parts, "^T", "new task", false);
+    }
     push_hint(&mut parts, "?", "help", false);
     if nested {
         let back_label = if matches!(app.view, AppView::NewTaskInput { .. }) {

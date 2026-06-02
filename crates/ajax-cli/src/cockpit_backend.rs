@@ -73,6 +73,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     };
     let mut state_changed = false;
     let mut cockpit_flash = None;
+    let mut open_new_task_repo = None;
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
     loop {
@@ -89,6 +90,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 runner,
                 state_changed: &mut state_changed,
             },
+            open_new_task_repo.take(),
         )
         .map_err(|e| CliError::CommandFailed(e.to_string()))?;
         let Some(pending) = pending else {
@@ -98,17 +100,21 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             });
         };
 
-        if !handle_pending_cockpit_result(
-            execute_pending_cockpit_action_with_task_session(
-                &pending,
-                context,
-                runner,
-                &mut state_changed,
-                &mut task_session,
-            ),
-            &mut cockpit_flash,
-        ) {
-            continue;
+        match execute_pending_cockpit_action_with_task_session(
+            &pending,
+            context,
+            runner,
+            &mut state_changed,
+            &mut task_session,
+        )? {
+            crate::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } => {
+                open_new_task_repo = Some(repo);
+            }
+            crate::cockpit_actions::PendingCockpitExecution::Continue(message) => {
+                if !handle_pending_cockpit_result(Ok(message), &mut cockpit_flash) {
+                    continue;
+                }
+            }
         }
     }
 }
