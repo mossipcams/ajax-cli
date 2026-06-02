@@ -6,6 +6,7 @@ use ajax_core::{
     models::OperatorAction,
     output::CockpitView,
     registry::{InMemoryRegistry, Registry},
+    runtime_refresh::RefreshTier,
 };
 use axum::{
     body::Bytes,
@@ -51,6 +52,7 @@ struct WebSharedState<C, B> {
     context: CommandContext<InMemoryRegistry>,
     runner: C,
     bridge: B,
+    attention_polls: u32,
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -75,6 +77,7 @@ impl<C, B> WebAppState<C, B> {
                 context,
                 runner,
                 bridge,
+                attention_polls: 0,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             state_dir: Arc::new(state_dir),
@@ -236,8 +239,15 @@ where
         context,
         runner,
         bridge,
+        attention_polls,
     } = guard;
-    if let Err(error) = bridge.refresh_cockpit(context, runner) {
+    *attention_polls = attention_polls.wrapping_add(1);
+    let tier = if attention_polls.is_multiple_of(4) {
+        RefreshTier::Full
+    } else {
+        RefreshTier::Live
+    };
+    if let Err(error) = bridge.refresh_cockpit(context, runner, tier) {
         eprintln!("Ajax web attention refresh failed: {error}");
     }
     attention_handles(&commands::cockpit_view(context))
@@ -284,6 +294,7 @@ where
         context,
         runner,
         bridge,
+        ..
     } = &mut *guard;
     match handle_refreshed_cockpit_request(context, runner, bridge) {
         Ok(response) => response.into_axum_response(),
@@ -328,6 +339,7 @@ where
         context,
         runner,
         bridge,
+        ..
     } = &mut *guard;
     match handle_start_task_request(
         &serde_json::to_string(&request).unwrap_or_default(),
@@ -402,6 +414,7 @@ where
         context,
         runner,
         bridge,
+        ..
     } = &mut *guard;
     let response = match handle_action_request(
         &serde_json::to_string(&request).unwrap_or_default(),
@@ -501,6 +514,7 @@ pub trait RuntimeBridge<C: CommandRunner> {
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
+        tier: RefreshTier,
     ) -> Result<bool, WebError>;
 
     fn execute_operate(
@@ -596,7 +610,7 @@ fn handle_refreshed_cockpit_request<C: CommandRunner>(
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
-    let _state_changed = bridge.refresh_cockpit(context, runner)?;
+    let _state_changed = bridge.refresh_cockpit(context, runner, RefreshTier::Full)?;
     json_response(
         200,
         serde_json::to_value(cockpit::browser_cockpit_view(context))
@@ -752,7 +766,7 @@ fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{route, route_with_bridge, ActionFailure, Request, RuntimeBridge};
+    use super::{route, route_with_bridge, ActionFailure, RefreshTier, Request, RuntimeBridge};
     use crate::slices::operate::{OperateOutcome, OperateRequest};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
@@ -802,6 +816,7 @@ mod tests {
             &mut self,
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
+            _tier: RefreshTier,
         ) -> Result<bool, crate::WebError> {
             self.refreshed = true;
             Ok(false)
