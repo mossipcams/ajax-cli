@@ -2,8 +2,6 @@
 
 use ajax_core::{models::OperatorAction, output::TaskCard};
 
-pub const SYNC_ACTION: &str = "sync";
-
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct WebActionState {
     pub action: String,
@@ -21,10 +19,7 @@ pub fn web_action_state(action: OperatorAction) -> WebActionState {
         | OperatorAction::Ship
         | OperatorAction::Repair
         | OperatorAction::Drop => ("supported", None),
-        OperatorAction::Resume => (
-            "needs_terminal",
-            Some("live agent typing requires native cockpit"),
-        ),
+        OperatorAction::Resume => ("unsupported", Some("resume requires native cockpit")),
         OperatorAction::Start => (
             "unsupported",
             Some("start uses the dedicated Web Cockpit new-task operation"),
@@ -38,17 +33,6 @@ pub fn web_action_state(action: OperatorAction) -> WebActionState {
         reason,
         destructive: action == OperatorAction::Drop,
         confirmation_required: action == OperatorAction::Drop,
-    }
-}
-
-pub fn sync_action_state() -> WebActionState {
-    WebActionState {
-        action: SYNC_ACTION.to_string(),
-        label: None,
-        status: "supported".to_string(),
-        reason: Some("refresh task runtime without terminal attach"),
-        destructive: false,
-        confirmation_required: false,
     }
 }
 
@@ -76,15 +60,9 @@ pub fn browser_action_states(card: &TaskCard) -> Vec<WebActionState> {
         card.available_actions
             .iter()
             .copied()
-            .filter(|action| *action != OperatorAction::Start)
+            .filter(|action| supported_web_action(*action))
             .map(web_action_state),
     );
-
-    let resume_relevant = card.available_actions.contains(&OperatorAction::Resume)
-        || card.primary_action == OperatorAction::Resume;
-    if resume_relevant && !states.iter().any(|state| state.action == SYNC_ACTION) {
-        states.push(sync_action_state());
-    }
 
     states
 }
@@ -94,20 +72,18 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
 }
 
 pub fn supported_browser_action(action: &str) -> bool {
-    if action == SYNC_ACTION || ajax_core::remediation::is_remediation_action(action) {
+    if ajax_core::remediation::is_remediation_action(action) {
         return true;
     }
     OperatorAction::from_label(action).is_some_and(supported_web_action)
 }
 
 pub fn primary_browser_action(card: &TaskCard) -> String {
+    if let Some(remediation) = card.remediations.first() {
+        return remediation.id.clone();
+    }
     if supported_web_action(card.primary_action) {
         return card.primary_action.as_str().to_string();
-    }
-    if card.available_actions.contains(&OperatorAction::Resume)
-        || card.primary_action == OperatorAction::Resume
-    {
-        return SYNC_ACTION.to_string();
     }
     card.available_actions
         .iter()
@@ -121,7 +97,7 @@ pub fn primary_browser_action(card: &TaskCard) -> String {
 mod tests {
     use super::{
         browser_action_states, primary_browser_action, supported_browser_action,
-        supported_web_action, web_action_state, SYNC_ACTION,
+        supported_web_action, web_action_state,
     };
     use ajax_core::{
         models::{
@@ -137,7 +113,7 @@ mod tests {
         let state = web_action_state(OperatorAction::Resume);
 
         assert_eq!(state.action, "resume");
-        assert_eq!(state.status, "needs_terminal");
+        assert_eq!(state.status, "unsupported");
         assert!(!supported_web_action(OperatorAction::Resume));
     }
 
@@ -152,7 +128,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_action_states_adds_sync_when_resume_is_relevant() {
+    fn browser_action_states_do_not_surface_resume_or_sync_in_web_cockpit() {
         let card = TaskCard {
             id: TaskId::new("web/fix-login"),
             qualified_handle: "web/fix-login".to_string(),
@@ -169,10 +145,11 @@ mod tests {
 
         let states = browser_action_states(&card);
 
-        assert!(states.iter().any(|state| state.action == SYNC_ACTION));
+        assert!(!states.iter().any(|state| state.action == "resume"));
+        assert!(!states.iter().any(|state| state.action == "sync"));
         assert!(states.iter().any(|state| state.action == "review"));
-        assert_eq!(primary_browser_action(&card), SYNC_ACTION);
-        assert!(supported_browser_action(SYNC_ACTION));
+        assert_eq!(primary_browser_action(&card), "review");
+        assert!(!supported_browser_action("sync"));
     }
 
     #[test]
@@ -198,6 +175,7 @@ mod tests {
             .expect("fix-ci action");
 
         assert_eq!(fix_ci.status, "supported");
+        assert_eq!(primary_browser_action(&card), FIX_CI);
         assert!(supported_browser_action(FIX_CI));
     }
 

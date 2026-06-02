@@ -25,11 +25,13 @@ const resultOutput = document.getElementById("result-output");
 const resultDismiss = document.getElementById("result-dismiss");
 
 const REFRESH_INTERVAL_MS = 1000;
-const CONFIRM_TIMEOUT_MS = 3000;
+const CONFIRM_TIMEOUT_MS = 8000;
 const RESULT_AUTO_DISMISS_MS = 12000;
 const RESTART_POLL_MS = 500;
 const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
+const PANE_INTERVAL_DEFAULT_MS = 1000;
+const MAX_LOG_ENTRIES = 24;
 
 let lastCockpit = null;
 let lastFingerprint = null;
@@ -38,7 +40,17 @@ let detailHandle = null;
 let detailInFlight = false;
 let selectedProject = null;
 const expandedCards = new Set();
-const pendingConfirms = new WeakMap();
+/** @type {Map<string, { originalLabel: string, expiresAt: number, timer: ReturnType<typeof setTimeout> }>} */
+const pendingConfirmByKey = new Map();
+
+// INTERACT PANEL STATE ------------------------------------------------------
+let lastDetailData = null;
+let lastPaneData = null;
+let paneSequence = 0;
+let paneInFlight = false;
+let paneTimer = null;
+let paneAvailable = false;
+let lastInteractKind = null;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -52,7 +64,6 @@ function titleCase(value) {
 }
 
 const ACTION_LABELS = {
-  sync: "Sync",
   "fix-ci": "Fix CI",
   "resolve-merge-conflicts": "Resolve conflicts",
 };
@@ -157,6 +168,7 @@ function actionButtonFromState(state, handle, isPrimary) {
     button.classList.add("is-disabled");
     if (state.reason) button.title = state.reason;
   }
+  applyPendingConfirm(button);
   return button;
 }
 
@@ -318,14 +330,19 @@ function summarize(data) {
     : `${total} ${taskWord} · ${attention} need attention`;
 }
 
+function actionStructureSignature(card) {
+  const states = card.action_states || card.available_actions || [];
+  return states.map((state) => {
+    if (typeof state === "string") return [state, "supported"];
+    return [state.action, state.status];
+  });
+}
+
 function structureFingerprint(data) {
   const cards = data.cards.map((c) => [
     c.qualified_handle,
-    c.ui_state,
-    c.status_label,
-    c.lifecycle,
     c.primary_action,
-    JSON.stringify(c.action_states || c.available_actions || []),
+    JSON.stringify(actionStructureSignature(c)),
   ]);
   const items = (data.inbox && data.inbox.items) || [];
   return JSON.stringify({
@@ -423,6 +440,7 @@ async function loadCockpit() {
 // DETAIL VIEW ---------------------------------------------------------------
 
 function renderDetail(detail) {
+  lastDetailData = detail;
   detailContainer.replaceChildren();
 
   const header = el("div", "detail-header");
@@ -435,6 +453,8 @@ function renderDetail(detail) {
   header.append(el("h1", "detail-title", detail.title || detail.qualified_handle));
   detailContainer.append(header);
 
+  detailContainer.append(renderInteractPanel(detail, lastPaneData));
+
   const liveSection = el("section", "detail-section");
   liveSection.append(el("h2", null, "Live status"));
   const liveGrid = el("dl", "detail-grid");
@@ -446,13 +466,6 @@ function renderDetail(detail) {
   if (detail.live_status_summary) appendGridRow(liveGrid, "Live note", detail.live_status_summary);
   liveSection.append(liveGrid);
   detailContainer.append(liveSection);
-
-  if (detail.agent_activity) {
-    const activitySection = el("section", "detail-section");
-    activitySection.append(el("h2", null, "Agent activity"));
-    activitySection.append(el("pre", "activity-excerpt", detail.agent_activity));
-    detailContainer.append(activitySection);
-  }
 
   const gitSection = el("section", "detail-section");
   gitSection.append(el("h2", null, "Branch"));
@@ -625,6 +638,342 @@ restartServerButton.addEventListener("click", () => {
   });
 });
 
+// INTERACT PANEL ------------------------------------------------------------
+
+const INTERACT_STATE_COPY = {
+  WaitingForApproval: { label: "Needs your approval", tone: "attention" },
+  WaitingForInput: { label: "Asking you", tone: "attention" },
+  AgentRunning: { label: "Working", tone: "running" },
+  CommandRunning: { label: "Running command", tone: "running" },
+  TestsRunning: { label: "Running tests", tone: "running" },
+  Thinking: { label: "Thinking", tone: "running" },
+  Done: { label: "Idle — done", tone: "success" },
+  CommandFailed: { label: "Command failed", tone: "danger" },
+  Blocked: { label: "Blocked", tone: "danger" },
+  AuthRequired: { label: "Needs sign-in", tone: "danger" },
+  RateLimited: { label: "Rate limited", tone: "danger" },
+  MergeConflict: { label: "Merge conflict", tone: "danger" },
+  CiFailed: { label: "CI failed", tone: "danger" },
+  Unknown: { label: "Status unknown", tone: "muted" },
+};
+
+function interactStateCopy(kind) {
+  return INTERACT_STATE_COPY[kind] || { label: kind || "—", tone: "muted" };
+}
+
+function interactCommand(detail, pane) {
+  if (pane && pane.state && pane.state.command) return pane.state.command;
+  if (detail && detail.live_status_kind === "WaitingForApproval" && detail.live_status_summary) {
+    return detail.live_status_summary;
+  }
+  return null;
+}
+
+function interactPrompt(detail, pane) {
+  if (pane && pane.state && pane.state.prompt) return pane.state.prompt;
+  if (detail && detail.live_status_kind === "WaitingForInput" && detail.live_status_summary) {
+    return detail.live_status_summary;
+  }
+  return null;
+}
+
+function renderInteractPanel(detail, pane) {
+  const panel = el("section", "interact-panel");
+  const tmuxMissing = pane && pane.tmux_exists === false;
+  const kind = detail.live_status_kind || "Unknown";
+  const copy = interactStateCopy(kind);
+  lastInteractKind = kind;
+
+  const stateRow = el("div", "interact-state");
+  const pill = el("span", `interact-pill tone-${copy.tone}`, copy.label);
+  stateRow.append(pill);
+  if (detail.live_status_summary) {
+    stateRow.append(el("span", "interact-summary", detail.live_status_summary));
+  }
+  panel.append(stateRow);
+
+  const cards = el("div", "dashboard-card-grid");
+  cards.append(renderDashboardCard("Current status", renderCurrentStatus(detail, pane)));
+  cards.append(renderDashboardCard("Needs from you", renderNeedsFromYou(detail, pane, tmuxMissing)));
+  cards.append(renderDashboardCard("Best next step", renderBestNextStep(detail)));
+  cards.append(renderDashboardCard("Recent milestones", renderMilestones(detail, pane)));
+  panel.append(cards);
+
+  panel.append(renderTerminalDetails(detail, pane, tmuxMissing));
+
+  return panel;
+}
+
+function renderDashboardCard(title, body) {
+  const card = el("section", "interact-card dashboard-card");
+  card.append(el("div", "interact-card-label", title));
+  card.append(body);
+  return card;
+}
+
+function renderCurrentStatus(detail, pane) {
+  const wrap = el("div", "dashboard-card-body");
+  wrap.append(el("p", "interact-card-body", detail.live_status_summary || detail.status_label || "No live summary yet."));
+  const meta = el("dl", "dashboard-meta");
+  appendGridRow(meta, "Task", detail.qualified_handle);
+  appendGridRow(meta, "Lifecycle", detail.lifecycle || "—");
+  appendGridRow(meta, "State", detail.ui_state || "—");
+  if (paneAvailable && pane && pane.truncated) {
+    appendGridRow(meta, "Terminal", "Live snapshot available");
+  }
+  wrap.append(meta);
+  return wrap;
+}
+
+function renderNeedsFromYou(detail, pane, tmuxMissing) {
+  const wrap = el("div", "dashboard-card-body");
+  if (tmuxMissing) {
+    wrap.append(el("p", "interact-card-body", "Tmux session is missing. Sync the task to recover."));
+    return wrap;
+  }
+
+  const kind = detail.live_status_kind;
+  const command = interactCommand(detail, pane);
+  if (kind === "WaitingForApproval" && command) {
+    wrap.append(el("p", "interact-card-body", "The agent is blocked on an approval decision."));
+    wrap.append(el("code", "interact-card-body", command));
+    if (pane && pane.state && pane.state.answerable && pane.state.fingerprint) {
+      const actions = el("div", "interact-card-actions");
+      const approve = el("button", "pill is-primary", "Approve");
+      approve.type = "button";
+      approve.addEventListener("click", () => sendAnswer("approve", pane.state.fingerprint));
+      const deny = el("button", "pill is-danger", "Deny");
+      deny.type = "button";
+      deny.addEventListener("click", () => sendAnswer("deny", pane.state.fingerprint));
+      actions.append(approve);
+      actions.append(deny);
+      wrap.append(actions);
+    } else {
+      wrap.append(el("p", "interact-hint", "Open the terminal for this approval."));
+    }
+    return wrap;
+  }
+
+  const prompt = interactPrompt(detail, pane);
+  if (kind === "WaitingForInput") {
+    if (prompt) wrap.append(el("p", "interact-card-body", prompt));
+    wrap.append(el("p", "interact-hint", "Open the terminal for free-form replies."));
+    return wrap;
+  }
+
+  wrap.append(el("p", "interact-card-body", "No immediate operator decision is blocking this task."));
+  return wrap;
+}
+
+function renderBestNextStep(detail) {
+  const wrap = el("div", "dashboard-card-body");
+  const primary = actionStatesForCard(detail).find((state) => state.action === detail.primary_action);
+  const message = nextStepMessage(detail, primary);
+  wrap.append(el("p", "interact-card-body", message));
+  if (primary && primary.status === "supported") {
+    wrap.append(el("span", "dashboard-chip", actionLabel(primary.action, primary)));
+  }
+  return wrap;
+}
+
+function nextStepMessage(detail, primary) {
+  switch (detail.live_status_kind) {
+    case "WaitingForApproval":
+      return "Clear the approval request, then let the task continue.";
+    case "WaitingForInput":
+      return "Open the terminal to reply directly to the agent.";
+    case "CiFailed":
+      return "Inspect the failing check and run Fix CI if you want Ajax to remediate it.";
+    case "MergeConflict":
+      return "Run Resolve conflicts to repair the branch before reviewing or shipping.";
+    default:
+      if (primary && primary.status === "supported") {
+        return `Use ${actionLabel(primary.action, primary)} when you're ready to move this task forward.`;
+      }
+      return "Monitor the task health and use the action drawer when intervention is needed.";
+  }
+}
+
+function renderMilestones(detail, pane) {
+  const list = el("ul", "milestone-list");
+  for (const entry of milestoneEntries(detail, pane)) {
+    const item = el("li", "milestone-entry");
+    item.append(el("span", "milestone-dot"));
+    item.append(el("span", "milestone-text", entry));
+    list.append(item);
+  }
+  return list;
+}
+
+function milestoneEntries(detail, pane) {
+  const entries = [];
+  entries.push(detail.live_status_summary || detail.status_label || "Task opened in Cockpit.");
+  if (detail.git) {
+    entries.push(
+      `${detail.git.ahead || 0} ahead · ${detail.git.behind || 0} behind · ${detail.git.dirty ? "dirty worktree" : "clean worktree"}`,
+    );
+  }
+  if (detail.agent_attempts && detail.agent_attempts.length) {
+    for (const attempt of detail.agent_attempts.slice(-3).reverse()) {
+      const started = new Date(attempt.started_unix_secs * 1000);
+      entries.push(`${titleCase(attempt.outcome)} at ${started.toLocaleString()}`);
+    }
+  } else if (detail.agent_activity) {
+    entries.push(detail.agent_activity);
+  }
+  if (pane && pane.state && pane.state.command) {
+    entries.push(`Pending command: ${pane.state.command}`);
+  }
+  return entries.slice(0, 4);
+}
+
+function renderTerminalDetails(detail, pane, tmuxMissing) {
+  const details = document.createElement("details");
+  details.className = "terminal-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "View terminal details";
+  details.append(summary);
+
+  if (tmuxMissing) {
+    details.append(el("p", "interact-hint", "Terminal session is unavailable for this task."));
+    return details;
+  }
+
+  const pre = el("pre", "activity-excerpt");
+  if (pane && Array.isArray(pane.lines) && pane.lines.length) {
+    pre.textContent = pane.lines.join("\n");
+  } else if (detail.agent_activity) {
+    pre.textContent = detail.agent_activity;
+  } else {
+    pre.textContent = "No live pane snapshot available.";
+  }
+  details.append(pre);
+  return details;
+}
+
+function renderInteractPanelInto(detail, pane) {
+  const existing = detailContainer.querySelector(".interact-panel");
+  if (!existing) return;
+  existing.replaceWith(renderInteractPanel(detail, pane));
+}
+
+async function sendAnswer(answer, fingerprint) {
+  if (!detailHandle) return;
+  if (!fingerprint) {
+    showResult("This approval is no longer current — refresh the task", null, true);
+    return;
+  }
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(detailHandle)}/answer`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ answer, fingerprint, request_id: requestId() }),
+    });
+    if (response.status === 429) {
+      showResult("Slow down — too many actions in a short window", null, true);
+      return;
+    }
+    if (response.status === 409) {
+      showResult("The agent moved on before this approval was sent", null, true);
+      schedulePaneTick(true);
+      return;
+    }
+    if (response.status === 422) {
+      showResult("This prompt needs the terminal instead of the dashboard", null, true);
+      return;
+    }
+    if (!response.ok) {
+      showResult(`Could not send answer (HTTP ${response.status})`, null, true);
+      return;
+    }
+    schedulePaneTick(true);
+  } catch (error) {
+    showResult("Could not send answer — network error", null, true);
+  }
+}
+
+function paneInterval() {
+  return PANE_INTERVAL_DEFAULT_MS;
+}
+
+function clearPaneTimer() {
+  if (paneTimer) {
+    clearTimeout(paneTimer);
+    paneTimer = null;
+  }
+}
+
+function schedulePaneTick(immediate) {
+  clearPaneTimer();
+  if (!detailHandle || document.hidden) return;
+  if (immediate) {
+    paneTimer = setTimeout(loadPane, 0);
+  } else {
+    paneTimer = setTimeout(loadPane, paneInterval());
+  }
+}
+
+async function loadPane() {
+  paneTimer = null;
+  if (!detailHandle || paneInFlight || document.hidden) {
+    schedulePaneTick(false);
+    return;
+  }
+  paneInFlight = true;
+  try {
+    const url = `/api/tasks/${encodeURIComponent(detailHandle)}/pane?since=${paneSequence}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (response.status === 404) {
+      // Endpoint not yet wired (backend pending) or task not found — degrade silently
+      paneAvailable = false;
+      lastPaneData = null;
+      return;
+    }
+    if (response.status === 409) {
+      const data = await response.json().catch(() => ({}));
+      paneAvailable = true;
+      lastPaneData = { sequence: paneSequence, lines: [], tmux_exists: false, state: null, ...data };
+      if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+      setOnline(true);
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = await response.json();
+    const incomingSeq = typeof data.sequence === "number" ? data.sequence : paneSequence;
+    const hasNewLines = Array.isArray(data.lines) && data.lines.length > 0;
+    if (incomingSeq > paneSequence && hasNewLines) {
+      // merge new lines into the cached buffer up to MAX_LOG_ENTRIES
+      const previous = lastPaneData && Array.isArray(lastPaneData.lines) ? lastPaneData.lines : [];
+      const merged = previous.concat(data.lines).slice(-MAX_LOG_ENTRIES);
+      lastPaneData = { ...data, lines: merged };
+      paneSequence = incomingSeq;
+    } else if (incomingSeq >= paneSequence) {
+      // unchanged delta — keep existing buffer but refresh state hints
+      lastPaneData = lastPaneData
+        ? { ...lastPaneData, ...data, lines: lastPaneData.lines }
+        : { ...data, lines: Array.isArray(data.lines) ? data.lines : [] };
+      paneSequence = incomingSeq;
+    }
+    paneAvailable = true;
+    if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+    setOnline(true);
+  } catch (error) {
+    setOnline(false);
+  } finally {
+    paneInFlight = false;
+    schedulePaneTick(false);
+  }
+}
+
+function resetInteractState() {
+  clearPaneTimer();
+  lastPaneData = null;
+  paneSequence = 0;
+  paneAvailable = false;
+  lastInteractKind = null;
+  lastDetailData = null;
+}
+
 // HASH ROUTER ---------------------------------------------------------------
 
 function updateNewTaskRowLabel() {
@@ -639,19 +988,24 @@ function applyRoute() {
   hideSettingsView();
 
   if (hash === "#/settings") {
+    if (detailHandle) resetInteractState();
     detailHandle = null;
     document.body.classList.add("view-settings");
     showSettingsView();
     return;
   }
   if (hash.startsWith("#/t/")) {
-    detailHandle = decodeURIComponent(hash.slice("#/t/".length));
+    const incoming = decodeURIComponent(hash.slice("#/t/".length));
+    if (incoming !== detailHandle) resetInteractState();
+    detailHandle = incoming;
     document.body.classList.add("view-detail");
     loadDetail();
+    schedulePaneTick(true);
     return;
   }
   if (hash.startsWith("#/p/")) {
     selectedProject = decodeURIComponent(hash.slice("#/p/".length)) || null;
+    if (detailHandle) resetInteractState();
     detailHandle = null;
     lastFingerprint = null;
     updateNewTaskRowLabel();
@@ -659,6 +1013,7 @@ function applyRoute() {
     else loadCockpit();
     return;
   }
+  if (detailHandle) resetInteractState();
   selectedProject = null;
   detailHandle = null;
   updateNewTaskRowLabel();
@@ -766,34 +1121,71 @@ document.querySelectorAll("[data-sheet-cancel]").forEach((btn) => {
 
 // ACTIONS -------------------------------------------------------------------
 
+function confirmKey(handle, action) {
+  return `${handle}:${action}`;
+}
+
+function clearPendingConfirm(key) {
+  const entry = pendingConfirmByKey.get(key);
+  if (entry?.timer) clearTimeout(entry.timer);
+  pendingConfirmByKey.delete(key);
+}
+
+function resetConfirmButton(button) {
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  clearPendingConfirm(key);
+  button.classList.remove("confirming");
+  if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
+}
+
+function applyPendingConfirm(button) {
+  if (!button.dataset.destructive && !button.dataset.confirmRequired) return;
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  const entry = pendingConfirmByKey.get(key);
+  if (!entry || Date.now() > entry.expiresAt) {
+    if (entry) clearPendingConfirm(key);
+    return;
+  }
+  button.dataset.originalLabel = entry.originalLabel;
+  button.textContent = "Tap to confirm";
+  button.classList.add("confirming");
+}
+
+function beginPendingConfirm(button) {
+  const key = confirmKey(button.dataset.task, button.dataset.action);
+  const originalLabel = button.textContent;
+  clearPendingConfirm(key);
+  const expiresAt = Date.now() + CONFIRM_TIMEOUT_MS;
+  const timer = setTimeout(() => {
+    clearPendingConfirm(key);
+    if (button.isConnected) resetConfirmButton(button);
+  }, CONFIRM_TIMEOUT_MS);
+  pendingConfirmByKey.set(key, { originalLabel, expiresAt, timer });
+  button.dataset.originalLabel = originalLabel;
+  button.textContent = "Tap to confirm";
+  button.classList.add("confirming");
+}
+
 function tryConfirmDestructive(button) {
   if (!button.dataset.destructive && !button.dataset.confirmRequired) return false;
+  const key = confirmKey(button.dataset.task, button.dataset.action);
   if (button.classList.contains("confirming")) {
-    const timer = pendingConfirms.get(button);
-    if (timer) clearTimeout(timer);
-    pendingConfirms.delete(button);
+    clearPendingConfirm(key);
     button.classList.remove("confirming");
     if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
     return false;
   }
-  button.dataset.originalLabel = button.textContent;
-  button.textContent = "Tap to confirm";
-  button.classList.add("confirming");
-  const timer = setTimeout(() => {
-    button.classList.remove("confirming");
-    if (button.dataset.originalLabel) button.textContent = button.dataset.originalLabel;
-    pendingConfirms.delete(button);
-  }, CONFIRM_TIMEOUT_MS);
-  pendingConfirms.set(button, timer);
+  beginPendingConfirm(button);
   return true;
 }
 
 async function runAction(button) {
+  resetConfirmButton(button);
   const cardEl = button.closest(".card, #task-detail");
   const peers = cardEl
     ? Array.from(cardEl.querySelectorAll("button[data-action]:not([disabled])"))
     : [button];
-  const originalLabel = button.textContent;
+  const originalLabel = button.dataset.originalLabel || button.textContent;
   button.textContent = `${originalLabel} …`;
   button.classList.add("is-running");
   for (const peer of peers) peer.disabled = true;
@@ -861,14 +1253,26 @@ document.addEventListener("click", (event) => {
 
 window.addEventListener("online", () => {
   if (isSettingsRoute()) return;
-  if (detailHandle) loadDetail();
-  else loadCockpit();
+  if (detailHandle) {
+    loadDetail();
+    schedulePaneTick(true);
+  } else {
+    loadCockpit();
+  }
 });
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
   if (isSettingsRoute()) return;
-  if (detailHandle) loadDetail();
-  else loadCockpit();
+  if (document.hidden) {
+    clearPaneTimer();
+    return;
+  }
+  if (detailHandle) {
+    loadDetail();
+    schedulePaneTick(true);
+  } else {
+    loadCockpit();
+  }
 });
 
 // PUSH NOTIFICATIONS --------------------------------------------------------

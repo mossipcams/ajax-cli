@@ -49,6 +49,7 @@ pub fn run_interactive_with_flash(
         initial_flash,
         Duration::from_secs(1),
         ActionOnly { on_action },
+        None,
     )
 }
 
@@ -59,6 +60,7 @@ pub fn run_interactive_with_flash_and_refresh(
     initial_flash: Option<String>,
     refresh_interval: Duration,
     handler: impl CockpitEventHandler,
+    initial_new_task_repo: Option<String>,
 ) -> io::Result<Option<PendingAction>> {
     let mut stdout = io::stdout();
     let mut terminal_mode = TerminalModeGuard::enter(&mut stdout)?;
@@ -66,6 +68,9 @@ pub fn run_interactive_with_flash_and_refresh(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(repos, cards, inbox);
+    if let Some(repo) = initial_new_task_repo {
+        app.open_new_task(repo);
+    }
     if let Some(message) = initial_flash {
         app.notify_system(message, Severity::Success, Origin::UserAction);
     }

@@ -1,11 +1,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod adapters;
+pub mod agent_prompt;
 pub mod analysis;
 pub mod attention;
 pub mod commands;
 pub mod config;
 pub mod events;
+pub mod ghost_task;
 pub mod lifecycle;
 pub mod live;
 mod live_application;

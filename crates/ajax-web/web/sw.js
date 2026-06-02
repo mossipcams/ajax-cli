@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v19";
+const CACHE = "ajax-cockpit-v22";
 const SHELL = [
   "/",
   "/app.css",
@@ -49,60 +49,41 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-function taskDeepLink(data) {
-  const handle = data && (data.task_handle || data.handle);
-  if (handle) return `#/t/${encodeURIComponent(handle)}`;
-  return "/";
-}
-
-// Web Push: show a notification when the companion reports a task needs
-// attention, and focus the cockpit when the operator taps it.
 self.addEventListener("push", (event) => {
-  let data = { title: "Ajax Cockpit", body: "A task needs attention", tag: "ajax" };
-  if (event.data) {
-    try {
-      data = Object.assign(data, event.data.json());
-    } catch (error) {
-      data.body = event.data.text();
-    }
+  if (!event.data) return;
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch (error) {
+    return;
   }
-  const url = taskDeepLink(data);
-  event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clients) => {
-        // Skip the system notification flash when the operator already has Cockpit open.
-        if (clients.some((client) => client.visibilityState === "visible")) {
-          return undefined;
-        }
-        return self.registration.showNotification(data.title, {
-          body: data.body,
-          tag: data.tag || "ajax",
-          renotify: false,
-          icon: "/icons/icon-192.png",
-          badge: "/icons/icon-192.png",
-          data: { url },
-        });
-      }),
-  );
+  const title = payload.title || "Ajax Cockpit";
+  const options = {
+    body: payload.body || "",
+    tag: payload.tag || "ajax-attention",
+    data: payload.data || {},
+    icon: "/icons/icon-192.png",
+    badge: "/icons/icon-192.png",
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || "/";
+  const data = event.notification.data || {};
+  const handle = data.task_handle;
+  const target = handle ? `#/t/${encodeURIComponent(handle)}` : "#/";
   event.waitUntil(
-    self.clients
-      .matchAll({ type: "window", includeUncontrolled: true })
-      .then((clients) => {
-        for (const client of clients) {
-          if ("focus" in client) {
-            if ("navigate" in client && target.startsWith("#")) {
-              return client.focus().then(() => client.navigate(target));
-            }
-            return client.focus();
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) {
+          if ("navigate" in client && target.startsWith("#")) {
+            return client.focus().then(() => client.navigate(target));
           }
+          return client.focus();
         }
-        return self.clients.openWindow(target.startsWith("#") ? `/${target}` : target);
-      }),
+      }
+      return self.clients.openWindow(target.startsWith("#") ? `/${target}` : target);
+    }),
   );
 });

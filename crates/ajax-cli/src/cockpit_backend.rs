@@ -73,11 +73,14 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     };
     let mut state_changed = false;
     let mut cockpit_flash = None;
+    let mut open_new_task_repo = None;
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
     loop {
         let mut task_session = PtyTaskSessionRunner;
-        let snapshot = build_cockpit_snapshot(context);
+        let mut cached_snapshot = None;
+        let snapshot =
+            refresh_cockpit_snapshot(context, runner, &mut state_changed, &mut cached_snapshot)?;
         let pending = ajax_tui::run_interactive_with_flash_and_refresh(
             snapshot.repos,
             snapshot.cards,
@@ -88,7 +91,9 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 context,
                 runner,
                 state_changed: &mut state_changed,
+                cached_snapshot: &mut cached_snapshot,
             },
+            open_new_task_repo.take(),
         )
         .map_err(|e| CliError::CommandFailed(e.to_string()))?;
         let Some(pending) = pending else {
@@ -98,17 +103,21 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             });
         };
 
-        if !handle_pending_cockpit_result(
-            execute_pending_cockpit_action_with_task_session(
-                &pending,
-                context,
-                runner,
-                &mut state_changed,
-                &mut task_session,
-            ),
-            &mut cockpit_flash,
-        ) {
-            continue;
+        match execute_pending_cockpit_action_with_task_session(
+            &pending,
+            context,
+            runner,
+            &mut state_changed,
+            &mut task_session,
+        )? {
+            crate::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } => {
+                open_new_task_repo = Some(repo);
+            }
+            crate::cockpit_actions::PendingCockpitExecution::Continue(message) => {
+                if !handle_pending_cockpit_result(Ok(message), &mut cockpit_flash) {
+                    continue;
+                }
+            }
         }
     }
 }
@@ -346,9 +355,20 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     state_changed: &mut bool,
+    cached_snapshot: &mut Option<CockpitSnapshot>,
 ) -> Result<CockpitSnapshot, CliError> {
-    *state_changed |= refresh_live_context(context, runner)?;
-    Ok(build_cockpit_snapshot(context))
+    let changed = refresh_live_context(context, runner)?;
+    *state_changed |= changed;
+    if changed || cached_snapshot.is_none() {
+        let snapshot = build_cockpit_snapshot(context);
+        *cached_snapshot = Some(snapshot.clone());
+        Ok(snapshot)
+    } else {
+        Ok(cached_snapshot
+            .as_ref()
+            .expect("cached snapshot must exist after first build")
+            .clone())
+    }
 }
 
 pub(crate) fn build_cockpit_snapshot(
@@ -366,6 +386,7 @@ struct InteractiveCockpitHandler<'a, R: CommandRunner> {
     context: &'a mut CommandContext<InMemoryRegistry>,
     runner: &'a mut R,
     state_changed: &'a mut bool,
+    cached_snapshot: &'a mut Option<CockpitSnapshot>,
 }
 
 impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
@@ -384,9 +405,14 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
     }
 
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
-        refresh_cockpit_snapshot(self.context, self.runner, self.state_changed)
-            .map(Some)
-            .map_err(|error| std::io::Error::other(error.to_string()))
+        refresh_cockpit_snapshot(
+            self.context,
+            self.runner,
+            self.state_changed,
+            self.cached_snapshot,
+        )
+        .map(Some)
+        .map_err(|error| std::io::Error::other(error.to_string()))
     }
 }
 
@@ -717,7 +743,8 @@ mod tests {
         let mut state_changed = false;
 
         let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+                .unwrap();
 
         assert!(state_changed);
         assert_eq!(
@@ -786,7 +813,8 @@ mod tests {
         let mut state_changed = false;
 
         let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+                .unwrap();
 
         assert!(state_changed);
         let card = snapshot
@@ -857,7 +885,8 @@ mod tests {
         let mut state_changed = false;
 
         let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+                .unwrap();
 
         assert!(state_changed);
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
@@ -1057,7 +1086,8 @@ mod tests {
         let mut state_changed = false;
 
         let snapshot =
-            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+                .unwrap();
 
         assert!(state_changed);
         assert!(snapshot

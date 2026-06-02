@@ -1600,6 +1600,63 @@ mod tests {
         assert!(app.expanded_task.is_none());
     }
 
+    #[test]
+    fn control_t_does_not_quit_cockpit() {
+        let mut app = App::new(
+            sample_repos(),
+            sample_tasks(),
+            InboxResponse { items: vec![] },
+        );
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+    }
+
+    #[test]
+    fn control_t_opens_new_task_input_in_project_view() {
+        let mut app = app_in_project_view();
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(
+            &app.view,
+            AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+        ));
+    }
+
+    #[test]
+    fn control_t_uses_selected_task_repo_on_projects_view() {
+        let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+        while !matches!(
+            app.selectables.get(app.selected),
+            Some(SelectableKind::Task(_))
+        ) {
+            app.select_next();
+        }
+
+        let action = handle_with_noop(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL)),
+            10,
+        );
+
+        assert!(matches!(action, EventLoopAction::Continue));
+        assert!(matches!(
+            &app.view,
+            AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+        ));
+    }
+
     #[rstest]
     #[case(KeyCode::Down, 0, 1)]
     #[case(KeyCode::Char('j'), 0, 1)]

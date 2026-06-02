@@ -38,7 +38,7 @@ mod tests {
         assert!(lib.contains("pub mod adapters;"));
         assert!(lib.contains("pub mod runtime;"));
         assert!(lib.contains("pub mod slices;"));
-        for module in ["cockpit", "operate", "install", "attention"] {
+        for module in ["cockpit", "operate", "install", "attention", "pane"] {
             assert!(
                 slices.contains(&format!("pub mod {module};")),
                 "missing ajax-web vertical slice: {module}"
@@ -59,7 +59,7 @@ mod tests {
             );
         }
 
-        for adapter in ["http", "tls", "push", "assets", "server"] {
+        for adapter in ["http", "tls", "push", "assets", "server", "tmux_input"] {
             assert!(
                 adapters.contains(&format!("pub mod {adapter};")),
                 "missing ajax-web adapter module: {adapter}"

@@ -1,0 +1,156 @@
+       9625ba2..3c44100  HEAD -> release-please--branches--main
+
+───────────────────────────────────────────────────────────────────────────────
+
+• PR #100 is rerunning on the new commit now. I’m checking the GitHub checks
+  directly until the previously failing Nextest and Doc Tests lane comes back,
+  so we can close this out with the remote result rather than just the local
+  one.
+
+• Ran rtk gh pr view 100 --json
+  │ headRefOid,mergeStateStatus,statusCheckRollup,url
+  └ {"headRefOid":"3c4410016142f34268c257e508c4dc93483a8fcf","mergeStateStatus"
+    :"BLOCKED","statusCheckRollup":
+    … +34 lines (ctrl + t to view transcript)
+    :"QUEUED","workflowName":"CI"}],"url":"https://github.com/mossipcams/
+    ajax-cli/pull/100"}
+
+───────────────────────────────────────────────────────────────────────────────
+
+• The new CI run is attached to commit 3c44100, which is the one we just
+  pushed. I’m polling until the slow lanes clear; the key thing I’m watching is
+  that Nextest and Doc Tests no longer trips on the seed-line assertion.
+
+• Waited for background terminal · sleep 20 && rtk gh pr view 100 --json
+mergeStateStatus,statusCheckRollup
+
+• Ran sleep 20 && rtk gh pr view 100 --json mergeStateStatus,statusCheckRollup
+  └ {"mergeStateStatus":"BLOCKED","statusCheckRollup":
+    [{"__typename":"CheckRun","completedAt":"2026-05-27T23:08:11Z","conclusion"
+    … +32 lines (ctrl + t to view transcript)
+    job/78191930310","name":"Smoke","startedAt":"2026-05-27T23:07:44Z","status"
+    :"IN_PROGRESS","workflowName":"CI"}]}
+
+───────────────────────────────────────────────────────────────────────────────
+
+• The rerun is progressing normally. Format and Duplication is already green,
+  and the old failing lane is still running instead of dying early, which is
+  the right sign for this specific fix.
+
+• Waited for background terminal · sleep 45 && rtk gh pr view 100 --json
+mergeStateStatus,statusCheckRollup
+
+• Ran sleep 45 && rtk gh pr view 100 --json mergeStateStatus,statusCheckRollup
+  └ {"mergeStateStatus":"BLOCKED","statusCheckRollup":
+    [{"__typename":"CheckRun","completedAt":"2026-05-27T23:08:11Z","conclusion"
+    … +32 lines (ctrl + t to view transcript)
+    job/78191930310","name":"Smoke","startedAt":"2026-05-27T23:07:44Z","status"
+    :"IN_PROGRESS","workflowName":"CI"}]}
+
+───────────────────────────────────────────────────────────────────────────────
+
+• GitHub is still on the slower lanes, but the docs job has already gone green
+  and there hasn’t been a fast re-failure in Nextest and Doc Tests. I’m
+  checking once more after the longer jobs have had enough time to finish.
+
+• Waited for background terminal · sleep 55 && rtk gh pr view 100 --json
+mergeStateStatus,statusCheckRollup
+
+• Ran sleep 55 && rtk gh pr view 100 --json mergeStateStatus,statusCheckRollup
+  └ {"mergeStateStatus":"BLOCKED","statusCheckRollup":
+    [{"__typename":"CheckRun","completedAt":"2026-05-27T23:08:11Z","conclusion"
+    … +32 lines (ctrl + t to view transcript)
+    job/78191930310","name":"Smoke","startedAt":"2026-05-27T23:07:44Z","status"
+    :"IN_PROGRESS","workflowName":"CI"}]}
+
+───────────────────────────────────────────────────────────────────────────────
+
+• The remaining jobs are just the usual longer ones now. Clippy is green too,
+  and the only thing left is waiting for the full test and smoke lanes to
+  finish out on GitHub.
+
+• Waited for background terminal · sleep 70 && rtk gh pr view 100 --json
+mergeStateStatus,statusCheckRollup
+
+• Ran sleep 70 && rtk gh pr view 100 --json mergeStateStatus,statusCheckRollup
+  └ {"mergeStateStatus":"CLEAN","statusCheckRollup":
+    [{"__typename":"CheckRun","completedAt":"2026-05-27T23:08:11Z","conclusion"
+    … +37 lines (ctrl + t to view transcript)
+    job/78192298850","name":"CI","startedAt":"2026-05-27T23:10:51Z","status":"C
+    OMPLETED","workflowName":"CI"}]}
+
+───────────────────────────────────────────────────────────────────────────────
+
+• PR #100 is green again.
+
+  I fixed the brittle release-please guardrail in /Users/matt/.ajax-dev/
+  worktrees/ajax-cli-cbeb640c/release-please-pr100-workspace-versions/crates/
+  ajax-cli/src/lib/tests.rs. The test no longer hard-codes 0.7.4; it now
+  derives the expected linked release line from crates/ajax-cli in the
+  manifest, and I added a focused regression test to lock that behavior in. I
+  pushed commit 3c44100 directly to release-please--branches--main, so the fix
+  is part of PR #100 and will land on main when that release PR merges.
+
+  Tests added or updated:
+
+  - Added
+    release_please_workspace_crate_seeds_follow_the_current_cli_release_line
+  - Updated release_please_registers_workspace_crates_for_library_only_changes
+
+  Validation I ran:
+
+  - Red phase:
+      - rtk proxy cargo test -p ajax-cli --lib
+        tests::release_please_workspace_crate_seeds_follow_the_current_cli_rele
+        ase_line -- --exact --nocapture
+  - Green phase:
+      - rtk proxy cargo test -p ajax-cli --lib
+        tests::release_please_workspace_crate_seeds_follow_the_current_cli_rele
+        ase_line -- --exact --nocapture
+      - rtk proxy cargo test -p ajax-cli --lib
+        tests::release_please_registers_workspace_crates_for_library_only_chang
+        es -- --exact --nocapture
+  - Full local validation:
+      - rtk cargo fmt --check
+      - rtk cargo check --all-targets --all-features
+      - rtk cargo clippy --all-targets --all-features -- -D warnings
+      - rtk cargo nextest run --all-features
+      - rtk cargo doc --no-deps --all-features
+      - RUSTDOCFLAGS='-D warnings' rtk cargo doc --no-deps --all-features
+      - rtk cargo audit
+  - Repo hook during commit also passed its full verification set.
+
+  Commands that failed:
+
+  - rtk proxy cargo test -p ajax-cli --lib
+    tests::release_please_workspace_crate_seeds_follow_the_current_cli_release_
+    line -- --exact --nocapture
+      - Failed as expected in the red phase because the temporary brittle
+        expectation returned 0.7.4 while the regenerated release manifest was
+        0.8.0.
+      - Fixed by deriving the seed line from manifest["crates/ajax-cli"].
+
+  Remote result for https://github.com/mossipcams/ajax-cli/pull/100:
+
+  - Format and Duplication: success
+  - Cargo Check: success
+  - Clippy: success
+  - Nextest and Doc Tests: success
+  - Documentation: success
+  - Cargo Audit: success
+  - Smoke: success
+  - aggregate CI: success
+  - mergeStateStatus: CLEAN
+
+  Limitation:
+
+  - cargo audit still reports the same 2 allowed warnings already present in
+    the repo (ansi_term unmaintained and yanked aes 0.9.0), but the command
+    completed successfully and this fix did not change that baseline.
+
+─ Worked for 7m 39s ───────────────────────────────────────────────────────────
+
+
+› Write tests for @filename
+
+  gpt-5.4 high · ~/.ajax-dev/worktrees/ajax-cli-cbeb640c/release-please-attach…

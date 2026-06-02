@@ -1,5 +1,3 @@
-#[cfg(any(test, feature = "interactive"))]
-use ajax_core::adapters::CommandOutput;
 use ajax_core::adapters::CommandRunner;
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
@@ -33,7 +31,9 @@ use crate::{
         mobile_web_port_for_command, refresh_live_context, render_interactive_cockpit_command,
         render_live_cockpit_command,
     },
-    task_session::{execute_task_entry_plan, TaskSessionRunner},
+    task_session::{
+        execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
+    },
 };
 use crate::{
     command_error, current_open_mode,
@@ -348,15 +348,26 @@ fn mobile_web_port_for_cockpit_entry(name: &str, paths: Option<&CliContextPaths>
 }
 
 #[cfg(feature = "interactive")]
+pub(crate) struct ExecuteNewTaskWithSession<'a> {
+    pub request: &'a commands::NewTaskRequest,
+    pub plan: &'a commands::CommandPlan,
+    pub session_context: &'a TaskSessionContext,
+    pub confirmed: bool,
+    pub open_mode: commands::OpenMode,
+}
+
+#[cfg(feature = "interactive")]
 pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     task_session: &mut S,
-    request: &commands::NewTaskRequest,
-    plan: &commands::CommandPlan,
-    confirmed: bool,
-    open_mode: commands::OpenMode,
-) -> Result<(Vec<CommandOutput>, ajax_core::models::Task), CliError> {
+    execution: &ExecuteNewTaskWithSession<'_>,
+) -> Result<TaskEntryPlanOutcome, CliError> {
+    let request = execution.request;
+    let plan = execution.plan;
+    let session_context = execution.session_context;
+    let confirmed = execution.confirmed;
+    let open_mode = execution.open_mode;
     let task = commands::record_new_task(context, request).map_err(command_error)?;
     let external_outputs =
         match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
@@ -384,20 +395,15 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
         .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
         .map_err(|error| command_error(error).after_state_change())?;
-    outputs.extend(
-        execute_task_entry_plan(&open_plan, runner, task_session)
-            .map_err(|error| error.after_state_change())?,
-    );
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|candidate| candidate.id == task.id)
-        .cloned()
-        .unwrap_or(task);
-
-    Ok((outputs, task))
+    match execute_task_entry_plan(&open_plan, runner, task_session, session_context)
+        .map_err(|error| error.after_state_change())?
+    {
+        TaskEntryPlanOutcome::Completed(session_outputs) => {
+            outputs.extend(session_outputs);
+            Ok(TaskEntryPlanOutcome::Completed(outputs))
+        }
+        TaskEntryPlanOutcome::OpenNewTask => Ok(TaskEntryPlanOutcome::OpenNewTask),
+    }
 }
 
 #[cfg(all(test, feature = "interactive"))]

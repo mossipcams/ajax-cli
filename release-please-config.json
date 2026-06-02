@@ -1,12 +1,25 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "240bb9954c7f7d761207e9ea9d470f6aab31852a",
+  "force-tag-creation": true,
   "release-type": "rust",
-  "plugins": ["cargo-workspace"],
+  "plugins": [
+    {
+      "type": "cargo-workspace",
+      "merge": false
+    }
+  ],
   "packages": {
     "crates/ajax-cli": {
       "package-name": "ajax-cli",
       "release-type": "rust",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "additional-paths": [
+        "crates/ajax-core",
+        "crates/ajax-supervisor",
+        "crates/ajax-tui",
+        "crates/ajax-web"
+      ]
     }
   }
 }

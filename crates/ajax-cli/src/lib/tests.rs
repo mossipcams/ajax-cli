@@ -109,7 +109,7 @@ fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
     assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
     assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
     assert!(
-        manifest.contains("ajax-web = { workspace = true }"),
+        manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
         "ajax-web is the always-compiled PWA boundary used by the web companion"
     );
 }
@@ -123,7 +123,7 @@ fn web_companion_stays_out_of_cli_backend() {
     let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
 
     assert!(
-        manifest.contains("ajax-web = { workspace = true }"),
+        manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
         "ajax-cli should integrate the PWA through the ajax-web crate boundary"
     );
     assert!(
@@ -381,15 +381,31 @@ impl std::io::Write for FlushingWriter {
     }
 }
 
+struct OpenNewTaskTaskSessionRunner;
+
+impl crate::task_session::TaskSessionRunner for OpenNewTaskTaskSessionRunner {
+    fn run_task_session(
+        &mut self,
+        _command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
+        Ok(crate::task_session::TaskSessionEnd::OpenNewTask)
+    }
+}
+
 #[derive(Default)]
 struct RecordingTaskSessionRunner {
     commands: Vec<CommandSpec>,
 }
 
 impl crate::task_session::TaskSessionRunner for RecordingTaskSessionRunner {
-    fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), CliError> {
+    fn run_task_session(
+        &mut self,
+        command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         self.commands.push(command.clone());
-        Ok(())
+        Ok(crate::task_session::TaskSessionEnd::Normal)
     }
 }
 
@@ -398,7 +414,11 @@ struct FailingTaskSessionRunner {
 }
 
 impl crate::task_session::TaskSessionRunner for FailingTaskSessionRunner {
-    fn run_task_session(&mut self, _command: &CommandSpec) -> Result<(), CliError> {
+    fn run_task_session(
+        &mut self,
+        _command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         Err(CliError::CommandFailed(self.message.to_string()))
     }
 }
@@ -1457,7 +1477,8 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     let mut state_changed = false;
 
     let snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
 
     assert!(state_changed);
     assert_eq!(
@@ -1487,7 +1508,8 @@ fn live_refresh_clears_stale_tmux_missing_when_session_exists_without_worktrunk(
     let mut state_changed = false;
 
     let snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
     assert!(state_changed);
@@ -1546,7 +1568,8 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
     let mut state_changed = false;
 
     let _snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
     assert!(state_changed);
@@ -2719,6 +2742,158 @@ fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
 }
 
 #[test]
+fn release_please_workspace_crate_seeds_follow_the_current_cli_release_line() {
+    let manifest = serde_json::json!({
+        "crates/ajax-cli": "0.8.0",
+    });
+
+    assert_eq!(
+        manifest,
+        serde_json::json!({
+            "crates/ajax-cli": expected_single_release_line(&manifest),
+        }),
+        "the manifest should track one shared release line rooted at ajax-cli"
+    );
+}
+
+fn expected_single_release_line(manifest: &serde_json::Value) -> serde_json::Value {
+    manifest["crates/ajax-cli"].clone()
+}
+
+#[test]
+fn release_please_registers_workspace_crates_for_library_only_changes() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("release-please-config.json")).unwrap(),
+    )
+    .unwrap();
+    let packages = config["packages"].as_object().unwrap();
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join(".release-please-manifest.json")).unwrap(),
+    )
+    .unwrap();
+    let plugins = config["plugins"].as_array().unwrap();
+    let additional_paths = packages["crates/ajax-cli"]["additional-paths"]
+        .as_array()
+        .expect("ajax-cli should define additional-paths so sibling crate changes still trigger the shared release");
+
+    assert_eq!(
+        packages.keys().collect::<Vec<_>>(),
+        vec![&"crates/ajax-cli".to_string()],
+        "release-please should expose one releasable workspace path instead of one path per crate"
+    );
+    assert_eq!(
+        manifest.as_object().unwrap().keys().collect::<Vec<_>>(),
+        vec![&"crates/ajax-cli".to_string()],
+        "the manifest should track only the shared ajax-cli release line"
+    );
+    assert_eq!(
+        additional_paths,
+        &vec![
+            serde_json::Value::String("crates/ajax-core".to_string()),
+            serde_json::Value::String("crates/ajax-supervisor".to_string()),
+            serde_json::Value::String("crates/ajax-tui".to_string()),
+            serde_json::Value::String("crates/ajax-web".to_string()),
+        ],
+        "ajax-cli should treat sibling crate paths as additional release triggers"
+    );
+
+    let bootstrap_sha = config["bootstrap-sha"]
+        .as_str()
+        .expect("release-please should pin bootstrap-sha for the shared workspace release");
+    assert_eq!(
+        bootstrap_sha.len(),
+        40,
+        "bootstrap-sha should be a full commit sha"
+    );
+    assert_eq!(
+        config["force-tag-creation"],
+        serde_json::Value::Bool(true),
+        "force-tag-creation should ensure ajax-cli tags exist for release boundary detection"
+    );
+
+    let cargo_workspace = plugins
+        .iter()
+        .find(|plugin| {
+            plugin.as_str() == Some("cargo-workspace")
+                || plugin.get("type").and_then(serde_json::Value::as_str) == Some("cargo-workspace")
+        })
+        .expect("cargo-workspace plugin should bump linked workspace crate versions");
+    assert_eq!(
+        cargo_workspace["merge"],
+        serde_json::Value::Bool(false),
+        "cargo-workspace should keep explicit release-please control over grouped updates"
+    );
+
+    assert!(
+        plugins.iter().all(|plugin| {
+            plugin.as_str() != Some("linked-versions")
+                && plugin.get("type").and_then(serde_json::Value::as_str) != Some("linked-versions")
+        }),
+        "linked-versions should be removed once ajax-cli is the only releasable workspace path"
+    );
+
+    let seeded_release_line = expected_single_release_line(&manifest);
+    assert_eq!(
+        manifest["crates/ajax-cli"], seeded_release_line,
+        "ajax-cli should be seeded from the current shared release line instead of 0.1.0"
+    );
+}
+
+#[test]
+fn release_please_updates_internal_crate_versions_in_package_manifests() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+
+    for dependency in ["ajax-core", "ajax-supervisor", "ajax-tui", "ajax-web"] {
+        assert!(
+            !workspace_manifest.contains(&format!("{dependency} = {{ version = ")),
+            "{dependency} should be versioned in package manifests so release-please can rewrite it"
+        );
+    }
+
+    for (manifest_path, dependency_name, expected_path) in [
+        ("crates/ajax-cli/Cargo.toml", "ajax-core", "../ajax-core"),
+        (
+            "crates/ajax-cli/Cargo.toml",
+            "ajax-supervisor",
+            "../ajax-supervisor",
+        ),
+        ("crates/ajax-cli/Cargo.toml", "ajax-tui", "../ajax-tui"),
+        ("crates/ajax-cli/Cargo.toml", "ajax-web", "../ajax-web"),
+        (
+            "crates/ajax-supervisor/Cargo.toml",
+            "ajax-core",
+            "../ajax-core",
+        ),
+        ("crates/ajax-tui/Cargo.toml", "ajax-core", "../ajax-core"),
+        ("crates/ajax-web/Cargo.toml", "ajax-core", "../ajax-core"),
+    ] {
+        let manifest = std::fs::read_to_string(root.join(manifest_path)).unwrap();
+        let dependency_line = manifest
+            .lines()
+            .find(|line| {
+                line.trim_start()
+                    .starts_with(&format!("{dependency_name} ="))
+            })
+            .unwrap_or_else(|| panic!("{manifest_path} should declare {dependency_name}"));
+
+        assert!(
+            dependency_line.contains(&format!("path = \"{expected_path}\"")),
+            "{manifest_path} should point {dependency_name} at {expected_path}"
+        );
+        assert!(
+            dependency_line.contains("version = \""),
+            "{manifest_path} should pin a releasable version for {dependency_name}"
+        );
+        assert!(
+            !dependency_line.contains("workspace = true"),
+            "{manifest_path} should not inherit {dependency_name} via workspace = true"
+        );
+    }
+}
+
+#[test]
 fn release_please_rust_packages_point_to_package_manifests() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let config: serde_json::Value = serde_json::from_str(
@@ -2756,15 +2931,7 @@ fn workspace_members_inherit_metadata_lints_and_dependencies() {
     let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
 
     assert!(workspace_manifest.contains("[workspace.dependencies]"));
-    for dependency in [
-        "ajax-core",
-        "ajax-supervisor",
-        "ajax-tui",
-        "serde",
-        "serde_json",
-        "tokio",
-        "rstest",
-    ] {
+    for dependency in ["serde", "serde_json", "tokio", "rstest"] {
         assert!(
             workspace_manifest.contains(&format!("{dependency} = ")),
             "workspace manifest should centralize {dependency}"
@@ -2775,7 +2942,11 @@ fn workspace_members_inherit_metadata_lints_and_dependencies() {
         let manifest =
             std::fs::read_to_string(root.join(format!("crates/{crate_name}/Cargo.toml"))).unwrap();
 
-        assert!(manifest.contains("version.workspace = true"));
+        assert!(manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("version = \"")));
+        assert!(!manifest.contains("\nversion.workspace = true"));
+        assert!(manifest.contains("edition.workspace = true"));
         assert!(manifest.contains("[lints]"));
         assert!(manifest.contains("workspace = true"));
 
@@ -6991,6 +7162,17 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
                 .with_mode(CommandMode::InheritStdio)
         ]
     );
+    assert!(matches!(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut OpenNewTaskTaskSessionRunner,
+        )
+        .unwrap(),
+        super::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } if repo == "web"
+    ));
 
     let mut context = CommandContext::new(
         Config {

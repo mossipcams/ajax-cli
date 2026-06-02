@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -21,6 +21,16 @@ pub trait AgentStatusCache {
     fn status_values_for_session(&self, session: &str) -> Vec<String>;
 }
 
+/// Controls how much substrate work a refresh pass performs.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum RefreshTier {
+    /// Tmux/live updates only; orphan git discovery runs when gates fire.
+    Live,
+    /// Always eligible for orphan git discovery when tasks are probed.
+    #[default]
+    Full,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoAgentStatusCache;
 
@@ -34,13 +44,36 @@ pub fn refresh_runtime_context<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
 ) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_agent_status_cache(context, runner, &NoAgentStatusCache)
+    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, RefreshTier::Full)
 }
 
 pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
     agent_status_cache: &impl AgentStatusCache,
+) -> Result<bool, CommandError> {
+    refresh_runtime_context_with_agent_status_cache_and_tier(
+        context,
+        runner,
+        agent_status_cache,
+        RefreshTier::Full,
+    )
+}
+
+pub fn refresh_runtime_context_with_agent_status_cache_and_tier<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    agent_status_cache: &impl AgentStatusCache,
+    tier: RefreshTier,
+) -> Result<bool, CommandError> {
+    refresh_runtime_context_with_tier(context, runner, agent_status_cache, tier)
+}
+
+pub fn refresh_runtime_context_with_tier<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    agent_status_cache: &impl AgentStatusCache,
+    tier: RefreshTier,
 ) -> Result<bool, CommandError> {
     let tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
     let should_probe_tasks = tasks.iter().any(should_probe_live_substrate);
@@ -83,11 +116,19 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         Err(_) => String::new(),
     };
 
+    let task_lookup: BTreeMap<TaskId, Task> = tasks
+        .iter()
+        .map(|task| (task.id.clone(), task.clone()))
+        .collect();
     let task_snapshots: Vec<Task> = probe_task_ids
         .iter()
-        .filter_map(|task_id| context.registry.get_task(task_id).cloned())
+        .filter_map(|task_id| task_lookup.get(task_id).cloned())
         .collect();
     let should_discover_orphans = task_snapshots.iter().any(should_probe_live_substrate);
+    let should_scan_orphans = should_scan_for_orphan_worktrees(&task_snapshots)
+        || unregistered_ajax_sessions_in_tmux(&sessions_output, &registered_task_handles);
+    let should_run_orphan_discovery =
+        should_discover_orphans && (tier == RefreshTier::Full || should_scan_orphans);
     let windows_output = if task_snapshots
         .iter()
         .any(|task| TmuxAdapter::parse_session_status(&task.tmux_session, &sessions_output).exists)
@@ -242,6 +283,15 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
             live::reduce_agent_status_values(agent_status_values.iter().map(String::as_str))
         {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
+                let live_status_unchanged = task
+                    .live_status
+                    .as_ref()
+                    .is_some_and(|status| status.kind == observation.kind);
+                let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
+                    && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
+                if live_status_unchanged && !needs_agent_running_flag {
+                    continue;
+                }
                 let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
                 task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
@@ -288,7 +338,7 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
         }
     }
 
-    if should_discover_orphans
+    if should_run_orphan_discovery
         && !sessions_output.trim().is_empty()
         && windows_output.as_ref().is_none_or(|output| output.is_ok())
     {
@@ -302,6 +352,50 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     }
 
     Ok(changed)
+}
+
+fn should_scan_for_orphan_worktrees(task_snapshots: &[Task]) -> bool {
+    let now = SystemTime::now();
+    if task_snapshots
+        .iter()
+        .any(|task| task.lifecycle_status == LifecycleStatus::Provisioning)
+    {
+        return true;
+    }
+
+    task_snapshots.iter().any(|task| {
+        if !should_probe_live_substrate(task) {
+            return false;
+        }
+
+        task.runtime_projection.source == RuntimeObservationSource::Unknown
+            || task.runtime_projection.health == RuntimeHealth::Unobservable
+            || task
+                .runtime_projection
+                .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
+    })
+}
+
+fn unregistered_ajax_sessions_in_tmux(
+    sessions_output: &str,
+    registered_handles: &BTreeSet<(String, String)>,
+) -> bool {
+    sessions_output.lines().any(|line| {
+        let session = line.trim();
+        let Some((repo, handle)) = parse_ajax_session_name(session) else {
+            return false;
+        };
+        !registered_handles.contains(&(repo, handle))
+    })
+}
+
+fn parse_ajax_session_name(session: &str) -> Option<(String, String)> {
+    let rest = session.strip_prefix("ajax-")?;
+    let (repo, handle) = rest.split_once('-')?;
+    if repo.is_empty() || handle.is_empty() {
+        return None;
+    }
+    Some((repo.to_string(), handle.to_string()))
 }
 
 fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
@@ -512,7 +606,9 @@ mod tests {
     };
 
     use super::{
-        refresh_runtime_context, refresh_runtime_context_with_agent_status_cache, AgentStatusCache,
+        refresh_runtime_context, refresh_runtime_context_with_agent_status_cache,
+        refresh_runtime_context_with_agent_status_cache_and_tier,
+        refresh_runtime_context_with_tier, AgentStatusCache, NoAgentStatusCache, RefreshTier,
     };
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
@@ -661,6 +757,7 @@ mod tests {
     struct CountingRegistry {
         inner: InMemoryRegistry,
         list_tasks_calls: Cell<u32>,
+        get_task_calls: Cell<u32>,
         worktrunk_status_updates: Cell<u32>,
     }
 
@@ -669,12 +766,17 @@ mod tests {
             Self {
                 inner,
                 list_tasks_calls: Cell::new(0),
+                get_task_calls: Cell::new(0),
                 worktrunk_status_updates: Cell::new(0),
             }
         }
 
         fn list_tasks_calls(&self) -> u32 {
             self.list_tasks_calls.get()
+        }
+
+        fn get_task_calls(&self) -> u32 {
+            self.get_task_calls.get()
         }
 
         fn worktrunk_status_updates(&self) -> u32 {
@@ -692,6 +794,7 @@ mod tests {
         }
 
         fn get_task(&self, task_id: &TaskId) -> Option<&Task> {
+            self.get_task_calls.set(self.get_task_calls.get() + 1);
             self.inner.get_task(task_id)
         }
 
@@ -839,12 +942,17 @@ mod tests {
     #[derive(Default)]
     struct OrphanRecoveryRunner {
         commands: Vec<CommandSpec>,
+        sessions_output: Option<String>,
     }
 
     impl CommandRunner for OrphanRecoveryRunner {
         fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             self.commands.push(command.clone());
             let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => self
+                    .sessions_output
+                    .as_deref()
+                    .unwrap_or("ajax-web-fix-login\n"),
                 [_, repo, subcommand, action, flag]
                     if repo == REPO_PATH
                         && subcommand == "worktree"
@@ -982,9 +1090,24 @@ mod tests {
         let base = context_with_unchanged_running_task();
         let mut context =
             CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::UNIX_EPOCH,
+            RuntimeObservationSource::TmuxProbe,
+        );
         let mut runner = OrphanRecoveryRunner::default();
 
-        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+        let changed = super::refresh_runtime_context_with_tier(
+            &mut context,
+            &mut runner,
+            &NoAgentStatusCache,
+            super::RefreshTier::Full,
+        )
+        .unwrap();
 
         assert!(changed);
         assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
@@ -1011,6 +1134,154 @@ mod tests {
                 stderr: String::new(),
             })
         }
+    }
+
+    #[test]
+    fn steady_state_fresh_projections_skip_orphan_git_scan_on_live_tier() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = OrphanRecoveryRunner::default();
+
+        refresh_runtime_context_with_tier(
+            &mut context,
+            &mut runner,
+            &NoAgentStatusCache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        assert!(
+            !runner.commands.iter().any(|command| {
+                command.args.len() >= 5
+                    && command.args[2] == "worktree"
+                    && command.args[3] == "list"
+            }),
+            "live tier with fresh projections should not list worktrees: {:?}",
+            runner.commands
+        );
+    }
+
+    #[test]
+    fn steady_state_recovers_orphan_when_tmux_lists_unregistered_ajax_session() {
+        let base = context_with_unchanged_running_task();
+        let mut context = CommandContext::new(base.config, base.registry);
+        let mut runner = OrphanRecoveryRunner {
+            sessions_output: Some("ajax-web-fix-login\najax-web-a\n".to_string()),
+            ..Default::default()
+        };
+
+        let changed = refresh_runtime_context_with_tier(
+            &mut context,
+            &mut runner,
+            &NoAgentStatusCache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
+    }
+
+    #[test]
+    fn steady_state_refresh_reuses_initial_task_snapshot() {
+        let base = context_with_unchanged_running_task();
+        let mut context =
+            CommandContext::new(base.config, CountingRegistry::from_registry(base.registry));
+        let mut runner = GitSkippingRunner::default();
+
+        let _changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert_eq!(
+            context.registry.get_task_calls(),
+            0,
+            "refresh should reuse the initial list_tasks snapshot, got {} get_task calls",
+            context.registry.get_task_calls()
+        );
+    }
+
+    #[test]
+    fn steady_state_refresh_skips_capture_pane_when_agent_cache_is_stable() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = GitSkippingRunner::default();
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        let _changed =
+            refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache)
+                .unwrap();
+
+        assert!(
+            !runner.commands.iter().any(|command| {
+                matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+            }),
+            "stable agent cache with unchanged live status should skip capture-pane"
+        );
+    }
+
+    #[test]
+    fn steady_state_refresh_skips_global_list_windows_when_no_probed_session_exists() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.tmux_session = "ajax-web-missing-session".to_string();
+        let mut runner = MissingSessionRunner::default();
+
+        let _changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(
+            !runner.commands.iter().any(|command| {
+                matches!(command.args.as_slice(), [command, ..] if command == "list-windows")
+            }),
+            "missing probed session should not list all windows: {:?}",
+            runner.commands
+        );
+    }
+
+    #[test]
+    fn steady_state_refresh_operation_budget() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = GitSkippingRunner::default();
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        let _changed = refresh_runtime_context_with_agent_status_cache_and_tier(
+            &mut context,
+            &mut runner,
+            &cache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        let git_worktree_lists = runner
+            .commands
+            .iter()
+            .filter(|command| git_worktree_list(&command.args))
+            .count();
+        let capture_panes = runner
+            .commands
+            .iter()
+            .filter(|command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane"))
+            .count();
+        let tmux_commands = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command.args.first().map(String::as_str),
+                    Some("list-sessions" | "list-windows")
+                )
+            })
+            .count();
+
+        assert_eq!(git_worktree_lists, 0);
+        assert_eq!(capture_panes, 0);
+        assert!(
+            tmux_commands <= 2,
+            "expected at most list-sessions + list-windows, got {tmux_commands}"
+        );
     }
 
     #[test]

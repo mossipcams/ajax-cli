@@ -483,7 +483,7 @@ mod tests {
         };
 
         assert_eq!(
-            adapter.launch(&launch),
+            adapter.launch(crate::models::AgentClient::Codex, &launch),
             CommandSpec::new("codex", ["--cd", "/tmp/worktree", "fix login"])
         );
     }
@@ -497,8 +497,40 @@ mod tests {
         };
 
         assert_eq!(
-            adapter.launch(&launch),
+            adapter.launch(crate::models::AgentClient::Codex, &launch),
             CommandSpec::new("codex", ["--cd", "/tmp/worktree"])
+        );
+    }
+
+    #[test]
+    fn agent_adapter_claude_launch_omits_cd_flag() {
+        use crate::models::AgentClient;
+
+        let adapter = AgentAdapter::new("claude");
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: String::new(),
+        };
+
+        assert_eq!(
+            adapter.launch(AgentClient::Claude, &launch),
+            CommandSpec::new("claude", [])
+        );
+    }
+
+    #[test]
+    fn agent_adapter_cursor_launch_uses_agent_subcommand() {
+        use crate::models::AgentClient;
+
+        let adapter = AgentAdapter::new("cursor");
+        let launch = AgentLaunch {
+            worktree_path: "/tmp/worktree".to_string(),
+            prompt: "fix login".to_string(),
+        };
+
+        assert_eq!(
+            adapter.launch(AgentClient::Other, &launch),
+            CommandSpec::new("cursor", ["agent", "fix login"])
         );
     }
 
