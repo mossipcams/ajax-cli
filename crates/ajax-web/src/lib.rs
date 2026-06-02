@@ -59,7 +59,7 @@ mod tests {
             );
         }
 
-        for adapter in ["http", "tls", "push", "assets", "tmux_input"] {
+        for adapter in ["http", "tls", "push", "assets", "server", "tmux_input"] {
             assert!(
                 adapters.contains(&format!("pub mod {adapter};")),
                 "missing ajax-web adapter module: {adapter}"

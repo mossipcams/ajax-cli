@@ -71,6 +71,9 @@ mod tests {
             "id=\"new-task-sheet\"",
             "value=\"cursor\"",
             "id=\"task-detail\"",
+            "id=\"settings-view\"",
+            "id=\"settings-link\"",
+            "id=\"restart-server\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
@@ -172,6 +175,8 @@ mod tests {
             script.contains("/api/tasks"),
             "missing POST start endpoint usage"
         );
+        assert!(script.contains("#/settings"));
+        assert!(script.contains("/api/server/restart"));
         assert!(
             script.contains("/answer"),
             "dashboard approvals should use the guarded answer endpoint"
@@ -182,7 +187,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v21"));
+        assert!(worker.contains("ajax-cockpit-v22"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(worker.contains("action: \"approve\""));
         assert!(worker.contains("/answer"));

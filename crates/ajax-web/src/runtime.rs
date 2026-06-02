@@ -29,7 +29,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     action_vocabulary::supported_web_action,
-    adapters::{push, tls},
+    adapters::{push, server, tls},
     slices::{attention, cockpit, install},
     WebError,
 };
@@ -110,6 +110,7 @@ where
         .route("/sw.js", get(axum_service_worker))
         .route("/icons/{*path}", get(axum_icon))
         .route("/api/health", get(axum_health))
+        .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
@@ -343,6 +344,19 @@ async fn axum_icon(AxumPath(path): AxumPath<String>) -> AxumResponse {
 
 async fn axum_health() -> AxumResponse {
     json_value_response(200, serde_json::json!({ "ok": true }))
+}
+
+async fn axum_server_restart() -> AxumResponse {
+    handle_server_restart().into_axum_response()
+}
+
+fn handle_server_restart() -> Response {
+    server::schedule_process_restart();
+    Response {
+        status_code: 200,
+        content_type: "application/json; charset=utf-8",
+        body: br#"{"ok":true,"restarting":true}"#.to_vec(),
+    }
 }
 
 async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
@@ -830,6 +844,7 @@ pub fn route_with_bridge<C: CommandRunner>(
         ("GET", "/api/push/config") => handle_push_config(state_dir),
         ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
         ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
+        ("POST", "/api/server/restart") => Ok(handle_server_restart()),
         _ => route(request, context).map_err(|error| match error {
             RouteError::Json(error) => WebError::JsonSerialization(error.to_string()),
         }),
@@ -1581,6 +1596,33 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert!(bridge.refreshed);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn server_restart_endpoint_returns_restarting_json() {
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut runner = OkRunner;
+        let mut bridge = TestBridge::default();
+        let dir = scratch_dir("restart");
+
+        let response = route_with_bridge(
+            Request {
+                method: "POST",
+                path: "/api/server/restart",
+                body: "",
+            },
+            &mut context,
+            &mut runner,
+            &mut bridge,
+            &dir,
+        )
+        .unwrap();
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+
+        assert_eq!(response.status_code, 200);
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["restarting"], true);
         std::fs::remove_dir_all(&dir).ok();
     }
 
