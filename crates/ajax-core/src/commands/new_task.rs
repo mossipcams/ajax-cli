@@ -68,11 +68,15 @@ pub fn new_task_plan<R: Registry>(
     let tmux_session = format!("ajax-{}-{handle}", request.repo);
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
+    let selected_agent = agent_from_name(&request.agent);
     let agent = AgentAdapter::new(&request.agent);
-    let launch = agent.launch(&AgentLaunch {
-        worktree_path: worktree_path_string.clone(),
-        prompt: String::new(),
-    });
+    let launch = agent.launch(
+        selected_agent,
+        &AgentLaunch {
+            worktree_path: worktree_path_string.clone(),
+            prompt: String::new(),
+        },
+    );
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     plan.commands.push(git.add_worktree(
         &repo.path.display().to_string(),
@@ -438,6 +442,48 @@ mod tests {
             },
             InMemoryRegistry::default(),
         )
+    }
+
+    fn agent_send_keys_line(plan: &crate::commands::CommandPlan) -> &str {
+        plan.commands
+            .iter()
+            .find(|command| {
+                command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string())
+            })
+            .map(|command| command.args[3].as_str())
+            .expect("expected tmux send-keys command")
+    }
+
+    #[test]
+    fn new_task_plan_claude_agent_command_omits_cd_flag() {
+        let context = context();
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "claude".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(agent_send_keys_line(&plan), "claude");
+    }
+
+    #[test]
+    fn new_task_plan_cursor_agent_command_uses_agent_subcommand() {
+        let context = context();
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "cursor".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(agent_send_keys_line(&plan), "cursor agent");
     }
 
     #[test]

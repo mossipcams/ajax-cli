@@ -282,6 +282,7 @@ mod tests {
 
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
+        assert!(html.contains("class=\"cockpit-chrome\""));
         assert!(html.contains("id=\"alerts-banner\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
@@ -409,18 +410,21 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v18"));
+        assert!(sw_text.contains("ajax-cockpit-v21"));
         assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
         assert!(sw_text.contains("showNotification"));
         assert!(sw_text.contains("#/t/"));
+        assert!(sw_text.contains("action: \"approve\""));
+        assert!(sw_text.contains("/answer"));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
         assert!(app_text.contains("pushManager.subscribe"));
         assert!(app_text.contains("/api/push/config"));
         assert!(app_text.contains("/api/push/subscribe"));
+        assert!(app_text.contains("/answer"));
     }
 
     #[test]

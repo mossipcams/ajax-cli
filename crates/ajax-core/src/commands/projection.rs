@@ -1,6 +1,6 @@
 use crate::{
     attention::annotate,
-    models::{Annotation, LifecycleStatus, SideFlag, Task},
+    models::{Annotation, LifecycleStatus, Task},
     output::{
         CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse, ReposResponse, TaskCard,
         TaskSummary, TasksResponse,
@@ -54,7 +54,7 @@ pub(super) fn is_visible_task(task: &Task) -> bool {
 }
 
 pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
-    is_visible_task(task) && !task.has_side_flag(SideFlag::Stale)
+    crate::ghost_task::is_cockpit_visible_task(task)
 }
 
 pub(super) fn task_summary(task: &Task) -> TaskSummary {
@@ -207,6 +207,19 @@ mod tests {
 
         assert_eq!(projection.cards[0].annotations.len(), 1);
         assert_eq!(projection.next.unwrap().action, OperatorAction::Review);
+    }
+
+    #[test]
+    fn cockpit_menu_visibility_matches_registry_ghost_classifier() {
+        let mut broken = task("broken");
+        broken.add_side_flag(SideFlag::WorktreeMissing);
+        assert!(super::is_cockpit_menu_task(&broken));
+        assert!(crate::ghost_task::is_cockpit_visible_task(&broken));
+
+        let mut stale = task("stale");
+        stale.add_side_flag(SideFlag::Stale);
+        assert!(!super::is_cockpit_menu_task(&stale));
+        assert!(!crate::ghost_task::is_cockpit_visible_task(&stale));
     }
 
     #[test]

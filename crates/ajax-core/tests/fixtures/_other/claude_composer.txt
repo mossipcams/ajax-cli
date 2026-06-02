@@ -1,0 +1,66 @@
+❯ I mesn should we piviot to agent orchestratiom
+
+⏺ Got it — agent orchestration. Same shape as my answer above, but let me be
+  sharper.
+
+  Recommendation: yes, with a specific definition
+
+  Pivot framing: "Ajax is the operator's console for running a fleet of coding
+  agents — Codex, Claude Code, Cursor — against real repos that ship real PRs."
+
+  This is what ajax already is architecturally. The pivot is mostly a
+  commitment, not a rebuild:
+
+  - Stop: trying to make per-task feel like SSH. The half-terminal, the full
+  xterm.js fantasy, the inline diff drill-down — all over-investment on the
+  wrong screen.
+  - Start: fleet UX as the home — priority queue, "what needs me?" across N
+  agents, batched approvals, dependency awareness, agent-to-agent handoff.
+  - Keep per-task minimal: glance + approve/deny + one steering message + "open
+   in SSH" escape hatch. ~15 seconds, then back to the fleet.
+
+  What you give up
+
+  You concede the per-task experience to SSH/Cursor/claude.ai. The user who
+  wants to babysit one agent in detail doesn't pick ajax — they have better
+  tools for that. You stop competing for them.
+
+  You get back: a sharp identity in a category nobody owns. Devin sandboxes.
+  Cursor lives in the IDE. Claude Code is per-task. Nobody is good at "I have 8
+   agents going and I'm running it from my phone." That's a real gap.
+
+  What changes about in-flight work
+
+  - The half-terminal pane log + free-form input bar: cut. They were
+  per-task-deep features.
+  - The event journal (tmux pipe-pane → JSONL): keep — orchestration also needs
+   it (for fleet-level "what's happening" and per-agent priority signals).
+  - Approve/Deny inline on cards in the fleet view: promote. Currently it
+  requires a tap into detail; in the orchestration framing it should fire from
+  the fleet card directly.
+  - "Full control" branch (ajax/ajax-web-full-control): scope it down to just
+  the fleet-card improvements + the pipe-pane journal. The pane view itself
+  gets archived.
+
+  The one question
+
+  Are you willing to lose the "I can do everything from the web cockpit" pitch?
+   Because that's what's been driving the per-task perfectionism. Orchestration
+   positioning says explicitly: you can't, and you shouldn't try — that's what
+  SSH is for. The cockpit's job is to make you need SSH less often, not
+  eliminate it.
+
+  If yes, commit and we replan. If no, then orchestration isn't actually the
+  pivot — you want a single-agent web tool, and we should be honest about that
+  instead.
+
+✻ Crunched for 29s
+
+───────────────────────────────────────────────────────────────────────────────
+❯ yes, commit and replan
+───────────────────────────────────────────────────────────────────────────────
+  Opus 4.7 │ ajax-web-full-control █░░░░░░░░░ 13%
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+                                       ~113k uncached · /clear to start fresh
+                                       new task? /clear to save 113.1k tokens
+

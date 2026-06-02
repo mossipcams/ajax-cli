@@ -10,6 +10,7 @@ use super::{
     refresh_task_annotations, InMemoryRegistry, RegistryEvent, RegistryEventKind,
     RegistrySnapshotError, RegistryStore,
 };
+use crate::ghost_task::is_registry_ghost_task;
 use crate::lifecycle::hydrate_lifecycle_status;
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
@@ -364,53 +365,6 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     load_agent_attempts_by_task(connection, &mut tasks)?;
 
     Ok(tasks)
-}
-
-fn is_registry_ghost_task(task: &Task) -> bool {
-    if task.lifecycle_status == LifecycleStatus::Removed {
-        return true;
-    }
-    if task.has_side_flag(SideFlag::Stale) {
-        return true;
-    }
-    if task.has_missing_substrate() && is_operational_missing_substrate_ghost(task) {
-        return true;
-    }
-    is_orphaned_drop_failure_ghost(task)
-}
-
-fn is_orphaned_drop_failure_ghost(task: &Task) -> bool {
-    task.lifecycle_status == LifecycleStatus::TeardownIncomplete
-        && task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists)
-        && task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| status.worktree_exists)
-}
-
-fn is_operational_missing_substrate_ghost(task: &Task) -> bool {
-    if task
-        .git_status
-        .as_ref()
-        .is_some_and(|status| status.worktree_exists)
-    {
-        return false;
-    }
-
-    matches!(
-        task.lifecycle_status,
-        LifecycleStatus::Created
-            | LifecycleStatus::Provisioning
-            | LifecycleStatus::Active
-            | LifecycleStatus::Waiting
-            | LifecycleStatus::Reviewable
-            | LifecycleStatus::Mergeable
-            | LifecycleStatus::Orphaned
-            | LifecycleStatus::Error
-    )
 }
 
 fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
@@ -1529,65 +1483,28 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_registry_store_persists_active_missing_substrate_when_worktree_exists() {
+    fn sqlite_registry_store_persists_active_missing_substrate_tasks() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = task("task-gap", "web", "fix-login");
-        task.lifecycle_status = LifecycleStatus::Active;
-        task.add_side_flag(SideFlag::TmuxMissing);
-        task.git_status = Some(GitStatus {
-            worktree_exists: true,
-            branch_exists: true,
-            current_branch: Some("ajax/fix-login".to_string()),
-            dirty: false,
-            ahead: 0,
-            behind: 0,
-            merged: false,
-            untracked_files: 0,
-            unpushed_commits: 0,
-            conflicted: false,
-            last_commit: None,
-        });
-        registry.create_task(task).unwrap();
-        let path = std::env::temp_dir().join(format!(
-            "ajax-registry-store-{}-{}.db",
-            std::process::id(),
-            "sqlite-active-missing-substrate-persist"
-        ));
-        let store = SqliteRegistryStore::new(&path);
-
-        store.save(&registry).unwrap();
-        let restored = store.load().unwrap();
-        std::fs::remove_file(&path).unwrap();
-
-        let task = restored
-            .get_task(&TaskId::new("task-gap"))
-            .expect("active task with worktree evidence should persist");
-        assert!(task.has_side_flag(SideFlag::TmuxMissing));
-    }
-
-    #[test]
-    fn sqlite_registry_store_does_not_persist_active_missing_substrate_ghost() {
-        let mut registry = InMemoryRegistry::default();
-        let mut ghost = task("task-ghost", "web", "fix-login");
-        ghost.lifecycle_status = LifecycleStatus::Active;
-        ghost.add_side_flag(SideFlag::TmuxMissing);
-        registry.create_task(ghost).unwrap();
+        let mut broken = task("task-broken", "web", "fix-login");
+        broken.lifecycle_status = LifecycleStatus::Active;
+        broken.add_side_flag(SideFlag::TmuxMissing);
+        registry.create_task(broken).unwrap();
         registry
             .create_task(task("task-live", "web", "keep-task"))
             .unwrap();
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
-            "sqlite-active-missing-substrate-ghost"
+            "sqlite-active-missing-substrate"
         ));
         let store = SqliteRegistryStore::new(&path);
 
         store.save(&registry).unwrap();
 
         let connection = rusqlite::Connection::open(&path).unwrap();
-        let ghost_task_count: i64 = connection
+        let broken_task_count: i64 = connection
             .query_row(
-                "SELECT count(*) FROM registry_tasks WHERE task_id = 'task-ghost'",
+                "SELECT count(*) FROM registry_tasks WHERE task_id = 'task-broken'",
                 [],
                 |row| row.get(0),
             )
@@ -1596,21 +1513,25 @@ mod tests {
         let restored = store.load().unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(ghost_task_count, 0);
-        assert!(restored.get_task(&TaskId::new("task-ghost")).is_none());
+        assert_eq!(broken_task_count, 1);
+        let restored_broken = restored
+            .get_task(&TaskId::new("task-broken"))
+            .expect("active missing-substrate task should survive save/load");
+        assert_eq!(restored_broken.lifecycle_status, LifecycleStatus::Active);
+        assert!(restored_broken.has_side_flag(SideFlag::TmuxMissing));
         assert!(restored.get_task(&TaskId::new("task-live")).is_some());
     }
 
     #[test]
-    fn sqlite_registry_store_prunes_orphaned_drop_failure_ghosts() {
+    fn sqlite_registry_store_persists_teardown_incomplete_for_cleanup_retry() {
         let mut registry = InMemoryRegistry::default();
-        let mut ghost = task("task-ghost", "web", "fix-login");
-        ghost.lifecycle_status = LifecycleStatus::TeardownIncomplete;
-        ghost.tmux_status = Some(TmuxStatus {
+        let mut incomplete = task("task-incomplete", "web", "fix-login");
+        incomplete.lifecycle_status = LifecycleStatus::TeardownIncomplete;
+        incomplete.tmux_status = Some(TmuxStatus {
             exists: false,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        ghost.git_status = Some(GitStatus {
+        incomplete.git_status = Some(GitStatus {
             worktree_exists: true,
             branch_exists: true,
             current_branch: Some("ajax/fix-login".to_string()),
@@ -1623,11 +1544,84 @@ mod tests {
             conflicted: false,
             last_commit: None,
         });
+        registry.create_task(incomplete).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-teardown-incomplete-retry"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let task = restored
+            .get_task(&TaskId::new("task-incomplete"))
+            .expect("teardown-incomplete task with remaining worktree should persist");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+    }
+
+    #[test]
+    fn sqlite_registry_store_retains_events_and_receipts_for_persisted_missing_substrate_tasks() {
+        let mut registry = InMemoryRegistry::default();
+        let mut broken = task("task-broken", "web", "fix-login");
+        broken.lifecycle_status = LifecycleStatus::Active;
+        broken.add_side_flag(SideFlag::WorktreeMissing);
+        registry.create_task(broken).unwrap();
+        registry
+            .record_event(
+                TaskId::new("task-broken"),
+                RegistryEventKind::UserNote,
+                "operator context",
+            )
+            .unwrap();
+        registry
+            .record_step_receipt(StepReceipt::succeeded(
+                TaskId::new("task-broken"),
+                TaskOperationKind::Drop,
+                "tmux_session_absent",
+                "ajax-web-fix-login",
+                "{}",
+            ))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-missing-substrate-history"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(restored.get_task(&TaskId::new("task-broken")).is_some());
+        let events = restored.events_for_task(&TaskId::new("task-broken"));
+        assert!(
+            events
+                .iter()
+                .any(|event| event.message == "operator context"),
+            "registry events should survive when the task survives"
+        );
+        let receipts = restored.step_receipts_for_task(&TaskId::new("task-broken"));
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].step_key, "tmux_session_absent");
+    }
+
+    #[test]
+    fn sqlite_registry_store_prunes_abandoned_provisioning_ghosts() {
+        let mut registry = InMemoryRegistry::default();
+        let mut ghost = task("task-ghost", "web", "fix-login");
+        ghost.lifecycle_status = LifecycleStatus::Provisioning;
+        ghost.add_side_flag(SideFlag::WorktreeMissing);
+        ghost.add_side_flag(SideFlag::BranchMissing);
+        ghost.add_side_flag(SideFlag::TmuxMissing);
         registry.create_task(ghost).unwrap();
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
-            "sqlite-orphaned-drop-failure"
+            "sqlite-abandoned-provisioning"
         ));
         let store = SqliteRegistryStore::new(&path);
 

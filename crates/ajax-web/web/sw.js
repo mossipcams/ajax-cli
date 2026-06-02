@@ -1,5 +1,5 @@
 // Ajax Mobile Cockpit service worker: offline app shell + push notifications.
-const CACHE = "ajax-cockpit-v18";
+const CACHE = "ajax-cockpit-v21";
 const SHELL = [
   "/",
   "/app.css",
@@ -67,6 +67,13 @@ self.addEventListener("push", (event) => {
     }
   }
   const url = taskDeepLink(data);
+  const answerable = !!(data.answerable && data.fingerprint && (data.task_handle || data.handle));
+  const actions = answerable
+    ? [
+        { action: "approve", title: "Approve" },
+        { action: "deny", title: "Deny" },
+      ]
+    : [];
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })
@@ -81,7 +88,12 @@ self.addEventListener("push", (event) => {
           renotify: false,
           icon: "/icons/icon-192.png",
           badge: "/icons/icon-192.png",
-          data: { url },
+          actions,
+          data: {
+            url,
+            handle: data.task_handle || data.handle || null,
+            fingerprint: data.fingerprint || null,
+          },
         });
       }),
   );
@@ -89,7 +101,28 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || "/";
+  const data = event.notification.data || {};
+  const target = data.url || "/";
+
+  if (event.action === "approve" || event.action === "deny") {
+    const requestId =
+      self.crypto && self.crypto.randomUUID
+        ? self.crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    event.waitUntil(
+      fetch(`/api/tasks/${encodeURIComponent(data.handle)}/answer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          answer: event.action,
+          fingerprint: data.fingerprint,
+          request_id: requestId,
+        }),
+      }).catch(() => undefined),
+    );
+    return;
+  }
+
   event.waitUntil(
     self.clients
       .matchAll({ type: "window", includeUncontrolled: true })

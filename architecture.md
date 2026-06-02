@@ -156,6 +156,14 @@ tmux still own live substrate reality; Ajax reconciles their observations into
 SQLite so Cockpit, command planning, and JSON output can read one coherent task
 record.
 
+Registry ghosts are tasks that should not survive SQLite save/load and should
+not appear in Cockpit. `ajax-core::ghost_task` is the single classifier for that
+decision. Persistence (`registry/sqlite`), Cockpit projection, and visibility
+all consult the same rule. Recoverable missing-substrate tasks in operational
+lifecycles remain persisted with their events and step receipts. Only
+`Removed`, `Stale`, or abandoned provisioning records with no recoverable Git
+substrate are pruned as ghosts.
+
 ### Lifecycle
 
 Lifecycle state is modeled in `ajax-core::lifecycle`. Commands and live-status
@@ -327,10 +335,12 @@ Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
-Web Cockpit is a first-class browser operator surface. It is intended to fully
-control Ajax wherever browser capabilities exist. Native Cockpit and Web
-Cockpit consume shared Cockpit projections and task-operation contracts; neither
-surface owns task truth.
+Web Cockpit is a first-class browser operator surface, but it is intentionally a
+dashboard rather than a terminal mirror. Native Cockpit and Web Cockpit consume
+shared Cockpit projections and task-operation contracts; neither surface owns
+task truth. The browser experience should lead with task state, required
+decisions, and next actions, while raw pane text stays secondary and
+collapsible.
 
 The PWA is not an offline-first Ajax client and must not introduce a second
 browser-side task model. Git, tmux, SQLite, supervised processes, and the Ajax
@@ -458,6 +468,22 @@ Owns browser attention delivery. It compares Cockpit attention projections over
 time, detects newly attention-worthy tasks, and asks the push adapter to notify
 subscribed browsers.
 
+### `ajax-web::slices::pane`
+
+Owns the browser pane and guarded approval capability. It turns tmux pane
+captures into cleaned browser snapshots with stable per-task sequences so the
+dashboard can derive current status and optional terminal details without
+centering the UI on a scrolling log.
+
+When the task's agent is at a recognized prompt, the snapshot can also carry a
+structured, confidence-scored `AgentPrompt` from `ajax-core::agent_prompt`: the
+command, the answerable choices, and a fingerprint. Browser approval actions
+post a typed answer plus that fingerprint; `answer_task_prompt` re-captures the
+live pane, rejects stale answers, resolves the operator intent through the agent
+adapter, and only then delivers `send-keys`, with per-task de-duplication and
+rate limiting inside the adapter boundary. Free-form browser input is outside
+the dashboard scope and remains a terminal escalation path.
+
 ### `ajax-web::runtime`
 
 Owns Web Cockpit runtime wiring and is not itself a slice. It sets up the Axum
@@ -496,8 +522,10 @@ Web Push is opt-in. Web Cockpit holds a persisted VAPID identity, serves its
 public key at `/api/push/config`, and stores browser subscriptions posted to
 `/api/push/subscribe`. A background attention poller rebuilds the Cockpit view
 on an interval, diffs the attention inbox, and sends a VAPID-signed encrypted
-notification for each task that newly needs attention; subscriptions the push
-service reports as gone are pruned.
+notification for each task that newly needs attention; recognized approval
+prompts may include actionable Approve and Deny buttons backed by the same
+fingerprint guard as the dashboard. Subscriptions the push service reports as
+gone are pruned.
 
 Native Cockpit starts `ajax-cli web` by default and keeps it alive for the
 Cockpit session. `ajax-cli` starts Web Cockpit on port `8787` with the stable

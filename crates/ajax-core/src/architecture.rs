@@ -7,7 +7,7 @@ mod tests {
         rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
     };
 
-    const SLICES: [&str; 1] = ["review"];
+    const SLICES: [&str; 2] = ["pane", "review"];
 
     const SUBSTRATE_MECHANISMS: [&str; 4] = ["adapters", "registry", "analysis", "runtime"];
 

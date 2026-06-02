@@ -1,5 +1,123 @@
 # Changelog
 
+## Unreleased
+
+### Bug Fixes
+
+* unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
+
+## [0.11.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.11.0...ajax-cli-v0.11.1) (2026-06-01)
+
+
+### Bug Fixes
+
+* **release:** collapse workspace to one releasable path ([#114](https://github.com/mossipcams/ajax-cli/issues/114)) ([2d09612](https://github.com/mossipcams/ajax-cli/commit/2d09612811bb07aba1206dd8579008a6a8400324))
+* **release:** keep one shared workspace release line ([#113](https://github.com/mossipcams/ajax-cli/issues/113)) ([2e49262](https://github.com/mossipcams/ajax-cli/commit/2e492625bf5b9837f1b5fae1b162180a1ae04456))
+* **web:** make cockpit dashboard-first and split releases per crate ([#111](https://github.com/mossipcams/ajax-cli/issues/111)) ([89906d9](https://github.com/mossipcams/ajax-cli/commit/89906d92243600694b26cd241d677006070ed7f8))
+
+## [0.11.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.1...ajax-cli-v0.11.0) (2026-05-29)
+
+
+### Features
+
+* **web:** triage-only structured agent answering with guarded approvals ([#109](https://github.com/mossipcams/ajax-cli/issues/109)) ([b6cbf0a](https://github.com/mossipcams/ajax-cli/commit/b6cbf0a90ffab071e2512265e3b5241fdbc8f295))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.10.1 to 0.11.0
+    * ajax-supervisor bumped from 0.10.1 to 0.11.0
+    * ajax-tui bumped from 0.10.1 to 0.11.0
+    * ajax-web bumped from 0.10.1 to 0.11.0
+
+## [0.10.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.10.0...ajax-cli-v0.10.1) (2026-05-28)
+
+
+### Bug Fixes
+
+* stop release please phantom sync release loop ([#107](https://github.com/mossipcams/ajax-cli/issues/107)) ([f5174a3](https://github.com/mossipcams/ajax-cli/commit/f5174a30d629fd6cf3134fa98c76d11633ce1992))
+* sync release please manifest paths on grouped releases ([#108](https://github.com/mossipcams/ajax-cli/issues/108)) ([d582aa2](https://github.com/mossipcams/ajax-cli/commit/d582aa24f264a941dc55116d9745978f29d62321))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.10.0 to 0.10.1
+    * ajax-supervisor bumped from 0.10.0 to 0.10.1
+    * ajax-tui bumped from 0.10.0 to 0.10.1
+    * ajax-web bumped from 0.10.0 to 0.10.1
+
+## [0.10.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.9.0...ajax-cli-v0.10.0) (2026-05-28)
+
+
+### Miscellaneous Chores
+
+* **ajax-cli:** Synchronize ajax-cli versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.9.0 to 0.10.0
+    * ajax-supervisor bumped from 0.9.0 to 0.10.0
+    * ajax-tui bumped from 0.9.0 to 0.10.0
+    * ajax-web bumped from 0.9.0 to 0.10.0
+
+## [0.9.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.8.0...ajax-cli-v0.9.0) (2026-05-27)
+
+
+### Miscellaneous Chores
+
+* **ajax-cli:** Synchronize ajax-cli versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.8.0 to 0.9.0
+    * ajax-supervisor bumped from 0.8.0 to 0.9.0
+    * ajax-tui bumped from 0.8.0 to 0.9.0
+    * ajax-web bumped from 0.8.0 to 0.9.0
+
+## [0.8.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.4...ajax-cli-v0.8.0) (2026-05-27)
+
+
+### Bug Fixes
+
+* register workspace crates in release please ([#98](https://github.com/mossipcams/ajax-cli/issues/98)) ([b4f083e](https://github.com/mossipcams/ajax-cli/commit/b4f083e0718dcf8c131e1f7d8ba64aec61574af6))
+* stabilize release please workspace version rewrites ([#102](https://github.com/mossipcams/ajax-cli/issues/102)) ([160eafa](https://github.com/mossipcams/ajax-cli/commit/160eaface52cc633156fb3e9d2613f4359f61879))
+* unify ghost-task classification across persistence and Cockpit ([#99](https://github.com/mossipcams/ajax-cli/issues/99)) ([142c2fd](https://github.com/mossipcams/ajax-cli/commit/142c2fdb5dc8a9c30c5b73cc7c58049bebbd8c7a))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * ajax-core bumped from 0.1.0 to 0.8.0
+    * ajax-supervisor bumped from 0.1.0 to 0.8.0
+    * ajax-tui bumped from 0.1.0 to 0.8.0
+    * ajax-web bumped from 0.1.0 to 0.8.0
+
+## [0.7.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.3...ajax-cli-v0.7.4) (2026-05-27)
+
+
+### Bug Fixes
+
+* **web:** keep PWA top banners inside iOS safe area ([#95](https://github.com/mossipcams/ajax-cli/issues/95)) ([f60561f](https://github.com/mossipcams/ajax-cli/commit/f60561f4e9d6b485533c32ea288a44d2c551872b))
+* **web:** stabilize PWA drop confirm and modernize action buttons ([#94](https://github.com/mossipcams/ajax-cli/issues/94)) ([20a38a3](https://github.com/mossipcams/ajax-cli/commit/20a38a3f6a537f2dbc22c383e3c52a39a04bc1ef))
+
+## [0.7.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.2...ajax-cli-v0.7.3) (2026-05-27)
+
+
+### Bug Fixes
+
+* resilient drop teardown, failure surfacing, and ghost task pruning ([#91](https://github.com/mossipcams/ajax-cli/issues/91)) ([cb29bcc](https://github.com/mossipcams/ajax-cli/commit/cb29bcc13312e122801ef9d1c8bf709e4b60af67))
+
 ## [0.7.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.7.1...ajax-cli-v0.7.2) (2026-05-27)
 
 
