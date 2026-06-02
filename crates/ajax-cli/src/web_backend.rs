@@ -2,14 +2,8 @@ use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
     registry::InMemoryRegistry,
-    runtime_refresh::{
-        refresh_runtime_context_with_agent_status_cache_and_tier,
-        refresh_runtime_context_with_tier, NoAgentStatusCache, RefreshTier,
-    },
+    runtime_refresh::{refresh_runtime_context_with_tier, NoAgentStatusCache, RefreshTier},
 };
-use std::time::SystemTime;
-
-use crate::agent_status_cache::TmuxAgentStatusCache;
 #[cfg(test)]
 use ajax_web::runtime::Request;
 #[cfg(test)]
@@ -23,6 +17,7 @@ use ajax_web::{
     WebError,
 };
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::{
     command_error,
@@ -106,6 +101,27 @@ pub(crate) fn serve_mobile_web_with_paths(
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
 
+fn refresh_runtime_context_for_web<C: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut C,
+    tier: RefreshTier,
+) -> Result<bool, ajax_core::commands::CommandError> {
+    #[cfg(feature = "interactive")]
+    {
+        use ajax_core::runtime_refresh::refresh_runtime_context_with_agent_status_cache_and_tier;
+
+        if let Some(cache) =
+            crate::agent_status_cache::TmuxAgentStatusCache::from_default_location()
+        {
+            return refresh_runtime_context_with_agent_status_cache_and_tier(
+                context, runner, &cache, tier,
+            );
+        }
+    }
+
+    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
+}
+
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
     let state_file = match paths {
         Some(paths) => paths.state_file.clone(),
@@ -131,13 +147,9 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         tier: RefreshTier,
     ) -> Result<bool, WebError> {
         self.reload_context_if_stale(context)?;
-        let state_changed = if let Some(cache) = TmuxAgentStatusCache::from_default_location() {
-            refresh_runtime_context_with_agent_status_cache_and_tier(context, runner, &cache, tier)
-        } else {
-            refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
-        }
-        .map_err(command_error)
-        .map_err(web_error_from_cli)?;
+        let state_changed = refresh_runtime_context_for_web(context, runner, tier)
+            .map_err(command_error)
+            .map_err(web_error_from_cli)?;
         if state_changed {
             if let Some(paths) = self.paths.as_ref() {
                 save_context(paths, context).map_err(web_error_from_cli)?;
