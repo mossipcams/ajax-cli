@@ -1477,7 +1477,8 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
     let mut state_changed = false;
 
     let snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
 
     assert!(state_changed);
     assert_eq!(
@@ -1507,7 +1508,8 @@ fn live_refresh_clears_stale_tmux_missing_when_session_exists_without_worktrunk(
     let mut state_changed = false;
 
     let snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
     assert!(state_changed);
@@ -1566,7 +1568,8 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
     let mut state_changed = false;
 
     let _snapshot =
-        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed).unwrap();
+        super::refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+            .unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
     assert!(state_changed);

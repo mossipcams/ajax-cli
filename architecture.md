@@ -203,6 +203,30 @@ or terminal cache formats and core reduces those values into live observations.
 Cockpit invokes runtime refresh through the CLI adapter but does not own the
 refresh algorithm.
 
+#### Runtime refresh and registry persistence
+
+Ajax keeps one operator-facing task model, but three boundaries apply different
+rules:
+
+- **In-memory registry** — authoritative for the running CLI or web process
+  between SQLite reloads.
+- **SQLite persistence** — stores durable operator intent. Active tasks with
+  credible git worktree evidence persist even when tmux/worktrunk substrate is
+  missing so Cockpit can offer drop/retry without recreate loops.
+- **Substrate observation** — git/tmux/pane probes update flags and live status
+  on existing rows; they must not fight persistence or silently duplicate tasks.
+
+Orphan worktree discovery runs only when a refresh gate fires: provisioning or
+stale runtime projections, or tmux lists an `ajax-{repo}-{handle}` session that
+is not yet registered. Steady-state polls with fresh projections skip per-repo
+`git worktree list` unless a gate demands discovery.
+
+`RefreshTier::Live` skips orphan git discovery unless those gates fire.
+`RefreshTier::Full` is used for periodic web attention polls and operator paths
+that require rediscovery. Native Cockpit uses in-memory context and saves on
+change; web reloads SQLite only when the state file mtime advances or after a
+mutating operation persisted to disk.
+
 ### Live Status
 
 `live.rs` reduces observations into live-status classifications.

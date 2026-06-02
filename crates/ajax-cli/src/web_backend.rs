@@ -2,7 +2,7 @@ use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
     registry::InMemoryRegistry,
-    runtime_refresh::refresh_runtime_context,
+    runtime_refresh::{refresh_runtime_context_with_tier, NoAgentStatusCache, RefreshTier},
 };
 #[cfg(test)]
 use ajax_web::runtime::Request;
@@ -17,6 +17,7 @@ use ajax_web::{
     WebError,
 };
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::{
     command_error,
@@ -63,6 +64,7 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     let dir = companion_state_dir(paths)?;
     let mut bridge = CliRuntimeBridge {
         paths: paths.cloned(),
+        last_loaded_mtime: paths.and_then(state_file_mtime),
     };
     runtime::route_with_bridge(
         Request { method, path, body },
@@ -93,9 +95,31 @@ pub(crate) fn serve_mobile_web_with_paths(
     let state_dir = companion_state_dir(paths)?;
     let bridge = CliRuntimeBridge {
         paths: paths.cloned(),
+        last_loaded_mtime: paths.as_ref().and_then(|paths| state_file_mtime(paths)),
     };
     let state = runtime::WebAppState::new(context.clone(), ProcessCommandRunner, bridge, state_dir);
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
+}
+
+fn refresh_runtime_context_for_web<C: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut C,
+    tier: RefreshTier,
+) -> Result<bool, ajax_core::commands::CommandError> {
+    #[cfg(feature = "interactive")]
+    {
+        use ajax_core::runtime_refresh::refresh_runtime_context_with_agent_status_cache_and_tier;
+
+        if let Some(cache) =
+            crate::agent_status_cache::TmuxAgentStatusCache::from_default_location()
+        {
+            return refresh_runtime_context_with_agent_status_cache_and_tier(
+                context, runner, &cache, tier,
+            );
+        }
+    }
+
+    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
@@ -110,8 +134,9 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
 }
 
 #[derive(Clone)]
-struct CliRuntimeBridge {
+pub(crate) struct CliRuntimeBridge {
     paths: Option<CliContextPaths>,
+    last_loaded_mtime: Option<SystemTime>,
 }
 
 impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
@@ -119,16 +144,16 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
+        tier: RefreshTier,
     ) -> Result<bool, WebError> {
-        if let Some(paths) = self.paths.as_ref() {
-            *context = load_context(paths).map_err(web_error_from_cli)?;
-        }
-        let state_changed = refresh_runtime_context(context, runner)
+        self.reload_context_if_stale(context)?;
+        let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
         if state_changed {
             if let Some(paths) = self.paths.as_ref() {
                 save_context(paths, context).map_err(web_error_from_cli)?;
+                self.last_loaded_mtime = state_file_mtime(paths);
             }
         }
         Ok(state_changed)
@@ -154,8 +179,25 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
 }
 
 impl CliRuntimeBridge {
+    fn reload_context_if_stale(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), WebError> {
+        let Some(paths) = self.paths.as_ref() else {
+            return Ok(());
+        };
+        let Some(mtime) = state_file_mtime(paths) else {
+            return Ok(());
+        };
+        if self.last_loaded_mtime != Some(mtime) {
+            *context = load_context(paths).map_err(web_error_from_cli)?;
+            self.last_loaded_mtime = Some(mtime);
+        }
+        Ok(())
+    }
+
     fn persist_operate(
-        &self,
+        &mut self,
         result: Result<OperateOutcome, OperateError>,
         context: &mut CommandContext<InMemoryRegistry>,
     ) -> Result<OperateOutcome, ActionFailure> {
@@ -164,6 +206,7 @@ impl CliRuntimeBridge {
                 if outcome.state_changed {
                     if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
+                        self.last_loaded_mtime = state_file_mtime(paths);
                     }
                 }
                 Ok(outcome)
@@ -173,6 +216,7 @@ impl CliRuntimeBridge {
                 if state_changed {
                     if let Some(paths) = self.paths.as_ref() {
                         save_context(paths, context).map_err(action_failure_from_cli)?;
+                        self.last_loaded_mtime = state_file_mtime(paths);
                     }
                 }
                 Err(ActionFailure {
@@ -198,6 +242,15 @@ fn cli_error_from_web(error: WebError) -> CliError {
     }
 }
 
+pub(crate) fn state_file_mtime(paths: &CliContextPaths) -> Option<SystemTime> {
+    if !paths.state_file.exists() {
+        return None;
+    }
+    std::fs::metadata(&paths.state_file)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+}
+
 fn action_failure_from_cli(error: CliError) -> ActionFailure {
     ActionFailure {
         message: error.to_string(),
@@ -211,6 +264,7 @@ mod tests {
         cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
         render_mobile_shell,
     };
+    use ajax_core::runtime_refresh::RefreshTier;
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -220,6 +274,7 @@ mod tests {
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
+    use ajax_web::runtime::{self, RuntimeBridge};
     use std::collections::BTreeSet;
 
     #[test]
@@ -543,14 +598,21 @@ mod tests {
         let mut server_context =
             CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = LiveRefreshRunner;
+        let mut bridge = super::CliRuntimeBridge {
+            paths: Some(paths.clone()),
+            last_loaded_mtime: None,
+        };
 
-        let response = handle_http_request_with_runner_and_paths(
-            "GET",
-            "/api/cockpit",
-            "",
+        let response = runtime::route_with_bridge(
+            runtime::Request {
+                method: "GET",
+                path: "/api/cockpit",
+                body: "",
+            },
             &mut server_context,
             &mut runner,
-            Some(&paths),
+            &mut bridge,
+            &root,
         )
         .unwrap();
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
@@ -558,6 +620,36 @@ mod tests {
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
         assert_eq!(body["cards"][0]["live_summary"], "agent running");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn web_refresh_cockpit_does_not_reload_sqlite_when_state_unchanged() {
+        let root = std::env::temp_dir().join(format!("ajax-web-no-reload-{}", std::process::id()));
+        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let saved_context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&saved_context.registry)
+            .unwrap();
+        let mut context = super::load_context(&paths).unwrap();
+        let mut runner = LiveRefreshRunner;
+        let mut bridge = super::CliRuntimeBridge {
+            paths: Some(paths.clone()),
+            last_loaded_mtime: super::state_file_mtime(&paths),
+        };
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .expect("first refresh");
+        let tasks_after_first = context.registry.list_tasks().len();
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .expect("second refresh");
+
+        assert_eq!(context.registry.list_tasks().len(), tasks_after_first);
+        assert_eq!(bridge.last_loaded_mtime, super::state_file_mtime(&paths));
 
         let _ = std::fs::remove_dir_all(root);
     }
