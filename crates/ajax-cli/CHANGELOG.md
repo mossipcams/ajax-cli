@@ -6,6 +6,18 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.12.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.11.1...ajax-cli-v0.12.0) (2026-06-02)
+
+
+### Features
+
+* add Ctrl+T shortcut to open create-task from cockpit and task session ([#119](https://github.com/mossipcams/ajax-cli/issues/119)) ([94fda3c](https://github.com/mossipcams/ajax-cli/commit/94fda3c64e02f09185c049cc3e8bec9bfc8b229b))
+
+
+### Performance Improvements
+
+* tiered runtime refresh and reduce steady-state substrate churn ([#117](https://github.com/mossipcams/ajax-cli/issues/117)) ([0e68e5d](https://github.com/mossipcams/ajax-cli/commit/0e68e5dcff5b990e47592df891ad9bdc89683d4e))
+
 ## [0.11.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.11.0...ajax-cli-v0.11.1) (2026-06-01)
 
 
