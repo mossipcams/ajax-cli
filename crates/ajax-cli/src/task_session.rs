@@ -32,6 +32,33 @@ use crate::{command_error, CliError};
 pub(crate) enum TaskInputAction {
     Forward,
     ReturnToCockpit,
+    OpenNewTask,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TaskSessionContext {
+    pub new_task_repo: Option<String>,
+}
+
+impl TaskSessionContext {
+    pub(crate) fn from_task_handle(handle: &str) -> Self {
+        Self {
+            new_task_repo: repo_from_task_handle(handle),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TaskSessionEnd {
+    Normal,
+    OpenNewTask,
+}
+
+pub(crate) fn repo_from_task_handle(handle: &str) -> Option<String> {
+    handle
+        .split_once('/')
+        .map(|(repo, _)| repo.to_string())
+        .or_else(|| (!handle.is_empty()).then(|| handle.to_string()))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -169,14 +196,25 @@ enum TaskDetachStep {
 }
 
 pub(crate) trait TaskSessionRunner {
-    fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), CliError>;
+    fn run_task_session(
+        &mut self,
+        command: &CommandSpec,
+        context: &TaskSessionContext,
+    ) -> Result<TaskSessionEnd, CliError>;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) enum TaskEntryPlanOutcome {
+    Completed(Vec<CommandOutput>),
+    OpenNewTask,
 }
 
 pub(crate) fn execute_task_entry_plan<R: CommandRunner, S: TaskSessionRunner>(
     plan: &commands::CommandPlan,
     runner: &mut R,
     task_session: &mut S,
-) -> Result<Vec<CommandOutput>, CliError> {
+    session_context: &TaskSessionContext,
+) -> Result<TaskEntryPlanOutcome, CliError> {
     let mut setup_plan = commands::CommandPlan::new(plan.title.clone());
     setup_plan.requires_confirmation = plan.requires_confirmation;
     setup_plan.blocked_reasons = plan.blocked_reasons.clone();
@@ -201,8 +239,10 @@ pub(crate) fn execute_task_entry_plan<R: CommandRunner, S: TaskSessionRunner>(
             "task entry plan did not include an interactive command".to_string(),
         )
     })?;
-    task_session.run_task_session(&task_command)?;
-    Ok(outputs)
+    match task_session.run_task_session(&task_command, session_context)? {
+        TaskSessionEnd::Normal => Ok(TaskEntryPlanOutcome::Completed(outputs)),
+        TaskSessionEnd::OpenNewTask => Ok(TaskEntryPlanOutcome::OpenNewTask),
+    }
 }
 
 pub(crate) fn filter_task_input(input: &[u8]) -> FilteredTaskInput {
@@ -218,6 +258,12 @@ pub(crate) fn filter_task_input(input: &[u8]) -> FilteredTaskInput {
             0x11 => {
                 return FilteredTaskInput {
                     action: TaskInputAction::ReturnToCockpit,
+                    bytes,
+                };
+            }
+            0x14 => {
+                return FilteredTaskInput {
+                    action: TaskInputAction::OpenNewTask,
                     bytes,
                 };
             }
@@ -436,12 +482,19 @@ fn task_detach_sequence() -> &'static [TaskDetachStep] {
 pub(crate) struct PtyTaskSessionRunner;
 
 impl TaskSessionRunner for PtyTaskSessionRunner {
-    fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), CliError> {
-        run_pty_task_session(command)
+    fn run_task_session(
+        &mut self,
+        command: &CommandSpec,
+        context: &TaskSessionContext,
+    ) -> Result<TaskSessionEnd, CliError> {
+        run_pty_task_session(command, context)
     }
 }
 
-fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
+fn run_pty_task_session(
+    command: &CommandSpec,
+    context: &TaskSessionContext,
+) -> Result<TaskSessionEnd, CliError> {
     let prepared = PreparedTaskCommand::new(command)?;
     debug_assert_eq!(prepared.argv.len(), prepared.args.len() + 1);
     let stdin = io::stdin();
@@ -470,12 +523,21 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
             &mut terminal.input,
             &mut terminal.output,
             &mut trace,
+            context,
         )? {
-            None => {
+            PtyAttachResult::Detached {
+                open_new_task: false,
+            } => {
                 trace.log("session_end", "outcome=detached");
-                return Ok(());
+                return Ok(TaskSessionEnd::Normal);
             }
-            Some(exit) => {
+            PtyAttachResult::Detached {
+                open_new_task: true,
+            } => {
+                trace.log("session_end", "outcome=detached reason=ctrl_t");
+                return Ok(TaskSessionEnd::OpenNewTask);
+            }
+            PtyAttachResult::ClientExit(exit) => {
                 if !attach_exit_allows_retry(&exit) {
                     trace.log(
                         "session_end",
@@ -484,7 +546,7 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
                             exit.attached_for.as_millis()
                         ),
                     );
-                    return Ok(());
+                    return Ok(TaskSessionEnd::Normal);
                 }
                 if exit.attached_for >= ATTACH_RETRY_STABLE_AFTER {
                     consecutive_interrupted_retries = 0;
@@ -513,13 +575,20 @@ fn run_pty_task_session(command: &CommandSpec) -> Result<(), CliError> {
     }
 }
 
+#[derive(Debug)]
+enum PtyAttachResult {
+    Detached { open_new_task: bool },
+    ClientExit(TaskAttachExit),
+}
+
 fn run_pty_task_attach(
     prepared: &PreparedTaskCommand,
     fork_config: &TaskPtyForkConfig,
     terminal_input: &mut File,
     terminal_output: &mut File,
     trace: &mut TaskSessionTrace,
-) -> Result<Option<TaskAttachExit>, CliError> {
+    context: &TaskSessionContext,
+) -> Result<PtyAttachResult, CliError> {
     // SAFETY: The parent only touches the returned master fd. In the child
     // branch, all fallible setup was prepared before fork, and the process
     // either execs the requested command or exits immediately.
@@ -542,7 +611,14 @@ fn run_pty_task_attach(
         }
         ForkptyResult::Parent { child, master } => {
             trace.log("attach_start", format!("child={}", child.as_raw()));
-            pump_task_pty(terminal_input, terminal_output, master, child, trace)
+            pump_task_pty(
+                terminal_input,
+                terminal_output,
+                master,
+                child,
+                trace,
+                context,
+            )
         }
     }
 }
@@ -651,7 +727,8 @@ fn pump_task_pty(
     master: OwnedFd,
     child: nix::unistd::Pid,
     trace: &mut TaskSessionTrace,
-) -> Result<Option<TaskAttachExit>, CliError> {
+    context: &TaskSessionContext,
+) -> Result<PtyAttachResult, CliError> {
     let mut master = File::from(master);
     let mut tty_input = [0_u8; 4096];
     let mut pty_output = [0_u8; 8192];
@@ -696,7 +773,7 @@ fn pump_task_pty(
             } => (tty_ready, master_ready),
             TaskPollAction::Detach => {
                 trace.log("outcome", "kind=detach reason=tty_poll");
-                return detach_task_child(master, child);
+                return detach_task_child(master, child, false);
             }
             TaskPollAction::Close => {
                 trace.log("outcome", "kind=attach_exit reason=master_poll");
@@ -717,7 +794,7 @@ fn pump_task_pty(
             };
             if count == 0 {
                 trace.log("outcome", "kind=detach reason=tty_eof");
-                return detach_task_child(master, child);
+                return detach_task_child(master, child, false);
             }
             let filtered = filter_task_input_after_startup_grace_period(
                 &tty_input[..count],
@@ -730,9 +807,16 @@ fn pump_task_pty(
                 }
                 trace.log("master_write", format!("bytes={}", filtered.bytes.len()));
             }
-            if filtered.action == TaskInputAction::ReturnToCockpit {
-                trace.log("outcome", "kind=detach reason=ctrl_q");
-                return detach_task_child(master, child);
+            match filtered.action {
+                TaskInputAction::ReturnToCockpit => {
+                    trace.log("outcome", "kind=detach reason=ctrl_q");
+                    return detach_task_child(master, child, false);
+                }
+                TaskInputAction::OpenNewTask if context.new_task_repo.is_some() => {
+                    trace.log("outcome", "kind=detach reason=ctrl_t");
+                    return detach_task_child(master, child, true);
+                }
+                TaskInputAction::Forward | TaskInputAction::OpenNewTask => {}
             }
         }
 
@@ -785,7 +869,7 @@ fn attach_client_exit(
     output: Vec<u8>,
     attached_for: Duration,
     trace: &mut TaskSessionTrace,
-) -> Result<Option<TaskAttachExit>, CliError> {
+) -> Result<PtyAttachResult, CliError> {
     let status = wait_for_attach_child_status(child)?;
     trace.log(
         "child_status",
@@ -795,7 +879,7 @@ fn attach_client_exit(
             output.len()
         ),
     );
-    Ok(Some(TaskAttachExit {
+    Ok(PtyAttachResult::ClientExit(TaskAttachExit {
         output,
         status,
         attached_for,
@@ -825,10 +909,11 @@ fn wait_for_attach_child_status(child: nix::unistd::Pid) -> Result<Option<WaitSt
 fn detach_task_child(
     master: File,
     child: nix::unistd::Pid,
-) -> Result<Option<TaskAttachExit>, CliError> {
+    open_new_task: bool,
+) -> Result<PtyAttachResult, CliError> {
     drop(master);
     request_task_child_exit(child)?;
-    Ok(None)
+    Ok(PtyAttachResult::Detached { open_new_task })
 }
 
 fn request_task_child_exit(child: nix::unistd::Pid) -> Result<(), CliError> {
@@ -981,8 +1066,8 @@ fn exit_child_after_exec_failure() -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_task_entry_plan, filter_task_input, FilteredTaskInput, TaskInputAction,
-        TaskSessionRunner,
+        execute_task_entry_plan, filter_task_input, FilteredTaskInput, TaskEntryPlanOutcome,
+        TaskInputAction, TaskSessionContext, TaskSessionEnd, TaskSessionRunner,
     };
     use ajax_core::{
         adapters::{CommandMode, CommandSpec, RecordingCommandRunner},
@@ -1000,16 +1085,24 @@ mod tests {
     }
 
     impl TaskSessionRunner for RecordingTaskSessionRunner {
-        fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), crate::CliError> {
+        fn run_task_session(
+            &mut self,
+            command: &CommandSpec,
+            _context: &TaskSessionContext,
+        ) -> Result<TaskSessionEnd, crate::CliError> {
             self.commands.push(command.clone());
-            Ok(())
+            Ok(TaskSessionEnd::Normal)
         }
     }
 
     struct FailingTaskSessionRunner;
 
     impl TaskSessionRunner for FailingTaskSessionRunner {
-        fn run_task_session(&mut self, _command: &CommandSpec) -> Result<(), crate::CliError> {
+        fn run_task_session(
+            &mut self,
+            _command: &CommandSpec,
+            _context: &TaskSessionContext,
+        ) -> Result<TaskSessionEnd, crate::CliError> {
             Err(crate::CliError::CommandFailed(
                 "task session unavailable".to_string(),
             ))
@@ -1036,6 +1129,26 @@ mod tests {
                 bytes: b"abc".to_vec(),
             }
         );
+    }
+
+    #[test]
+    fn task_input_filter_opens_new_task_on_control_t_without_forwarding_it() {
+        assert_eq!(
+            filter_task_input(b"abc\x14def"),
+            FilteredTaskInput {
+                action: TaskInputAction::OpenNewTask,
+                bytes: b"abc".to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn repo_from_task_handle_extracts_repo_prefix() {
+        assert_eq!(
+            super::repo_from_task_handle("web/fix-login").as_deref(),
+            Some("web")
+        );
+        assert_eq!(super::repo_from_task_handle("api").as_deref(), Some("api"));
     }
 
     #[test]
@@ -1382,7 +1495,10 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut task_session = RecordingTaskSessionRunner::default();
 
-        execute_task_entry_plan(&plan, &mut runner, &mut task_session).unwrap();
+        let context = TaskSessionContext::from_task_handle("web/fix-login");
+        let outcome =
+            execute_task_entry_plan(&plan, &mut runner, &mut task_session, &context).unwrap();
+        assert!(matches!(outcome, TaskEntryPlanOutcome::Completed(_)));
 
         assert_eq!(
             runner.commands(),
@@ -1414,7 +1530,9 @@ mod tests {
         let mut runner = RecordingCommandRunner::default();
         let mut task_session = FailingTaskSessionRunner;
 
-        let error = execute_task_entry_plan(&plan, &mut runner, &mut task_session).unwrap_err();
+        let context = TaskSessionContext::from_task_handle("web/fix-login");
+        let error =
+            execute_task_entry_plan(&plan, &mut runner, &mut task_session, &context).unwrap_err();
 
         assert!(matches!(
             error,

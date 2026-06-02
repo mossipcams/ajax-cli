@@ -381,15 +381,31 @@ impl std::io::Write for FlushingWriter {
     }
 }
 
+struct OpenNewTaskTaskSessionRunner;
+
+impl crate::task_session::TaskSessionRunner for OpenNewTaskTaskSessionRunner {
+    fn run_task_session(
+        &mut self,
+        _command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
+        Ok(crate::task_session::TaskSessionEnd::OpenNewTask)
+    }
+}
+
 #[derive(Default)]
 struct RecordingTaskSessionRunner {
     commands: Vec<CommandSpec>,
 }
 
 impl crate::task_session::TaskSessionRunner for RecordingTaskSessionRunner {
-    fn run_task_session(&mut self, command: &CommandSpec) -> Result<(), CliError> {
+    fn run_task_session(
+        &mut self,
+        command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         self.commands.push(command.clone());
-        Ok(())
+        Ok(crate::task_session::TaskSessionEnd::Normal)
     }
 }
 
@@ -398,7 +414,11 @@ struct FailingTaskSessionRunner {
 }
 
 impl crate::task_session::TaskSessionRunner for FailingTaskSessionRunner {
-    fn run_task_session(&mut self, _command: &CommandSpec) -> Result<(), CliError> {
+    fn run_task_session(
+        &mut self,
+        _command: &CommandSpec,
+        _context: &crate::task_session::TaskSessionContext,
+    ) -> Result<crate::task_session::TaskSessionEnd, CliError> {
         Err(CliError::CommandFailed(self.message.to_string()))
     }
 }
@@ -6991,6 +7011,17 @@ fn pending_cockpit_open_and_create_actions_return_to_ajax_after_task_session() {
                 .with_mode(CommandMode::InheritStdio)
         ]
     );
+    assert!(matches!(
+        super::cockpit_actions::execute_pending_cockpit_action_with_task_session(
+            &pending,
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut OpenNewTaskTaskSessionRunner,
+        )
+        .unwrap(),
+        super::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } if repo == "web"
+    ));
 
     let mut context = CommandContext::new(
         Config {
