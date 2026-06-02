@@ -59,7 +59,7 @@ mod tests {
             );
         }
 
-        for adapter in ["http", "tls", "push", "assets"] {
+        for adapter in ["http", "tls", "push", "assets", "server"] {
             assert!(
                 adapters.contains(&format!("pub mod {adapter};")),
                 "missing ajax-web adapter module: {adapter}"

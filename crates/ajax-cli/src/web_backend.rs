@@ -242,6 +242,8 @@ mod tests {
         assert!(html.contains("id=\"alerts-banner\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
+        assert!(html.contains("id=\"settings-view\""));
+        assert!(html.contains("id=\"restart-server\""));
     }
 
     #[test]
@@ -358,6 +360,8 @@ mod tests {
         assert!(script.contains("structureFingerprint"));
         assert!(script.contains("updateLiveSummaries"));
         assert!(script.contains("action_states"));
+        assert!(script.contains("#/settings"));
+        assert!(script.contains("/api/server/restart"));
     }
 
     #[test]
@@ -366,7 +370,7 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v18"));
+        assert!(sw_text.contains("ajax-cockpit-v19"));
         assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));

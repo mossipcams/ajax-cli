@@ -279,6 +279,25 @@ h1 {
   text-overflow: ellipsis;
 }
 
+.settings-link {
+  flex: none;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.settings-link:hover,
+.settings-link:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+  outline: none;
+}
+
 .live-dot {
   flex: none;
   width: 8px;
@@ -666,6 +685,78 @@ body.view-detail #inbox,
 body.view-detail #repos,
 body.view-detail #empty-state {
   display: none;
+}
+
+/* SETTINGS VIEW ---------------------------------------------------------- */
+.settings-view {
+  display: none;
+}
+
+body.view-settings .settings-view {
+  display: block;
+}
+
+body.view-settings #project-nav,
+body.view-settings #alerts-banner,
+body.view-settings #new-task-row,
+body.view-settings #inbox,
+body.view-settings #repos,
+body.view-settings #empty-state,
+body.view-settings #task-detail {
+  display: none;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  flex: 1 1 auto;
+}
+
+.settings-back {
+  flex: none;
+}
+
+.settings-section {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.settings-section h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.settings-note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
+
+.settings-note code {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.settings-status {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--ink-muted);
 }
 
 .detail-header {

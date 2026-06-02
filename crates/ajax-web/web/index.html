@@ -24,6 +24,7 @@
     <div class="bar">
       <h1>Ajax</h1>
       <p id="status-line" class="status-line" aria-live="polite">— loading</p>
+      <button id="settings-link" class="settings-link" type="button">Settings</button>
       <span class="live-dot" aria-hidden="true"></span>
     </div>
   </header>
@@ -43,6 +44,23 @@
     <p id="empty-state" class="empty" hidden>All quiet</p>
 
     <section id="task-detail" aria-live="polite"></section>
+
+    <section id="settings-view" class="settings-view" aria-labelledby="settings-heading" hidden>
+      <div class="settings-header">
+        <button id="settings-back" type="button" class="settings-back pill">Back</button>
+        <h2 id="settings-heading">Settings</h2>
+      </div>
+      <div class="settings-section">
+        <h3>Web server</h3>
+        <p class="settings-note">
+          Restarts this Cockpit process. Use when running <code>ajax-cli web</code> standalone or
+          under a host supervisor. If Native Cockpit started the web companion, restart from the
+          terminal instead.
+        </p>
+        <button id="restart-server" type="button" class="pill">Restart server</button>
+        <p id="restart-status" class="settings-status" hidden></p>
+      </div>
+    </section>
   </main>
 
   <div id="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title">

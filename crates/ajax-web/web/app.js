@@ -14,6 +14,11 @@ const newTaskTitle = document.getElementById("new-task-title-input");
 const newTaskAgent = document.getElementById("new-task-agent");
 const newTaskError = document.getElementById("new-task-error");
 const detailContainer = document.getElementById("task-detail");
+const settingsView = document.getElementById("settings-view");
+const settingsLink = document.getElementById("settings-link");
+const settingsBack = document.getElementById("settings-back");
+const restartServerButton = document.getElementById("restart-server");
+const restartStatus = document.getElementById("restart-status");
 const resultPanel = document.getElementById("result-panel");
 const resultMessage = document.getElementById("result-message");
 const resultOutput = document.getElementById("result-output");
@@ -22,6 +27,8 @@ const resultDismiss = document.getElementById("result-dismiss");
 const REFRESH_INTERVAL_MS = 1000;
 const CONFIRM_TIMEOUT_MS = 3000;
 const RESULT_AUTO_DISMISS_MS = 12000;
+const RESTART_POLL_MS = 500;
+const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
 
 let lastCockpit = null;
@@ -543,6 +550,81 @@ async function loadDetail() {
   }
 }
 
+// SETTINGS ------------------------------------------------------------------
+
+function isSettingsRoute() {
+  return (window.location.hash || "#/") === "#/settings";
+}
+
+function showSettingsView() {
+  settingsView.hidden = false;
+}
+
+function hideSettingsView() {
+  settingsView.hidden = true;
+  restartStatus.hidden = true;
+  restartStatus.textContent = "";
+}
+
+async function waitForServerOnline() {
+  const deadline = Date.now() + RESTART_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch("/api/health", { cache: "no-store" });
+      if (response.ok) return true;
+    } catch (error) {
+      // expected while the server is down
+    }
+    await new Promise((resolve) => setTimeout(resolve, RESTART_POLL_MS));
+  }
+  return false;
+}
+
+async function restartServer() {
+  if (tryConfirmDestructive(restartServerButton)) return;
+
+  restartServerButton.disabled = true;
+  restartStatus.textContent = "Restarting…";
+  restartStatus.hidden = false;
+  try {
+    const response = await fetch("/api/server/restart", {
+      method: "POST",
+      cache: "no-store",
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      showResult(payload.error || "Restart failed", null, true);
+      return;
+    }
+  } catch (error) {
+    // connection drop during restart is expected
+  }
+
+  const online = await waitForServerOnline();
+  if (online) {
+    showResult("Server restarted", null, false);
+    window.location.hash = "#/";
+    loadCockpit();
+  } else {
+    showResult("Server did not come back in time", null, true);
+  }
+}
+
+settingsLink.addEventListener("click", () => {
+  window.location.hash = "#/settings";
+});
+
+settingsBack.addEventListener("click", () => {
+  window.location.hash = "#/";
+});
+
+restartServerButton.addEventListener("click", () => {
+  restartServer().finally(() => {
+    restartServerButton.disabled = false;
+    if (!isSettingsRoute()) restartStatus.hidden = true;
+  });
+});
+
 // HASH ROUTER ---------------------------------------------------------------
 
 function updateNewTaskRowLabel() {
@@ -553,6 +635,15 @@ function updateNewTaskRowLabel() {
 
 function applyRoute() {
   const hash = window.location.hash || "#/";
+  document.body.classList.remove("view-detail", "view-settings");
+  hideSettingsView();
+
+  if (hash === "#/settings") {
+    detailHandle = null;
+    document.body.classList.add("view-settings");
+    showSettingsView();
+    return;
+  }
   if (hash.startsWith("#/t/")) {
     detailHandle = decodeURIComponent(hash.slice("#/t/".length));
     document.body.classList.add("view-detail");
@@ -562,7 +653,6 @@ function applyRoute() {
   if (hash.startsWith("#/p/")) {
     selectedProject = decodeURIComponent(hash.slice("#/p/".length)) || null;
     detailHandle = null;
-    document.body.classList.remove("view-detail");
     lastFingerprint = null;
     updateNewTaskRowLabel();
     if (lastCockpit) applyData(lastCockpit);
@@ -571,7 +661,6 @@ function applyRoute() {
   }
   selectedProject = null;
   detailHandle = null;
-  document.body.classList.remove("view-detail");
   updateNewTaskRowLabel();
   loadCockpit();
 }
@@ -771,11 +860,13 @@ document.addEventListener("click", (event) => {
 });
 
 window.addEventListener("online", () => {
+  if (isSettingsRoute()) return;
   if (detailHandle) loadDetail();
   else loadCockpit();
 });
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
+  if (isSettingsRoute()) return;
   if (detailHandle) loadDetail();
   else loadCockpit();
 });
@@ -917,6 +1008,7 @@ if ("serviceWorker" in navigator) {
 if (!navigator.onLine) setOnline(false);
 
 setInterval(() => {
+  if (isSettingsRoute()) return;
   if (detailHandle) loadDetail();
   else loadCockpit();
 }, REFRESH_INTERVAL_MS);

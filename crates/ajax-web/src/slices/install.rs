@@ -69,6 +69,9 @@ mod tests {
             "id=\"new-task-sheet\"",
             "value=\"cursor\"",
             "id=\"task-detail\"",
+            "id=\"settings-view\"",
+            "id=\"settings-link\"",
+            "id=\"restart-server\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
@@ -140,9 +143,11 @@ mod tests {
             script.contains("/api/tasks"),
             "missing POST start endpoint usage"
         );
+        assert!(script.contains("#/settings"));
+        assert!(script.contains("/api/server/restart"));
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v18"));
+        assert!(worker.contains("ajax-cockpit-v19"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         for cached in [
             "\"/\"",
