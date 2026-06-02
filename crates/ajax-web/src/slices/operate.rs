@@ -488,6 +488,58 @@ mod tests {
         assert_eq!(text, "diff stat");
     }
 
+    fn agent_send_keys_line(commands: &[ajax_core::adapters::CommandSpec]) -> &str {
+        commands
+            .iter()
+            .find(|command| {
+                command.program == "tmux" && command.args.first() == Some(&"send-keys".to_string())
+            })
+            .map(|command| command.args[3].as_str())
+            .expect("expected tmux send-keys command")
+    }
+
+    #[test]
+    fn start_task_cursor_agent_command_uses_agent_subcommand_without_cd() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "cursor".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        let line = agent_send_keys_line(runner.commands());
+        assert_eq!(line, "cursor agent");
+        assert!(!line.contains("--cd"));
+    }
+
+    #[test]
+    fn start_task_claude_agent_command_omits_cd_flag() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "claude".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(agent_send_keys_line(runner.commands()), "claude");
+    }
+
     #[test]
     fn start_task_creates_a_new_task_in_the_registry() {
         let mut context = context_with_managed_repo();
