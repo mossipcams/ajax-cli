@@ -6,6 +6,13 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.13.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.12.1...ajax-cli-v0.13.0) (2026-06-03)
+
+
+### Features
+
+* **web:** auto-update installed PWA shell instead of requiring re-add ([#123](https://github.com/mossipcams/ajax-cli/issues/123)) ([c6e573a](https://github.com/mossipcams/ajax-cli/commit/c6e573a037c10630a24062fce15355e585f625fa))
+
 ## [0.12.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.12.0...ajax-cli-v0.12.1) (2026-06-03)
 
 
