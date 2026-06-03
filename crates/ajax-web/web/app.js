@@ -5,6 +5,7 @@ const projectNav = document.getElementById("project-nav");
 const emptyState = document.getElementById("empty-state");
 const statusLine = document.getElementById("status-line");
 const alertsBanner = document.getElementById("alerts-banner");
+const updateBanner = document.getElementById("update-banner");
 const newTaskRow = document.getElementById("new-task-row");
 const newTaskRowLabel = document.getElementById("new-task-row-label");
 const newTaskSheet = document.getElementById("new-task-sheet");
@@ -27,6 +28,7 @@ const resultDismiss = document.getElementById("result-dismiss");
 const REFRESH_INTERVAL_MS = 1000;
 const CONFIRM_TIMEOUT_MS = 8000;
 const RESULT_AUTO_DISMISS_MS = 12000;
+const VERSION_POLL_MS = 30000;
 const RESTART_POLL_MS = 500;
 const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
@@ -1262,11 +1264,14 @@ window.addEventListener("online", () => {
 });
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
-  if (isSettingsRoute()) return;
   if (document.hidden) {
-    clearPaneTimer();
+    if (!isSettingsRoute()) clearPaneTimer();
     return;
   }
+  // Coming back to the foreground is when a frozen iOS snapshot would resume
+  // stale code, so always re-check the shell version regardless of route.
+  checkForUpdate(true);
+  if (isSettingsRoute()) return;
   if (detailHandle) {
     loadDetail();
     schedulePaneTick(true);
@@ -1398,7 +1403,58 @@ alertsBanner.addEventListener("click", () => {
   enableNotifications();
 });
 
+// SHELL UPDATES -------------------------------------------------------------
+// An installed iOS standalone PWA resumes a frozen snapshot and has no reload
+// affordance, so a redeployed shell would run stale forever (the symptom that
+// looks like "updates need re-adding to the Home Screen"). We pin the version
+// the app booted with and, whenever the server reports a different one, surface
+// a tap-to-reload banner. The foreground check is the load-bearing path: it
+// runs the moment the app is brought back to the front, which is exactly when a
+// frozen snapshot would otherwise show old code.
+let loadedVersion = null;
+let lastVersionCheck = 0;
+
+async function checkForUpdate(force) {
+  const now = Date.now();
+  if (!force && now - lastVersionCheck < VERSION_POLL_MS) return;
+  lastVersionCheck = now;
+  try {
+    const response = await fetch("/api/version", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const version = data && data.version;
+    if (!version) return;
+    if (loadedVersion === null) {
+      loadedVersion = version;
+    } else if (version !== loadedVersion) {
+      updateBanner.hidden = false;
+    }
+  } catch (error) {
+    // Offline or unreachable: leave the current version pinned and retry later.
+  }
+}
+
+if (updateBanner) {
+  updateBanner.addEventListener("click", () => {
+    // Network-first service worker means a plain reload pulls the fresh shell.
+    window.location.reload();
+  });
+}
+
 if ("serviceWorker" in navigator) {
+  // When the service worker updates itself (skipWaiting + clients.claim on a new
+  // deploy), the controller changes — reload once to swap in the fresh shell.
+  // Guard against the initial claim on first load (no prior controller) and
+  // against reload loops. This is the fast path on platforms that run SW update
+  // checks promptly; the /api/version banner remains the fallback for frozen iOS
+  // standalone PWAs, where the SW check may not run until the next foreground.
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloadingForUpdate = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate || !hadController) return;
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
   navigator.serviceWorker.register("/sw.js")
     .then(() => syncAlertsBanner())
     .catch((error) => {
@@ -1409,9 +1465,12 @@ if ("serviceWorker" in navigator) {
   syncAlertsBanner();
 }
 
+checkForUpdate(true);
+
 if (!navigator.onLine) setOnline(false);
 
 setInterval(() => {
+  checkForUpdate(false);
   if (isSettingsRoute()) return;
   if (detailHandle) loadDetail();
   else loadCockpit();

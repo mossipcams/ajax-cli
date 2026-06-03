@@ -110,6 +110,7 @@ where
         .route("/sw.js", get(axum_service_worker))
         .route("/icons/{*path}", get(axum_icon))
         .route("/api/health", get(axum_health))
+        .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
@@ -344,6 +345,13 @@ async fn axum_icon(AxumPath(path): AxumPath<String>) -> AxumResponse {
 
 async fn axum_health() -> AxumResponse {
     json_value_response(200, serde_json::json!({ "ok": true }))
+}
+
+async fn axum_version() -> AxumResponse {
+    json_value_response(
+        200,
+        serde_json::json!({ "version": install::app_version() }),
+    )
 }
 
 async fn axum_server_restart() -> AxumResponse {
@@ -796,6 +804,12 @@ pub fn route<R: Registry>(
             body: cockpit::browser_cockpit_json(context)
                 .map_err(RouteError::Json)?
                 .into_bytes(),
+        }),
+        ("GET", "/api/version") => Ok(Response {
+            status_code: 200,
+            content_type: "application/json; charset=utf-8",
+            body: serde_json::to_vec(&serde_json::json!({ "version": install::app_version() }))
+                .map_err(RouteError::Json)?,
         }),
         ("GET", path) if path.starts_with("/api/tasks/") => {
             let handle = &path["/api/tasks/".len()..];
@@ -1369,6 +1383,38 @@ mod tests {
         assert!(!std::str::from_utf8(&missing_api_body)
             .unwrap()
             .contains("Ajax Cockpit"));
+    }
+
+    #[tokio::test]
+    async fn axum_router_reports_shell_version() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-version"),
+        );
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/version")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let version = value["version"].as_str().expect("version string");
+        assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
+        assert_eq!(version, crate::slices::install::app_version());
     }
 
     #[tokio::test]

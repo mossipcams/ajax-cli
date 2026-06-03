@@ -8,6 +8,10 @@ pub fn pwa_shell() -> &'static str {
     assets::pwa_shell_html()
 }
 
+pub fn app_version() -> &'static str {
+    assets::app_version()
+}
+
 pub fn static_asset(path: &str) -> Option<StaticAsset> {
     assets::static_asset(path)
 }
@@ -187,7 +191,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v22"));
+        assert!(worker.contains("ajax-cockpit-v23"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(worker.contains("action: \"approve\""));
         assert!(worker.contains("/answer"));
