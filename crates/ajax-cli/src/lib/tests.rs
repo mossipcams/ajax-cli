@@ -2731,9 +2731,14 @@ fn release_please_virtual_workspace_root_does_not_use_cargo_workspace_plugin() {
     let has_root_package = config["packages"].as_object().unwrap().contains_key(".");
     let uses_cargo_workspace = config["plugins"]
         .as_array()
-        .unwrap()
-        .iter()
-        .any(|plugin| plugin.as_str() == Some("cargo-workspace"));
+        .map(|plugins| {
+            plugins.iter().any(|plugin| {
+                plugin.as_str() == Some("cargo-workspace")
+                    || plugin.get("type").and_then(serde_json::Value::as_str)
+                        == Some("cargo-workspace")
+            })
+        })
+        .unwrap_or(false);
 
     assert!(
             !(has_root_package && uses_cargo_workspace),
@@ -2772,30 +2777,55 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         &std::fs::read_to_string(root.join(".release-please-manifest.json")).unwrap(),
     )
     .unwrap();
-    let plugins = config["plugins"].as_array().unwrap();
-    let additional_paths = packages["crates/ajax-cli"]["additional-paths"]
-        .as_array()
-        .expect("ajax-cli should define additional-paths so sibling crate changes still trigger the shared release");
 
+    // The whole repository is tracked as one releasable package rooted at "."
+    // so a releasable commit touching ANY crate -- including library-only crates
+    // like ajax-web -- still opens the single shared release PR. (Keying the
+    // package on crates/ajax-cli, as before, meant library-only changes counted
+    // zero commits and never released.)
     assert_eq!(
         packages.keys().collect::<Vec<_>>(),
-        vec![&"crates/ajax-cli".to_string()],
-        "release-please should expose one releasable workspace path instead of one path per crate"
+        vec![&".".to_string()],
+        "release-please should track the repo root as the one releasable path so any crate change triggers a release"
     );
     assert_eq!(
         manifest.as_object().unwrap().keys().collect::<Vec<_>>(),
-        vec![&"crates/ajax-cli".to_string()],
-        "the manifest should track only the shared ajax-cli release line"
+        vec![&".".to_string()],
+        "the manifest should track only the shared release line rooted at \".\""
     );
+
+    let root_package = &packages["."];
     assert_eq!(
-        additional_paths,
-        &vec![
-            serde_json::Value::String("crates/ajax-core".to_string()),
-            serde_json::Value::String("crates/ajax-supervisor".to_string()),
-            serde_json::Value::String("crates/ajax-tui".to_string()),
-            serde_json::Value::String("crates/ajax-web".to_string()),
-        ],
-        "ajax-cli should treat sibling crate paths as additional release triggers"
+        root_package["package-name"].as_str(),
+        Some("ajax-cli"),
+        "the root package should release under the ajax-cli name/tag"
+    );
+
+    // The "simple" release type is required: release-please's rust updater
+    // cannot bump the virtual workspace root Cargo.toml.
+    let release_type = root_package["release-type"]
+        .as_str()
+        .or(config["release-type"].as_str());
+    assert_eq!(
+        release_type,
+        Some("simple"),
+        "the root package must use the simple release type (rust cannot bump a virtual workspace root)"
+    );
+
+    // The simple type does not parse Cargo.toml, so the binary version is bumped
+    // through an extra-files TOML updater targeting crates/ajax-cli/Cargo.toml.
+    let bumps_cli_cargo_toml = root_package["extra-files"]
+        .as_array()
+        .expect("the root package should define extra-files to bump the ajax-cli Cargo.toml version")
+        .iter()
+        .any(|file| {
+            file["type"].as_str() == Some("toml")
+                && file["path"].as_str() == Some("crates/ajax-cli/Cargo.toml")
+                && file["jsonpath"].as_str() == Some("$.package.version")
+        });
+    assert!(
+        bumps_cli_cargo_toml,
+        "extra-files should bump $.package.version in crates/ajax-cli/Cargo.toml"
     );
 
     let bootstrap_sha = config["bootstrap-sha"]
@@ -2812,31 +2842,37 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
         "force-tag-creation should ensure ajax-cli tags exist for release boundary detection"
     );
 
-    let cargo_workspace = plugins
-        .iter()
-        .find(|plugin| {
-            plugin.as_str() == Some("cargo-workspace")
-                || plugin.get("type").and_then(serde_json::Value::as_str) == Some("cargo-workspace")
-        })
-        .expect("cargo-workspace plugin should bump linked workspace crate versions");
-    assert_eq!(
-        cargo_workspace["merge"],
-        serde_json::Value::Bool(false),
-        "cargo-workspace should keep explicit release-please control over grouped updates"
-    );
+    // Neither cargo-workspace nor linked-versions may be present: cargo-workspace
+    // crashes on the virtual root package, and there is only one release line.
+    let plugins = config["plugins"].as_array();
+    for forbidden in ["cargo-workspace", "linked-versions"] {
+        let present = plugins
+            .map(|plugins| {
+                plugins.iter().any(|plugin| {
+                    plugin.as_str() == Some(forbidden)
+                        || plugin.get("type").and_then(serde_json::Value::as_str) == Some(forbidden)
+                })
+            })
+            .unwrap_or(false);
+        assert!(
+            !present,
+            "the {forbidden} plugin must not be used with a single root package"
+        );
+    }
 
-    assert!(
-        plugins.iter().all(|plugin| {
-            plugin.as_str() != Some("linked-versions")
-                && plugin.get("type").and_then(serde_json::Value::as_str) != Some("linked-versions")
-        }),
-        "linked-versions should be removed once ajax-cli is the only releasable workspace path"
+    // The shared release line is seeded from the current CLI version, not 0.1.0.
+    let cli_version = std::fs::read_to_string(root.join("version.txt"))
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_ne!(
+        cli_version, "0.1.0",
+        "the release line should be seeded from the current shared version"
     );
-
-    let seeded_release_line = expected_single_release_line(&manifest);
     assert_eq!(
-        manifest["crates/ajax-cli"], seeded_release_line,
-        "ajax-cli should be seeded from the current shared release line instead of 0.1.0"
+        manifest["."].as_str(),
+        Some(cli_version.as_str()),
+        "the manifest release line should match version.txt"
     );
 }
 
