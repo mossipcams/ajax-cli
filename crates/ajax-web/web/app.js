@@ -1350,6 +1350,11 @@ async function syncAlertsBanner() {
     return;
   }
 
+  if (isIosBrowser() && isStandalonePwa() && Notification.permission !== "granted") {
+    showAlertsBanner("Turn on alerts", true);
+    return;
+  }
+
   try {
     const registration = await navigator.serviceWorker.ready;
     const existing = await registration.pushManager.getSubscription();
@@ -1361,6 +1366,11 @@ async function syncAlertsBanner() {
   } catch (error) {
     hideAlertsBanner();
   }
+}
+
+async function ensureServiceWorkerRegistered() {
+  if (!("serviceWorker" in navigator)) return null;
+  return await navigator.serviceWorker.register("/sw.js");
 }
 
 async function enableNotifications() {
@@ -1378,6 +1388,7 @@ async function enableNotifications() {
       await syncAlertsBanner();
       return;
     }
+    await ensureServiceWorkerRegistered();
     const registration = await navigator.serviceWorker.ready;
     const config = await (await fetch("/api/push/config")).json();
     const subscription = await registration.pushManager.subscribe({
@@ -1441,26 +1452,40 @@ if (updateBanner) {
   });
 }
 
+function shouldRegisterServiceWorkerOnBoot() {
+  if (isIosBrowser() && isStandalonePwa() && Notification.permission !== "granted") {
+    return false;
+  }
+  return true;
+}
+
 if ("serviceWorker" in navigator) {
-  // When the service worker updates itself (skipWaiting + clients.claim on a new
-  // deploy), the controller changes — reload once to swap in the fresh shell.
-  // Guard against the initial claim on first load (no prior controller) and
-  // against reload loops. This is the fast path on platforms that run SW update
-  // checks promptly; the /api/version banner remains the fallback for frozen iOS
-  // standalone PWAs, where the SW check may not run until the next foreground.
-  const hadController = !!navigator.serviceWorker.controller;
-  let reloadingForUpdate = false;
-  navigator.serviceWorker.addEventListener("controllerchange", () => {
-    if (reloadingForUpdate || !hadController) return;
-    reloadingForUpdate = true;
-    window.location.reload();
-  });
-  navigator.serviceWorker.register("/sw.js")
-    .then(() => syncAlertsBanner())
-    .catch((error) => {
-      console.warn("service worker registration failed", error);
-      syncAlertsBanner();
+  if (!shouldRegisterServiceWorkerOnBoot()) {
+    navigator.serviceWorker.getRegistrations()
+      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
+      .then(() => syncAlertsBanner())
+      .catch(() => syncAlertsBanner());
+  } else {
+    // When the service worker updates itself (skipWaiting + clients.claim on a new
+    // deploy), the controller changes — reload once to swap in the fresh shell.
+    // Guard against the initial claim on first load (no prior controller) and
+    // against reload loops. This is the fast path on platforms that run SW update
+    // checks promptly; the /api/version banner remains the fallback for frozen iOS
+    // standalone PWAs, where the SW check may not run until the next foreground.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloadingForUpdate = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (reloadingForUpdate || !hadController) return;
+      reloadingForUpdate = true;
+      window.location.reload();
     });
+    ensureServiceWorkerRegistered()
+      .then(() => syncAlertsBanner())
+      .catch((error) => {
+        console.warn("service worker registration failed", error);
+        syncAlertsBanner();
+      });
+  }
 } else {
   syncAlertsBanner();
 }

@@ -268,6 +268,24 @@ mod tests {
     }
 
     #[test]
+    fn ios_standalone_does_not_register_service_worker_before_notification_opt_in() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        assert!(
+            script.contains("shouldRegisterServiceWorkerOnBoot"),
+            "app.js should gate boot-time service worker registration"
+        );
+        assert!(
+            script.contains("if (isIosBrowser() && isStandalonePwa() && Notification.permission !== \"granted\")"),
+            "iOS standalone should avoid boot-time service worker registration until notifications are granted"
+        );
+        assert!(
+            script.contains("await navigator.serviceWorker.register(\"/sw.js\");"),
+            "explicit notification opt-in should still be able to register the service worker"
+        );
+    }
+
+    #[test]
     fn dashboard_detail_view_uses_operator_cards_instead_of_pane_log() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
