@@ -231,7 +231,7 @@ where
                 .collect::<Vec<_>>()
         };
         for notification in notifications {
-            if let Err(error) = push::send_to_all(&state.state_dir, &notification) {
+            if let Err(error) = push::send_to_all_async(&state.state_dir, &notification).await {
                 eprintln!("Ajax web push notification failed: {error}");
             }
         }
