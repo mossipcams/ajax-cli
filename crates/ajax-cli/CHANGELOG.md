@@ -6,6 +6,13 @@
 
 * unify ghost-task classification so recoverable missing-substrate tasks survive save/load with events, receipts, and Cockpit visibility
 
+## [0.12.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.12.0...ajax-cli-v0.12.1) (2026-06-03)
+
+
+### Bug Fixes
+
+* **task-session:** propagate terminal resize to PTY master ([#121](https://github.com/mossipcams/ajax-cli/issues/121)) ([32b7402](https://github.com/mossipcams/ajax-cli/commit/32b74025320f1c4dc621ecb2fccf94201c01f495))
+
 ## [0.12.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.11.1...ajax-cli-v0.12.0) (2026-06-02)
 
 
