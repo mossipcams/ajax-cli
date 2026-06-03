@@ -574,6 +574,22 @@ fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
         )
 }
 
+fn expected_sync_default_branch_commands(repo_path: &str, branch: &str) -> Vec<CommandSpec> {
+    vec![
+        CommandSpec::new("git", ["-C", repo_path, "fetch", "origin", branch]),
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                repo_path,
+                "fetch",
+                "origin",
+                &format!("{branch}:{branch}"),
+            ],
+        ),
+    ]
+}
+
 fn ajax_binary_path() -> PathBuf {
     if let Some(binary) = std::env::var_os("CARGO_BIN_EXE_ajax-cli") {
         return binary.into();
@@ -3405,53 +3421,53 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
     .unwrap();
 
     assert!(output.contains("recorded task: web/fix-login"));
-    assert_eq!(
-        runner.commands(),
-        &[
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "send-keys",
-                    "-t",
-                    "ajax-web-fix-login:worktrunk",
-                    "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "Enter"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-            ),
-            expected_new_task_open_command("ajax-web-fix-login")
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            [
+                "send-keys",
+                "-t",
+                "ajax-web-fix-login:worktrunk",
+                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "Enter",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+        ),
+        expected_new_task_open_command("ajax-web-fix-login"),
+    ]);
+    assert_eq!(runner.commands(), expected_commands.as_slice());
     let recorded = context
         .registry
         .list_tasks()
@@ -3501,55 +3517,55 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
     )
     .unwrap();
 
-    assert_eq!(
-        runner.commands(),
-        &[
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new("sh", ["-lc", "npm ci"])
-                .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "send-keys",
-                    "-t",
-                    "ajax-web-fix-login:worktrunk",
-                    "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "Enter"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-            ),
-            expected_new_task_open_command("ajax-web-fix-login")
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new("sh", ["-lc", "npm ci"])
+            .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            [
+                "send-keys",
+                "-t",
+                "ajax-web-fix-login:worktrunk",
+                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "Enter",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+        ),
+        expected_new_task_open_command("ajax-web-fix-login"),
+    ]);
+    assert_eq!(runner.commands(), expected_commands.as_slice());
 }
 
 #[test]
@@ -3587,6 +3603,8 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
         InMemoryRegistry::default(),
     );
     let mut runner = QueuedRunner::new(vec![
+        output(0, ""),
+        output(0, ""),
         output(0, ""),
         output(0, ""),
         CommandOutput {
@@ -3627,38 +3645,38 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
         .as_ref()
         .is_some_and(|status| { status.worktree_exists && status.branch_exists }));
     assert_eq!(task.tmux_status, None);
-    assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
-                ]
-            )
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            ],
+        ),
+    ]);
+    assert_eq!(runner.commands, expected_commands);
 }
 
 #[test]
@@ -3673,6 +3691,8 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
         InMemoryRegistry::default(),
     );
     let mut runner = QueuedRunner::new(vec![
+        output(0, ""),
+        output(0, ""),
         output(0, ""),
         output(0, ""),
         CommandOutput {
@@ -3710,27 +3730,27 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
     assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
     assert!(task.has_side_flag(SideFlag::NeedsInput));
     assert!(task.agent_attempts.is_empty());
-    assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new("sh", ["-lc", "npm ci"])
-                .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login")
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new("sh", ["-lc", "npm ci"])
+            .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+    ]);
+    assert_eq!(runner.commands, expected_commands);
 }
 
 #[test]
@@ -3818,53 +3838,53 @@ fn new_execute_allows_reusing_removed_task_handle() {
     .unwrap();
 
     assert!(output.contains("recorded task: web/fix-login"));
-    assert_eq!(
-        runner.commands(),
-        &[
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-web-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/Users/matt/projects/web__worktrees/ajax-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "send-keys",
-                    "-t",
-                    "ajax-web-fix-login:worktrunk",
-                    "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                    "Enter"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-            ),
-            expected_new_task_open_command("ajax-web-fix-login")
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/web", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            [
+                "send-keys",
+                "-t",
+                "ajax-web-fix-login:worktrunk",
+                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "Enter",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+        ),
+        expected_new_task_open_command("ajax-web-fix-login"),
+    ]);
+    assert_eq!(runner.commands(), expected_commands.as_slice());
     assert_eq!(
         context
             .registry
@@ -3965,6 +3985,8 @@ fn new_execute_persists_state_when_open_after_create_fails() {
     )
     .unwrap();
     let mut runner = QueuedRunner::new(vec![
+        output(0, ""),
+        output(0, ""),
         output(0, ""),
         output(0, ""),
         output(0, ""),
@@ -6195,53 +6217,53 @@ fn pending_new_task_action_runs_after_title_is_collected() {
     assert!(outcome
         .as_deref()
         .is_some_and(|output| output.contains("recorded task: api/fix-login")));
-    assert_eq!(
-        runner.commands(),
-        &[
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/api",
-                    "worktree",
-                    "add",
-                    "-b",
-                    "ajax/fix-login",
-                    "/Users/matt/projects/api__worktrees/ajax-fix-login",
-                    "main"
-                ]
-            ),
-            expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "new-session",
-                    "-d",
-                    "-s",
-                    "ajax-api-fix-login",
-                    "-n",
-                    "worktrunk",
-                    "-c",
-                    "/Users/matt/projects/api__worktrees/ajax-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                [
-                    "send-keys",
-                    "-t",
-                    "ajax-api-fix-login:worktrunk",
-                    "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
-                    "Enter"
-                ]
-            ),
-            CommandSpec::new(
-                "tmux",
-                ["select-window", "-t", "ajax-api-fix-login:worktrunk"]
-            ),
-            expected_new_task_open_command("ajax-api-fix-login")
-        ]
-    );
+    let mut expected_commands =
+        expected_sync_default_branch_commands("/Users/matt/projects/api", "main");
+    expected_commands.extend([
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/api",
+                "worktree",
+                "add",
+                "-b",
+                "ajax/fix-login",
+                "/Users/matt/projects/api__worktrees/ajax-fix-login",
+                "main",
+            ],
+        ),
+        expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-api-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/api__worktrees/ajax-fix-login",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            [
+                "send-keys",
+                "-t",
+                "ajax-api-fix-login:worktrunk",
+                "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
+                "Enter",
+            ],
+        ),
+        CommandSpec::new(
+            "tmux",
+            ["select-window", "-t", "ajax-api-fix-login:worktrunk"],
+        ),
+        expected_new_task_open_command("ajax-api-fix-login"),
+    ]);
+    assert_eq!(runner.commands(), expected_commands.as_slice());
     let task = context
         .registry
         .list_tasks()

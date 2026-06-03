@@ -188,6 +188,17 @@ and supervised processes.
 
 Git evidence interpretation lives in `analysis::git_evidence`.
 
+Before provisioning a task worktree, start planning runs `git fetch origin
+<default_branch>` and a fast-forward `git fetch origin <branch>:<branch>` on the
+managed repo root so `git worktree add` branches from a local default branch that
+matches `origin`. Diverged local default branches fail the start operation
+instead of silently basing tasks on stale `main`.
+
+Managed repos may optionally run a `graphify_update` shell command from the repo
+root during start (for example `graphify extract --update`). Each repo keeps its
+own `graphify-out/` knowledge graph. `ajax doctor` warns when `graphify-out` is
+gitignored so agents can rely on the checked-in or generated graph.
+
 Runtime reconciliation lives in `runtime`. It compares expected task runtime
 state with observed Git, tmux, and task-window evidence, then produces a single
 runtime health verdict such as healthy, missing worktree, missing session,

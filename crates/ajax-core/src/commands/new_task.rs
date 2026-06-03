@@ -77,9 +77,18 @@ pub fn new_task_plan<R: Registry>(
             prompt: String::new(),
         },
     );
+    let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
+    plan.commands
+        .push(git.fetch_origin_branch(&repo_path, &repo.default_branch));
+    plan.commands
+        .push(git.sync_default_branch_from_origin(&repo_path, &repo.default_branch));
+    if let Some(graphify_update) = &repo.graphify_update {
+        plan.commands
+            .push(CommandSpec::new("sh", ["-lc", graphify_update.as_str()]).with_cwd(&repo.path));
+    }
     plan.commands.push(git.add_worktree(
-        &repo.path.display().to_string(),
+        &repo_path,
         &worktree_path_string,
         &branch,
         &repo.default_branch,
@@ -213,13 +222,15 @@ fn next_incomplete_start_step<R: Registry>(
 pub fn mark_new_task_step_completed<R: Registry>(
     context: &mut CommandContext<R>,
     task_id: &TaskId,
-    step_index: usize,
+    plan: &CommandPlan,
+    command_index: usize,
 ) -> Result<(), CommandError> {
-    let step = match step_index {
-        0 => StartProvisioningStep::WorktreeCreated,
-        1 => StartProvisioningStep::TaskSessionCreated,
-        2 => StartProvisioningStep::AgentCommandSent,
-        _ => return Ok(()),
+    let Some(step) = plan
+        .commands
+        .get(command_index)
+        .and_then(start_provisioning_step_for_command)
+    else {
+        return Ok(());
     };
     mark_new_task_provisioning_step_completed(context, task_id, step)
 }
@@ -307,6 +318,34 @@ pub fn is_new_task_husky_hook_command(command: &CommandSpec) -> bool {
         && command.args[0] == "-lc"
         && command.args[1] == INSTALL_HUSKY_HOOKS
         && command.args[2] == "sh"
+}
+
+pub fn is_git_worktree_add_command(command: &CommandSpec) -> bool {
+    command.program == "git"
+        && command
+            .args
+            .windows(2)
+            .any(|window| window == ["worktree", "add"])
+}
+
+pub fn is_worktrunk_new_session_command(command: &CommandSpec) -> bool {
+    command.program == "tmux" && command.args.first().is_some_and(|arg| arg == "new-session")
+}
+
+pub fn is_agent_send_keys_command(command: &CommandSpec) -> bool {
+    command.program == "tmux" && command.args.first().is_some_and(|arg| arg == "send-keys")
+}
+
+pub fn start_provisioning_step_for_command(command: &CommandSpec) -> Option<StartProvisioningStep> {
+    if is_git_worktree_add_command(command) {
+        Some(StartProvisioningStep::WorktreeCreated)
+    } else if is_worktrunk_new_session_command(command) {
+        Some(StartProvisioningStep::TaskSessionCreated)
+    } else if is_agent_send_keys_command(command) {
+        Some(StartProvisioningStep::AgentCommandSent)
+    } else {
+        None
+    }
 }
 
 fn ajax_worktree_path(
@@ -423,10 +462,11 @@ fn agent_from_name(name: &str) -> AgentClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        mark_new_task_provisioning_step_completed, new_task_plan, record_new_task,
-        task_from_new_request, NewTaskRequest, StartProvisioningStep,
+        is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
+        record_new_task, task_from_new_request, NewTaskRequest, StartProvisioningStep,
     };
     use crate::{
+        adapters::{CommandSpec, GitAdapter},
         commands::CommandContext,
         config::{Config, ManagedRepo, RuntimePathRequest, WorktreePlacement},
         models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
@@ -487,6 +527,55 @@ mod tests {
     }
 
     #[test]
+    fn new_task_plan_syncs_default_branch_from_origin_before_worktree_add() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let plan = new_task_plan(&context, request).unwrap();
+        let git = GitAdapter::new("git");
+
+        assert_eq!(
+            plan.commands[0],
+            git.fetch_origin_branch("/repo/web", "main")
+        );
+        assert_eq!(
+            plan.commands[1],
+            git.sync_default_branch_from_origin("/repo/web", "main")
+        );
+        assert!(is_git_worktree_add_command(&plan.commands[2]));
+    }
+
+    #[test]
+    fn new_task_plan_runs_graphify_update_in_repo_root_when_configured() {
+        let mut repo = ManagedRepo::new("web", "/repo/web", "main");
+        repo.graphify_update = Some("graphify extract --update".to_string());
+        let context = CommandContext::new(
+            Config {
+                repos: vec![repo],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let plan = new_task_plan(&context, request).unwrap();
+
+        assert_eq!(
+            plan.commands[2],
+            CommandSpec::new("sh", ["-lc", "graphify extract --update"]).with_cwd("/repo/web")
+        );
+        assert!(is_git_worktree_add_command(&plan.commands[3]));
+    }
+
+    #[test]
     fn default_new_task_plan_preserves_legacy_sibling_worktree_path() {
         let context = context();
         let request = NewTaskRequest {
@@ -497,7 +586,12 @@ mod tests {
 
         let plan = new_task_plan(&context, request).unwrap();
 
-        assert!(plan.commands[0]
+        let worktree_command = plan
+            .commands
+            .iter()
+            .find(|command| is_git_worktree_add_command(command))
+            .expect("worktree add command");
+        assert!(worktree_command
             .args
             .contains(&"/repo/web__worktrees/ajax-fix-login".to_string()));
     }
@@ -527,7 +621,12 @@ mod tests {
 
         let plan = new_task_plan(&context, request.clone()).unwrap();
         let task = task_from_new_request(&context, &request).unwrap();
-        let planned_worktree = plan.commands[0]
+        let worktree_command = plan
+            .commands
+            .iter()
+            .find(|command| is_git_worktree_add_command(command))
+            .expect("worktree add command");
+        let planned_worktree = worktree_command
             .args
             .iter()
             .find(|arg| arg.starts_with(worktree_root.to_str().unwrap()))

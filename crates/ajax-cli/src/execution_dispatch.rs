@@ -371,7 +371,11 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     let task = commands::record_new_task(context, request).map_err(command_error)?;
     let external_outputs =
         match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
-            if let Some(step) = start_provisioning_step_for_command_index(plan, index) {
+            if let Some(step) = plan
+                .commands
+                .get(index)
+                .and_then(commands::start_provisioning_step_for_command)
+            {
                 commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
             }
             Ok(())
@@ -424,22 +428,6 @@ mod cockpit_entry_tests {
             mobile_web_port_for_cockpit_entry("cockpit", Some(&paths)),
             8788
         );
-    }
-}
-
-#[cfg(feature = "interactive")]
-fn start_provisioning_step_for_command_index(
-    plan: &commands::CommandPlan,
-    index: usize,
-) -> Option<commands::StartProvisioningStep> {
-    if index == 0 {
-        Some(commands::StartProvisioningStep::WorktreeCreated)
-    } else if index + 2 == plan.commands.len() {
-        Some(commands::StartProvisioningStep::TaskSessionCreated)
-    } else if index + 1 == plan.commands.len() {
-        Some(commands::StartProvisioningStep::AgentCommandSent)
-    } else {
-        None
     }
 }
 
