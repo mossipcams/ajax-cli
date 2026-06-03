@@ -3,7 +3,7 @@
   "bootstrap-sha": "240bb9954c7f7d761207e9ea9d470f6aab31852a",
   "force-tag-creation": true,
   "include-component-in-tag": true,
-  "separate-pull-requests": false,
+  "separate-pull-requests": true,
   "release-type": "simple",
   "pull-request-title-pattern": "chore${scope}: release${component} ${version}",
   "packages": {
