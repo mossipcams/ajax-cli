@@ -2816,7 +2816,9 @@ fn release_please_registers_workspace_crates_for_library_only_changes() {
     // through an extra-files TOML updater targeting crates/ajax-cli/Cargo.toml.
     let bumps_cli_cargo_toml = root_package["extra-files"]
         .as_array()
-        .expect("the root package should define extra-files to bump the ajax-cli Cargo.toml version")
+        .expect(
+            "the root package should define extra-files to bump the ajax-cli Cargo.toml version",
+        )
         .iter()
         .any(|file| {
             file["type"].as_str() == Some("toml")
