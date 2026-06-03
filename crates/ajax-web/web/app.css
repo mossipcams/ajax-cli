@@ -221,6 +221,40 @@ select {
   display: none;
 }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 10px 16px;
+  background: var(--teal);
+  border: 1px solid var(--teal);
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: left;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.update-banner::after {
+  content: "⟳";
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.update-banner:hover,
+.update-banner:focus-visible {
+  background: var(--paper);
+  border-color: var(--ink);
+  outline: none;
+}
+
 /* NEW TASK ROW ----------------------------------------------------------- */
 .new-task-row {
   display: flex;
