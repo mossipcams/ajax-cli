@@ -193,7 +193,14 @@ fn vapid_subject() -> &'static str {
 
 /// Sends `notification` to every stored subscription, pruning any the push
 /// service reports as gone. Returns how many were delivered.
-pub fn send_to_all(dir: &Path, notification: &PushNotification) -> Result<usize, WebError> {
+///
+/// This is the async core: callers already inside a Tokio runtime (such as the
+/// web server's attention poller) must use this rather than [`send_to_all`],
+/// which builds its own runtime and would panic if entered from within one.
+pub async fn send_to_all_async(
+    dir: &Path,
+    notification: &PushNotification,
+) -> Result<usize, WebError> {
     use web_push::WebPushClient;
 
     let subscriptions = load_subscriptions(dir);
@@ -203,29 +210,21 @@ pub fn send_to_all(dir: &Path, notification: &PushNotification) -> Result<usize,
     let keys = load_or_create_vapid_keys(dir)?;
     let payload = notification_payload(notification);
 
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| WebError::CommandFailed(format!("web push runtime failed: {error}")))?;
-
-    let (delivered, gone) = runtime.block_on(async {
-        let client = web_push::HyperWebPushClient::new();
-        let mut delivered = 0_usize;
-        let mut gone: Vec<String> = Vec::new();
-        for subscription in &subscriptions {
-            if let Ok(message) = build_push_message(&keys.private_pem, subscription, &payload) {
-                match client.send(message).await {
-                    Ok(()) => delivered += 1,
-                    Err(error) => {
-                        if is_gone(&error) {
-                            gone.push(subscription.endpoint.clone());
-                        }
+    let client = web_push::HyperWebPushClient::new();
+    let mut delivered = 0_usize;
+    let mut gone: Vec<String> = Vec::new();
+    for subscription in &subscriptions {
+        if let Ok(message) = build_push_message(&keys.private_pem, subscription, &payload) {
+            match client.send(message).await {
+                Ok(()) => delivered += 1,
+                Err(error) => {
+                    if is_gone(&error) {
+                        gone.push(subscription.endpoint.clone());
                     }
                 }
             }
         }
-        (delivered, gone)
-    });
+    }
 
     if !gone.is_empty() {
         let live: Vec<PushSubscription> = subscriptions
@@ -235,6 +234,18 @@ pub fn send_to_all(dir: &Path, notification: &PushNotification) -> Result<usize,
         save_subscriptions(dir, &live)?;
     }
     Ok(delivered)
+}
+
+/// Blocking wrapper around [`send_to_all_async`] for callers outside an async
+/// context. Do not call this from within a Tokio runtime; use
+/// [`send_to_all_async`] there instead.
+pub fn send_to_all(dir: &Path, notification: &PushNotification) -> Result<usize, WebError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| WebError::CommandFailed(format!("web push runtime failed: {error}")))?;
+
+    runtime.block_on(send_to_all_async(dir, notification))
 }
 
 #[cfg(test)]
@@ -380,6 +391,41 @@ mod tests {
     fn send_to_all_with_no_subscriptions_delivers_nothing() {
         let dir = scratch_dir("empty-send");
         let delivered = send_to_all(&dir, &PushNotification::attention("ignored")).unwrap();
+        assert_eq!(delivered, 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // Regression: the attention poller drives delivery from inside the web
+    // server's multi-threaded Tokio runtime. The async core must not build its
+    // own runtime there (which panics with "Cannot start a runtime from within
+    // a runtime"), so the subscription-present branch has to run cleanly when
+    // awaited inside an existing runtime.
+    #[test]
+    fn send_to_all_async_runs_inside_a_runtime_with_subscriptions() {
+        use super::send_to_all_async;
+
+        let dir = scratch_dir("async-send");
+        add_subscription(&dir, subscription("https://push.example/a")).unwrap();
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        // The bogus subscription keys make message building fail, so nothing is
+        // sent over the network; the point is that reaching the delivery loop
+        // does not panic when running on a runtime worker thread (the poller's
+        // context). A spawned task isolates panics, so assert the join succeeds.
+        let send_dir = dir.clone();
+        let delivered = runtime
+            .block_on(async move {
+                tokio::spawn(async move {
+                    send_to_all_async(&send_dir, &PushNotification::attention("web/x")).await
+                })
+                .await
+                .expect("delivery task must not panic inside a runtime")
+            })
+            .unwrap();
         assert_eq!(delivered, 0);
 
         std::fs::remove_dir_all(&dir).ok();
