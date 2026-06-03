@@ -8,7 +8,7 @@ use nix::{
     poll::{poll, PollFd, PollFlags, PollTimeout},
     pty::{forkpty, ForkptyResult, Winsize},
     sys::{
-        signal::{kill, Signal},
+        signal::{kill, sigaction, SaFlags, SigAction, SigHandler, SigSet, Signal},
         termios::{tcgetattr, tcsetattr, SetArg},
         wait::{waitpid, WaitPidFlag, WaitStatus},
     },
@@ -22,6 +22,7 @@ use std::{
     os::raw::c_char,
     os::unix::ffi::OsStrExt,
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     thread::sleep,
     time::{Duration, Instant},
 };
@@ -508,6 +509,7 @@ fn run_pty_task_session(
     );
     let mut terminal = TaskOperatorTerminal::open()?;
     let _guard = terminal.enter_raw_mode(original_termios, &fork_config.raw_termios)?;
+    let _winch_guard = TaskWinchGuard::install()?;
     let _screen_guard = TaskScreenGuard::enter(&mut terminal.output)?;
     let mut trace = TaskSessionTrace::from_env()?;
     trace.log(
@@ -690,6 +692,95 @@ impl TaskOperatorTerminal {
     }
 }
 
+/// Set by the SIGWINCH handler whenever the operator terminal is resized.
+/// Seeded `true` so the pump syncs the size once on attach, covering any
+/// resize that slipped between reading the winsize and forking the PTY.
+static WINCH_PENDING: AtomicBool = AtomicBool::new(true);
+
+extern "C" fn handle_winch(_: nix::libc::c_int) {
+    // Async-signal-safe: a single relaxed atomic store, nothing more.
+    WINCH_PENDING.store(true, Ordering::Relaxed);
+}
+
+/// Installs a SIGWINCH handler for the duration of an attach and restores the
+/// previous disposition on drop. The handler must exist (not SIG_IGN/SIG_DFL)
+/// so the resize interrupts the pump's blocking `poll` with EINTR.
+struct TaskWinchGuard {
+    previous: SigAction,
+}
+
+impl TaskWinchGuard {
+    fn install() -> Result<Self, CliError> {
+        WINCH_PENDING.store(true, Ordering::Relaxed);
+        let action = SigAction::new(
+            SigHandler::Handler(handle_winch),
+            // No SA_RESTART: we want `poll` interrupted so the loop reacts.
+            SaFlags::empty(),
+            SigSet::empty(),
+        );
+        // SAFETY: `handle_winch` is async-signal-safe (one atomic store).
+        let previous = unsafe { sigaction(Signal::SIGWINCH, &action) }
+            .map_err(tty_error("failed to install resize handler"))?;
+        Ok(Self { previous })
+    }
+}
+
+impl Drop for TaskWinchGuard {
+    fn drop(&mut self) {
+        // SAFETY: restoring the disposition captured at install time.
+        let _ = unsafe { sigaction(Signal::SIGWINCH, &self.previous) };
+    }
+}
+
+/// Reads the operator terminal's current window size, or `None` if the ioctl
+/// fails (e.g. the descriptor is no longer a tty).
+fn read_operator_winsize(fd: i32) -> Option<nix::libc::winsize> {
+    // SAFETY: ioctl writes into the provided winsize struct for a tty fd.
+    let mut raw: nix::libc::winsize = unsafe { std::mem::zeroed() };
+    let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCGWINSZ, &mut raw) };
+    (result == 0).then_some(raw)
+}
+
+fn winsize_changed(last: Option<(u16, u16)>, current: (u16, u16)) -> bool {
+    last != Some(current)
+}
+
+/// Propagates a pending operator resize to the PTY master so the attached
+/// client (tmux) re-renders at the live terminal size. No-op unless SIGWINCH
+/// fired since the last call and the size actually changed.
+fn sync_pending_winsize(
+    operator_fd: i32,
+    master_fd: i32,
+    last: &mut Option<(u16, u16)>,
+    trace: &mut TaskSessionTrace,
+) {
+    if !WINCH_PENDING.swap(false, Ordering::Relaxed) {
+        return;
+    }
+    let Some(raw) = read_operator_winsize(operator_fd) else {
+        trace.log("winsize_read_err", "ioctl=TIOCGWINSZ");
+        return;
+    };
+    let current = (raw.ws_row, raw.ws_col);
+    if !winsize_changed(*last, current) {
+        return;
+    }
+    // SAFETY: ioctl reads the winsize struct for a valid master fd.
+    let result = unsafe { nix::libc::ioctl(master_fd, nix::libc::TIOCSWINSZ, &raw) };
+    if result != 0 {
+        trace.log(
+            "winsize_apply_err",
+            format!("error={}", io::Error::last_os_error()),
+        );
+        return;
+    }
+    *last = Some(current);
+    trace.log(
+        "winsize_apply",
+        format!("rows={} cols={}", current.0, current.1),
+    );
+}
+
 struct TaskScreenGuard {
     output: File,
 }
@@ -733,9 +824,17 @@ fn pump_task_pty(
     let mut tty_input = [0_u8; 4096];
     let mut pty_output = [0_u8; 8192];
     let mut recent_output = Vec::new();
+    let mut last_winsize: Option<(u16, u16)> = None;
     let attached_at = Instant::now();
 
     loop {
+        sync_pending_winsize(
+            terminal_input.as_raw_fd(),
+            master.as_raw_fd(),
+            &mut last_winsize,
+            trace,
+        );
+
         let poll_action = {
             let mut poll_fds = [
                 PollFd::new(terminal_input.as_fd(), PollFlags::POLLIN),
@@ -1066,8 +1165,9 @@ fn exit_child_after_exec_failure() -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        execute_task_entry_plan, filter_task_input, FilteredTaskInput, TaskEntryPlanOutcome,
-        TaskInputAction, TaskSessionContext, TaskSessionEnd, TaskSessionRunner,
+        execute_task_entry_plan, filter_task_input, winsize_changed, FilteredTaskInput,
+        TaskEntryPlanOutcome, TaskInputAction, TaskSessionContext, TaskSessionEnd,
+        TaskSessionRunner,
     };
     use ajax_core::{
         adapters::{CommandMode, CommandSpec, RecordingCommandRunner},
@@ -1453,6 +1553,116 @@ mod tests {
         assert_eq!(winsize.ws_col, 79);
         assert_eq!(winsize.ws_xpixel, 0);
         assert_eq!(winsize.ws_ypixel, 0);
+    }
+
+    #[test]
+    fn winsize_change_detection_tracks_rows_and_columns() {
+        // First observation always counts as a change.
+        assert!(winsize_changed(None, (24, 80)));
+        // Identical size is a no-op so we never spam SIGWINCH at the child.
+        assert!(!winsize_changed(Some((24, 80)), (24, 80)));
+        // A change in either dimension propagates.
+        assert!(winsize_changed(Some((24, 80)), (30, 80)));
+        assert!(winsize_changed(Some((24, 80)), (24, 120)));
+    }
+
+    fn set_kernel_winsize(fd: i32, rows: u16, cols: u16) {
+        let ws = nix::libc::winsize {
+            ws_row: rows,
+            ws_col: cols,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        };
+        // SAFETY: TIOCSWINSZ reads the winsize struct for a valid pty fd.
+        let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCSWINSZ, &ws) };
+        assert_eq!(
+            result,
+            0,
+            "TIOCSWINSZ failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+
+    fn kernel_winsize(fd: i32) -> (u16, u16) {
+        // SAFETY: TIOCGWINSZ writes the winsize struct for a valid pty fd.
+        let mut ws: nix::libc::winsize = unsafe { std::mem::zeroed() };
+        let result = unsafe { nix::libc::ioctl(fd, nix::libc::TIOCGWINSZ, &mut ws) };
+        assert_eq!(
+            result,
+            0,
+            "TIOCGWINSZ failed: {}",
+            std::io::Error::last_os_error()
+        );
+        (ws.ws_row, ws.ws_col)
+    }
+
+    // End-to-end proof against real kernel PTY state: a live SIGWINCH must move
+    // the child PTY's window size, and the old (no-sync) path must leave it stale.
+    #[test]
+    fn live_sigwinch_propagates_operator_size_to_child_pty() {
+        use nix::pty::openpty;
+        use nix::sys::signal::{raise, Signal};
+        use std::os::fd::AsRawFd;
+
+        // "operator" = the terminal the operator looks at (production reads its
+        // size from stdin). "child" = the PTY the attached tmux client renders to.
+        let operator = openpty(None, None).expect("openpty operator");
+        let child = openpty(None, None).expect("openpty child");
+        let operator_read_fd = operator.slave.as_raw_fd();
+        let child_master_fd = child.master.as_raw_fd();
+
+        // Both start at 24x80, matching a fresh attach.
+        set_kernel_winsize(operator.master.as_raw_fd(), 24, 80);
+        set_kernel_winsize(child_master_fd, 24, 80);
+
+        let mut trace = super::TaskSessionTrace::from_path(None).unwrap();
+        let mut last: Option<(u16, u16)> = None;
+
+        // Install the real handler used in production (seeds a pending sync).
+        let _guard = super::TaskWinchGuard::install().unwrap();
+
+        // First pump iteration syncs the current size on attach.
+        super::sync_pending_winsize(operator_read_fd, child_master_fd, &mut last, &mut trace);
+        assert_eq!(kernel_winsize(child_master_fd), (24, 80));
+        assert_eq!(last, Some((24, 80)));
+        println!(
+            "[attach]            child PTY size = {:?}",
+            kernel_winsize(child_master_fd)
+        );
+
+        // The operator terminal is resized (e.g. mobile keyboard hides).
+        set_kernel_winsize(operator.master.as_raw_fd(), 40, 100);
+        println!(
+            "[operator resized]  operator size = {:?}, child PTY size = {:?}",
+            kernel_winsize(operator_read_fd),
+            kernel_winsize(child_master_fd)
+        );
+
+        // OLD BEHAVIOR: with no SIGWINCH propagation, the child stays stale —
+        // this is exactly the flicker/scroll-jump bug.
+        assert_eq!(
+            kernel_winsize(child_master_fd),
+            (24, 80),
+            "child should still be stale until the resize is propagated"
+        );
+
+        // A real SIGWINCH is delivered to this thread, running the production
+        // handler, which flags a pending sync.
+        raise(Signal::SIGWINCH).expect("raise SIGWINCH");
+
+        // NEW BEHAVIOR: the next pump iteration pushes the live size to the child.
+        super::sync_pending_winsize(operator_read_fd, child_master_fd, &mut last, &mut trace);
+
+        assert_eq!(
+            kernel_winsize(child_master_fd),
+            (40, 100),
+            "child PTY must reflect the resized operator terminal"
+        );
+        assert_eq!(last, Some((40, 100)));
+        println!(
+            "[after SIGWINCH]    child PTY size = {:?}  <- propagated",
+            kernel_winsize(child_master_fd)
+        );
     }
 
     #[test]
