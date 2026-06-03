@@ -117,6 +117,21 @@ set -euo pipefail
 printf 'git %s\n' "$*" >> "$AJAX_SMOKE_COMMAND_LOG"
 
 case "$*" in
+  *" fetch origin "*)
+    exit 0
+    ;;
+  *" worktree list --porcelain"*)
+    printf 'worktree %s\nHEAD 1111111\nbranch refs/heads/main\n\n' "$REPO"
+    if [[ -f "$AJAX_SMOKE_SUBSTRATE_DIR/worktree" ]]; then
+      printf 'worktree %s\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n' "$WORKTREE"
+    fi
+    ;;
+  *" branch --format="*)
+    printf 'main\n'
+    if [[ -f "$AJAX_SMOKE_SUBSTRATE_DIR/branch" ]]; then
+      printf 'ajax/fix-login\n'
+    fi
+    ;;
   *" worktree add "*)
     mkdir -p "$AJAX_SMOKE_WORKTREE"
     printf '1\n' > "$AJAX_SMOKE_SUBSTRATE_DIR/worktree"
@@ -202,8 +217,10 @@ EOF_CONFIG
   write_fake_tools
 
   export PATH="$FAKE_BIN:$ORIGINAL_PATH"
+  unset AJAX_HOME AJAX_WORKTREE_ROOT AJAX_PROFILE
   export AJAX_CONFIG="$CONFIG"
   export AJAX_STATE="$STATE"
+  export REPO WORKTREE
   export AJAX_SMOKE_WORKTREE="$WORKTREE"
   export AJAX_SMOKE_SUBSTRATE_DIR
   export AJAX_SMOKE_COMMAND_LOG
@@ -281,6 +298,8 @@ run_recovery_journey() {
   assert_json_contains "$tasks" '"qualified_handle": "web/fix-login"' "recovery tasks"
   assert_json_contains "$tasks" '"lifecycle_status": "Error"' "recovery tasks"
   assert_json_contains "$tasks" '"needs_attention": true' "recovery tasks"
+  assert_log_contains "git -C $REPO fetch origin main"
+  assert_log_contains "git -C $REPO fetch origin main:main"
   assert_log_contains "git -C $REPO worktree add -b ajax/fix-login $WORKTREE main"
   assert_log_contains "tmux new-session -d -s ajax-web-fix-login -n worktrunk -c $WORKTREE"
 
