@@ -5,9 +5,7 @@ const inbox = document.getElementById("inbox");
 const repos = document.getElementById("repos");
 const projectNav = document.getElementById("project-nav");
 const emptyState = document.getElementById("empty-state");
-const attentionSummary = document.getElementById("attention-summary");
 const statusLine = document.getElementById("status-line");
-const pwaWarning = document.getElementById("pwa-warning");
 const updateBanner = document.getElementById("update-banner");
 const connectionStatus = document.getElementById("connection-status");
 const connectionLabel = document.getElementById("connection-label");
@@ -47,8 +45,6 @@ const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
 const PANE_INTERVAL_DEFAULT_MS = 1000;
 const MAX_LOG_ENTRIES = 24;
-const STANDALONE_WARNING_TEXT =
-  "Ajax works best in Safari on iOS. Home Screen mode is experimental and may get stuck due to iOS lifecycle/cache behavior.";
 
 const CONNECTION_STATES = {
   connected: "connected",
@@ -72,7 +68,6 @@ let refreshInFlight = false;
 let detailHandle = null;
 let detailInFlight = false;
 let selectedProject = null;
-const expandedCards = new Set();
 /** @type {Map<string, { originalLabel: string, expiresAt: number, timer: ReturnType<typeof setTimeout> }>} */
 const pendingConfirmByKey = new Map();
 
@@ -220,24 +215,59 @@ async function forceBackendHealthCheck(reason) {
 
 // LIST VIEW -----------------------------------------------------------------
 
-function stateIndicator(state) {
-  switch ((state || "").toLowerCase()) {
-    case "running":
-      return "is-running";
-    case "review ready":
-    case "safe merge":
-      return "is-attention";
-    case "needs input":
-    case "blocked":
-    case "failed":
-      return "is-danger";
-    case "cleanable":
-      return "is-success";
-    case "idle":
-    case "archived":
-    default:
-      return "is-muted";
-  }
+// Status vocabulary — one tone + display label per backend ui_state. Tones map
+// to the walnut palette accents in app.css (tone-running/ready/attention/
+// danger/done/muted). The backend emits lowercase ui_state strings.
+const STATUS_META = {
+  blocked: { tone: "danger", label: "Blocked" },
+  failed: { tone: "danger", label: "Failed" },
+  "needs input": { tone: "attention", label: "Needs input" },
+  "review ready": { tone: "ready", label: "Review" },
+  "safe merge": { tone: "ready", label: "Safe merge" },
+  running: { tone: "running", label: "Running" },
+  cleanable: { tone: "done", label: "Cleanable" },
+  idle: { tone: "muted", label: "Idle" },
+  archived: { tone: "muted", label: "Archived" },
+};
+
+// Order tasks in the calm list so the most active sit on top.
+const STATUS_ORDER = [
+  "running",
+  "review ready",
+  "safe merge",
+  "needs input",
+  "blocked",
+  "failed",
+  "cleanable",
+  "idle",
+  "archived",
+];
+
+function statusMeta(state) {
+  const key = (state || "").toLowerCase();
+  return STATUS_META[key] || { tone: "muted", label: titleCase(state || "—") };
+}
+
+function statusRank(state) {
+  const index = STATUS_ORDER.indexOf((state || "").toLowerCase());
+  return index === -1 ? STATUS_ORDER.length : index;
+}
+
+function statusDot(tone) {
+  const dot = el("span", `status-dot tone-${tone}`);
+  dot.setAttribute("aria-hidden", "true");
+  return dot;
+}
+
+function statusBadge(meta) {
+  return el("span", `status-badge tone-${meta.tone}`, meta.label);
+}
+
+function sectionHead(title, count, options) {
+  const head = el("div", options && options.attention ? "section-head attention" : "section-head");
+  head.append(el("span", "section-head-title", title));
+  if (count != null) head.append(el("span", "section-head-count", String(count)));
+  return head;
 }
 
 function actionButtonFromState(state, handle, isPrimary) {
@@ -262,14 +292,6 @@ function actionButtonFromState(state, handle, isPrimary) {
   }
   applyPendingConfirm(button);
   return button;
-}
-
-function appendDetailRow(parent, label, value) {
-  if (!value) return;
-  const row = el("div", "detail-row");
-  row.append(el("span", "detail-label", label));
-  row.append(el("span", "detail-value", value));
-  parent.append(row);
 }
 
 function renderProjectNav(data) {
@@ -307,137 +329,127 @@ function cardMatchesProject(card) {
   return repoOf(card.qualified_handle) === selectedProject;
 }
 
-function taskCard(card, options) {
-  const opts = options || {};
-  const article = el("article", opts.attention ? "card attention" : "card");
-  article.dataset.state = card.ui_state;
-  article.dataset.handle = card.qualified_handle;
-  if (expandedCards.has(card.qualified_handle)) article.classList.add("expanded");
-
-  const head = el("div", "card-head");
-  const indicator = el("span", `indicator ${stateIndicator(card.ui_state)}`.trim());
-  indicator.setAttribute("aria-hidden", "true");
-  head.append(indicator);
-  head.append(el("span", "handle", card.qualified_handle));
-  head.append(el("span", "badge", card.status_label || card.ui_state));
-
+// Inbox cards carry the full weight: status, reason, and inline actions so the
+// operator can clear the blocker in one tap. Tapping the card body (not a
+// button) opens the detail view — "tap to learn more".
+function inboxActionRow(card) {
   const states = actionStatesForCard(card);
   const supported = states.filter((state) => state.status === "supported");
-  const primaryName = card.primary_action;
-  const primaryState = supported.find((state) => state.action === primaryName) || supported[0];
+  const primaryState =
+    supported.find((state) => state.action === card.primary_action) || supported[0];
+
+  const row = el("div", "inbox-card-actions");
   if (primaryState) {
-    head.append(actionButtonFromState(primaryState, card.qualified_handle, true));
+    row.append(actionButtonFromState(primaryState, card.qualified_handle, true));
   }
+  const open = el("button", "action", "Open");
+  open.type = "button";
+  open.setAttribute("data-open-task", card.qualified_handle);
+  row.append(open);
+  for (const state of supported) {
+    if (primaryState && state.action === primaryState.action) continue;
+    row.append(actionButtonFromState(state, card.qualified_handle, false));
+  }
+  return row;
+}
+
+function inboxCard(card, item) {
+  const meta = statusMeta(card.ui_state);
+  const article = el("article", `inbox-card tone-${meta.tone}`);
+  article.dataset.handle = card.qualified_handle;
+  article.dataset.severity = severityBucket(item.severity || 999);
+
+  const head = el("div", "inbox-card-head");
+  head.append(statusDot(meta.tone));
+  head.append(el("span", "inbox-card-handle", card.qualified_handle));
+  head.append(statusBadge(meta));
   article.append(head);
 
-  const summary = opts.reason || card.live_summary || card.status_label || card.title;
-  if (summary) article.append(el("p", "summary", summary));
+  const reason = item.reason || card.live_summary || card.status_label;
+  if (reason) article.append(el("p", "inbox-card-reason", reason));
 
-  const drawer = el("div", "action-drawer");
-  const drawerTitle = el("div", "drawer-title", "Actions");
-  drawer.append(drawerTitle);
-  const drawerActions = el("div", "actions");
-  const openButton = el("button", "action", "Open");
-  openButton.type = "button";
-  openButton.setAttribute("data-open-task", card.qualified_handle);
-  drawerActions.append(openButton);
-  const copyButton = el("button", "action", "Copy Summary");
-  copyButton.type = "button";
-  copyButton.setAttribute("data-copy-summary", card.qualified_handle);
-  drawerActions.append(copyButton);
-  for (const state of states) {
-    if (primaryState && state.action === primaryState.action) continue;
-    drawerActions.append(actionButtonFromState(state, card.qualified_handle, false));
-  }
-  if (drawerActions.childElementCount) drawer.append(drawerActions);
-  article.append(drawer);
-
-  const details = el("div", "card-details");
-  const titleText =
-    card.title && card.title !== card.qualified_handle ? card.title : null;
-  appendDetailRow(details, "Title", titleText);
-  appendDetailRow(details, "Lifecycle", titleCase(card.lifecycle));
-  appendDetailRow(details, "State", titleCase(card.ui_state));
-  if (details.childElementCount) {
-    article.append(details);
-    article.classList.add("has-details");
-  }
-
+  article.append(inboxActionRow(card));
   return article;
+}
+
+// Task rows are deliberately light: a status dot, the handle, an optional live
+// sub-line, and the status label. The whole row is the open-detail target.
+function taskRow(card) {
+  const meta = statusMeta(card.ui_state);
+  const row = el("button", `task-row tone-${meta.tone}`);
+  row.type = "button";
+  row.dataset.handle = card.qualified_handle;
+  row.setAttribute("data-open-task", card.qualified_handle);
+
+  row.append(statusDot(meta.tone));
+
+  const main = el("div", "task-row-main");
+  main.append(el("span", "task-row-handle", card.qualified_handle));
+  const sub = card.live_summary || card.status_label;
+  if (sub && sub.toLowerCase() !== meta.label.toLowerCase()) {
+    main.append(el("span", "task-row-sub", sub));
+  }
+  row.append(main);
+
+  row.append(el("span", "task-row-status", meta.label));
+  row.append(el("span", "task-row-chevron", "›"));
+  return row;
 }
 
 function renderInbox(data, cardsByHandle) {
   inbox.replaceChildren();
   const items = ((data.inbox && data.inbox.items) || [])
     .slice()
-    .sort((a, b) => (a.severity || 999) - (b.severity || 999));
+    .sort((a, b) => (a.severity || 999) - (b.severity || 999))
+    .filter((item) => {
+      const card = cardsByHandle.get(item.task_handle);
+      return card && cardMatchesProject(card);
+    });
   if (!items.length) return;
-  const cards = el("div", "cards");
+  inbox.append(sectionHead("Needs you", items.length, { attention: true }));
+  const list = el("div", "inbox-list");
   for (const item of items) {
-    const card = cardsByHandle.get(item.task_handle);
-    if (!card || !cardMatchesProject(card)) continue;
-    const article = taskCard(card, { attention: true, reason: item.reason });
-    article.dataset.severity = severityBucket(item.severity || 999);
-    cards.append(article);
+    list.append(inboxCard(cardsByHandle.get(item.task_handle), item));
   }
-  if (!cards.childElementCount) return;
-  inbox.append(el("div", "section-title attention", "Inbox"));
-  inbox.append(cards);
+  inbox.append(list);
 }
 
-function renderAttentionSummary(data) {
-  if (!attentionSummary) return;
-  attentionSummary.replaceChildren();
-  const cards = (data.cards || []).filter((card) => cardMatchesProject(card));
-  const inboxItems = (data.inbox && data.inbox.items) || [];
-  const attentionCount = inboxItems.filter((item) => {
-    const card = cards.find((candidate) => candidate.qualified_handle === item.task_handle);
-    return Boolean(card);
-  }).length;
-  const runningCount = cards.filter((card) => card.ui_state === "Running").length;
-  const reviewReadyCount = cards.filter((card) =>
-    ["Review Ready", "Safe Merge"].includes(card.ui_state || card.status_label),
-  ).length;
-  const failedCount = cards.filter((card) =>
-    ["Blocked", "Failed"].includes(card.ui_state) ||
-    /failed|conflict|blocked/i.test(card.status_label || card.live_summary || ""),
-  ).length;
-
-  for (const [label, value] of [
-    ["Attention", attentionCount],
-    ["Running", runningCount],
-    ["Review-ready", reviewReadyCount],
-    ["Failed", failedCount],
-  ]) {
-    const item = el("div", "summary-chip");
-    item.append(el("span", "summary-chip-label", label));
-    item.append(el("strong", null, String(value)));
-    attentionSummary.append(item);
-  }
-}
-
-function renderRepos(data) {
+function renderTasks(data) {
   repos.replaceChildren();
   const inboxHandles = new Set(
     ((data.inbox && data.inbox.items) || []).map((item) => item.task_handle),
   );
+  const visible = data.cards.filter(
+    (card) => cardMatchesProject(card) && !inboxHandles.has(card.qualified_handle),
+  );
+  if (!visible.length) return;
+
+  repos.append(sectionHead(selectedProject ? selectedProject : "Tasks", visible.length));
+
   const byRepo = new Map();
-  for (const card of data.cards) {
-    if (inboxHandles.has(card.qualified_handle)) continue;
-    if (!cardMatchesProject(card)) continue;
+  for (const card of visible) {
     const repo = repoOf(card.qualified_handle);
     if (!byRepo.has(repo)) byRepo.set(repo, []);
     byRepo.get(repo).push(card);
   }
-  if (!byRepo.size) return;
-  const title = selectedProject ? selectedProject : "Tasks";
-  repos.append(el("div", "section-title", title));
+
+  const sortCards = (cards) =>
+    cards
+      .slice()
+      .sort(
+        (a, b) =>
+          statusRank(a.ui_state) - statusRank(b.ui_state) ||
+          a.qualified_handle.localeCompare(b.qualified_handle),
+      );
+
   for (const repo of [...byRepo.keys()].sort()) {
-    const block = el("section");
-    if (!selectedProject) block.append(el("div", "group-title", repo));
-    const cards = el("div", "cards");
-    for (const card of byRepo.get(repo)) cards.append(taskCard(card));
-    block.append(cards);
+    const block = el("section", "task-group");
+    if (!selectedProject && byRepo.size > 1) {
+      block.append(el("div", "task-group-title", repo));
+    }
+    const list = el("div", "task-list");
+    for (const card of sortCards(byRepo.get(repo))) list.append(taskRow(card));
+    block.append(list);
     repos.append(block);
   }
 }
@@ -492,39 +504,58 @@ function updateLiveSummaries(data, cardsByHandle) {
   const inboxByHandle = new Map(
     ((data.inbox && data.inbox.items) || []).map((item) => [item.task_handle, item]),
   );
-  for (const article of document.querySelectorAll(".card[data-handle]")) {
+  for (const article of document.querySelectorAll(".inbox-card[data-handle]")) {
     const card = cardsByHandle.get(article.dataset.handle);
     if (!card) continue;
     const inboxItem = inboxByHandle.get(card.qualified_handle);
-    const summary = article.querySelector(".summary");
-    const text = cardSummaryText(card, inboxItem);
-    if (summary) {
+    const meta = statusMeta(card.ui_state);
+    article.className = `inbox-card tone-${meta.tone}`;
+    if (inboxItem) article.dataset.severity = severityBucket(inboxItem.severity || 999);
+    const dot = article.querySelector(".status-dot");
+    if (dot) dot.className = `status-dot tone-${meta.tone}`;
+    const badge = article.querySelector(".status-badge");
+    if (badge) {
+      badge.className = `status-badge tone-${meta.tone}`;
+      badge.textContent = meta.label;
+    }
+    const reason = article.querySelector(".inbox-card-reason");
+    if (reason) {
+      const text = cardSummaryText(card, inboxItem);
       if (text) {
-        summary.textContent = text;
-        summary.hidden = false;
+        reason.textContent = text;
+        reason.hidden = false;
       } else {
-        summary.hidden = true;
+        reason.hidden = true;
       }
     }
-    const badge = article.querySelector(".badge");
-    if (badge) badge.textContent = card.status_label || card.ui_state;
-    article.dataset.state = card.ui_state;
-    if (inboxItem) {
-      article.dataset.severity = severityBucket(inboxItem.severity || 999);
-    }
-    const indicator = article.querySelector(".indicator");
-    if (indicator) {
-      indicator.className = `indicator ${stateIndicator(card.ui_state)}`.trim();
+  }
+  for (const row of document.querySelectorAll(".task-row[data-handle]")) {
+    const card = cardsByHandle.get(row.dataset.handle);
+    if (!card) continue;
+    const meta = statusMeta(card.ui_state);
+    row.className = `task-row tone-${meta.tone}`;
+    const dot = row.querySelector(".status-dot");
+    if (dot) dot.className = `status-dot tone-${meta.tone}`;
+    const status = row.querySelector(".task-row-status");
+    if (status) status.textContent = meta.label;
+    const sub = row.querySelector(".task-row-sub");
+    if (sub) {
+      const subText = card.live_summary || card.status_label;
+      if (subText && subText.toLowerCase() !== meta.label.toLowerCase()) {
+        sub.textContent = subText;
+        sub.hidden = false;
+      } else {
+        sub.hidden = true;
+      }
     }
   }
 }
 
 function renderList(data) {
   renderProjectNav(data);
-  renderAttentionSummary(data);
   const cardsByHandle = new Map(data.cards.map((card) => [card.qualified_handle, card]));
   renderInbox(data, cardsByHandle);
-  renderRepos(data);
+  renderTasks(data);
   const visibleCount = data.cards.filter((card) => cardMatchesProject(card)).length;
   emptyState.hidden = visibleCount > 0;
   emptyState.textContent = selectedProject
@@ -1504,7 +1535,7 @@ function tryConfirmDestructive(button) {
 
 async function runAction(button) {
   resetConfirmButton(button);
-  const cardEl = button.closest(".card, #task-detail");
+  const cardEl = button.closest(".inbox-card, #task-detail");
   const peers = cardEl
     ? Array.from(cardEl.querySelectorAll("button[data-action]:not([disabled])"))
     : [button];
@@ -1545,43 +1576,6 @@ async function runAction(button) {
   }
 }
 
-function toggleCardExpansion(cardEl) {
-  const handle = cardEl.dataset.handle;
-  if (!handle) return;
-  if (cardEl.classList.contains("expanded")) {
-    cardEl.classList.remove("expanded");
-    expandedCards.delete(handle);
-  } else {
-    cardEl.classList.add("expanded");
-    expandedCards.add(handle);
-  }
-}
-
-async function copyTaskSummary(handle) {
-  const card =
-    lastCockpit && Array.isArray(lastCockpit.cards)
-      ? lastCockpit.cards.find((candidate) => candidate.qualified_handle === handle)
-      : null;
-  if (!card) {
-    showResult("Task summary unavailable", null, true);
-    return;
-  }
-  const summary = [
-    card.qualified_handle,
-    card.title,
-    card.status_label || card.ui_state,
-    card.live_summary,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    await navigator.clipboard.writeText(summary);
-    showResult("Task summary copied", null, false);
-  } else {
-    showResult("Task summary ready", summary, false);
-  }
-}
-
 document.addEventListener("click", (event) => {
   const shortcut = event.target.closest("[data-terminal-shortcut]");
   if (shortcut) {
@@ -1593,11 +1587,6 @@ document.addEventListener("click", (event) => {
     window.location.hash = `#/t/${encodeURIComponent(openTask.getAttribute("data-open-task"))}`;
     return;
   }
-  const copySummary = event.target.closest("[data-copy-summary]");
-  if (copySummary) {
-    copyTaskSummary(copySummary.getAttribute("data-copy-summary"));
-    return;
-  }
   const button = event.target.closest("button[data-action]");
   if (button) {
     if (button.disabled) return;
@@ -1605,9 +1594,9 @@ document.addEventListener("click", (event) => {
     runAction(button);
     return;
   }
-  const cardEl = event.target.closest(".card.has-details");
-  if (cardEl && !event.target.closest(".action-drawer")) {
-    const handle = cardEl.dataset.handle;
+  const inboxCardEl = event.target.closest(".inbox-card");
+  if (inboxCardEl && !event.target.closest("button")) {
+    const handle = inboxCardEl.dataset.handle;
     if (handle) {
       window.location.hash = `#/t/${encodeURIComponent(handle)}`;
     }
@@ -1669,16 +1658,6 @@ function isStandalonePwa() {
   );
 }
 
-function isIosBrowser() {
-  return /iPad|iPhone|iPod/.test(window.navigator.userAgent);
-}
-
-function syncStandaloneWarning() {
-  if (!pwaWarning) return;
-  pwaWarning.textContent = STANDALONE_WARNING_TEXT;
-  pwaWarning.hidden = !(isIosBrowser() && isStandalonePwa());
-}
-
 // SHELL UPDATES -------------------------------------------------------------
 // An installed iOS standalone PWA resumes a frozen snapshot and has no reload
 // affordance, so a redeployed shell would run stale forever (the symptom that
@@ -1737,8 +1716,6 @@ connectionCopyDiagnostics.addEventListener("click", () => {
 });
 
 if (connectionHealthLink) connectionHealthLink.href = "/api/health";
-
-syncStandaloneWarning();
 
 function unregisterExistingServiceWorkers() {
   if (!("serviceWorker" in navigator)) return;

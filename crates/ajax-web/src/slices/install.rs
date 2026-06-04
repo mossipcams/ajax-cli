@@ -80,7 +80,6 @@ mod tests {
             "id=\"settings-view\"",
             "id=\"settings-link\"",
             "id=\"restart-server\"",
-            "id=\"pwa-warning\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
@@ -97,6 +96,10 @@ mod tests {
             "id=\"alerts-banner\"",
             "id=\"repair-pwa\"",
             "id=\"repair-status\"",
+            // PWA fully retired in favour of Safari-first: the standalone
+            // warning and the attention-summary grid are gone.
+            "id=\"pwa-warning\"",
+            "id=\"attention-summary\"",
         ] {
             assert!(
                 !shell.contains(removed),
@@ -155,7 +158,9 @@ mod tests {
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
         let lowered = css.to_ascii_lowercase();
 
-        for hex in ["#f2ebdc", "#2a2522", "#c9a24a", "#2e5e5a", "#b7553a"] {
+        // Refined walnut palette: cream ink, walnut tint, mustard, teal,
+        // terracotta. Mustard is unchanged from the original variant.
+        for hex in ["#f4eee0", "#251e1a", "#c9a24a", "#367069", "#bc5c3e"] {
             assert!(
                 lowered.contains(hex),
                 "css missing MCM palette token: {hex}"
@@ -228,7 +233,7 @@ mod tests {
             "rebuilt action buttons must restore an in-flight confirm"
         );
         assert!(
-            !css.contains(".action.confirming {\n  background: var(--terracotta);\n  border-color: var(--terracotta);\n  color: var(--ink);\n  animation: pulse"),
+            !css.contains("animation: pulse infinite"),
             "confirming destructive actions should not flash"
         );
         assert!(
@@ -236,26 +241,31 @@ mod tests {
             "task action buttons should use pill geometry"
         );
         assert!(
-            css.contains(".card-head .action.primary {\n  flex: none;\n  background: var(--teal);\n  border: 1px solid var(--teal);\n  border-radius: 999px;"),
-            "primary card actions should use pill geometry"
+            css.contains(
+                ".action.primary {\n  background: var(--teal);\n  border-color: var(--teal);"
+            ),
+            "primary actions should be the filled teal pill"
         );
     }
 
     #[test]
-    fn browser_shell_removes_notification_opt_in_and_warns_standalone_users() {
+    fn browser_shell_removes_notification_opt_in_and_standalone_warning() {
         let shell = pwa_shell();
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
+        // PWA is fully retired: there is no standalone mode left to warn about.
         assert!(
-            shell.contains("id=\"pwa-warning\""),
-            "shell must include the standalone warning"
+            !shell.contains("id=\"pwa-warning\""),
+            "shell must not carry the retired standalone warning"
         );
-
-        for expected in [
+        for gone in [
             "function syncStandaloneWarning",
             "Ajax works best in Safari on iOS",
         ] {
-            assert!(script.contains(expected), "app.js missing {expected}");
+            assert!(
+                !script.contains(gone),
+                "app.js must not contain retired standalone-warning code: {gone}"
+            );
         }
 
         for forbidden in [
@@ -407,21 +417,37 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_cards_expose_attention_summary_and_copy_actions() {
-        let shell = pwa_shell();
+    fn dashboard_splits_inbox_from_calm_task_list_with_status_counts() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
-        assert!(shell.contains("id=\"attention-summary\""));
+        // Inbox ("Needs you") cards up top, lightweight task rows below, each
+        // section carrying its own count chip; tapping either opens detail.
         for expected in [
-            "attentionCount",
-            "runningCount",
-            "reviewReadyCount",
-            "failedCount",
+            "function renderInbox",
+            "function inboxCard",
+            "function renderTasks",
+            "function taskRow",
+            "function sectionHead",
+            "\"Needs you\"",
+            "inbox-card",
+            "task-row",
             "data-open-task",
-            "data-copy-summary",
-            "function copyTaskSummary",
+            "const STATUS_META",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
+        }
+
+        // The retired buggy attention-summary grid (Title-cased ui_state
+        // comparisons that never matched) must be gone.
+        for gone in [
+            "function renderAttentionSummary",
+            "function copyTaskSummary",
+            "data-copy-summary",
+        ] {
+            assert!(
+                !script.contains(gone),
+                "app.js must not contain retired list code: {gone}"
+            );
         }
     }
 
