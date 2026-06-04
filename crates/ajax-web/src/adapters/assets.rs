@@ -9,8 +9,8 @@ pub struct StaticAsset {
     pub body: &'static [u8],
 }
 
-pub fn pwa_shell_html() -> &'static str {
-    include_str!("../../web/index.html")
+pub fn pwa_shell_html() -> String {
+    include_str!("../../web/index.html").replace("__AJAX_APP_VERSION__", app_version())
 }
 
 /// Build identifier for the served PWA shell.

@@ -8,6 +8,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Ajax">
+  <meta name="ajax-app-version" content="__AJAX_APP_VERSION__">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
   <link rel="icon" href="/icons/icon-192.png">
@@ -64,6 +65,19 @@
         </p>
         <button id="restart-server" type="button" class="pill">Restart server</button>
         <p id="restart-status" class="settings-status" hidden></p>
+      </div>
+      <div class="settings-section">
+        <h3>Diagnostics</h3>
+        <button id="run-diagnostics" type="button" class="pill">Run diagnostics</button>
+        <pre id="diagnostics-output" class="settings-status" hidden></pre>
+      </div>
+      <div class="settings-section">
+        <h3>Repair PWA</h3>
+        <p class="settings-note">
+          Clears Ajax app-shell cache and reloads this installed app without removing sessions.
+        </p>
+        <button id="repair-pwa" type="button" class="pill is-danger">Repair PWA</button>
+        <p id="repair-status" class="settings-status" hidden></p>
       </div>
     </section>
   </main>

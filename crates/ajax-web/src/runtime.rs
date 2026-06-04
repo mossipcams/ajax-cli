@@ -320,7 +320,7 @@ where
 }
 
 async fn axum_pwa_shell() -> AxumResponse {
-    html_response(install::pwa_shell().as_bytes().to_vec())
+    html_response(install::pwa_shell().into_bytes())
 }
 
 async fn axum_app_css() -> AxumResponse {
@@ -796,7 +796,7 @@ pub fn route<R: Registry>(
         ("GET", "/") => Ok(Response {
             status_code: 200,
             content_type: "text/html; charset=utf-8",
-            body: install::pwa_shell().as_bytes().to_vec(),
+            body: install::pwa_shell().into_bytes(),
         }),
         ("GET", "/api/cockpit") => Ok(Response {
             status_code: 200,

@@ -1,4 +1,6 @@
 // Ajax Cockpit — mobile operator client driven by server action_states.
+const loadedAppVersion =
+  document.querySelector('meta[name="ajax-app-version"]')?.content || null;
 const inbox = document.getElementById("inbox");
 const repos = document.getElementById("repos");
 const projectNav = document.getElementById("project-nav");
@@ -20,6 +22,10 @@ const settingsLink = document.getElementById("settings-link");
 const settingsBack = document.getElementById("settings-back");
 const restartServerButton = document.getElementById("restart-server");
 const restartStatus = document.getElementById("restart-status");
+const runDiagnosticsButton = document.getElementById("run-diagnostics");
+const diagnosticsOutput = document.getElementById("diagnostics-output");
+const repairPwaButton = document.getElementById("repair-pwa");
+const repairStatus = document.getElementById("repair-status");
 const resultPanel = document.getElementById("result-panel");
 const resultMessage = document.getElementById("result-message");
 const resultOutput = document.getElementById("result-output");
@@ -640,6 +646,100 @@ restartServerButton.addEventListener("click", () => {
   });
 });
 
+async function diagnosticFetch(path) {
+  try {
+    const response = await fetch(path, { cache: "no-store" });
+    const text = await response.text();
+    let body = text.slice(0, 600);
+    try {
+      const parsed = JSON.parse(text);
+      body = JSON.stringify(parsed, null, 2).slice(0, 600);
+    } catch (error) {
+      // Plain-text responses are still useful diagnostics.
+    }
+    return {
+      ok: response.ok,
+      status: response.status,
+      error: null,
+      body,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: null,
+      error: error && error.message ? error.message : String(error),
+      body: null,
+    };
+  }
+}
+
+async function runDiagnostics() {
+  runDiagnosticsButton.disabled = true;
+  diagnosticsOutput.hidden = false;
+  diagnosticsOutput.textContent = "Running diagnostics...";
+
+  const checks = {
+    health: await diagnosticFetch("/api/health"),
+    version: await diagnosticFetch("/api/version"),
+    cockpit: await diagnosticFetch("/api/cockpit"),
+  };
+  if (detailHandle) {
+    checks.task = await diagnosticFetch(`/api/tasks/${encodeURIComponent(detailHandle)}`);
+  }
+
+  const report = {
+    standalone: isStandalonePwa(),
+    online: navigator.onLine,
+    service_worker_controller: Boolean(
+      navigator.serviceWorker && navigator.serviceWorker.controller,
+    ),
+    loaded_app_version: loadedAppVersion,
+    location: window.location.href,
+    checks,
+  };
+  diagnosticsOutput.textContent = JSON.stringify(report, null, 2);
+  runDiagnosticsButton.disabled = false;
+}
+
+runDiagnosticsButton.addEventListener("click", runDiagnostics);
+
+function resetTransientAppState() {
+  lastCockpit = null;
+  lastFingerprint = null;
+  selectedProject = null;
+  expandedCards.clear();
+  for (const key of pendingConfirmByKey.keys()) clearPendingConfirm(key);
+  resetInteractState();
+}
+
+async function repairPwa() {
+  repairPwaButton.disabled = true;
+  repairStatus.hidden = false;
+  repairStatus.textContent = "Repairing PWA...";
+  try {
+    if ("serviceWorker" in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(
+        keys
+          .filter((key) => key.startsWith("ajax-cockpit-"))
+          .map((key) => caches.delete(key)),
+      );
+    }
+    resetTransientAppState();
+    window.location.replace(`/?repair=${Date.now()}`);
+  } catch (error) {
+    repairStatus.textContent =
+      error && error.message ? `Repair failed: ${error.message}` : "Repair failed";
+    repairPwaButton.disabled = false;
+  }
+}
+
+repairPwaButton.addEventListener("click", repairPwa);
+
 // INTERACT PANEL ------------------------------------------------------------
 
 const INTERACT_STATE_COPY = {
@@ -1253,7 +1353,7 @@ document.addEventListener("click", (event) => {
   }
 });
 
-window.addEventListener("online", () => {
+function refreshCurrentRoute() {
   if (isSettingsRoute()) return;
   if (detailHandle) {
     loadDetail();
@@ -1261,7 +1361,14 @@ window.addEventListener("online", () => {
   } else {
     loadCockpit();
   }
-});
+}
+
+function refreshAfterResume() {
+  checkForUpdate(true);
+  refreshCurrentRoute();
+}
+
+window.addEventListener("online", refreshAfterResume);
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
@@ -1270,15 +1377,10 @@ document.addEventListener("visibilitychange", () => {
   }
   // Coming back to the foreground is when a frozen iOS snapshot would resume
   // stale code, so always re-check the shell version regardless of route.
-  checkForUpdate(true);
-  if (isSettingsRoute()) return;
-  if (detailHandle) {
-    loadDetail();
-    schedulePaneTick(true);
-  } else {
-    loadCockpit();
-  }
+  refreshAfterResume();
 });
+window.addEventListener("pageshow", refreshAfterResume);
+window.addEventListener("focus", refreshAfterResume);
 
 // PUSH NOTIFICATIONS --------------------------------------------------------
 
@@ -1370,7 +1472,9 @@ async function syncAlertsBanner() {
 
 async function ensureServiceWorkerRegistered() {
   if (!("serviceWorker" in navigator)) return null;
-  return await navigator.serviceWorker.register("/sw.js");
+  const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
+  if (registration.update) await registration.update().catch(() => undefined);
+  return registration;
 }
 
 async function enableNotifications() {
@@ -1422,7 +1526,7 @@ alertsBanner.addEventListener("click", () => {
 // a tap-to-reload banner. The foreground check is the load-bearing path: it
 // runs the moment the app is brought back to the front, which is exactly when a
 // frozen snapshot would otherwise show old code.
-let loadedVersion = null;
+let loadedVersion = loadedAppVersion;
 let lastVersionCheck = 0;
 
 async function checkForUpdate(force) {

@@ -30,7 +30,7 @@ pub(crate) type HttpResponse = runtime::Response;
 
 #[cfg(test)]
 pub(crate) fn render_mobile_shell() -> String {
-    web_install::pwa_shell().to_string()
+    web_install::pwa_shell()
 }
 
 #[cfg(test)]
@@ -426,7 +426,11 @@ mod tests {
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v23"));
+        assert!(sw_text.contains("ajax-cockpit-v24"));
+        assert!(
+            !sw_text.contains("\"/sw.js\""),
+            "service worker install should not fail PWA boot by requiring its own script in cache"
+        );
         assert!(sw_text.contains("visibilityState"));
         assert!(sw_text.contains("\"push\""));
         assert!(sw_text.contains("notificationclick"));
