@@ -40,6 +40,23 @@ impl GitAdapter {
         )
     }
 
+    pub fn fetch_origin_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(&self.program, ["-C", repo_path, "fetch", "origin", branch])
+    }
+
+    pub fn sync_default_branch_from_origin(&self, repo_path: &str, branch: &str) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "-C",
+                repo_path,
+                "fetch",
+                "origin",
+                &format!("{branch}:{branch}"),
+            ],
+        )
+    }
+
     pub fn add_worktree(
         &self,
         repo_path: &str,
@@ -274,6 +291,20 @@ fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
 #[cfg(test)]
 mod tests {
     use super::{CommandMode, CommandSpec, GitAdapter};
+
+    #[test]
+    fn sync_default_branch_fetches_origin_ref_before_fast_forwarding_local_branch() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.fetch_origin_branch("/repos/web", "main"),
+            CommandSpec::new("git", ["-C", "/repos/web", "fetch", "origin", "main"])
+        );
+        assert_eq!(
+            adapter.sync_default_branch_from_origin("/repos/web", "main"),
+            CommandSpec::new("git", ["-C", "/repos/web", "fetch", "origin", "main:main"])
+        );
+    }
 
     #[test]
     fn list_worktrees_uses_porcelain_for_repo_root() {

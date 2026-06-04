@@ -82,7 +82,9 @@ pub mod start {
         let task = commands::record_new_task(context, request)?;
         let external_outputs =
             match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
-                if let Some(step) = start_step_for_command_index(plan, index) {
+                if let Some(step) = commands::start_provisioning_step_for_command(
+                    plan.commands.get(index).expect("command index"),
+                ) {
                     commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
                     context
                         .registry
@@ -114,21 +116,6 @@ pub mod start {
         let task = context.registry.get_task(&task.id).cloned().unwrap_or(task);
 
         Ok((outputs, task))
-    }
-
-    fn start_step_for_command_index(
-        plan: &CommandPlan,
-        index: usize,
-    ) -> Option<StartProvisioningStep> {
-        if index == 0 {
-            Some(StartProvisioningStep::WorktreeCreated)
-        } else if index + 2 == plan.commands.len() {
-            Some(StartProvisioningStep::TaskSessionCreated)
-        } else if index + 1 == plan.commands.len() {
-            Some(StartProvisioningStep::AgentCommandSent)
-        } else {
-            None
-        }
     }
 
     fn start_step_receipt(task: &Task, step: StartProvisioningStep) -> StepReceipt {
@@ -1365,9 +1352,12 @@ mod tests {
         assert_eq!(intent.worktrunk_window, "worktrunk");
         assert_eq!(intent.selected_agent, AgentClient::Codex);
         assert_eq!(plan.title, "create task: Fix login");
-        assert_eq!(plan.commands.len(), 4);
+        assert_eq!(plan.commands.len(), 6);
+        assert!(crate::commands::is_git_worktree_add_command(
+            &plan.commands[2]
+        ));
         assert!(crate::commands::is_new_task_husky_hook_command(
-            &plan.commands[1]
+            &plan.commands[3]
         ));
     }
 

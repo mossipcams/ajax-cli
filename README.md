@@ -168,6 +168,7 @@ name = "web"
 path = "/Users/matt/projects/web"
 default_branch = "main"
 bootstrap = "npm ci"
+graphify_update = "graphify extract --update"
 
 [[test_commands]]
 repo = "web"
@@ -181,6 +182,15 @@ Set `bootstrap` when a repo needs dependencies or guardrail tooling installed
 inside each task worktree before the agent starts. Ajax runs the command from
 the newly created worktree after `git worktree add` succeeds and before tmux or
 the selected agent CLI are launched.
+
+`ajax start` fast-forwards the managed repo's `default_branch` from `origin`
+before creating the task worktree so new branches base on current remote `main`
+(or your configured default branch).
+
+Set `graphify_update` to refresh a per-repo knowledge graph at
+`<repo>/graphify-out/` during start. Keep `graphify-out` out of `.gitignore`
+(add `!graphify-out/` if needed) so agents can query it; `ajax doctor` reports
+repos where `graphify-out` is still ignored.
 
 ## First Run
 

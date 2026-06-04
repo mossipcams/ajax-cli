@@ -18,9 +18,11 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    is_new_task_husky_hook_command, mark_new_task_provisioning_failed,
+    is_agent_send_keys_command, is_git_worktree_add_command, is_new_task_husky_hook_command,
+    is_worktrunk_new_session_command, mark_new_task_provisioning_failed,
     mark_new_task_provisioning_step_completed, mark_new_task_step_completed, new_task_plan,
-    record_new_task, task_from_new_request, NewTaskRequest, StartProvisioningStep,
+    record_new_task, start_provisioning_step_for_command, task_from_new_request, NewTaskRequest,
+    StartProvisioningStep,
 };
 pub use open::{mark_task_opened, open_task_plan};
 pub use teardown::{
@@ -545,11 +547,11 @@ mod tests {
         plan_drop_from_observation, plan_drop_from_observation_for_task,
         refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
         task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
-        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
+        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState, StartProvisioningStep,
     };
     use crate::{
         adapters::{
-            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter,
             RecordingCommandRunner,
         },
         config::{Config, ManagedRepo, TestCommand},
@@ -838,8 +840,17 @@ mod tests {
             )
             .unwrap();
 
-            let send_keys = &plan.commands[3];
-            let worktree_path = plan.commands[0].args[6].clone();
+            let worktree_command = plan
+                .commands
+                .iter()
+                .find(|command| super::is_git_worktree_add_command(command))
+                .expect("worktree add command");
+            let send_keys = plan
+                .commands
+                .iter()
+                .find(|command| super::is_agent_send_keys_command(command))
+                .expect("agent send-keys command");
+            let worktree_path = worktree_command.args[6].clone();
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
             prop_assert_eq!(send_keys.args[0].as_str(), "send-keys");
@@ -1703,7 +1714,8 @@ mod tests {
             TestCommand::new("api", "cargo test"),
         ];
         let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-            .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"]);
+            .with_existing_paths(["/Users/matt/projects/web", "/Users/matt/projects/api"])
+            .with_graphify_out_gitignored(std::iter::empty::<std::path::PathBuf>());
 
         let doctor = doctor_with_environment(&context, &environment);
         let status = status(&context);
@@ -1749,7 +1761,8 @@ mod tests {
         };
         let context = CommandContext::new(config, InMemoryRegistry::default());
         let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
-            .with_existing_paths(["/repos/web"]);
+            .with_existing_paths(["/repos/web"])
+            .with_graphify_out_gitignored(std::iter::empty::<std::path::PathBuf>());
 
         let doctor = doctor_with_environment(&context, &environment);
 
@@ -1776,6 +1789,29 @@ mod tests {
                 .find(|check| check.name == "repo:api:test-command")
                 .map(|check| (check.ok, check.message.as_str())),
             Some((false, "no test command configured"))
+        );
+    }
+
+    #[test]
+    fn doctor_warns_when_graphify_out_is_gitignored() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repos/web", "main")],
+            ..Config::default()
+        };
+        let context = CommandContext::new(config, InMemoryRegistry::default());
+        let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])
+            .with_existing_paths(["/repos/web"])
+            .with_graphify_out_gitignored(["/repos/web"]);
+
+        let doctor = doctor_with_environment(&context, &environment);
+
+        assert_eq!(
+            doctor
+                .checks
+                .iter()
+                .find(|check| check.name == "repo:web:graphify-out")
+                .map(|check| (check.ok, check.message.contains("gitignored"))),
+            Some((false, true))
         );
     }
 
@@ -1919,9 +1955,12 @@ mod tests {
         .unwrap();
 
         assert!(!plan.requires_confirmation);
+        let git = GitAdapter::new("git");
         assert_eq!(
             plan.commands,
             vec![
+                git.fetch_origin_branch("/Users/matt/projects/web", "main"),
+                git.sync_default_branch_from_origin("/Users/matt/projects/web", "main"),
                 CommandSpec::new(
                     "git",
                     [
@@ -1996,20 +2035,21 @@ mod tests {
         .unwrap();
 
         assert_eq!(plan.commands[0].args[1], "/Users/matt/projects/web app");
+        assert_eq!(plan.commands[1].args[1], "/Users/matt/projects/web app");
         assert_eq!(
-            plan.commands[0].args[6],
+            plan.commands[2].args[6],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[1].args[3],
+            plan.commands[3].args[3],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[2].args[7],
+            plan.commands[4].args[7],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            shell_words(&plan.commands[3].args[3]),
+            shell_words(&plan.commands[5].args[3]),
             vec![
                 "codex",
                 "--cd",
@@ -2063,19 +2103,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(plan.title, "create task: Ship oauth v2!");
-        assert_eq!(plan.commands[0].args[5], "ajax/ship-oauth-v2");
+        let worktree_command = plan
+            .commands
+            .iter()
+            .find(|command| super::is_git_worktree_add_command(command))
+            .expect("worktree add command");
+        let send_keys = plan
+            .commands
+            .iter()
+            .find(|command| super::is_agent_send_keys_command(command))
+            .expect("agent send-keys command");
+        assert_eq!(worktree_command.args[5], "ajax/ship-oauth-v2");
         assert_eq!(
-            plan.commands[0].args[6],
+            worktree_command.args[6],
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
         assert_eq!(
-            plan.commands[1].args[3],
+            plan.commands
+                .iter()
+                .find(|command| super::is_new_task_husky_hook_command(command))
+                .expect("husky command")
+                .args[3],
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
-        assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
-        assert_eq!(plan.commands[3].args[2], "ajax-api-ship-oauth-v2:worktrunk");
         assert_eq!(
-            plan.commands[3].args[3],
+            plan.commands
+                .iter()
+                .find(|command| super::is_worktrunk_new_session_command(command))
+                .expect("tmux session command")
+                .args[3],
+            "ajax-api-ship-oauth-v2"
+        );
+        assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:worktrunk");
+        assert_eq!(
+            send_keys.args[3],
             "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
 
@@ -2108,8 +2169,18 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(removed_duplicate.commands[0].args[5], "ajax/fix-login");
-        assert_eq!(removed_duplicate.commands[2].args[3], "ajax-web-fix-login");
+        let removed_worktree = removed_duplicate
+            .commands
+            .iter()
+            .find(|command| super::is_git_worktree_add_command(command))
+            .expect("worktree add command");
+        let removed_session = removed_duplicate
+            .commands
+            .iter()
+            .find(|command| super::is_worktrunk_new_session_command(command))
+            .expect("tmux session command");
+        assert_eq!(removed_worktree.args[5], "ajax/fix-login");
+        assert_eq!(removed_session.args[3], "ajax-web-fix-login");
     }
 
     #[test]
@@ -2222,7 +2293,12 @@ mod tests {
         let task = super::record_new_task(&mut context, &request).unwrap();
         let task_id = task.id.clone();
 
-        super::mark_new_task_step_completed(&mut context, &task_id, 0).unwrap();
+        super::mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::WorktreeCreated,
+        )
+        .unwrap();
         let task = context.registry.get_task(&task_id).unwrap();
         assert_eq!(task.lifecycle_status, LifecycleStatus::Provisioning);
         assert!(task
@@ -2232,7 +2308,12 @@ mod tests {
         assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(!task.has_side_flag(SideFlag::BranchMissing));
 
-        super::mark_new_task_step_completed(&mut context, &task_id, 1).unwrap();
+        super::mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::TaskSessionCreated,
+        )
+        .unwrap();
         let task = context.registry.get_task(&task_id).unwrap();
         assert_eq!(
             task.tmux_status,
@@ -2248,7 +2329,12 @@ mod tests {
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
         assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
 
-        super::mark_new_task_step_completed(&mut context, &task_id, 2).unwrap();
+        super::mark_new_task_provisioning_step_completed(
+            &mut context,
+            &task_id,
+            StartProvisioningStep::AgentCommandSent,
+        )
+        .unwrap();
         let task = context.registry.get_task(&task_id).unwrap();
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.agent_attempts.len(), 1);

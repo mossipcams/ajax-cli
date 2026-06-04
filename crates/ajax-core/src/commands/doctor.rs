@@ -66,6 +66,22 @@ pub fn doctor_with_environment<R: Registry>(
                 "no test command configured".to_string()
             },
         });
+
+        if repo_path_exists {
+            let graphify_out_gitignored = environment.graphify_out_gitignored(&repo.path);
+            checks.push(DoctorCheck {
+                name: format!("repo:{}:graphify-out", repo.name),
+                ok: !graphify_out_gitignored,
+                message: if graphify_out_gitignored {
+                    format!(
+                        "graphify-out is gitignored in {}; add '!graphify-out/' to .gitignore so agents can use the repo graph",
+                        repo.path.display()
+                    )
+                } else {
+                    "graphify-out is not gitignored".to_string()
+                },
+            });
+        }
     }
 
     DoctorResponse { checks }

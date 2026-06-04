@@ -263,6 +263,8 @@ pub struct ManagedRepo {
     pub default_branch: String,
     #[serde(default)]
     pub bootstrap: Option<String>,
+    #[serde(default)]
+    pub graphify_update: Option<String>,
 }
 
 impl ManagedRepo {
@@ -276,6 +278,7 @@ impl ManagedRepo {
             path: path.into(),
             default_branch: default_branch.into(),
             bootstrap: None,
+            graphify_update: None,
         }
     }
 }
@@ -512,6 +515,25 @@ mod tests {
 
         assert_eq!(config.repos[0].name, "web");
         assert_eq!(config.test_commands[0].repo, "web");
+    }
+
+    #[test]
+    fn config_loads_repo_graphify_update_command() {
+        let config = Config::from_toml_str(
+            r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            graphify_update = "graphify extract --update"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.repos[0].graphify_update.as_deref(),
+            Some("graphify extract --update")
+        );
     }
 
     #[test]

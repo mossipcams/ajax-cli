@@ -393,6 +393,9 @@ slug_from_path() {
 }
 
 case "$*" in
+  *" fetch origin "*)
+    exit 0
+    ;;
   *" worktree add "*)
     worktree="${7:-}"
     mkdir -p "$worktree"
@@ -785,6 +788,14 @@ fn smoke_new_execute_creates_active_task_environment() {
 
     let log = sandbox.command_log();
     assert!(
+        log.contains(&format!("git -C {} fetch origin main", repo.display())),
+        "fake git log should sync default branch before worktree add:\n{log}"
+    );
+    assert!(
+        log.contains(&format!("git -C {} fetch origin main:main", repo.display())),
+        "fake git log should fast-forward local main from origin:\n{log}"
+    );
+    assert!(
         log.contains(&format!(
             "git -C {} worktree add -b ajax/fix-login {} main",
             repo.display(),
@@ -1139,6 +1150,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     assert_eq!(inspect["worktree_path"], worktree.display().to_string());
 
     let log = sandbox.command_log();
+    assert!(log.contains(&format!("git -C {} fetch origin main", repo.display())));
     assert!(log.contains(&format!(
         "git -C {} worktree add -b ajax/fix-login {} main",
         repo.display(),
