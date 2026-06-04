@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Ajax Cockpit</title>
   <meta name="theme-color" content="#1F1A17">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -29,16 +29,28 @@
         <button id="settings-link" class="settings-link" type="button">Settings</button>
         <span class="live-dot" aria-hidden="true"></span>
       </div>
+      <div id="connection-status" class="connection-status" data-state="checking">
+        <span id="connection-label">checking</span>
+        <div class="connection-actions" aria-label="Connection actions">
+          <button id="connection-retry" type="button">Retry</button>
+          <button id="connection-reload" type="button">Reload</button>
+          <button id="connection-copy-diagnostics" type="button">Copy Diagnostics</button>
+          <a id="connection-health-link" href="/api/health" target="_blank" rel="noreferrer">Open Health URL</a>
+        </div>
+      </div>
     </header>
 
     <div class="page-lead">
       <button id="update-banner" class="update-banner" type="button" hidden>Update ready — tap to reload</button>
-      <button id="alerts-banner" class="alerts-banner" type="button" hidden></button>
+      <div id="pwa-warning" class="pwa-warning" role="status" hidden>
+        Ajax works best in Safari on iOS. Home Screen mode is experimental and may get stuck due to iOS lifecycle/cache behavior.
+      </div>
     </div>
   </div>
 
   <main>
     <nav id="project-nav" class="project-nav" aria-label="Projects" hidden></nav>
+    <section id="attention-summary" class="attention-summary" aria-label="Task summary"></section>
 
     <button id="new-task-row" class="new-task-row" type="button">
       <span class="new-task-glyph" aria-hidden="true">+</span>
@@ -69,18 +81,17 @@
       <div class="settings-section">
         <h3>Diagnostics</h3>
         <button id="run-diagnostics" type="button" class="pill">Run diagnostics</button>
+        <button id="copy-diagnostics" type="button" class="pill">Copy Diagnostics</button>
         <pre id="diagnostics-output" class="settings-status" hidden></pre>
-      </div>
-      <div class="settings-section">
-        <h3>Repair PWA</h3>
-        <p class="settings-note">
-          Clears Ajax app-shell cache and reloads this installed app without removing sessions.
-        </p>
-        <button id="repair-pwa" type="button" class="pill is-danger">Repair PWA</button>
-        <p id="repair-status" class="settings-status" hidden></p>
       </div>
     </section>
   </main>
+
+  <nav id="bottom-nav" class="bottom-nav" aria-label="Mobile navigation">
+    <button type="button" data-bottom-route="#/">Dashboard</button>
+    <button type="button" data-bottom-action="new-task">New</button>
+    <button type="button" data-bottom-route="#/settings">Settings</button>
+  </nav>
 
   <div id="new-task-sheet" role="dialog" aria-modal="true" aria-labelledby="new-task-title">
     <form id="new-task-form" class="sheet-card" autocomplete="off">

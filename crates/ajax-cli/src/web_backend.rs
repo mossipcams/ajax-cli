@@ -275,7 +275,6 @@ mod tests {
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
     use ajax_web::runtime::{self, RuntimeBridge};
-    use std::collections::BTreeSet;
 
     #[test]
     fn mobile_shell_is_responsive_and_loads_cockpit_data() {
@@ -295,7 +294,9 @@ mod tests {
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("class=\"cockpit-chrome\""));
-        assert!(html.contains("id=\"alerts-banner\""));
+        assert!(html.contains("id=\"pwa-warning\""));
+        assert!(html.contains("id=\"connection-status\""));
+        assert!(html.contains("id=\"attention-summary\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
         assert!(html.contains("id=\"settings-view\""));
@@ -421,34 +422,26 @@ mod tests {
     }
 
     #[test]
-    fn service_worker_and_app_handle_push_notifications() {
+    fn service_worker_and_app_are_push_free() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
         let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("ajax-cockpit-v24"));
-        assert!(
-            !sw_text.contains("\"/sw.js\""),
-            "service worker install should not fail PWA boot by requiring its own script in cache"
-        );
-        assert!(sw_text.contains("visibilityState"));
-        assert!(sw_text.contains("\"push\""));
-        assert!(sw_text.contains("notificationclick"));
-        assert!(sw_text.contains("showNotification"));
-        assert!(sw_text.contains("#/t/"));
-        assert!(sw_text.contains("action: \"approve\""));
-        assert!(sw_text.contains("/answer"));
+        assert!(sw_text.contains("self.registration.unregister"));
+        assert!(!sw_text.contains("showNotification"));
+        assert!(!sw_text.contains("notificationclick"));
+        assert!(!sw_text.contains("addEventListener(\"push\""));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
-        assert!(app_text.contains("pushManager.subscribe"));
-        assert!(app_text.contains("/api/push/config"));
-        assert!(app_text.contains("/api/push/subscribe"));
+        assert!(!app_text.contains("pushManager.subscribe"));
+        assert!(!app_text.contains("/api/push/config"));
+        assert!(!app_text.contains("/api/push/subscribe"));
         assert!(app_text.contains("/answer"));
     }
 
     #[test]
-    fn http_router_serves_service_worker_and_app_registers_it() {
+    fn http_router_serves_cleanup_service_worker_and_app_does_not_register_it() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
@@ -457,7 +450,7 @@ mod tests {
         assert!(!sw.body.is_empty());
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
-        assert!(String::from_utf8_lossy(&app.body).contains("serviceWorker.register"));
+        assert!(!String::from_utf8_lossy(&app.body).contains("serviceWorker.register"));
     }
 
     #[test]
@@ -684,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn push_config_and_subscribe_endpoints_round_trip() {
+    fn push_endpoints_are_not_supported() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
         let dir = scratch_dir("push");
@@ -699,9 +692,7 @@ mod tests {
             Some(&paths),
         )
         .unwrap();
-        assert_eq!(config.status_code, 200);
-        let config_body: serde_json::Value = serde_json::from_slice(&config.body).unwrap();
-        assert_eq!(config_body["public_key"].as_array().map(Vec::len), Some(65));
+        assert_eq!(config.status_code, 404);
 
         let subscribe = handle_http_request_with_runner_and_paths(
             "POST",
@@ -712,8 +703,7 @@ mod tests {
             Some(&paths),
         )
         .unwrap();
-        assert_eq!(subscribe.status_code, 200);
-        assert_eq!(ajax_web::adapters::push::load_subscriptions(&dir).len(), 1);
+        assert_eq!(subscribe.status_code, 405);
 
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
@@ -724,30 +714,9 @@ mod tests {
             Some(&paths),
         )
         .unwrap();
-        assert_eq!(unsubscribe.status_code, 200);
-        assert!(ajax_web::adapters::push::load_subscriptions(&dir).is_empty());
+        assert_eq!(unsubscribe.status_code, 405);
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn newly_attention_returns_only_freshly_added_handles() {
-        let previous: BTreeSet<String> = ["web/a".to_string(), "web/b".to_string()]
-            .into_iter()
-            .collect();
-        let current: BTreeSet<String> = [
-            "web/b".to_string(),
-            "web/c".to_string(),
-            "web/d".to_string(),
-        ]
-        .into_iter()
-        .collect();
-
-        assert_eq!(
-            ajax_web::slices::attention::new_attention_handles(&previous, &current),
-            vec!["web/c", "web/d"]
-        );
-        assert!(ajax_web::slices::attention::new_attention_handles(&current, &current).is_empty());
     }
 
     struct OkRunner;

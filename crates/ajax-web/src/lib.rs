@@ -38,7 +38,7 @@ mod tests {
         assert!(lib.contains("pub mod adapters;"));
         assert!(lib.contains("pub mod runtime;"));
         assert!(lib.contains("pub mod slices;"));
-        for module in ["cockpit", "operate", "install", "attention", "pane"] {
+        for module in ["cockpit", "operate", "install", "pane"] {
             assert!(
                 slices.contains(&format!("pub mod {module};")),
                 "missing ajax-web vertical slice: {module}"
@@ -52,14 +52,14 @@ mod tests {
         let slices = std::fs::read_to_string(manifest_dir.join("src/slices/mod.rs")).unwrap();
         let adapters = std::fs::read_to_string(manifest_dir.join("src/adapters/mod.rs")).unwrap();
 
-        for mechanism in ["http", "tls", "push", "assets", "server"] {
+        for mechanism in ["http", "tls", "assets", "server"] {
             assert!(
                 !slices.contains(&format!("pub mod {mechanism};")),
                 "mechanism must not be an ajax-web vertical slice: {mechanism}"
             );
         }
 
-        for adapter in ["http", "tls", "push", "assets", "server", "tmux_input"] {
+        for adapter in ["http", "tls", "assets", "server", "tmux_input"] {
             assert!(
                 adapters.contains(&format!("pub mod {adapter};")),
                 "missing ajax-web adapter module: {adapter}"

@@ -58,7 +58,7 @@ body {
   line-height: 1.5;
   color: var(--ink);
   -webkit-font-smoothing: antialiased;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: calc(70px + env(safe-area-inset-bottom));
 }
 
 button {
@@ -70,6 +70,8 @@ input,
 textarea,
 select {
   font: inherit;
+  font-size: 16px;
+  min-height: 16px;
   color: var(--ink);
 }
 
@@ -88,7 +90,7 @@ select {
   padding: 0 20px 12px;
 }
 
-.page-lead .alerts-banner {
+.page-lead .pwa-warning {
   margin-bottom: 0;
 }
 
@@ -140,6 +142,18 @@ select {
   padding: 4px 10px;
 }
 
+.terminal-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.terminal-shortcuts .pill {
+  min-height: 34px;
+  font-size: 11px;
+}
+
 /* PROJECT NAV ------------------------------------------------------------ */
 .project-nav {
   display: flex;
@@ -176,11 +190,39 @@ select {
   color: var(--ink);
 }
 
-/* ALERTS BANNER ---------------------------------------------------------- */
-.alerts-banner {
+.attention-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.summary-chip {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--rule);
+  border-radius: 2px;
+  background: var(--paper-tint);
+}
+
+.summary-chip-label {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--ink-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.summary-chip strong {
+  font-size: 16px;
+  color: var(--ink);
+}
+
+/* STANDALONE WARNING ----------------------------------------------------- */
+.pwa-warning {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   width: 100%;
   margin: 0 0 12px;
@@ -195,30 +237,6 @@ select {
   text-align: left;
   cursor: pointer;
   transition: background 140ms ease, border-color 140ms ease;
-}
-
-.alerts-banner::after {
-  content: "›";
-  flex: none;
-  color: var(--ink-muted);
-  font-size: 16px;
-  line-height: 1;
-}
-
-.alerts-banner:hover:not(:disabled),
-.alerts-banner:focus-visible:not(:disabled) {
-  border-color: var(--ink);
-  background: var(--paper-tint);
-  outline: none;
-}
-
-.alerts-banner:disabled {
-  cursor: default;
-  color: var(--ink-muted);
-}
-
-.alerts-banner:disabled::after {
-  display: none;
 }
 
 .update-banner {
@@ -304,7 +322,7 @@ select {
 }
 
 body.is-offline .new-task-row,
-body.is-offline .alerts-banner {
+body.is-offline .pwa-warning {
   opacity: 0.4;
   pointer-events: none;
 }
@@ -363,6 +381,57 @@ h1 {
   outline: none;
 }
 
+.connection-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px 10px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-muted);
+  font-size: 12px;
+}
+
+.connection-status[data-state="connected"] {
+  color: var(--ink-soft);
+}
+
+.connection-status[data-state="backend unreachable"],
+.connection-status[data-state="disconnected"],
+.connection-status[data-state="stale session"] {
+  background: rgba(183, 85, 58, 0.14);
+  color: var(--ink);
+}
+
+.connection-actions {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connection-actions button,
+.connection-actions a {
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 11px;
+  text-decoration: none;
+}
+
+.connection-actions button:hover,
+.connection-actions button:focus-visible,
+.connection-actions a:hover,
+.connection-actions a:focus-visible {
+  border-color: var(--ink);
+  color: var(--ink);
+  outline: none;
+}
+
 .live-dot {
   flex: none;
   width: 8px;
@@ -371,6 +440,36 @@ h1 {
   background: var(--teal);
   align-self: center;
   animation: pulse 2.4s ease-in-out infinite;
+}
+
+.bottom-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  padding: 8px max(12px, env(safe-area-inset-left)) calc(8px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-right));
+  border-top: 1px solid var(--rule);
+  background: var(--paper);
+}
+
+.bottom-nav button {
+  min-height: 42px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  background: var(--paper-tint);
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.bottom-nav button:focus-visible,
+.bottom-nav button:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+  outline: none;
 }
 
 body.is-offline .live-dot {

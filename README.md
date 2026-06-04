@@ -44,12 +44,12 @@ From Cockpit you can start a task, jump back into an active task, inspect work
 that needs attention, review completed work, ship it, or drop stale task
 environments.
 
-### Web Cockpit (PWA)
+### Web Cockpit (Safari-first)
 
-Web Cockpit is a mobile-first Progressive Web App and operator dashboard over
-Ajax. It runs host-native through `ajax-cli web`, with the same host authority
-as SQLite, configured repos, worktrees, tmux sessions, agent CLIs, and host
-process state. Docker is no longer part of the Web Cockpit runtime.
+Web Cockpit is a mobile-first browser operator dashboard over Ajax. It runs
+host-native through `ajax-cli web`, with the same host authority as SQLite,
+configured repos, worktrees, tmux sessions, agent CLIs, and host process state.
+Docker is no longer part of the Web Cockpit runtime.
 
 When Native Cockpit starts through `ajax-cli` or `ajax-cli dev`, Ajax also
 starts the host-native Web Cockpit server. Stable serves on `0.0.0.0:8787`; dev
@@ -65,22 +65,25 @@ Cockpit. Public internet exposure is unsupported. Bind the server to a trusted
 interface or restrict access at the network layer before using it from another
 device.
 
-Web Cockpit serves HTTPS, which browsers require before they will install a PWA,
-run its service worker, or deliver push notifications. Open
-`https://<this-machine-ip>:8787` or `https://<this-machine-ip>:8788` from a
-browser device on the private network. On first run Ajax generates a self-signed
-certificate and stores it beside the state database (`web-tls-cert.pem`); your
-browser will warn the first time. To install the app to your home screen and
-enable notifications, trust that certificate once. On iOS, open
-`web-tls-cert.pem`, install the profile, then enable full trust under Settings,
-General, About, Certificate Trust Settings.
+Web Cockpit serves HTTPS. Open `https://<this-machine-ip>:8787` or
+`https://<this-machine-ip>:8788` from Safari on an iPhone connected to the
+private network. On first run Ajax generates a self-signed certificate and
+stores it beside the state database (`web-tls-cert.pem`); Safari will warn the
+first time. On iOS, open `web-tls-cert.pem`, install the profile, then enable
+full trust under Settings, General, About, Certificate Trust Settings.
 
-From the installed app you can see every repo's tasks, use the attention inbox,
-and run browser-capable operations such as `review`, `ship`, `repair`, and
-`drop`. The main task view is dashboard-first: current status, required
-decision, best next action, and recent milestones are primary; live pane text is
-available only as secondary terminal details. Browser `resume` remains
-`needs_terminal` until the terminal bridge exists.
+Recommended on iPhone: use a normal Safari tab. Home Screen PWA mode is
+experimental and not recommended for operations because iOS lifecycle and cache
+behavior can leave the installed app unable to reach the backend even when
+Safari works. A native app is only a future option if the browser path stops
+being sufficient.
+
+From Safari you can see every repo's tasks, use the attention inbox, and run
+browser-capable operations such as `review`, `ship`, `repair`, and `drop`. The
+main task view is dashboard-first: current status, required decision, best next
+action, and recent milestones are primary; live pane text is available only as
+secondary terminal details. Browser `resume` remains `needs_terminal` until the
+terminal bridge exists.
 
 When an agent stops at a recognized approval prompt, Web Cockpit shows guarded
 structured actions such as Approve and Deny. The browser sends a typed answer
@@ -90,20 +93,19 @@ cannot safely structure — free-text composers, low-confidence prompts, or othe
 terminal-only interactions — escalates to the terminal instead of offering a
 browser text box.
 
-Tap Alerts to enable Web Push: the phone is then notified when a task newly
-needs attention, even when the app is closed. Recognized approval prompts can
-also ship actionable notification buttons on supported platforms; iOS falls back
-to opening the task. Web Push on iOS requires iOS 16.4 or later and the app
-installed to the home screen.
+Notifications are out of scope. Ajax Web Cockpit does not support Web Push,
+PushManager flows, Notification API prompts, VAPID keys, push subscriptions,
+service-worker push handlers, notification click handlers, or native/external
+notification replacements.
 
-The PWA renders server-authoritative Cockpit projections and submits typed
+The browser renders server-authoritative Cockpit projections and submits typed
 operator intents. It does not own offline task mutation state, persist task
-operation queues, or replay mutations after reload. The service worker is only
-for static app-shell assets and must not cache `/api/*`.
+operation queues, replay mutations after reload, or cache operational/API data.
+A full page reload should recover the current cockpit state from the server.
 
 The Web Cockpit HTTP runtime uses Axum inside the host-native `ajax-cli web`
 process. Axum is transport only: routing, request extraction, response
-construction, static PWA serving, TLS wiring, and future stream/WebSocket
+construction, static browser shell serving, TLS wiring, and future stream/WebSocket
 endpoints. Task lifecycle, registry truth, substrate evidence, action policy,
 browser DTOs, and operation outcomes remain server-authoritative Ajax
 contracts. Bind `--host` to the WireGuard interface address when you want the

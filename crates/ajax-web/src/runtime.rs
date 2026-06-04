@@ -2,9 +2,8 @@
 
 use ajax_core::{
     adapters::CommandRunner,
-    commands::{self, CommandContext},
+    commands::CommandContext,
     models::OperatorAction,
-    output::CockpitView,
     registry::{InMemoryRegistry, Registry},
     runtime_refresh::RefreshTier,
 };
@@ -29,8 +28,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     action_vocabulary::supported_web_action,
-    adapters::{push, server, tls},
-    slices::{attention, cockpit, install},
+    adapters::{server, tls},
+    slices::{cockpit, install},
     WebError,
 };
 
@@ -54,7 +53,6 @@ struct WebSharedState<C, B> {
     pane_inputs: crate::slices::pane::PaneInputState,
     runner: C,
     bridge: B,
-    attention_polls: u32,
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -81,7 +79,6 @@ impl<C, B> WebAppState<C, B> {
                 pane_inputs: crate::slices::pane::PaneInputState::default(),
                 runner,
                 bridge,
-                attention_polls: 0,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             state_dir: Arc::new(state_dir),
@@ -120,9 +117,6 @@ where
         )
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
-        .route("/api/push/config", get(axum_push_config::<C, B>))
-        .route("/api/push/subscribe", post(axum_push_subscribe::<C, B>))
-        .route("/api/push/unsubscribe", post(axum_push_unsubscribe::<C, B>))
         .fallback(axum_fallback)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -151,7 +145,6 @@ where
             listener: tcp_listener,
             acceptor: tokio_rustls::TlsAcceptor::from(tls_config),
         };
-        tokio::spawn(run_attention_poller_for_state(state.clone()));
         axum::serve(tls_listener, axum_app(state))
             .await
             .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
@@ -200,123 +193,6 @@ fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, WebError> {
         .ok_or_else(|| {
             WebError::CommandFailed(format!("web bind address unresolved: {host}:{port}"))
         })
-}
-
-async fn run_attention_poller_for_state<C, B>(state: WebAppState<C, B>)
-where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
-{
-    let initial = {
-        let mut guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        refresh_attention_handles(&mut guard)
-    };
-    let mut notifier = attention::AttentionNotifier::seeded_with(initial);
-
-    loop {
-        tokio::time::sleep(ATTENTION_POLL_INTERVAL).await;
-        let notifications = {
-            let mut guard = state
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let current = refresh_attention_handles(&mut guard);
-            notifier
-                .poll(current)
-                .into_iter()
-                .map(|handle| build_attention_notification(&mut guard, handle))
-                .collect::<Vec<_>>()
-        };
-        for notification in notifications {
-            if let Err(error) = push::send_to_all_async(&state.state_dir, &notification).await {
-                eprintln!("Ajax web push notification failed: {error}");
-            }
-        }
-    }
-}
-
-/// Enrich a newly-attention handle into a notification. When the task is at a
-/// high-confidence approval, the notification carries the command and a
-/// fingerprint so the operator can answer in one tap from the notification
-/// itself; everything else degrades to a plain "needs attention" alert.
-fn build_attention_notification<C, B>(
-    guard: &mut WebSharedState<C, B>,
-    handle: String,
-) -> push::PushNotification
-where
-    C: CommandRunner,
-    B: RuntimeBridge<C>,
-{
-    use ajax_core::agent_prompt::{Confidence, PromptKind};
-
-    let WebSharedState {
-        context, runner, ..
-    } = guard;
-    let Some(task) = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == handle)
-    else {
-        return push::PushNotification::attention(handle);
-    };
-
-    match crate::slices::pane::core_pane_capture_prompt(runner, task) {
-        Some(prompt)
-            if prompt.kind == PromptKind::Approval && prompt.confidence == Confidence::High =>
-        {
-            let title = match &prompt.command {
-                Some(command) => format!("Approve: {command}"),
-                None => "Approve this action?".to_string(),
-            };
-            push::PushNotification {
-                title,
-                body: handle.clone(),
-                tag: handle.clone(),
-                task_handle: handle,
-                kind: "approval".to_string(),
-                answerable: true,
-                fingerprint: Some(prompt.fingerprint),
-            }
-        }
-        Some(_) => push::PushNotification {
-            title: "An agent is waiting on you".to_string(),
-            body: handle.clone(),
-            tag: handle.clone(),
-            task_handle: handle,
-            kind: "input".to_string(),
-            answerable: false,
-            fingerprint: None,
-        },
-        None => push::PushNotification::attention(handle),
-    }
-}
-
-fn refresh_attention_handles<C, B>(guard: &mut WebSharedState<C, B>) -> BTreeSet<String>
-where
-    C: CommandRunner,
-    B: RuntimeBridge<C>,
-{
-    let WebSharedState {
-        context,
-        runner,
-        bridge,
-        attention_polls,
-        ..
-    } = guard;
-    *attention_polls = attention_polls.wrapping_add(1);
-    let tier = if attention_polls.is_multiple_of(4) {
-        RefreshTier::Full
-    } else {
-        RefreshTier::Live
-    };
-    if let Err(error) = bridge.refresh_cockpit(context, runner, tier) {
-        eprintln!("Ajax web attention refresh failed: {error}");
-    }
-    attention_handles(&commands::cockpit_view(context))
 }
 
 async fn axum_pwa_shell() -> AxumResponse {
@@ -689,45 +565,6 @@ where
     response.into_axum_response()
 }
 
-async fn axum_push_config<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
-where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
-{
-    match handle_push_config(&state.state_dir) {
-        Ok(response) => response.into_axum_response(),
-        Err(error) => web_error_response(error),
-    }
-}
-
-async fn axum_push_subscribe<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    body: String,
-) -> AxumResponse
-where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
-{
-    match handle_push_subscribe(&body, &state.state_dir) {
-        Ok(response) => response.into_axum_response(),
-        Err(error) => web_error_response(error),
-    }
-}
-
-async fn axum_push_unsubscribe<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    body: String,
-) -> AxumResponse
-where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
-{
-    match handle_push_unsubscribe(&body, &state.state_dir) {
-        Ok(response) => response.into_axum_response(),
-        Err(error) => web_error_response(error),
-    }
-}
-
 async fn axum_fallback(uri: Uri) -> AxumResponse {
     if uri.path().starts_with("/api/") {
         return json_value_response(
@@ -840,7 +677,7 @@ pub fn route_with_bridge<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
-    state_dir: &Path,
+    _state_dir: &Path,
 ) -> Result<Response, WebError> {
     let path = request.path.split('?').next().unwrap_or(request.path);
     match (request.method, path) {
@@ -855,9 +692,6 @@ pub fn route_with_bridge<C: CommandRunner>(
             handle_action_request(request.body, context, runner, bridge)
         }
         ("POST", "/api/tasks") => handle_start_task_request(request.body, context, runner, bridge),
-        ("GET", "/api/push/config") => handle_push_config(state_dir),
-        ("POST", "/api/push/subscribe") => handle_push_subscribe(request.body, state_dir),
-        ("POST", "/api/push/unsubscribe") => handle_push_unsubscribe(request.body, state_dir),
         ("POST", "/api/server/restart") => Ok(handle_server_restart()),
         _ => route(request, context).map_err(|error| match error {
             RouteError::Json(error) => WebError::JsonSerialization(error.to_string()),
@@ -1114,61 +948,6 @@ fn handle_start_task_request<C: CommandRunner>(
         Ok(outcome) => operation_success_response(outcome, context),
         Err(error) => operation_error_response(error, context),
     }
-}
-
-fn handle_push_config(state_dir: &Path) -> Result<Response, WebError> {
-    let keys = push::load_or_create_vapid_keys(state_dir)?;
-    json_response(
-        200,
-        serde_json::json!({
-            "public_key": keys.public_key,
-        }),
-    )
-}
-
-fn handle_push_subscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let subscription = match parse_push_subscription(body) {
-        Ok(subscription) => subscription,
-        Err(error) => {
-            return json_response(
-                400,
-                serde_json::json!({ "ok": false, "error": error.to_string() }),
-            );
-        }
-    };
-    push::add_subscription(state_dir, subscription)?;
-    json_response(200, serde_json::json!({ "ok": true }))
-}
-
-fn parse_push_subscription(body: &str) -> Result<push::PushSubscription, serde_json::Error> {
-    let value: serde_json::Value = serde_json::from_str(body)?;
-    if let Some(subscription) = value.get("subscription") {
-        serde_json::from_value(subscription.clone())
-    } else {
-        serde_json::from_value(value)
-    }
-}
-
-fn handle_push_unsubscribe(body: &str, state_dir: &Path) -> Result<Response, WebError> {
-    let request: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
-    let Some(endpoint) = request.get("endpoint").and_then(serde_json::Value::as_str) else {
-        return json_response(
-            400,
-            serde_json::json!({ "ok": false, "error": "endpoint is required" }),
-        );
-    };
-    push::remove_subscription(state_dir, endpoint)?;
-    json_response(200, serde_json::json!({ "ok": true }))
-}
-
-const ATTENTION_POLL_INTERVAL: Duration = Duration::from_secs(15);
-
-fn attention_handles(view: &CockpitView) -> BTreeSet<String> {
-    view.inbox
-        .items
-        .iter()
-        .map(|item| item.task_handle.clone())
-        .collect()
 }
 
 #[cfg(test)]
@@ -2078,7 +1857,7 @@ mod tests {
     }
 
     #[test]
-    fn push_config_and_subscribe_endpoints_round_trip() {
+    fn push_endpoints_are_not_supported() {
         let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let mut runner = OkRunner;
         let mut bridge = TestBridge::default();
@@ -2096,9 +1875,7 @@ mod tests {
             &dir,
         )
         .unwrap();
-        assert_eq!(config.status_code, 200);
-        let config_body: serde_json::Value = serde_json::from_slice(&config.body).unwrap();
-        assert_eq!(config_body["public_key"].as_array().map(Vec::len), Some(65));
+        assert_eq!(config.status_code, 404);
 
         let subscribe = route_with_bridge(
             Request {
@@ -2112,23 +1889,7 @@ mod tests {
             &dir,
         )
         .unwrap();
-        assert_eq!(subscribe.status_code, 200);
-        assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 1);
-
-        let wrapped = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/push/subscribe",
-                body: r#"{"subscription":{"endpoint":"https://push.example/y","keys":{"p256dh":"k2","auth":"a2"}}}"#,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        assert_eq!(wrapped.status_code, 200);
-        assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 2);
+        assert_eq!(subscribe.status_code, 405);
 
         let unsubscribe = route_with_bridge(
             Request {
@@ -2142,23 +1903,7 @@ mod tests {
             &dir,
         )
         .unwrap();
-        assert_eq!(unsubscribe.status_code, 200);
-        assert_eq!(crate::adapters::push::load_subscriptions(&dir).len(), 1);
-
-        let unsubscribe_wrapped = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/push/unsubscribe",
-                body: r#"{"endpoint":"https://push.example/y"}"#,
-            },
-            &mut context,
-            &mut runner,
-            &mut bridge,
-            &dir,
-        )
-        .unwrap();
-        assert_eq!(unsubscribe_wrapped.status_code, 200);
-        assert!(crate::adapters::push::load_subscriptions(&dir).is_empty());
+        assert_eq!(unsubscribe.status_code, 405);
 
         std::fs::remove_dir_all(&dir).ok();
     }
