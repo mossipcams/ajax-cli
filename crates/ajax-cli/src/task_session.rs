@@ -598,8 +598,10 @@ fn run_pty_task_attach(
         .map_err(tty_error("failed to fork task PTY"))?
     {
         ForkptyResult::Child => {
-            // SAFETY: The env name is a pre-fork CString with a stable nul-terminated pointer.
-            unsafe { nix::libc::unsetenv(prepared.tmux_env_name.as_ptr()) };
+            if prepared.clear_tmux_env {
+                // SAFETY: The env name is a pre-fork CString with a stable nul-terminated pointer.
+                unsafe { nix::libc::unsetenv(prepared.tmux_env_name.as_ptr()) };
+            }
             if let Some(cwd) = prepared.cwd.as_ref() {
                 // SAFETY: cwd is a pre-fork CString with a stable nul-terminated pointer.
                 if unsafe { nix::libc::chdir(cwd.as_ptr()) } != 0 {
@@ -1091,6 +1093,7 @@ struct PreparedTaskCommand {
     argv: Vec<*const c_char>,
     cwd: Option<CString>,
     tmux_env_name: CString,
+    clear_tmux_env: bool,
 }
 
 impl PreparedTaskCommand {
@@ -1119,6 +1122,8 @@ impl PreparedTaskCommand {
             })
             .transpose()?;
 
+        let clear_tmux_env = command_needs_detached_tmux_environment(command);
+
         Ok(Self {
             executable,
             args,
@@ -1129,8 +1134,17 @@ impl PreparedTaskCommand {
                     "task command environment name contains a nul byte".to_string(),
                 )
             })?,
+            clear_tmux_env,
         })
     }
+}
+
+fn command_needs_detached_tmux_environment(command: &CommandSpec) -> bool {
+    command.program == "tmux"
+        && command
+            .args
+            .first()
+            .is_some_and(|arg| arg == "attach-session")
 }
 
 struct TtyTermiosGuard {
@@ -1814,5 +1828,23 @@ mod tests {
             "/tmp/ajax task"
         );
         assert_eq!(prepared.tmux_env_name.to_str().unwrap(), "TMUX");
+    }
+
+    #[test]
+    fn prepared_task_command_preserves_tmux_for_switch_client() {
+        let command = CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"]);
+
+        let prepared = super::PreparedTaskCommand::new(&command).unwrap();
+
+        assert!(!prepared.clear_tmux_env);
+    }
+
+    #[test]
+    fn prepared_task_command_clears_tmux_for_attach_session() {
+        let command = CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"]);
+
+        let prepared = super::PreparedTaskCommand::new(&command).unwrap();
+
+        assert!(prepared.clear_tmux_env);
     }
 }
