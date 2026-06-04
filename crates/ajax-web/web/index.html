@@ -42,24 +42,20 @@
 
     <div class="page-lead">
       <button id="update-banner" class="update-banner" type="button" hidden>Update ready — tap to reload</button>
-      <div id="pwa-warning" class="pwa-warning" role="status" hidden>
-        Ajax works best in Safari on iOS. Home Screen mode is experimental and may get stuck due to iOS lifecycle/cache behavior.
-      </div>
     </div>
   </div>
 
   <main>
     <nav id="project-nav" class="project-nav" aria-label="Projects" hidden></nav>
-    <section id="attention-summary" class="attention-summary" aria-label="Task summary"></section>
+
+    <section id="inbox" class="group inbox" aria-live="polite"></section>
+    <section id="repos" class="group tasks" aria-live="polite"></section>
+    <p id="empty-state" class="empty" hidden>All quiet</p>
 
     <button id="new-task-row" class="new-task-row" type="button">
       <span class="new-task-glyph" aria-hidden="true">+</span>
       <span id="new-task-row-label" class="new-task-label">New task</span>
     </button>
-
-    <section id="inbox" class="group" aria-live="polite"></section>
-    <section id="repos" class="group" aria-live="polite"></section>
-    <p id="empty-state" class="empty" hidden>All quiet</p>
 
     <section id="task-detail" aria-live="polite"></section>
 

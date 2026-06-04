@@ -294,13 +294,14 @@ mod tests {
         assert!(html.contains("id=\"inbox\""));
         assert!(html.contains("id=\"repos\""));
         assert!(html.contains("class=\"cockpit-chrome\""));
-        assert!(html.contains("id=\"pwa-warning\""));
         assert!(html.contains("id=\"connection-status\""));
-        assert!(html.contains("id=\"attention-summary\""));
         assert!(html.contains("id=\"new-task-row\""));
         assert!(html.contains("id=\"result-panel\""));
         assert!(html.contains("id=\"settings-view\""));
         assert!(html.contains("id=\"restart-server\""));
+        // Retired with the move to Safari-first + redesigned dashboard.
+        assert!(!html.contains("id=\"pwa-warning\""));
+        assert!(!html.contains("id=\"attention-summary\""));
     }
 
     #[test]
