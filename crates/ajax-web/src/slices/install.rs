@@ -4,7 +4,7 @@ use crate::adapters::assets;
 
 pub use crate::adapters::assets::StaticAsset;
 
-pub fn pwa_shell() -> &'static str {
+pub fn pwa_shell() -> String {
     assets::pwa_shell_html()
 }
 
@@ -18,7 +18,7 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
 
 #[cfg(test)]
 mod tests {
-    use super::{pwa_shell, static_asset};
+    use super::{app_version, pwa_shell, static_asset};
     use crate::adapters::assets as asset_adapter;
 
     #[test]
@@ -36,6 +36,9 @@ mod tests {
 
         assert!(shell.contains("<!doctype html>"));
         assert!(shell.contains("name=\"viewport\""));
+        assert!(shell.contains("name=\"ajax-app-version\""));
+        assert!(shell.contains(app_version()));
+        assert!(!shell.contains("__AJAX_APP_VERSION__"));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/manifest.webmanifest\""));
@@ -191,7 +194,7 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v23"));
+        assert!(worker.contains("ajax-cockpit-v24"));
         assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
         assert!(worker.contains("action: \"approve\""));
         assert!(worker.contains("/answer"));
@@ -200,7 +203,6 @@ mod tests {
             "\"/app.css\"",
             "\"/app.js\"",
             "\"/manifest.webmanifest\"",
-            "\"/sw.js\"",
             "\"/icons/icon-192.png\"",
             "\"/icons/icon-512.png\"",
             "\"/icons/icon-maskable-512.png\"",
@@ -211,6 +213,10 @@ mod tests {
                 "service worker does not cache {cached}"
             );
         }
+        assert!(
+            !worker.contains("\"/sw.js\""),
+            "service worker install should not fail PWA boot by requiring its own script in cache"
+        );
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
     }
@@ -280,9 +286,83 @@ mod tests {
             "iOS standalone should avoid boot-time service worker registration until notifications are granted"
         );
         assert!(
-            script.contains("await navigator.serviceWorker.register(\"/sw.js\");"),
-            "explicit notification opt-in should still be able to register the service worker"
+            script.contains(
+                "await navigator.serviceWorker.register(\"/sw.js\", { updateViaCache: \"none\" });"
+            ),
+            "explicit notification opt-in should still register a freshly checked service worker"
         );
+    }
+
+    #[test]
+    fn pwa_script_refreshes_ios_standalone_after_resume_and_updates_sw() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "const loadedAppVersion",
+            "ajax-app-version",
+            "function refreshAfterResume",
+            "window.addEventListener(\"pageshow\"",
+            "window.addEventListener(\"focus\"",
+            "registration.update()",
+            "updateViaCache: \"none\"",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn pwa_settings_exposes_connection_diagnostics() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "id=\"run-diagnostics\"",
+            "id=\"diagnostics-output\"",
+            "Diagnostics",
+        ] {
+            assert!(shell.contains(expected), "shell missing {expected}");
+        }
+
+        for expected in [
+            "function runDiagnostics",
+            "standalone",
+            "navigator.onLine",
+            "navigator.serviceWorker.controller",
+            "loadedAppVersion",
+            "\"/api/health\"",
+            "\"/api/version\"",
+            "\"/api/cockpit\"",
+            "`/api/tasks/${encodeURIComponent(detailHandle)}`",
+            "status",
+            "error",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn pwa_settings_exposes_safe_repair_action() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        assert!(shell.contains("id=\"repair-pwa\""));
+        assert!(shell.contains("id=\"repair-status\""));
+
+        for expected in [
+            "function repairPwa",
+            "navigator.serviceWorker.getRegistrations()",
+            "registration.unregister()",
+            "caches.keys()",
+            "key.startsWith(\"ajax-cockpit-\")",
+            "window.location.replace(`/?repair=${Date.now()}`)",
+            "resetTransientAppState",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+
+        assert!(!script.contains("localStorage.clear"));
+        assert!(!script.contains("sessionStorage.clear"));
+        assert!(!script.contains("indexedDB.deleteDatabase"));
     }
 
     #[test]
