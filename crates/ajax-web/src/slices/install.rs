@@ -70,7 +70,6 @@ mod tests {
             "class=\"cockpit-chrome\"",
             "class=\"page-lead\"",
             "id=\"status-line\"",
-            "id=\"alerts-banner\"",
             "id=\"new-task-row\"",
             "id=\"inbox\"",
             "id=\"repos\"",
@@ -81,6 +80,7 @@ mod tests {
             "id=\"settings-view\"",
             "id=\"settings-link\"",
             "id=\"restart-server\"",
+            "id=\"pwa-warning\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
         ] {
@@ -94,6 +94,9 @@ mod tests {
             "id=\"tidy-button\"",
             "id=\"help-button\"",
             "id=\"help-sheet\"",
+            "id=\"alerts-banner\"",
+            "id=\"repair-pwa\"",
+            "id=\"repair-status\"",
         ] {
             assert!(
                 !shell.contains(removed),
@@ -170,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    fn pwa_shell_is_local_only_and_service_worker_caches_only_static_shell() {
+    fn browser_shell_is_local_only_and_service_worker_is_non_critical_cleanup() {
         let shell = pwa_shell();
         assert!(!shell.contains("fonts.googleapis.com"));
         assert!(!shell.contains("fonts.gstatic.com"));
@@ -194,29 +197,15 @@ mod tests {
         );
 
         let worker = std::str::from_utf8(static_asset("/sw.js").unwrap().body).unwrap();
-        assert!(worker.contains("ajax-cockpit-v24"));
-        assert!(worker.contains("url.pathname.startsWith(\"/api/\")"));
-        assert!(worker.contains("action: \"approve\""));
-        assert!(worker.contains("/answer"));
-        for cached in [
-            "\"/\"",
-            "\"/app.css\"",
-            "\"/app.js\"",
-            "\"/manifest.webmanifest\"",
-            "\"/icons/icon-192.png\"",
-            "\"/icons/icon-512.png\"",
-            "\"/icons/icon-maskable-512.png\"",
-            "\"/icons/apple-touch-icon.png\"",
-        ] {
-            assert!(
-                worker.contains(cached),
-                "service worker does not cache {cached}"
-            );
-        }
+        assert!(worker.contains("self.registration.unregister"));
         assert!(
-            !worker.contains("\"/sw.js\""),
-            "service worker install should not fail PWA boot by requiring its own script in cache"
+            !worker.contains("addEventListener(\"fetch\""),
+            "service worker must not intercept fetches"
         );
+        assert!(!worker.contains("addEventListener(\"push\""));
+        assert!(!worker.contains("notificationclick"));
+        assert!(!worker.contains("showNotification"));
+        assert!(!worker.contains("caches.open"));
         assert!(!worker.contains("IndexedDB"));
         assert!(!worker.contains("sync"));
     }
@@ -253,48 +242,55 @@ mod tests {
     }
 
     #[test]
-    fn pwa_exposes_visible_notification_opt_in_with_environment_guidance() {
+    fn browser_shell_removes_notification_opt_in_and_warns_standalone_users() {
         let shell = pwa_shell();
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
         assert!(
-            shell.contains("id=\"alerts-banner\""),
-            "shell must include the alerts control"
+            shell.contains("id=\"pwa-warning\""),
+            "shell must include the standalone warning"
         );
 
         for expected in [
-            "function notificationEnvironment()",
-            "function syncAlertsBanner()",
-            "Add Ajax to your Home Screen to enable alerts",
-            "Alerts blocked",
-            "Turn on alerts",
+            "function syncStandaloneWarning",
+            "Ajax works best in Safari on iOS",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
+        }
+
+        for forbidden in [
+            "Notification.requestPermission",
+            "PushManager",
+            "pushManager.subscribe",
+            "/api/push/config",
+            "/api/push/subscribe",
+            "Add Ajax to your Home Screen to enable alerts",
+            "Turn on alerts",
+        ] {
+            assert!(
+                !script.contains(forbidden),
+                "app.js must not contain notification opt-in code: {forbidden}"
+            );
         }
     }
 
     #[test]
-    fn ios_standalone_does_not_register_service_worker_before_notification_opt_in() {
+    fn browser_shell_does_not_register_service_worker_on_boot() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
         assert!(
-            script.contains("shouldRegisterServiceWorkerOnBoot"),
-            "app.js should gate boot-time service worker registration"
+            script.contains("unregisterExistingServiceWorkers"),
+            "app.js should clean up stale workers from older PWA builds"
         );
         assert!(
-            script.contains("if (isIosBrowser() && isStandalonePwa() && Notification.permission !== \"granted\")"),
-            "iOS standalone should avoid boot-time service worker registration until notifications are granted"
+            !script.contains("serviceWorker.register"),
+            "Safari-first shell should not register a service worker"
         );
-        assert!(
-            script.contains(
-                "await navigator.serviceWorker.register(\"/sw.js\", { updateViaCache: \"none\" });"
-            ),
-            "explicit notification opt-in should still register a freshly checked service worker"
-        );
+        assert!(!script.contains("updateViaCache"));
     }
 
     #[test]
-    fn pwa_script_refreshes_ios_standalone_after_resume_and_updates_sw() {
+    fn browser_script_refreshes_after_resume_without_service_worker_updates() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
         for expected in [
@@ -303,11 +299,12 @@ mod tests {
             "function refreshAfterResume",
             "window.addEventListener(\"pageshow\"",
             "window.addEventListener(\"focus\"",
-            "registration.update()",
-            "updateViaCache: \"none\"",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }
+
+        assert!(!script.contains("registration.update()"));
+        assert!(!script.contains("updateViaCache"));
     }
 
     #[test]
@@ -317,6 +314,7 @@ mod tests {
 
         for expected in [
             "id=\"run-diagnostics\"",
+            "id=\"copy-diagnostics\"",
             "id=\"diagnostics-output\"",
             "Diagnostics",
         ] {
@@ -325,10 +323,15 @@ mod tests {
 
         for expected in [
             "function runDiagnostics",
-            "standalone",
+            "browser_mode",
+            "backend_url",
             "navigator.onLine",
             "navigator.serviceWorker.controller",
             "loadedAppVersion",
+            "server_version",
+            "last_successful_connection_at",
+            "last_fetch_error",
+            "last_fetch_status",
             "\"/api/health\"",
             "\"/api/version\"",
             "\"/api/cockpit\"",
@@ -341,28 +344,129 @@ mod tests {
     }
 
     #[test]
-    fn pwa_settings_exposes_safe_repair_action() {
+    fn browser_shell_exposes_connection_recovery_controls() {
         let shell = pwa_shell();
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
-        assert!(shell.contains("id=\"repair-pwa\""));
-        assert!(shell.contains("id=\"repair-status\""));
+        for expected in [
+            "id=\"connection-status\"",
+            "id=\"connection-retry\"",
+            "id=\"connection-reload\"",
+            "id=\"connection-copy-diagnostics\"",
+            "id=\"connection-health-link\"",
+        ] {
+            assert!(shell.contains(expected), "shell missing {expected}");
+        }
 
         for expected in [
-            "function repairPwa",
-            "navigator.serviceWorker.getRegistrations()",
-            "registration.unregister()",
-            "caches.keys()",
-            "key.startsWith(\"ajax-cockpit-\")",
-            "window.location.replace(`/?repair=${Date.now()}`)",
-            "resetTransientAppState",
+            "connected",
+            "checking",
+            "reconnecting",
+            "disconnected",
+            "backend unreachable",
+            "stale session",
+            "function setConnectionState",
+            "function copyDiagnostics",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }
+    }
 
-        assert!(!script.contains("localStorage.clear"));
-        assert!(!script.contains("sessionStorage.clear"));
-        assert!(!script.contains("indexedDB.deleteDatabase"));
+    #[test]
+    fn browser_script_forces_health_check_on_resume_events() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "function forceBackendHealthCheck",
+            "forceBackendHealthCheck(\"initial\")",
+            "forceBackendHealthCheck(\"online\")",
+            "forceBackendHealthCheck(\"visibilitychange\")",
+            "forceBackendHealthCheck(\"pageshow\")",
+            "forceBackendHealthCheck(\"focus\")",
+            "refreshCurrentRoute({ forceHealth: true })",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn browser_shell_uses_safari_layout_basics() {
+        let shell = pwa_shell();
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+
+        assert!(shell.contains(
+            "name=\"viewport\" content=\"width=device-width, initial-scale=1, viewport-fit=cover\""
+        ));
+        assert!(shell.contains("id=\"bottom-nav\""));
+        assert!(
+            css.contains("min-height: 16px") || css.contains("font-size: 16px"),
+            "inputs must stay at least 16px to avoid iOS focus zoom"
+        );
+        assert!(css.contains("env(safe-area-inset-bottom)"));
+        assert!(!css.contains("100vh"));
+    }
+
+    #[test]
+    fn dashboard_cards_expose_attention_summary_and_copy_actions() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        assert!(shell.contains("id=\"attention-summary\""));
+        for expected in [
+            "attentionCount",
+            "runningCount",
+            "reviewReadyCount",
+            "failedCount",
+            "data-open-task",
+            "data-copy-summary",
+            "function copyTaskSummary",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn terminal_details_expose_focused_mobile_shortcuts() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "terminal-shortcuts",
+            "Continue",
+            "Approve plan",
+            "Run tests",
+            "Show diff",
+            "Stop task",
+            "Restart task",
+            "Copy last error",
+            "Copy visible output",
+            "function runTerminalShortcut",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn settings_do_not_expose_pwa_repair_action() {
+        let shell = pwa_shell();
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for forbidden in ["id=\"repair-pwa\"", "id=\"repair-status\"", "Repair PWA"] {
+            assert!(
+                !shell.contains(forbidden),
+                "shell must not contain {forbidden}"
+            );
+        }
+
+        for forbidden in [
+            "function repairPwa",
+            "Repairing PWA",
+            "window.location.replace(`/?repair=${Date.now()}`)",
+        ] {
+            assert!(
+                !script.contains(forbidden),
+                "app.js must not contain {forbidden}"
+            );
+        }
     }
 
     #[test]

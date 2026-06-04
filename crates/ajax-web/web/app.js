@@ -5,9 +5,16 @@ const inbox = document.getElementById("inbox");
 const repos = document.getElementById("repos");
 const projectNav = document.getElementById("project-nav");
 const emptyState = document.getElementById("empty-state");
+const attentionSummary = document.getElementById("attention-summary");
 const statusLine = document.getElementById("status-line");
-const alertsBanner = document.getElementById("alerts-banner");
+const pwaWarning = document.getElementById("pwa-warning");
 const updateBanner = document.getElementById("update-banner");
+const connectionStatus = document.getElementById("connection-status");
+const connectionLabel = document.getElementById("connection-label");
+const connectionRetry = document.getElementById("connection-retry");
+const connectionReload = document.getElementById("connection-reload");
+const connectionCopyDiagnostics = document.getElementById("connection-copy-diagnostics");
+const connectionHealthLink = document.getElementById("connection-health-link");
 const newTaskRow = document.getElementById("new-task-row");
 const newTaskRowLabel = document.getElementById("new-task-row-label");
 const newTaskSheet = document.getElementById("new-task-sheet");
@@ -23,13 +30,13 @@ const settingsBack = document.getElementById("settings-back");
 const restartServerButton = document.getElementById("restart-server");
 const restartStatus = document.getElementById("restart-status");
 const runDiagnosticsButton = document.getElementById("run-diagnostics");
+const copyDiagnosticsButton = document.getElementById("copy-diagnostics");
 const diagnosticsOutput = document.getElementById("diagnostics-output");
-const repairPwaButton = document.getElementById("repair-pwa");
-const repairStatus = document.getElementById("repair-status");
 const resultPanel = document.getElementById("result-panel");
 const resultMessage = document.getElementById("result-message");
 const resultOutput = document.getElementById("result-output");
 const resultDismiss = document.getElementById("result-dismiss");
+const bottomNav = document.getElementById("bottom-nav");
 
 const REFRESH_INTERVAL_MS = 1000;
 const CONFIRM_TIMEOUT_MS = 8000;
@@ -40,9 +47,27 @@ const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
 const PANE_INTERVAL_DEFAULT_MS = 1000;
 const MAX_LOG_ENTRIES = 24;
+const STANDALONE_WARNING_TEXT =
+  "Ajax works best in Safari on iOS. Home Screen mode is experimental and may get stuck due to iOS lifecycle/cache behavior.";
+
+const CONNECTION_STATES = {
+  connected: "connected",
+  checking: "checking",
+  reconnecting: "reconnecting",
+  disconnected: "disconnected",
+  backendUnreachable: "backend unreachable",
+  staleSession: "stale session",
+};
 
 let lastCockpit = null;
 let lastFingerprint = null;
+let lastSuccessfulConnectionAt = null;
+let lastFetchError = null;
+let lastFetchStatus = null;
+let lastHealthResult = null;
+let lastVersionResult = null;
+let lastCockpitResult = null;
+let serverVersion = null;
 let refreshInFlight = false;
 let detailHandle = null;
 let detailInFlight = false;
@@ -133,6 +158,65 @@ function hideResult() {
 }
 
 resultDismiss.addEventListener("click", hideResult);
+
+function setConnectionState(state, detail) {
+  const label = CONNECTION_STATES[state] || state || CONNECTION_STATES.checking;
+  if (connectionStatus) connectionStatus.dataset.state = label;
+  if (connectionLabel) {
+    connectionLabel.textContent = detail ? `${label}: ${detail}` : label;
+  }
+  document.body.classList.toggle("is-offline", label !== CONNECTION_STATES.connected);
+}
+
+function recordFetchResult(path, result) {
+  if (result && result.ok) {
+    lastSuccessfulConnectionAt = new Date().toISOString();
+  }
+  lastFetchStatus = result ? result.status : null;
+  lastFetchError = result ? result.error : null;
+  if (path === "/api/health") lastHealthResult = result;
+  if (path === "/api/version") lastVersionResult = result;
+  if (path === "/api/cockpit") lastCockpitResult = result;
+}
+
+function recordFetchFailure(path, error, status) {
+  recordFetchResult(path, {
+    ok: false,
+    status: status == null ? null : status,
+    error: error && error.message ? error.message : String(error),
+    body: null,
+  });
+}
+
+async function checkBackendHealth() {
+  try {
+    const response = await fetch("/api/health", { cache: "no-store" });
+    const text = await response.text();
+    const result = {
+      ok: response.ok,
+      status: response.status,
+      error: response.ok ? null : `HTTP ${response.status}`,
+      body: text.slice(0, 600),
+    };
+    recordFetchResult("/api/health", result);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    setConnectionState("connected");
+    return true;
+  } catch (error) {
+    recordFetchFailure("/api/health", error, null);
+    setConnectionState("backendUnreachable", lastFetchError);
+    return false;
+  }
+}
+
+async function forceBackendHealthCheck(reason) {
+  setConnectionState(lastSuccessfulConnectionAt ? "reconnecting" : "checking", reason);
+  const healthy = await checkBackendHealth();
+  if (healthy) {
+    refreshCurrentRoute({ forceHealth: true });
+  }
+  return healthy;
+}
 
 // LIST VIEW -----------------------------------------------------------------
 
@@ -253,6 +337,14 @@ function taskCard(card, options) {
   const drawerTitle = el("div", "drawer-title", "Actions");
   drawer.append(drawerTitle);
   const drawerActions = el("div", "actions");
+  const openButton = el("button", "action", "Open");
+  openButton.type = "button";
+  openButton.setAttribute("data-open-task", card.qualified_handle);
+  drawerActions.append(openButton);
+  const copyButton = el("button", "action", "Copy Summary");
+  copyButton.type = "button";
+  copyButton.setAttribute("data-copy-summary", card.qualified_handle);
+  drawerActions.append(copyButton);
   for (const state of states) {
     if (primaryState && state.action === primaryState.action) continue;
     drawerActions.append(actionButtonFromState(state, card.qualified_handle, false));
@@ -291,6 +383,37 @@ function renderInbox(data, cardsByHandle) {
   if (!cards.childElementCount) return;
   inbox.append(el("div", "section-title attention", "Inbox"));
   inbox.append(cards);
+}
+
+function renderAttentionSummary(data) {
+  if (!attentionSummary) return;
+  attentionSummary.replaceChildren();
+  const cards = (data.cards || []).filter((card) => cardMatchesProject(card));
+  const inboxItems = (data.inbox && data.inbox.items) || [];
+  const attentionCount = inboxItems.filter((item) => {
+    const card = cards.find((candidate) => candidate.qualified_handle === item.task_handle);
+    return Boolean(card);
+  }).length;
+  const runningCount = cards.filter((card) => card.ui_state === "Running").length;
+  const reviewReadyCount = cards.filter((card) =>
+    ["Review Ready", "Safe Merge"].includes(card.ui_state || card.status_label),
+  ).length;
+  const failedCount = cards.filter((card) =>
+    ["Blocked", "Failed"].includes(card.ui_state) ||
+    /failed|conflict|blocked/i.test(card.status_label || card.live_summary || ""),
+  ).length;
+
+  for (const [label, value] of [
+    ["Attention", attentionCount],
+    ["Running", runningCount],
+    ["Review-ready", reviewReadyCount],
+    ["Failed", failedCount],
+  ]) {
+    const item = el("div", "summary-chip");
+    item.append(el("span", "summary-chip-label", label));
+    item.append(el("strong", null, String(value)));
+    attentionSummary.append(item);
+  }
 }
 
 function renderRepos(data) {
@@ -398,6 +521,7 @@ function updateLiveSummaries(data, cardsByHandle) {
 
 function renderList(data) {
   renderProjectNav(data);
+  renderAttentionSummary(data);
   const cardsByHandle = new Map(data.cards.map((card) => [card.qualified_handle, card]));
   renderInbox(data, cardsByHandle);
   renderRepos(data);
@@ -424,7 +548,7 @@ function applyData(data) {
 }
 
 function setOnline(online) {
-  document.body.classList.toggle("is-offline", !online);
+  setConnectionState(online ? "connected" : "disconnected");
   if (!online) {
     statusLine.textContent = OFFLINE_STATUS;
   }
@@ -436,9 +560,16 @@ async function loadCockpit() {
   try {
     const response = await fetch("/api/cockpit", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    recordFetchResult("/api/cockpit", {
+      ok: true,
+      status: response.status,
+      error: null,
+      body: "ok",
+    });
     const data = await response.json();
     applyData(data);
   } catch (error) {
+    recordFetchFailure("/api/cockpit", error, null);
     setOnline(false);
   } finally {
     refreshInFlight = false;
@@ -561,10 +692,17 @@ async function loadDetail() {
       return;
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    recordFetchResult(`/api/tasks/${detailHandle}`, {
+      ok: true,
+      status: response.status,
+      error: null,
+      body: "ok",
+    });
     const detail = await response.json();
     renderDetail(detail);
     setOnline(true);
   } catch (error) {
+    recordFetchFailure(`/api/tasks/${detailHandle}`, error, null);
     setOnline(false);
   } finally {
     detailInFlight = false;
@@ -657,27 +795,27 @@ async function diagnosticFetch(path) {
     } catch (error) {
       // Plain-text responses are still useful diagnostics.
     }
-    return {
+    const result = {
       ok: response.ok,
       status: response.status,
       error: null,
       body,
     };
+    recordFetchResult(path, result);
+    return result;
   } catch (error) {
-    return {
+    const result = {
       ok: false,
       status: null,
       error: error && error.message ? error.message : String(error),
       body: null,
     };
+    recordFetchResult(path, result);
+    return result;
   }
 }
 
-async function runDiagnostics() {
-  runDiagnosticsButton.disabled = true;
-  diagnosticsOutput.hidden = false;
-  diagnosticsOutput.textContent = "Running diagnostics...";
-
+async function buildDiagnosticsReport() {
   const checks = {
     health: await diagnosticFetch("/api/health"),
     version: await diagnosticFetch("/api/version"),
@@ -687,58 +825,70 @@ async function runDiagnostics() {
     checks.task = await diagnosticFetch(`/api/tasks/${encodeURIComponent(detailHandle)}`);
   }
 
-  const report = {
-    standalone: isStandalonePwa(),
-    online: navigator.onLine,
+  serverVersion = serverVersionFromResult(checks.version);
+
+  return {
+    browser_mode: isStandalonePwa() ? "standalone" : "Safari/browser",
+    backend_url: window.location.origin,
+    navigator_onLine: navigator.onLine,
+    app_version: loadedAppVersion,
+    server_version: serverVersion,
     service_worker_controller: Boolean(
       navigator.serviceWorker && navigator.serviceWorker.controller,
     ),
     loaded_app_version: loadedAppVersion,
     location: window.location.href,
+    last_successful_connection_at: lastSuccessfulConnectionAt,
+    last_fetch_error: lastFetchError,
+    last_fetch_status: lastFetchStatus,
+    cached_results: {
+      health: lastHealthResult,
+      version: lastVersionResult,
+      cockpit: lastCockpitResult,
+    },
     checks,
   };
+}
+
+function serverVersionFromResult(result) {
+  if (!result || !result.body) return null;
+  try {
+    const parsed = JSON.parse(result.body);
+    return parsed.version || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+async function runDiagnostics() {
+  runDiagnosticsButton.disabled = true;
+  diagnosticsOutput.hidden = false;
+  diagnosticsOutput.textContent = "Running diagnostics...";
+
+  const report = await buildDiagnosticsReport();
   diagnosticsOutput.textContent = JSON.stringify(report, null, 2);
   runDiagnosticsButton.disabled = false;
+  return report;
 }
 
 runDiagnosticsButton.addEventListener("click", runDiagnostics);
 
-function resetTransientAppState() {
-  lastCockpit = null;
-  lastFingerprint = null;
-  selectedProject = null;
-  expandedCards.clear();
-  for (const key of pendingConfirmByKey.keys()) clearPendingConfirm(key);
-  resetInteractState();
-}
-
-async function repairPwa() {
-  repairPwaButton.disabled = true;
-  repairStatus.hidden = false;
-  repairStatus.textContent = "Repairing PWA...";
-  try {
-    if ("serviceWorker" in navigator) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
-    }
-    if ("caches" in window) {
-      const keys = await caches.keys();
-      await Promise.all(
-        keys
-          .filter((key) => key.startsWith("ajax-cockpit-"))
-          .map((key) => caches.delete(key)),
-      );
-    }
-    resetTransientAppState();
-    window.location.replace(`/?repair=${Date.now()}`);
-  } catch (error) {
-    repairStatus.textContent =
-      error && error.message ? `Repair failed: ${error.message}` : "Repair failed";
-    repairPwaButton.disabled = false;
+async function copyDiagnostics() {
+  const report = await buildDiagnosticsReport();
+  const text = JSON.stringify(report, null, 2);
+  diagnosticsOutput.hidden = false;
+  diagnosticsOutput.textContent = text;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    showResult("Diagnostics copied", null, false);
+  } else {
+    showResult("Diagnostics ready to copy", null, false);
   }
 }
 
-repairPwaButton.addEventListener("click", repairPwa);
+copyDiagnosticsButton.addEventListener("click", () => {
+  copyDiagnostics().catch(() => showResult("Could not copy diagnostics", null, true));
+});
 
 // INTERACT PANEL ------------------------------------------------------------
 
@@ -936,6 +1086,24 @@ function renderTerminalDetails(detail, pane, tmuxMissing) {
   summary.textContent = "View terminal details";
   details.append(summary);
 
+  const shortcuts = el("div", "terminal-shortcuts");
+  for (const label of [
+    "Continue",
+    "Approve plan",
+    "Run tests",
+    "Show diff",
+    "Stop task",
+    "Restart task",
+    "Copy last error",
+    "Copy visible output",
+  ]) {
+    const button = el("button", "pill", label);
+    button.type = "button";
+    button.dataset.terminalShortcut = label;
+    shortcuts.append(button);
+  }
+  details.append(shortcuts);
+
   if (tmuxMissing) {
     details.append(el("p", "interact-hint", "Terminal session is unavailable for this task."));
     return details;
@@ -951,6 +1119,59 @@ function renderTerminalDetails(detail, pane, tmuxMissing) {
   }
   details.append(pre);
   return details;
+}
+
+function visiblePaneOutput() {
+  if (lastPaneData && Array.isArray(lastPaneData.lines)) {
+    return lastPaneData.lines.join("\n");
+  }
+  return lastDetailData && lastDetailData.agent_activity ? lastDetailData.agent_activity : "";
+}
+
+function lastErrorOutput() {
+  return visiblePaneOutput()
+    .split("\n")
+    .reverse()
+    .find((line) => /error|failed|panic|conflict/i.test(line)) || "";
+}
+
+async function copyTextResult(text, success, empty) {
+  if (!text) {
+    showResult(empty, null, true);
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    showResult(success, null, false);
+  } else {
+    showResult(success, text, false);
+  }
+}
+
+async function runTerminalShortcut(label) {
+  switch (label) {
+    case "Copy visible output":
+      await copyTextResult(visiblePaneOutput(), "Visible output copied", "No visible output");
+      return;
+    case "Copy last error":
+      await copyTextResult(lastErrorOutput(), "Last error copied", "No visible error found");
+      return;
+    case "Show diff": {
+      const button = detailContainer.querySelector('button[data-action="review"]');
+      if (button && !button.disabled) runAction(button);
+      else showResult("Show diff is unavailable for this task", null, true);
+      return;
+    }
+    case "Approve plan":
+      if (lastPaneData?.state?.fingerprint) {
+        await sendAnswer("approve", lastPaneData.state.fingerprint);
+      } else {
+        showResult("No current approval prompt", null, true);
+      }
+      return;
+    default:
+      showResult(`${label} needs terminal mode for now`, null, true);
+  }
 }
 
 function renderInteractPanelInto(detail, pane) {
@@ -1336,7 +1557,47 @@ function toggleCardExpansion(cardEl) {
   }
 }
 
+async function copyTaskSummary(handle) {
+  const card =
+    lastCockpit && Array.isArray(lastCockpit.cards)
+      ? lastCockpit.cards.find((candidate) => candidate.qualified_handle === handle)
+      : null;
+  if (!card) {
+    showResult("Task summary unavailable", null, true);
+    return;
+  }
+  const summary = [
+    card.qualified_handle,
+    card.title,
+    card.status_label || card.ui_state,
+    card.live_summary,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(summary);
+    showResult("Task summary copied", null, false);
+  } else {
+    showResult("Task summary ready", summary, false);
+  }
+}
+
 document.addEventListener("click", (event) => {
+  const shortcut = event.target.closest("[data-terminal-shortcut]");
+  if (shortcut) {
+    runTerminalShortcut(shortcut.dataset.terminalShortcut);
+    return;
+  }
+  const openTask = event.target.closest("[data-open-task]");
+  if (openTask) {
+    window.location.hash = `#/t/${encodeURIComponent(openTask.getAttribute("data-open-task"))}`;
+    return;
+  }
+  const copySummary = event.target.closest("[data-copy-summary]");
+  if (copySummary) {
+    copyTaskSummary(copySummary.getAttribute("data-copy-summary"));
+    return;
+  }
   const button = event.target.closest("button[data-action]");
   if (button) {
     if (button.disabled) return;
@@ -1353,8 +1614,20 @@ document.addEventListener("click", (event) => {
   }
 });
 
-function refreshCurrentRoute() {
+bottomNav.addEventListener("click", (event) => {
+  const routeButton = event.target.closest("[data-bottom-route]");
+  if (routeButton) {
+    window.location.hash = routeButton.getAttribute("data-bottom-route");
+    return;
+  }
+  const actionButton = event.target.closest("[data-bottom-action=\"new-task\"]");
+  if (actionButton) openNewTaskSheet();
+});
+
+function refreshCurrentRoute(options) {
   if (isSettingsRoute()) return;
+  const forceHealth = options && options.forceHealth;
+  if (forceHealth) setConnectionState("checking", "refreshing cockpit");
   if (detailHandle) {
     loadDetail();
     schedulePaneTick(true);
@@ -1363,26 +1636,31 @@ function refreshCurrentRoute() {
   }
 }
 
-function refreshAfterResume() {
+function refreshAfterResume(reason) {
   checkForUpdate(true);
-  refreshCurrentRoute();
+  forceBackendHealthCheck(reason);
 }
 
-window.addEventListener("online", refreshAfterResume);
+window.addEventListener("online", () => forceBackendHealthCheck("online"));
 window.addEventListener("offline", () => setOnline(false));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     if (!isSettingsRoute()) clearPaneTimer();
     return;
   }
-  // Coming back to the foreground is when a frozen iOS snapshot would resume
-  // stale code, so always re-check the shell version regardless of route.
-  refreshAfterResume();
+  checkForUpdate(true);
+  forceBackendHealthCheck("visibilitychange");
 });
-window.addEventListener("pageshow", refreshAfterResume);
-window.addEventListener("focus", refreshAfterResume);
+window.addEventListener("pageshow", () => {
+  checkForUpdate(true);
+  forceBackendHealthCheck("pageshow");
+});
+window.addEventListener("focus", () => {
+  checkForUpdate(true);
+  forceBackendHealthCheck("focus");
+});
 
-// PUSH NOTIFICATIONS --------------------------------------------------------
+// BROWSER MODE --------------------------------------------------------------
 
 function isStandalonePwa() {
   return (
@@ -1395,128 +1673,11 @@ function isIosBrowser() {
   return /iPad|iPhone|iPod/.test(window.navigator.userAgent);
 }
 
-function notificationEnvironment() {
-  if (!("serviceWorker" in navigator) || !("Notification" in window)) {
-    return {
-      status: "unsupported",
-      reason: "This browser cannot receive alerts.",
-    };
-  }
-  if (!("PushManager" in window)) {
-    if (isIosBrowser() && !isStandalonePwa()) {
-      return {
-        status: "unsupported",
-        reason: "Add Ajax to your Home Screen to enable alerts.",
-      };
-    }
-    return {
-      status: "unsupported",
-      reason: "Alerts are not available in this browser.",
-    };
-  }
-  if (Notification.permission === "denied") {
-    return {
-      status: "denied",
-      reason: "Notifications blocked — enable them in browser settings.",
-    };
-  }
-  return { status: "available", reason: null };
+function syncStandaloneWarning() {
+  if (!pwaWarning) return;
+  pwaWarning.textContent = STANDALONE_WARNING_TEXT;
+  pwaWarning.hidden = !(isIosBrowser() && isStandalonePwa());
 }
-
-function showAlertsBanner(text, actionable) {
-  alertsBanner.textContent = text;
-  alertsBanner.disabled = !actionable;
-  alertsBanner.hidden = false;
-}
-
-function hideAlertsBanner() {
-  alertsBanner.hidden = true;
-  alertsBanner.disabled = false;
-  alertsBanner.textContent = "";
-}
-
-async function syncAlertsBanner() {
-  const env = notificationEnvironment();
-
-  if (env.status === "unsupported") {
-    if (isIosBrowser() && !isStandalonePwa()) {
-      showAlertsBanner("Add Ajax to your Home Screen to enable alerts", false);
-    } else {
-      hideAlertsBanner();
-    }
-    return;
-  }
-
-  if (env.status === "denied") {
-    showAlertsBanner("Alerts blocked — enable in browser settings", false);
-    return;
-  }
-
-  if (isIosBrowser() && isStandalonePwa() && Notification.permission !== "granted") {
-    showAlertsBanner("Turn on alerts", true);
-    return;
-  }
-
-  try {
-    const registration = await navigator.serviceWorker.ready;
-    const existing = await registration.pushManager.getSubscription();
-    if (existing) {
-      hideAlertsBanner();
-      return;
-    }
-    showAlertsBanner("Turn on alerts", true);
-  } catch (error) {
-    hideAlertsBanner();
-  }
-}
-
-async function ensureServiceWorkerRegistered() {
-  if (!("serviceWorker" in navigator)) return null;
-  const registration = await navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" });
-  if (registration.update) await registration.update().catch(() => undefined);
-  return registration;
-}
-
-async function enableNotifications() {
-  const env = notificationEnvironment();
-  if (env.status !== "available") {
-    await syncAlertsBanner();
-    return;
-  }
-
-  alertsBanner.disabled = true;
-  try {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") {
-      showResult("Notifications were not allowed", null, true);
-      await syncAlertsBanner();
-      return;
-    }
-    await ensureServiceWorkerRegistered();
-    const registration = await navigator.serviceWorker.ready;
-    const config = await (await fetch("/api/push/config")).json();
-    const subscription = await registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: new Uint8Array(config.public_key),
-    });
-    const response = await fetch("/api/push/subscribe", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(subscription),
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    showResult("Notifications enabled", null, false);
-    await syncAlertsBanner();
-  } catch (error) {
-    showResult("Could not enable notifications", null, true);
-    await syncAlertsBanner();
-  }
-}
-
-alertsBanner.addEventListener("click", () => {
-  if (alertsBanner.disabled) return;
-  enableNotifications();
-});
 
 // SHELL UPDATES -------------------------------------------------------------
 // An installed iOS standalone PWA resumes a frozen snapshot and has no reload
@@ -1539,60 +1700,59 @@ async function checkForUpdate(force) {
     const data = await response.json();
     const version = data && data.version;
     if (!version) return;
+    serverVersion = version;
+    recordFetchResult("/api/version", {
+      ok: true,
+      status: response.status,
+      error: null,
+      body: JSON.stringify(data),
+    });
     if (loadedVersion === null) {
       loadedVersion = version;
     } else if (version !== loadedVersion) {
       updateBanner.hidden = false;
     }
   } catch (error) {
+    recordFetchFailure("/api/version", error, null);
     // Offline or unreachable: leave the current version pinned and retry later.
   }
 }
 
 if (updateBanner) {
   updateBanner.addEventListener("click", () => {
-    // Network-first service worker means a plain reload pulls the fresh shell.
     window.location.reload();
   });
 }
 
-function shouldRegisterServiceWorkerOnBoot() {
-  if (isIosBrowser() && isStandalonePwa() && Notification.permission !== "granted") {
-    return false;
-  }
-  return true;
+connectionRetry.addEventListener("click", () => {
+  forceBackendHealthCheck("manual retry");
+});
+
+connectionReload.addEventListener("click", () => {
+  window.location.reload();
+});
+
+connectionCopyDiagnostics.addEventListener("click", () => {
+  copyDiagnostics().catch(() => showResult("Could not copy diagnostics", null, true));
+});
+
+if (connectionHealthLink) connectionHealthLink.href = "/api/health";
+
+syncStandaloneWarning();
+
+function unregisterExistingServiceWorkers() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker
+    .getRegistrations()
+    .then((registrations) =>
+      Promise.all(registrations.map((registration) => registration.unregister())),
+    )
+    .catch((error) => {
+      console.warn("service worker cleanup failed", error);
+    });
 }
 
-if ("serviceWorker" in navigator) {
-  if (!shouldRegisterServiceWorkerOnBoot()) {
-    navigator.serviceWorker.getRegistrations()
-      .then((registrations) => Promise.all(registrations.map((registration) => registration.unregister())))
-      .then(() => syncAlertsBanner())
-      .catch(() => syncAlertsBanner());
-  } else {
-    // When the service worker updates itself (skipWaiting + clients.claim on a new
-    // deploy), the controller changes — reload once to swap in the fresh shell.
-    // Guard against the initial claim on first load (no prior controller) and
-    // against reload loops. This is the fast path on platforms that run SW update
-    // checks promptly; the /api/version banner remains the fallback for frozen iOS
-    // standalone PWAs, where the SW check may not run until the next foreground.
-    const hadController = !!navigator.serviceWorker.controller;
-    let reloadingForUpdate = false;
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (reloadingForUpdate || !hadController) return;
-      reloadingForUpdate = true;
-      window.location.reload();
-    });
-    ensureServiceWorkerRegistered()
-      .then(() => syncAlertsBanner())
-      .catch((error) => {
-        console.warn("service worker registration failed", error);
-        syncAlertsBanner();
-      });
-  }
-} else {
-  syncAlertsBanner();
-}
+unregisterExistingServiceWorkers();
 
 checkForUpdate(true);
 
@@ -1606,3 +1766,4 @@ setInterval(() => {
 }, REFRESH_INTERVAL_MS);
 
 applyRoute();
+forceBackendHealthCheck("initial");
