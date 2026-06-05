@@ -53,6 +53,7 @@ struct WebSharedState<C, B> {
     pane_inputs: crate::slices::pane::PaneInputState,
     runner: C,
     bridge: B,
+    revision: u64,
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -79,6 +80,7 @@ impl<C, B> WebAppState<C, B> {
                 pane_inputs: crate::slices::pane::PaneInputState::default(),
                 runner,
                 bridge,
+                revision: 0,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             state_dir: Arc::new(state_dir),
@@ -257,6 +259,7 @@ where
             context: guard.context.clone(),
             runner: guard.runner.clone(),
             bridge: guard.bridge.clone(),
+            revision: guard.revision,
         }
     };
     let result = handle_refreshed_cockpit_request(
@@ -269,8 +272,10 @@ where
             .shared
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        guard.context = refresh_session.context;
-        guard.bridge = refresh_session.bridge;
+        if guard.revision == refresh_session.revision {
+            guard.context = refresh_session.context;
+            guard.bridge = refresh_session.bridge;
+        }
     }
     match result {
         Ok(response) => response.into_axum_response(),
@@ -282,6 +287,7 @@ struct CockpitRefreshSession<C, B> {
     context: CommandContext<InMemoryRegistry>,
     runner: C,
     bridge: B,
+    revision: u64,
 }
 
 async fn axum_task_detail<C, B>(
@@ -527,9 +533,10 @@ where
         context,
         runner,
         bridge,
+        revision,
         ..
     } = &mut *guard;
-    match handle_start_task_request(
+    let response = match handle_start_task_request(
         &serde_json::to_string(&request).unwrap_or_default(),
         context,
         runner,
@@ -537,7 +544,9 @@ where
     ) {
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
-    }
+    };
+    *revision = revision.saturating_add(1);
+    response
 }
 
 async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
@@ -602,6 +611,7 @@ where
         context,
         runner,
         bridge,
+        revision,
         ..
     } = &mut *guard;
     let response = match handle_action_request(
@@ -613,6 +623,7 @@ where
         Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
         Err(error) => response_from_web_error(error, request_id.as_deref()),
     };
+    *revision = revision.saturating_add(1);
     drop(guard);
 
     let mut operations = state
@@ -1561,6 +1572,65 @@ mod tests {
             "health took {health_elapsed:?} while cockpit refresh was in flight"
         );
         assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_cockpit_refresh_does_not_overwrite_concurrent_operation_state() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge {
+                refresh_delay: Duration::from_millis(250),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-refresh-operation-race"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let refresh_app = app.clone();
+        let cockpit = tokio::spawn(async move {
+            refresh_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/cockpit")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let operation = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"req-race","task_handle":"web/fix-login","action":"review"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(operation.status(), StatusCode::OK);
+        assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.operate_count, 1);
+        assert_eq!(
+            guard
+                .bridge
+                .operate
+                .as_ref()
+                .map(|request| request.action.as_str()),
+            Some("review")
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

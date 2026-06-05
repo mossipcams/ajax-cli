@@ -1,7 +1,7 @@
 use std::{
     process::{Command, Stdio},
-    sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 
 use super::command::{CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec};
@@ -31,65 +31,58 @@ fn run_capture(
     command: &CommandSpec,
 ) -> Result<CommandOutput, CommandRunError> {
     if let Some(timeout) = command.timeout {
-        let child = process
+        let mut child = process
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-        let shared_child = Arc::new(Mutex::new(Some(child)));
-        let waiter_child = Arc::clone(&shared_child);
-        let (sender, receiver) = std::sync::mpsc::channel();
-        thread::spawn(move || {
-            let output = waiter_child
-                .lock()
-                .ok()
-                .and_then(|mut guard| guard.take())
-                .and_then(|child| child.wait_with_output().ok());
-            let _ = sender.send(output);
-        });
-        match receiver.recv_timeout(timeout) {
-            Ok(Some(output)) => {
-                let status_code = output
-                    .status
-                    .code()
-                    .ok_or(CommandRunError::MissingStatusCode)?;
-                Ok(CommandOutput {
-                    status_code,
-                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                })
+
+        let started = Instant::now();
+        loop {
+            if child
+                .try_wait()
+                .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?
+                .is_some()
+            {
+                let output = child
+                    .wait_with_output()
+                    .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
+                return command_output_from_process_output(output);
             }
-            Ok(None) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if let Ok(mut guard) = shared_child.lock() {
-                    if let Some(mut child) = guard.take() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
-                }
-                Err(CommandRunError::TimedOut {
+
+            if started.elapsed() >= timeout {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CommandRunError::TimedOut {
                     program: command.program.clone(),
                     timeout,
-                })
+                });
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                Err(CommandRunError::MissingStatusCode)
-            }
+
+            let remaining = timeout.saturating_sub(started.elapsed());
+            thread::sleep(remaining.min(Duration::from_millis(5)));
         }
     } else {
         let output = process
             .output()
             .map_err(|error| CommandRunError::SpawnFailed(error.to_string()))?;
-        let status_code = output
-            .status
-            .code()
-            .ok_or(CommandRunError::MissingStatusCode)?;
-
-        Ok(CommandOutput {
-            status_code,
-            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        })
+        command_output_from_process_output(output)
     }
+}
+
+fn command_output_from_process_output(
+    output: std::process::Output,
+) -> Result<CommandOutput, CommandRunError> {
+    let status_code = output
+        .status
+        .code()
+        .ok_or(CommandRunError::MissingStatusCode)?;
+
+    Ok(CommandOutput {
+        status_code,
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
 }
 
 fn run_inherit_stdio(mut process: Command) -> Result<CommandOutput, CommandRunError> {
@@ -162,5 +155,35 @@ mod tests {
         let output = runner.run(&CommandSpec::new("true", [])).unwrap();
 
         assert_eq!(output.status_code, 0);
+    }
+
+    #[test]
+    fn timed_out_command_is_terminated() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-timeout-kill-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let marker = root.join("marker");
+        let script = format!("sleep 0.2; touch '{}'", marker.display());
+        let mut runner = ProcessCommandRunner;
+        let command =
+            CommandSpec::new("sh", ["-c", script.as_str()]).with_timeout(Duration::from_millis(25));
+
+        let error = runner.run(&command).unwrap_err();
+        std::thread::sleep(Duration::from_millis(350));
+
+        assert!(matches!(error, CommandRunError::TimedOut { .. }));
+        assert!(
+            !marker.exists(),
+            "timed-out child continued running and created {}",
+            marker.display()
+        );
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }
