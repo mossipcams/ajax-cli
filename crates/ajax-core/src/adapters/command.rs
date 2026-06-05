@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fmt, path::PathBuf};
+use std::{error::Error, fmt, path::PathBuf, time::Duration};
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct CommandSpec {
@@ -7,6 +7,8 @@ pub struct CommandSpec {
     pub args: Vec<String>,
     pub cwd: Option<PathBuf>,
     pub mode: CommandMode,
+    #[serde(skip)]
+    pub timeout: Option<Duration>,
 }
 
 impl CommandSpec {
@@ -16,7 +18,13 @@ impl CommandSpec {
             args: args.into_iter().map(str::to_string).collect(),
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
     }
 
     pub fn with_cwd(mut self, cwd: impl Into<PathBuf>) -> Self {
@@ -50,6 +58,10 @@ pub struct CommandOutput {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandRunError {
     SpawnFailed(String),
+    TimedOut {
+        program: String,
+        timeout: Duration,
+    },
     MissingStatusCode,
     NonZeroExit {
         program: String,
@@ -63,6 +75,11 @@ impl fmt::Display for CommandRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SpawnFailed(message) => write!(formatter, "failed to start command: {message}"),
+            Self::TimedOut { program, timeout } => write!(
+                formatter,
+                "{program} timed out after {}s",
+                timeout.as_secs()
+            ),
             Self::MissingStatusCode => write!(formatter, "command exited without a status code"),
             Self::NonZeroExit {
                 program,
@@ -101,6 +118,32 @@ impl CommandRunner for RecordingCommandRunner {
     fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
         self.commands.push(command.clone());
 
+        Ok(CommandOutput {
+            status_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
+}
+
+/// Test helper that records every command spec it receives.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct CountingCommandRunner {
+    pub commands: Vec<CommandSpec>,
+}
+
+impl CountingCommandRunner {
+    pub fn count_matching(&self, predicate: impl Fn(&CommandSpec) -> bool) -> usize {
+        self.commands
+            .iter()
+            .filter(|command| predicate(command))
+            .count()
+    }
+}
+
+impl CommandRunner for CountingCommandRunner {
+    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        self.commands.push(command.clone());
         Ok(CommandOutput {
             status_code: 0,
             stdout: String::new(),

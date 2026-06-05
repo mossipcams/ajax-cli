@@ -447,18 +447,65 @@ pub fn plan_drop_from_observation_for_task(
         .collect()
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RepoDropObservationCache {
+    pub worktrees_output: Option<String>,
+    pub branches_output: Option<String>,
+}
+
 pub fn observe_drop_resources<R: Registry>(
     context: &mut CommandContext<R>,
     task: &Task,
     runner: &mut impl CommandRunner,
 ) -> Result<DropObservation, CommandError> {
+    observe_drop_resources_with_cache(
+        context,
+        task,
+        runner,
+        None,
+        &mut RepoDropObservationCache::default(),
+    )
+}
+
+pub fn observe_drop_resources_with_cache<R: Registry>(
+    context: &mut CommandContext<R>,
+    task: &Task,
+    runner: &mut impl CommandRunner,
+    shared_sessions_output: Option<&str>,
+    repo_cache: &mut RepoDropObservationCache,
+) -> Result<DropObservation, CommandError> {
     let repo_path = task_repo_path(context, task)
         .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
-    let tmux_output = run_observation_command(runner, &tmux.list_sessions())?;
-    let worktrees_output = run_observation_command(runner, &git.list_worktrees(&repo_path))?;
-    let branches_output = run_observation_command(runner, &git.list_branches(&repo_path))?;
+    let tmux_output = match shared_sessions_output {
+        Some(output) => ObservationOutput::Output(output.to_string()),
+        None => run_observation_command(runner, &tmux.list_sessions())?,
+    };
+    if repo_cache.worktrees_output.is_none() {
+        repo_cache.worktrees_output =
+            match run_observation_command(runner, &git.list_worktrees(&repo_path))? {
+                ObservationOutput::Output(output) => Some(output),
+                ObservationOutput::Unsupported | ObservationOutput::Unknown => None,
+            };
+    }
+    if repo_cache.branches_output.is_none() {
+        repo_cache.branches_output =
+            match run_observation_command(runner, &git.list_branches(&repo_path))? {
+                ObservationOutput::Output(output) => Some(output),
+                ObservationOutput::Unsupported | ObservationOutput::Unknown => None,
+            };
+    }
+    let worktrees_output = repo_cache
+        .worktrees_output
+        .as_ref()
+        .map(|output| ObservationOutput::Output(output.clone()))
+        .unwrap_or(ObservationOutput::Unknown);
+    let branches_output = repo_cache
+        .branches_output
+        .as_ref()
+        .map(|output| ObservationOutput::Output(output.clone()))
+        .unwrap_or(ObservationOutput::Unknown);
 
     let tmux_session = match tmux_output {
         ObservationOutput::Output(ref output) => {

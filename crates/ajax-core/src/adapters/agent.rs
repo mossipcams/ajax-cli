@@ -36,6 +36,7 @@ impl AgentAdapter {
             args,
             cwd: None,
             mode: super::command::CommandMode::Capture,
+            timeout: None,
         }
     }
 }

@@ -38,7 +38,7 @@ pub(crate) fn render_task_command<R: CommandRunner>(
             state_changed |= changed;
         }
     }
-    let mut plan =
+    let plan =
         plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
@@ -46,21 +46,6 @@ pub(crate) fn render_task_command<R: CommandRunner>(
             state_changed,
         });
     }
-    if kind == TaskCommandKind::Ship
-        && plan.blocked_reasons.is_empty()
-        && (!plan.requires_confirmation || confirmed)
-        && context
-            .registry
-            .list_tasks()
-            .into_iter()
-            .find(|candidate| candidate.qualified_handle() == task)
-            .is_some_and(|candidate| candidate.git_status.is_some())
-    {
-        let _refresh_attempted = commands::refresh_git_evidence(context, task, runner, false);
-        plan =
-            plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
-    }
-
     let (outputs, operation_state_changed) = execute_task_command_operation(
         context, kind, task, &plan, confirmed, runner,
     )

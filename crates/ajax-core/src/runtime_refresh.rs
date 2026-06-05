@@ -85,6 +85,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
         .map(|task| (task.repo.clone(), task.handle.clone()))
         .collect::<BTreeSet<_>>();
+    let registered_sessions = tasks
+        .iter()
+        .filter(|task| task.lifecycle_status != LifecycleStatus::Removed)
+        .map(|task| task.tmux_session.clone())
+        .collect::<BTreeSet<_>>();
     let probe_task_ids: Vec<TaskId> = tasks
         .iter()
         .filter(|task| should_probe_live_substrate(task))
@@ -126,7 +131,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         .collect();
     let should_discover_orphans = task_snapshots.iter().any(should_probe_live_substrate);
     let should_scan_orphans = should_scan_for_orphan_worktrees(&task_snapshots)
-        || unregistered_ajax_sessions_in_tmux(&sessions_output, &registered_task_handles);
+        || unregistered_ajax_sessions_in_tmux(&sessions_output, &registered_sessions);
     let should_run_orphan_discovery =
         should_discover_orphans && (tier == RefreshTier::Full || should_scan_orphans);
     let windows_output = if task_snapshots
@@ -378,24 +383,12 @@ fn should_scan_for_orphan_worktrees(task_snapshots: &[Task]) -> bool {
 
 fn unregistered_ajax_sessions_in_tmux(
     sessions_output: &str,
-    registered_handles: &BTreeSet<(String, String)>,
+    registered_sessions: &BTreeSet<String>,
 ) -> bool {
     sessions_output.lines().any(|line| {
         let session = line.trim();
-        let Some((repo, handle)) = parse_ajax_session_name(session) else {
-            return false;
-        };
-        !registered_handles.contains(&(repo, handle))
+        session.starts_with("ajax-") && !registered_sessions.contains(session)
     })
-}
-
-fn parse_ajax_session_name(session: &str) -> Option<(String, String)> {
-    let rest = session.strip_prefix("ajax-")?;
-    let (repo, handle) = rest.split_once('-')?;
-    if repo.is_empty() || handle.is_empty() {
-        return None;
-    }
-    Some((repo.to_string(), handle.to_string()))
 }
 
 fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
@@ -1413,6 +1406,156 @@ mod tests {
             .registry
             .get_task(&TaskId::new("web/fix-login"))
             .is_some());
+    }
+
+    fn context_with_many_active_tasks(count: usize) -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![
+                ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH),
+                ManagedRepo::new("api", "/Users/matt/projects/api", BASE_BRANCH),
+            ],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        for index in 0..count {
+            let repo = if index % 2 == 0 { REPO_NAME } else { "api" };
+            let handle = format!("task-{index}");
+            let branch = format!("ajax/{handle}");
+            let session = format!("ajax-{repo}-{handle}");
+            let worktree = format!("/tmp/worktrees/{repo}-{handle}");
+            let mut task = Task::new(
+                TaskId::new(format!("{repo}/{handle}")),
+                repo,
+                &handle,
+                format!("Task {index}"),
+                &branch,
+                BASE_BRANCH,
+                &worktree,
+                &session,
+                TASK_WINDOW,
+                AgentClient::Codex,
+            );
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.git_status = Some(clean_git_status());
+            task.tmux_status = Some(TmuxStatus::present(&session));
+            task.worktrunk_status = Some(WorktrunkStatus::present(TASK_WINDOW, &worktree));
+            registry.create_task(task).unwrap();
+        }
+        CommandContext::new(config, registry)
+    }
+
+    #[test]
+    fn live_refresh_many_active_tasks_use_bounded_tmux_commands() {
+        let mut context = context_with_many_active_tasks(24);
+        let mut runner = GitSkippingRunner::default();
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string(); 24],
+        };
+
+        refresh_runtime_context_with_agent_status_cache_and_tier(
+            &mut context,
+            &mut runner,
+            &cache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        let list_sessions = runner
+            .commands
+            .iter()
+            .filter(|command| command.args.first().map(String::as_str) == Some("list-sessions"))
+            .count();
+        let list_all_windows = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                command.args.first().map(String::as_str) == Some("list-windows")
+                    && command.args.contains(&"-a".to_string())
+            })
+            .count();
+
+        assert_eq!(list_sessions, 1);
+        assert!(list_all_windows <= 1);
+    }
+
+    #[test]
+    fn hyphenated_repo_registered_session_does_not_trigger_orphan_recovery() {
+        let config = Config {
+            repos: vec![ManagedRepo::new("api-v2", "/repo/api-v2", BASE_BRANCH)],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("api-v2/fix-login"),
+            "api-v2",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            BASE_BRANCH,
+            "/repo/api-v2__worktrees/ajax-fix-login",
+            "ajax-api-v2-fix-login",
+            TASK_WINDOW,
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.git_status = Some(clean_git_status());
+        task.runtime_projection = RuntimeProjection::new(
+            RuntimeHealth::Healthy,
+            SystemTime::now(),
+            RuntimeObservationSource::TmuxProbe,
+        );
+        registry.create_task(task).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = OrphanRecoveryRunner {
+            sessions_output: Some("ajax-api-v2-fix-login\n".to_string()),
+            ..Default::default()
+        };
+
+        refresh_runtime_context_with_tier(
+            &mut context,
+            &mut runner,
+            &NoAgentStatusCache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        assert_eq!(context.registry.list_tasks().len(), 1);
+        assert!(
+            !runner
+                .commands
+                .iter()
+                .any(|command| git_worktree_list(&command.args)),
+            "registered hyphenated sessions must not trigger orphan git discovery"
+        );
+    }
+
+    #[test]
+    fn exact_registered_session_names_gate_orphan_recovery() {
+        let base = context_with_unchanged_running_task();
+        let mut context = CommandContext::new(base.config, base.registry);
+        let mut runner = OrphanRecoveryRunner {
+            sessions_output: Some("ajax-web-fix-login\najax-web-a\n".to_string()),
+            ..Default::default()
+        };
+
+        let changed = refresh_runtime_context_with_tier(
+            &mut context,
+            &mut runner,
+            &NoAgentStatusCache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert!(context.registry.get_task(&TaskId::new("web/a")).is_some());
+        assert_eq!(
+            context
+                .registry
+                .get_task(&TaskId::new(TASK_ID))
+                .expect("registered session should remain")
+                .tmux_session,
+            TASK_SESSION
+        );
     }
 
     #[test]

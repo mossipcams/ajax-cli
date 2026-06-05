@@ -1,10 +1,13 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
-    registry::{InMemoryRegistry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore},
+    models::{LifecycleStatus, Task, TaskId},
+    registry::{
+        InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
+    },
 };
 use clap::ArgMatches;
-use std::path::PathBuf;
+use std::{collections::BTreeSet, path::PathBuf, time::SystemTime};
 
 use crate::CliError;
 
@@ -239,31 +242,175 @@ fn reject_legacy_json_state(path: &std::path::Path) -> Result<(), CliError> {
     Ok(())
 }
 
-pub(crate) fn save_context(
+#[derive(Clone)]
+pub(crate) struct TrackedContext {
+    pub context: CommandContext<InMemoryRegistry>,
+    pub save_state: ContextSaveState,
+}
+
+pub(crate) fn load_tracked_context(paths: &CliContextPaths) -> Result<TrackedContext, CliError> {
+    let context = load_context(paths)?;
+    Ok(TrackedContext {
+        save_state: context_save_state_from_registry(&context.registry, state_file_mtime(paths)),
+        context,
+    })
+}
+
+pub(crate) fn save_tracked_context(
+    paths: &CliContextPaths,
+    tracked: &mut TrackedContext,
+) -> Result<(), CliError> {
+    save_context_with_state(paths, &tracked.context, &mut tracked.save_state)
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ContextSaveState {
+    pub loaded_mtime: Option<SystemTime>,
+    pub loaded_task_ids: BTreeSet<TaskId>,
+}
+
+pub(crate) fn state_file_mtime(paths: &CliContextPaths) -> Option<SystemTime> {
+    if !paths.state_file.exists() {
+        return None;
+    }
+    std::fs::metadata(&paths.state_file)
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+}
+
+pub(crate) fn save_context_with_state(
     paths: &CliContextPaths,
     context: &CommandContext<InMemoryRegistry>,
+    save_state: &mut ContextSaveState,
 ) -> Result<(), CliError> {
     if let Some(parent) = paths.state_file.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| CliError::ContextSave(error.to_string()))?;
     }
+
+    let disk_mtime = state_file_mtime(paths);
+    let registry = if matches!(
+        (disk_mtime, save_state.loaded_mtime),
+        (Some(disk), Some(loaded)) if disk > loaded
+    ) {
+        let disk_context = load_context(paths)?;
+        save_state.loaded_mtime = disk_mtime;
+        merge_registries(
+            disk_context.registry,
+            &context.registry,
+            &save_state.loaded_task_ids,
+        )?
+    } else {
+        context.registry.clone()
+    };
+
     SqliteRegistryStore::new(&paths.state_file)
-        .save(&context.registry)
-        .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))
+        .save(&registry)
+        .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))?;
+    save_state.loaded_mtime = state_file_mtime(paths);
+    Ok(())
+}
+
+pub(crate) fn context_save_state_from_registry(
+    registry: &InMemoryRegistry,
+    loaded_mtime: Option<SystemTime>,
+) -> ContextSaveState {
+    ContextSaveState {
+        loaded_mtime,
+        loaded_task_ids: registry
+            .list_tasks()
+            .into_iter()
+            .map(|task| task.id.clone())
+            .collect(),
+    }
+}
+
+fn merge_registries(
+    disk: InMemoryRegistry,
+    in_memory: &InMemoryRegistry,
+    loaded_task_ids: &BTreeSet<TaskId>,
+) -> Result<InMemoryRegistry, CliError> {
+    let mut merged = in_memory.clone();
+    for disk_task in disk.list_tasks() {
+        if in_memory.get_task(&disk_task.id).is_some() {
+            if tasks_conflict(
+                in_memory
+                    .get_task(&disk_task.id)
+                    .expect("task should exist"),
+                disk_task,
+            ) {
+                return Err(CliError::ContextSave(format!(
+                    "state conflict for {}: disk and in-memory lifecycle diverged",
+                    disk_task.qualified_handle()
+                )));
+            }
+            continue;
+        }
+        if !loaded_task_ids.contains(&disk_task.id) {
+            merged
+                .create_task(disk_task.clone())
+                .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+        }
+    }
+
+    for event in in_memory.list_events() {
+        if merged
+            .events_for_task(&event.task_id)
+            .iter()
+            .any(|existing| existing.message == event.message && existing.kind == event.kind)
+        {
+            continue;
+        }
+        merged
+            .record_event(event.task_id.clone(), event.kind, &event.message)
+            .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+    }
+
+    Ok(merged)
+}
+
+fn tasks_conflict(disk: &Task, memory: &Task) -> bool {
+    if disk.lifecycle_status == memory.lifecycle_status {
+        return false;
+    }
+    if disk.lifecycle_status == LifecycleStatus::Removed
+        || memory.lifecycle_status == LifecycleStatus::Removed
+    {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{context_paths_from_matches_and_env, load_context, CliContextPaths, RuntimeEnv};
+    use super::{
+        context_paths_from_matches_and_env, load_context, load_tracked_context,
+        save_tracked_context, CliContextPaths, RuntimeEnv,
+    };
     use crate::build_cli;
     use ajax_core::{
         config::{RuntimePathRequest, WorktreePlacement},
-        models::{AgentClient, Task, TaskId},
+        models::{AgentClient, LifecycleStatus, Task, TaskId},
         registry::{
             InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
         },
     };
-    use std::path::Path;
+    use std::{path::Path, thread, time::Duration};
+
+    fn sample_task(id: &str, handle: &str, title: &str) -> Task {
+        Task::new(
+            TaskId::new(id),
+            "web",
+            handle,
+            title,
+            format!("ajax/{handle}"),
+            "main",
+            format!("/tmp/worktrees/web-{handle}"),
+            format!("ajax-web-{handle}"),
+            "worktrunk",
+            AgentClient::Codex,
+        )
+    }
 
     #[test]
     fn context_load_uses_store_loader_without_event_mode() {
@@ -403,5 +550,98 @@ mod tests {
             paths.runtime_paths.worktree_placement,
             WorktreePlacement::Root(Path::new("/tmp/worktrees").to_path_buf())
         );
+    }
+
+    #[test]
+    fn save_context_merges_web_companion_task_additions() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-merge-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        baseline
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("native task")
+            .title = "Updated by native".to_string();
+
+        let mut web_registry = baseline.clone();
+        web_registry
+            .create_task(sample_task("web/fix-sidebar", "fix-sidebar", "Fix sidebar"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&web_registry)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        save_tracked_context(&paths, &mut tracked).expect("merge save");
+        let reloaded = load_context(&paths).expect("reload");
+
+        assert_eq!(reloaded.registry.list_tasks().len(), 2);
+        assert_eq!(
+            reloaded
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .expect("native task")
+                .title,
+            "Updated by native"
+        );
+        assert!(reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-sidebar"))
+            .is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_surfaces_conflict_when_same_task_diverges() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-conflict-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        let mut native_task = sample_task("web/fix-login", "fix-login", "Fix login");
+        native_task.lifecycle_status = LifecycleStatus::Reviewable;
+        baseline.create_task(native_task).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        let mut web_registry = baseline.clone();
+        let web_task = web_registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("web task");
+        web_task.lifecycle_status = LifecycleStatus::Merged;
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&web_registry)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        let error = save_tracked_context(&paths, &mut tracked).unwrap_err();
+        assert!(error.to_string().contains("state conflict"));
+        assert!(error.to_string().contains("web/fix-login"));
+
+        let _ = std::fs::remove_dir_all(root);
     }
 }

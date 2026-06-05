@@ -7,7 +7,8 @@ pub mod tmux;
 
 pub use agent::{AgentAdapter, AgentLaunch};
 pub use command::{
-    CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
+    CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, CountingCommandRunner,
+    RecordingCommandRunner,
 };
 pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
 pub use git::GitAdapter;
@@ -126,6 +127,7 @@ mod tests {
         assert_eq!(
             adapter.list_sessions(),
             CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8))
         );
         assert_eq!(
             adapter.list_windows("ajax-web-fix-login"),
@@ -151,6 +153,7 @@ mod tests {
                     "#{session_name}\t#{window_name}\t#{pane_current_path}"
                 ]
             )
+            .with_timeout(std::time::Duration::from_secs(8))
         );
         assert_eq!(
             adapter.capture_pane("ajax-web-fix-login", "worktrunk"),
@@ -165,6 +168,7 @@ mod tests {
                     "-80"
                 ]
             )
+            .with_timeout(std::time::Duration::from_secs(8))
         );
     }
 

@@ -53,6 +53,7 @@ struct WebSharedState<C, B> {
     pane_inputs: crate::slices::pane::PaneInputState,
     runner: C,
     bridge: B,
+    revision: u64,
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -79,6 +80,7 @@ impl<C, B> WebAppState<C, B> {
                 pane_inputs: crate::slices::pane::PaneInputState::default(),
                 runner,
                 bridge,
+                revision: 0,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             state_dir: Arc::new(state_dir),
@@ -95,8 +97,8 @@ struct OperationCoordinator {
 
 pub fn axum_app<C, B>(state: WebAppState<C, B>) -> Router
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     Router::new()
         .route("/", get(axum_pwa_shell))
@@ -124,8 +126,8 @@ where
 
 pub fn serve_axum_web<C, B>(host: &str, port: u16, state: WebAppState<C, B>) -> Result<(), WebError>
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let identity = tls::load_or_create_identity(&state.state_dir)?;
     let address = resolve_bind_address(host, port)?;
@@ -245,23 +247,47 @@ fn handle_server_restart() -> Response {
 
 async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        runner,
-        bridge,
-        ..
-    } = &mut *guard;
-    match handle_refreshed_cockpit_request(context, runner, bridge) {
+    let mut refresh_session = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        CockpitRefreshSession {
+            context: guard.context.clone(),
+            runner: guard.runner.clone(),
+            bridge: guard.bridge.clone(),
+            revision: guard.revision,
+        }
+    };
+    let result = handle_refreshed_cockpit_request(
+        &mut refresh_session.context,
+        &mut refresh_session.runner,
+        &mut refresh_session.bridge,
+    );
+    {
+        let mut guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.revision == refresh_session.revision {
+            guard.context = refresh_session.context;
+            guard.bridge = refresh_session.bridge;
+        }
+    }
+    match result {
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
     }
+}
+
+struct CockpitRefreshSession<C, B> {
+    context: CommandContext<InMemoryRegistry>,
+    runner: C,
+    bridge: B,
+    revision: u64,
 }
 
 async fn axum_task_detail<C, B>(
@@ -296,39 +322,84 @@ async fn axum_task_pane<C, B>(
     Query(query): Query<PaneQuery>,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Send + 'static,
 {
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        pane_sequences,
-        runner,
-        ..
-    } = &mut *guard;
-    match crate::slices::pane::browser_task_pane_view(
-        context,
-        runner,
-        pane_sequences,
-        &handle,
-        query.since,
-    ) {
-        Ok(pane) => json_value_response(200, serde_json::to_value(pane).unwrap_or_default()),
-        Err(crate::slices::pane::PaneRouteError::TaskNotFound) => json_value_response(
-            404,
-            serde_json::json!({ "ok": false, "error": "task not found" }),
-        ),
-        Err(crate::slices::pane::PaneRouteError::SessionMissing) => json_value_response(
-            409,
-            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
-        ),
-        Err(crate::slices::pane::PaneRouteError::Command(message)) => {
-            json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
+    let prepared = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        crate::slices::pane::prepare_browser_task_pane_view(
+            &guard.context,
+            &guard.pane_sequences,
+            &handle,
+            query.since,
+        )
+    };
+
+    let prepared = match prepared {
+        Ok(outcome) => outcome,
+        Err(crate::slices::pane::PaneRouteError::TaskNotFound) => {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "task not found" }),
+            );
         }
-    }
+        Err(crate::slices::pane::PaneRouteError::SessionMissing) => {
+            return json_value_response(
+                409,
+                serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+            );
+        }
+        Err(crate::slices::pane::PaneRouteError::Command(message)) => {
+            return json_value_response(500, serde_json::json!({ "ok": false, "error": message }));
+        }
+    };
+
+    let pane = match prepared {
+        crate::slices::pane::PanePrepareOutcome::Ready(snapshot) => snapshot,
+        crate::slices::pane::PanePrepareOutcome::Capture(work) => {
+            let mut runner = {
+                let guard = state
+                    .shared
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                guard.runner.clone()
+            };
+            let snapshot = match crate::slices::pane::capture_browser_task_pane(&mut runner, &work)
+            {
+                Ok(snapshot) => snapshot,
+                Err(crate::slices::pane::PaneRouteError::SessionMissing) => {
+                    return json_value_response(
+                        409,
+                        serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+                    );
+                }
+                Err(crate::slices::pane::PaneRouteError::Command(message)) => {
+                    return json_value_response(
+                        500,
+                        serde_json::json!({ "ok": false, "error": message }),
+                    );
+                }
+                Err(crate::slices::pane::PaneRouteError::TaskNotFound) => {
+                    unreachable!("pane capture work is only prepared for existing tasks")
+                }
+            };
+            let mut guard = state
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            crate::slices::pane::commit_browser_task_pane_view(
+                &mut guard.pane_sequences,
+                &handle,
+                query.since,
+                snapshot,
+            )
+        }
+    };
+
+    json_value_response(200, serde_json::to_value(pane).unwrap_or_default())
 }
 
 async fn axum_task_get<C, B>(
@@ -337,7 +408,7 @@ async fn axum_task_get<C, B>(
     Query(query): Query<PaneQuery>,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Send + 'static,
 {
     if let Some(task_handle) = handle.strip_suffix("/pane") {
@@ -462,9 +533,10 @@ where
         context,
         runner,
         bridge,
+        revision,
         ..
     } = &mut *guard;
-    match handle_start_task_request(
+    let response = match handle_start_task_request(
         &serde_json::to_string(&request).unwrap_or_default(),
         context,
         runner,
@@ -472,7 +544,9 @@ where
     ) {
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
-    }
+    };
+    *revision = revision.saturating_add(1);
+    response
 }
 
 async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
@@ -537,6 +611,7 @@ where
         context,
         runner,
         bridge,
+        revision,
         ..
     } = &mut *guard;
     let response = match handle_action_request(
@@ -548,6 +623,7 @@ where
         Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
         Err(error) => response_from_web_error(error, request_id.as_deref()),
     };
+    *revision = revision.saturating_add(1);
     drop(guard);
 
     let mut operations = state
@@ -854,7 +930,7 @@ fn handle_refreshed_cockpit_request<C: CommandRunner>(
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
-    let _state_changed = bridge.refresh_cockpit(context, runner, RefreshTier::Full)?;
+    let _state_changed = bridge.refresh_cockpit(context, runner, RefreshTier::Live)?;
     json_response(
         200,
         serde_json::to_value(cockpit::browser_cockpit_view(context))
@@ -967,11 +1043,14 @@ mod tests {
     use std::time::Duration;
     use tower::ServiceExt;
 
+    #[derive(Clone)]
     struct TestBridge {
         refreshed: bool,
+        refresh_tier: Option<RefreshTier>,
         operate: Option<OperateRequest>,
         operate_count: usize,
         operate_delay: Duration,
+        refresh_delay: Duration,
         operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
         start_result: Result<OperateOutcome, ActionFailure>,
@@ -981,9 +1060,11 @@ mod tests {
         fn default() -> Self {
             Self {
                 refreshed: false,
+                refresh_tier: None,
                 operate: None,
                 operate_count: 0,
                 operate_delay: Duration::ZERO,
+                refresh_delay: Duration::ZERO,
                 operate_result: Ok(OperateOutcome {
                     state_changed: true,
                     output: String::new(),
@@ -997,15 +1078,29 @@ mod tests {
         }
     }
 
+    fn refresh_cockpit_with_optional_delay<C: CommandRunner>(
+        bridge: &mut TestBridge,
+        context: &mut CommandContext<InMemoryRegistry>,
+        _runner: &mut C,
+        tier: RefreshTier,
+    ) -> Result<bool, crate::WebError> {
+        if bridge.refresh_delay > Duration::ZERO {
+            std::thread::sleep(bridge.refresh_delay);
+        }
+        bridge.refreshed = true;
+        bridge.refresh_tier = Some(tier);
+        let _ = context;
+        Ok(false)
+    }
+
     impl RuntimeBridge<OkRunner> for TestBridge {
         fn refresh_cockpit(
             &mut self,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut OkRunner,
-            _tier: RefreshTier,
+            context: &mut CommandContext<InMemoryRegistry>,
+            runner: &mut OkRunner,
+            tier: RefreshTier,
         ) -> Result<bool, crate::WebError> {
-            self.refreshed = true;
-            Ok(false)
+            refresh_cockpit_with_optional_delay(self, context, runner, tier)
         }
 
         fn execute_operate(
@@ -1025,6 +1120,39 @@ mod tests {
             request: crate::slices::operate::StartTaskRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.start = Some(request);
+            self.start_result.clone()
+        }
+    }
+
+    impl RuntimeBridge<SlowPaneRunner> for TestBridge {
+        fn refresh_cockpit(
+            &mut self,
+            context: &mut CommandContext<InMemoryRegistry>,
+            runner: &mut SlowPaneRunner,
+            tier: RefreshTier,
+        ) -> Result<bool, crate::WebError> {
+            refresh_cockpit_with_optional_delay(self, context, runner, tier)
+        }
+
+        fn execute_operate(
+            &mut self,
+            request: OperateRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut SlowPaneRunner,
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.operate_count += 1;
+            std::thread::sleep(self.operate_delay);
+            self.operate = Some(request);
+            self.operate_result.clone()
+        }
+
+        fn execute_start_task(
+            &mut self,
+            request: crate::slices::operate::StartTaskRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut SlowPaneRunner,
         ) -> Result<OperateOutcome, ActionFailure> {
             self.start = Some(request);
             self.start_result.clone()
@@ -1034,12 +1162,11 @@ mod tests {
     impl RuntimeBridge<PaneRunner> for TestBridge {
         fn refresh_cockpit(
             &mut self,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut PaneRunner,
-            _tier: RefreshTier,
+            context: &mut CommandContext<InMemoryRegistry>,
+            runner: &mut PaneRunner,
+            tier: RefreshTier,
         ) -> Result<bool, crate::WebError> {
-            self.refreshed = true;
-            Ok(false)
+            refresh_cockpit_with_optional_delay(self, context, runner, tier)
         }
 
         fn execute_operate(
@@ -1065,8 +1192,36 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Default)]
     struct OkRunner;
 
+    #[derive(Clone)]
+    struct SlowPaneRunner {
+        delay: Duration,
+    }
+
+    impl Default for SlowPaneRunner {
+        fn default() -> Self {
+            Self {
+                delay: Duration::from_millis(400),
+            }
+        }
+    }
+
+    impl CommandRunner for SlowPaneRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if command.args.first().map(String::as_str) == Some("capture-pane") {
+                std::thread::sleep(self.delay);
+            }
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: "agent running\n".to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[derive(Clone)]
     struct PaneRunner {
         response: Result<CommandOutput, CommandRunError>,
         run_count: usize,
@@ -1087,6 +1242,35 @@ mod tests {
             self.run_count += 1;
             self.response.clone()
         }
+    }
+
+    fn context_with_task() -> CommandContext<InMemoryRegistry> {
+        use ajax_core::{
+            config::ManagedRepo,
+            models::{AgentClient, Task, TaskId},
+            registry::Registry as _,
+        };
+
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(Task::new(
+                TaskId::new("web/fix-login"),
+                "web",
+                "fix-login",
+                "Fix login",
+                "ajax/fix-login",
+                "main",
+                "/repo/web__worktrees/ajax-fix-login",
+                "ajax-web-fix-login",
+                "worktrunk",
+                AgentClient::Codex,
+            ))
+            .unwrap();
+        CommandContext::new(config, registry)
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
@@ -1344,6 +1528,197 @@ mod tests {
         assert_eq!(guard.bridge.operate_count, 1);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_health_stays_responsive_during_slow_cockpit_refresh() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge {
+                refresh_delay: Duration::from_millis(400),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-health-cockpit"),
+        );
+        let app = super::axum_app(state);
+
+        let slow_app = app.clone();
+        let cockpit = tokio::spawn(async move {
+            slow_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/cockpit")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+
+        let health_started = std::time::Instant::now();
+        let health = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let health_elapsed = health_started.elapsed();
+
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while cockpit refresh was in flight"
+        );
+        assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_cockpit_refresh_does_not_overwrite_concurrent_operation_state() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge {
+                refresh_delay: Duration::from_millis(250),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-refresh-operation-race"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let refresh_app = app.clone();
+        let cockpit = tokio::spawn(async move {
+            refresh_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/cockpit")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+
+        let operation = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"req-race","task_handle":"web/fix-login","action":"review"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(operation.status(), StatusCode::OK);
+        assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.operate_count, 1);
+        assert_eq!(
+            guard
+                .bridge
+                .operate
+                .as_ref()
+                .map(|request| request.action.as_str()),
+            Some("review")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_health_stays_responsive_during_slow_pane_capture() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            SlowPaneRunner::default(),
+            TestBridge::default(),
+            scratch_dir("axum-health-pane"),
+        );
+        let app = super::axum_app(state);
+
+        let slow_app = app.clone();
+        let pane = tokio::spawn(async move {
+            slow_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/tasks/web/fix-login/pane")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+
+        let health_started = std::time::Instant::now();
+        let health = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let health_elapsed = health_started.elapsed();
+
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while pane capture was in flight"
+        );
+        assert_eq!(pane.await.unwrap().status(), StatusCode::OK);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn axum_task_detail_stays_responsive_during_slow_pane_capture() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            SlowPaneRunner::default(),
+            TestBridge::default(),
+            scratch_dir("axum-detail-pane"),
+        );
+        let app = super::axum_app(state);
+
+        let slow_app = app.clone();
+        let pane = tokio::spawn(async move {
+            slow_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/tasks/web/fix-login/pane")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+
+        let detail_started = std::time::Instant::now();
+        let detail = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/tasks/web/fix-login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let detail_elapsed = detail_started.elapsed();
+
+        assert_eq!(detail.status(), StatusCode::OK);
+        assert!(
+            detail_elapsed < Duration::from_millis(150),
+            "task detail took {detail_elapsed:?} while pane capture was in flight"
+        );
+        assert_eq!(pane.await.unwrap().status(), StatusCode::OK);
+    }
+
     #[test]
     fn production_server_uses_axum_instead_of_manual_http_loop() {
         let source = std::fs::read_to_string(
@@ -1421,6 +1796,7 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert!(bridge.refreshed);
+        assert_eq!(bridge.refresh_tier, Some(RefreshTier::Live));
         std::fs::remove_dir_all(&dir).ok();
     }
 

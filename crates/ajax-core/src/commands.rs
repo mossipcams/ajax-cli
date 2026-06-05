@@ -30,8 +30,9 @@ pub use teardown::{
     format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
     mark_drop_agent_stopped, mark_task_cleanup_step_completed, mark_task_force_removed,
     mark_task_removed, mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
-    plan_drop_from_observation, plan_drop_from_observation_for_task, remove_task_plan,
-    sweep_cleanup_candidates, sweep_cleanup_plan, DropObservation, DropOp, ResourceState,
+    observe_drop_resources_with_cache, plan_drop_from_observation,
+    plan_drop_from_observation_for_task, remove_task_plan, sweep_cleanup_candidates,
+    sweep_cleanup_plan, DropObservation, DropOp, RepoDropObservationCache, ResourceState,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
@@ -3403,7 +3404,8 @@ mod tests {
         assert_eq!(
             runner.commands,
             vec![
-                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+                CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                    .with_timeout(std::time::Duration::from_secs(8)),
                 CommandSpec::new(
                     "git",
                     [

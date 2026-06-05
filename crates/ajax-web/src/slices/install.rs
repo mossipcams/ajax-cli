@@ -496,6 +496,34 @@ mod tests {
     }
 
     #[test]
+    fn pane_polling_uses_state_aware_intervals() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in [
+            "function paneInterval()",
+            "PANE_INTERVAL_DEFAULT_MS",
+            "PANE_INTERVAL_IDLE_MS",
+            "PANE_INTERVAL_UNCHANGED_MS",
+            "WaitingForApproval",
+            "WaitingForInput",
+            "AgentRunning",
+            "document.hidden",
+            "schedulePaneTick",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+
+        assert!(
+            !script.contains("setTimeout(loadPane, 1000)"),
+            "pane polling must not use a fixed 1000ms loop"
+        );
+        assert!(
+            script.contains("setTimeout(loadPane, paneInterval())"),
+            "pane polling must defer to paneInterval()"
+        );
+    }
+
+    #[test]
     fn dashboard_detail_view_uses_operator_cards_instead_of_pane_log() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 

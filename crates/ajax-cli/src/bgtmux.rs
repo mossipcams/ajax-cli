@@ -119,6 +119,7 @@ pub(crate) fn bgtmux_fixture_commands(session: &str) -> Vec<CommandSpec> {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         },
     ]
 }
