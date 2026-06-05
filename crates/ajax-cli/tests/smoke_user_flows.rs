@@ -791,13 +791,10 @@ fn smoke_new_execute_creates_active_task_environment() {
         log.contains(&format!("git -C {} fetch origin main", repo.display())),
         "fake git log should sync default branch before worktree add:\n{log}"
     );
-    assert!(
-        log.contains(&format!("git -C {} fetch origin main:main", repo.display())),
-        "fake git log should fast-forward local main from origin:\n{log}"
-    );
+    assert!(!log.contains("main:main"));
     assert!(
         log.contains(&format!(
-            "git -C {} worktree add -b ajax/fix-login {} main",
+            "git -C {} worktree add -b ajax/fix-login {} origin/main",
             repo.display(),
             worktree.display()
         )),
@@ -1152,7 +1149,7 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
     let log = sandbox.command_log();
     assert!(log.contains(&format!("git -C {} fetch origin main", repo.display())));
     assert!(log.contains(&format!(
-        "git -C {} worktree add -b ajax/fix-login {} main",
+        "git -C {} worktree add -b ajax/fix-login {} origin/main",
         repo.display(),
         worktree.display()
     )));

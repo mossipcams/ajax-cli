@@ -1961,7 +1961,6 @@ mod tests {
             plan.commands,
             vec![
                 git.fetch_origin_branch("/Users/matt/projects/web", "main"),
-                git.sync_default_branch_from_origin("/Users/matt/projects/web", "main"),
                 CommandSpec::new(
                     "git",
                     [
@@ -1972,7 +1971,7 @@ mod tests {
                         "-b",
                         "ajax/fix-logout",
                         "/Users/matt/projects/web__worktrees/ajax-fix-logout",
-                        "main"
+                        "origin/main"
                     ]
                 ),
                 CommandSpec::new(
@@ -2038,19 +2037,19 @@ mod tests {
         assert_eq!(plan.commands[0].args[1], "/Users/matt/projects/web app");
         assert_eq!(plan.commands[1].args[1], "/Users/matt/projects/web app");
         assert_eq!(
-            plan.commands[2].args[6],
+            plan.commands[1].args[6],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[3].args[3],
+            plan.commands[2].args[3],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            plan.commands[4].args[7],
+            plan.commands[3].args[7],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
         assert_eq!(
-            shell_words(&plan.commands[5].args[3]),
+            shell_words(&plan.commands[4].args[3]),
             vec![
                 "codex",
                 "--cd",

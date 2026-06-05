@@ -189,10 +189,9 @@ and supervised processes.
 Git evidence interpretation lives in `analysis::git_evidence`.
 
 Before provisioning a task worktree, start planning runs `git fetch origin
-<default_branch>` and a fast-forward `git fetch origin <branch>:<branch>` on the
-managed repo root so `git worktree add` branches from a local default branch that
-matches `origin`. Diverged local default branches fail the start operation
-instead of silently basing tasks on stale `main`.
+<default_branch>` on the managed repo root, then `git worktree add` branches from
+`origin/<default_branch>`. This avoids mutating a checked-out or diverged local
+default branch while ensuring new tasks use the fetched remote state.
 
 Managed repos may optionally run a `graphify_update` shell command from the repo
 root during start (for example `graphify extract --update`). Each repo keeps its

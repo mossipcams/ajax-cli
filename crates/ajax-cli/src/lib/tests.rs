@@ -578,19 +578,10 @@ fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
 }
 
 fn expected_sync_default_branch_commands(repo_path: &str, branch: &str) -> Vec<CommandSpec> {
-    vec![
-        CommandSpec::new("git", ["-C", repo_path, "fetch", "origin", branch]),
-        CommandSpec::new(
-            "git",
-            [
-                "-C",
-                repo_path,
-                "fetch",
-                "origin",
-                &format!("{branch}:{branch}"),
-            ],
-        ),
-    ]
+    vec![CommandSpec::new(
+        "git",
+        ["-C", repo_path, "fetch", "origin", branch],
+    )]
 }
 
 fn ajax_binary_path() -> PathBuf {
@@ -3136,7 +3127,7 @@ fn new_command_renders_plan_without_json_panic() {
     .unwrap();
 
     assert!(output.contains("create task: fix logout"));
-    assert!(output.contains("git -C /Users/matt/projects/web worktree add -b ajax/fix-logout /Users/matt/projects/web__worktrees/ajax-fix-logout main"));
+    assert!(output.contains("git -C /Users/matt/projects/web worktree add -b ajax/fix-logout /Users/matt/projects/web__worktrees/ajax-fix-logout origin/main"));
     assert!(output.contains("tmux new-session -d -s ajax-web-fix-logout -n worktrunk -c /Users/matt/projects/web__worktrees/ajax-fix-logout"));
     assert!(output.contains("tmux send-keys -t ajax-web-fix-logout:worktrunk"));
 }
@@ -3441,7 +3432,7 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
@@ -3537,7 +3528,7 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
@@ -3613,7 +3604,6 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
         output(0, ""),
         output(0, ""),
         output(0, ""),
-        output(0, ""),
         CommandOutput {
             status_code: 42,
             stdout: String::new(),
@@ -3665,7 +3655,7 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
@@ -3698,7 +3688,6 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
         InMemoryRegistry::default(),
     );
     let mut runner = QueuedRunner::new(vec![
-        output(0, ""),
         output(0, ""),
         output(0, ""),
         output(0, ""),
@@ -3750,7 +3739,7 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
@@ -3858,7 +3847,7 @@ fn new_execute_allows_reusing_removed_task_handle() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
@@ -6219,7 +6208,7 @@ fn pending_new_task_action_runs_after_title_is_collected() {
                 "-b",
                 "ajax/fix-login",
                 "/Users/matt/projects/api__worktrees/ajax-fix-login",
-                "main",
+                "origin/main",
             ],
         ),
         expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
