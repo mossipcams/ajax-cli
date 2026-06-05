@@ -351,6 +351,26 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     }
 }
 
+fn cached_snapshot_needs_rebuild(
+    context: &CommandContext<InMemoryRegistry>,
+    cached_snapshot: &CockpitSnapshot,
+) -> bool {
+    use std::collections::BTreeSet;
+
+    let view = commands::cockpit_view(context);
+    let visible_handles: BTreeSet<_> = view
+        .cards
+        .iter()
+        .map(|card| card.qualified_handle.as_str())
+        .collect();
+    let cached_handles: BTreeSet<_> = cached_snapshot
+        .cards
+        .iter()
+        .map(|card| card.qualified_handle.as_str())
+        .collect();
+    visible_handles != cached_handles
+}
+
 pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -359,7 +379,10 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
 ) -> Result<CockpitSnapshot, CliError> {
     let changed = refresh_live_context(context, runner)?;
     *state_changed |= changed;
-    if changed || cached_snapshot.is_none() {
+    let cache_stale = cached_snapshot
+        .as_ref()
+        .is_some_and(|snapshot| cached_snapshot_needs_rebuild(context, snapshot));
+    if changed || cached_snapshot.is_none() || cache_stale {
         let snapshot = build_cockpit_snapshot(context);
         *cached_snapshot = Some(snapshot.clone());
         Ok(snapshot)
@@ -478,9 +501,11 @@ mod tests {
             LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, SideFlag,
             Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
+        output::TaskCard,
         registry::{InMemoryRegistry, Registry},
         runtime_refresh::{refresh_runtime_context_with_agent_status_cache, AgentStatusCache},
     };
+    use ajax_tui::CockpitSnapshot;
 
     #[derive(Default)]
     struct LiveRefreshRunner;
@@ -1245,6 +1270,88 @@ mod tests {
         assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
         ));
+    }
+
+    #[test]
+    fn cockpit_snapshot_rebuilds_after_cached_task_is_removed() {
+        let mut context = context_with_active_task();
+        let initial_snapshot = build_cockpit_snapshot(&context);
+        assert_eq!(initial_snapshot.cards.len(), 1);
+        assert_eq!(initial_snapshot.cards[0].qualified_handle, "web/fix-login");
+
+        let mut cached_snapshot = Some(initial_snapshot);
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Removed;
+
+        let mut runner = EmptyTmuxRunner;
+        let mut state_changed = false;
+        let snapshot = refresh_cockpit_snapshot(
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+        )
+        .unwrap();
+
+        assert!(snapshot.cards.is_empty());
+        assert!(cached_snapshot.as_ref().unwrap().cards.is_empty());
+        assert!(snapshot
+            .repos
+            .repos
+            .iter()
+            .all(|repo| repo.active_tasks == 0));
+        assert!(snapshot.inbox.items.is_empty());
+    }
+
+    #[test]
+    fn cockpit_snapshot_reuses_cache_when_visible_tasks_are_unchanged() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .expect("fixture task should exist");
+        task.lifecycle_status = LifecycleStatus::Cleanable;
+        task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: true,
+            window_name: task.worktrunk_window.clone(),
+            current_path: task.worktree_path.clone(),
+            points_at_expected_path: true,
+        });
+        let fresh_snapshot = build_cockpit_snapshot(&context);
+        let mut cached_snapshot = Some(CockpitSnapshot {
+            repos: fresh_snapshot.repos,
+            cards: vec![TaskCard {
+                live_summary: Some("cached-only summary".to_string()),
+                ..fresh_snapshot.cards[0].clone()
+            }],
+            inbox: fresh_snapshot.inbox,
+        });
+        let mut runner = EmptyTmuxRunner;
+        let mut state_changed = false;
+
+        let snapshot = refresh_cockpit_snapshot(
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+        )
+        .unwrap();
+
+        assert!(!state_changed);
+        assert_eq!(
+            snapshot.cards[0].live_summary.as_deref(),
+            Some("cached-only summary")
+        );
+        assert_eq!(
+            cached_snapshot.as_ref().unwrap().cards[0]
+                .live_summary
+                .as_deref(),
+            Some("cached-only summary")
+        );
     }
 
     #[test]
