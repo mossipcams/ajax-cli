@@ -26,11 +26,23 @@ If an approved change alters architecture, update `architecture.md` in the same 
 
 ---
 
+## Graphify
+
+- Use Graphify only for planning and repo navigation.
+- Before editing, inspect the actual files in this worktree.
+- After edits, run tests and update the graph only if the change affects architecture or cross-module flow.
+
+---
+
 ## Workflow
 
 ### Step 1: Plan First
 
 Before changing code or documentation, create a plan.
+
+Do not ask before creating a plan.
+
+Always save the plan in a `.md` file.
 
 Break the work into small tasks, roughly 5–15 minutes each.
 
