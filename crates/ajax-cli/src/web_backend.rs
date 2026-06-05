@@ -21,7 +21,7 @@ use std::time::SystemTime;
 
 use crate::{
     command_error,
-    context::{load_context, save_context},
+    context::{load_context, save_context_with_state, state_file_mtime},
     CliContextPaths, CliError,
 };
 
@@ -111,7 +111,7 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
         use ajax_core::runtime_refresh::refresh_runtime_context_with_agent_status_cache_and_tier;
 
         if let Some(cache) =
-            crate::agent_status_cache::TmuxAgentStatusCache::from_default_location()
+            crate::agent_status_cache::TmuxAgentStatusSnapshot::from_default_location()
         {
             return refresh_runtime_context_with_agent_status_cache_and_tier(
                 context, runner, &cache, tier,
@@ -152,7 +152,15 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             .map_err(web_error_from_cli)?;
         if state_changed {
             if let Some(paths) = self.paths.as_ref() {
-                save_context(paths, context).map_err(web_error_from_cli)?;
+                save_context_with_state(
+                    paths,
+                    context,
+                    &mut crate::context::context_save_state_from_registry(
+                        &context.registry,
+                        self.last_loaded_mtime,
+                    ),
+                )
+                .map_err(web_error_from_cli)?;
                 self.last_loaded_mtime = state_file_mtime(paths);
             }
         }
@@ -205,7 +213,15 @@ impl CliRuntimeBridge {
             Ok(outcome) => {
                 if outcome.state_changed {
                     if let Some(paths) = self.paths.as_ref() {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                        save_context_with_state(
+                            paths,
+                            context,
+                            &mut crate::context::context_save_state_from_registry(
+                                &context.registry,
+                                self.last_loaded_mtime,
+                            ),
+                        )
+                        .map_err(action_failure_from_cli)?;
                         self.last_loaded_mtime = state_file_mtime(paths);
                     }
                 }
@@ -215,7 +231,15 @@ impl CliRuntimeBridge {
                 let state_changed = matches!(error, OperateError::Command(_, true));
                 if state_changed {
                     if let Some(paths) = self.paths.as_ref() {
-                        save_context(paths, context).map_err(action_failure_from_cli)?;
+                        save_context_with_state(
+                            paths,
+                            context,
+                            &mut crate::context::context_save_state_from_registry(
+                                &context.registry,
+                                self.last_loaded_mtime,
+                            ),
+                        )
+                        .map_err(action_failure_from_cli)?;
                         self.last_loaded_mtime = state_file_mtime(paths);
                     }
                 }
@@ -240,15 +264,6 @@ fn cli_error_from_web(error: WebError) -> CliError {
         WebError::JsonSerialization(message) => CliError::JsonSerialization(message),
         WebError::CommandFailed(message) => CliError::CommandFailed(message),
     }
-}
-
-pub(crate) fn state_file_mtime(paths: &CliContextPaths) -> Option<SystemTime> {
-    if !paths.state_file.exists() {
-        return None;
-    }
-    std::fs::metadata(&paths.state_file)
-        .ok()
-        .and_then(|meta| meta.modified().ok())
 }
 
 fn action_failure_from_cli(error: CliError) -> ActionFailure {
@@ -638,7 +653,7 @@ mod tests {
         let mut runner = LiveRefreshRunner;
         let mut bridge = super::CliRuntimeBridge {
             paths: Some(paths.clone()),
-            last_loaded_mtime: super::state_file_mtime(&paths),
+            last_loaded_mtime: crate::context::state_file_mtime(&paths),
         };
 
         bridge
@@ -651,7 +666,10 @@ mod tests {
             .expect("second refresh");
 
         assert_eq!(context.registry.list_tasks().len(), tasks_after_first);
-        assert_eq!(bridge.last_loaded_mtime, super::state_file_mtime(&paths));
+        assert_eq!(
+            bridge.last_loaded_mtime,
+            crate::context::state_file_mtime(&paths)
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }

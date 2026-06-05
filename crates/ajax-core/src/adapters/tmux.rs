@@ -1,4 +1,7 @@
 use super::command::{CommandMode, CommandSpec};
+use std::time::Duration;
+
+const TMUX_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 use crate::models::{TmuxStatus, WorktrunkStatus};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -73,6 +76,7 @@ impl TmuxAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -82,6 +86,7 @@ impl TmuxAdapter {
 
     pub fn list_sessions(&self) -> CommandSpec {
         CommandSpec::new(&self.program, ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
     pub fn list_windows(&self, session: &str) -> CommandSpec {
@@ -107,6 +112,7 @@ impl TmuxAdapter {
                 "#{session_name}\t#{window_name}\t#{pane_current_path}",
             ],
         )
+        .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
@@ -123,6 +129,7 @@ impl TmuxAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: Some(TMUX_PROBE_TIMEOUT),
         }
     }
 

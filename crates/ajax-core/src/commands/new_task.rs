@@ -400,6 +400,7 @@ fn install_husky_hooks_command(worktree_path: &Path) -> CommandSpec {
         ],
         cwd: None,
         mode: crate::adapters::CommandMode::Capture,
+        timeout: None,
     }
 }
 

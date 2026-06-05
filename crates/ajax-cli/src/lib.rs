@@ -46,7 +46,10 @@ use cli::{parse_args, ParsedArgs};
 #[cfg(feature = "interactive")]
 use cockpit_backend::stream_live_cockpit_command;
 pub use context::CliContextPaths;
-use context::{context_paths_from_matches, load_context, load_context_with_events, save_context};
+use context::{
+    context_paths_from_matches, load_context, load_context_with_events, load_tracked_context,
+    save_tracked_context, TrackedContext,
+};
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 use snapshot_dispatch::render_matches_with_paths;
 use std::{ffi::OsStr, io::Write};
@@ -127,20 +130,24 @@ pub fn run_with_args(
         );
     }
 
-    let mut context = load_context_for_matches(&paths, &matches)?;
+    let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
-    let rendered =
-        match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                if error.state_changed() {
-                    save_context(&paths, &context)?;
-                }
-                return Err(error);
+    let rendered = match render_matches_mut_with_paths(
+        &matches,
+        &mut tracked.context,
+        &mut runner,
+        Some(&paths),
+    ) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            if error.state_changed() {
+                save_tracked_context(&paths, &mut tracked)?;
             }
-        };
+            return Err(error);
+        }
+    };
     if rendered.state_changed {
-        save_context(&paths, &context)?;
+        save_tracked_context(&paths, &mut tracked)?;
     }
 
     Ok(rendered.output)
@@ -156,30 +163,38 @@ pub fn run_with_args_to_writer(
     };
 
     let paths = context_paths_from_matches(&matches)?;
-    let mut context = load_context_for_matches(&paths, &matches)?;
+    let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;
     let mut runner = ProcessCommandRunner;
 
-    if let Some(result) =
-        stream_command_to_writer(&matches, &mut context, &mut runner, writer, |context| {
-            save_context(&paths, context)
-        })
-    {
+    let mut persist_state = tracked.save_state.clone();
+    if let Some(result) = stream_command_to_writer(
+        &matches,
+        &mut tracked.context,
+        &mut runner,
+        writer,
+        |context| context::save_context_with_state(&paths, context, &mut persist_state),
+    ) {
+        tracked.save_state = persist_state;
         result?;
         return Ok(());
     }
 
-    let rendered =
-        match render_matches_mut_with_paths(&matches, &mut context, &mut runner, Some(&paths)) {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                if error.state_changed() {
-                    save_context(&paths, &context)?;
-                }
-                return Err(error);
+    let rendered = match render_matches_mut_with_paths(
+        &matches,
+        &mut tracked.context,
+        &mut runner,
+        Some(&paths),
+    ) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            if error.state_changed() {
+                save_tracked_context(&paths, &mut tracked)?;
             }
-        };
+            return Err(error);
+        }
+    };
     if rendered.state_changed {
-        save_context(&paths, &context)?;
+        save_tracked_context(&paths, &mut tracked)?;
     }
     write_command_output(writer, &rendered.output)
 }
@@ -256,19 +271,19 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return Ok(message),
     };
-    let mut context = load_context_for_matches(paths, &matches)?;
-    let rendered = match render_matches_mut_with_paths(&matches, &mut context, runner, Some(paths))
-    {
-        Ok(rendered) => rendered,
-        Err(error) => {
-            if error.state_changed() {
-                save_context(paths, &context)?;
+    let mut tracked = load_tracked_context_for_matches(paths, &matches)?;
+    let rendered =
+        match render_matches_mut_with_paths(&matches, &mut tracked.context, runner, Some(paths)) {
+            Ok(rendered) => rendered,
+            Err(error) => {
+                if error.state_changed() {
+                    save_tracked_context(paths, &mut tracked)?;
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
     if rendered.state_changed {
-        save_context(paths, &context)?;
+        save_tracked_context(paths, &mut tracked)?;
     }
 
     Ok(rendered.output)
@@ -292,6 +307,26 @@ fn load_context_for_matches(
         load_context_with_events(paths)
     } else {
         load_context(paths)
+    }
+}
+
+fn load_tracked_context_for_matches(
+    paths: &CliContextPaths,
+    matches: &ArgMatches,
+) -> Result<TrackedContext, CliError> {
+    if matches.subcommand().is_some_and(|(name, subcommand)| {
+        name == "state" && matches!(subcommand.subcommand(), Some(("export", _)))
+    }) {
+        let context = load_context_with_events(paths)?;
+        Ok(TrackedContext {
+            save_state: context::context_save_state_from_registry(
+                &context.registry,
+                context::state_file_mtime(paths),
+            ),
+            context,
+        })
+    } else {
+        load_tracked_context(paths)
     }
 }
 

@@ -14,6 +14,7 @@ use std::{
 };
 
 const PANE_LINE_LIMIT: usize = 12;
+const PANE_CAPTURE_FRESH_FOR: Duration = Duration::from_secs(2);
 const INPUT_RATE_LIMIT: usize = 10;
 const INPUT_RATE_WINDOW: Duration = Duration::from_secs(5);
 const INPUT_DEDUP_WINDOW: Duration = Duration::from_secs(30);
@@ -27,6 +28,8 @@ pub struct PaneSequenceState {
 struct StoredPane {
     sequence: u64,
     lines: Vec<String>,
+    captured_at: Option<Instant>,
+    cached_state: Option<core_pane::PaneState>,
 }
 
 impl PaneSequenceState {
@@ -99,13 +102,25 @@ pub struct TaskInputResponse {
     pub sequence_hint: u64,
 }
 
-pub fn browser_task_pane_view<R: Registry>(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaneCaptureWork {
+    pub tmux_session: String,
+    pub selected_agent: ajax_core::models::AgentClient,
+    pub previous_lines: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PanePrepareOutcome {
+    Ready(BrowserPaneSnapshot),
+    Capture(PaneCaptureWork),
+}
+
+pub fn prepare_browser_task_pane_view<R: Registry>(
     context: &CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    sequences: &mut PaneSequenceState,
+    sequences: &PaneSequenceState,
     qualified_handle: &str,
     since: Option<u64>,
-) -> Result<BrowserPaneSnapshot, PaneRouteError> {
+) -> Result<PanePrepareOutcome, PaneRouteError> {
     let task = context
         .registry
         .list_tasks()
@@ -113,34 +128,75 @@ pub fn browser_task_pane_view<R: Registry>(
         .find(|task| task.qualified_handle() == qualified_handle)
         .ok_or(PaneRouteError::TaskNotFound)?;
 
+    let now = Instant::now();
+    if let Some(entry) = sequences.entries.get(qualified_handle) {
+        if since.is_some_and(|value| value == entry.sequence)
+            && entry
+                .captured_at
+                .is_some_and(|captured_at| now.duration_since(captured_at) < PANE_CAPTURE_FRESH_FOR)
+        {
+            return Ok(PanePrepareOutcome::Ready(BrowserPaneSnapshot {
+                sequence: entry.sequence,
+                lines: Vec::new(),
+                truncated: false,
+                tmux_exists: true,
+                state: entry
+                    .cached_state
+                    .as_ref()
+                    .map(|state| browser_pane_state(state.clone())),
+            }));
+        }
+    }
+
     let previous_lines = sequences
         .entries
         .get(qualified_handle)
-        .map(|entry| entry.lines.as_slice());
-    let snapshot = core_pane::snapshot(
-        runner,
-        &task.tmux_session,
-        task.selected_agent,
+        .map(|entry| entry.lines.clone())
+        .unwrap_or_default();
+
+    Ok(PanePrepareOutcome::Capture(PaneCaptureWork {
+        tmux_session: task.tmux_session.clone(),
+        selected_agent: task.selected_agent,
         previous_lines,
+    }))
+}
+
+pub fn capture_browser_task_pane(
+    runner: &mut impl CommandRunner,
+    work: &PaneCaptureWork,
+) -> Result<core_pane::PaneSnapshot, PaneRouteError> {
+    core_pane::snapshot(
+        runner,
+        &work.tmux_session,
+        work.selected_agent,
+        Some(work.previous_lines.as_slice()),
         PANE_LINE_LIMIT,
     )
-    .map_err(|error| match error {
-        core_pane::PaneError::SessionMissing => PaneRouteError::SessionMissing,
-        core_pane::PaneError::InvalidKeys(message) => PaneRouteError::Command(message),
-        core_pane::PaneError::CommandRun(inner) => PaneRouteError::Command(inner.to_string()),
-    })?;
+    .map_err(map_pane_snapshot_error)
+}
 
+pub fn commit_browser_task_pane_view(
+    sequences: &mut PaneSequenceState,
+    qualified_handle: &str,
+    since: Option<u64>,
+    snapshot: core_pane::PaneSnapshot,
+) -> BrowserPaneSnapshot {
+    let now = Instant::now();
     let entry = sequences
         .entries
         .entry(qualified_handle.to_string())
         .or_insert_with(|| StoredPane {
             sequence: 0,
             lines: Vec::new(),
+            captured_at: None,
+            cached_state: None,
         });
     if snapshot.sequence_changed {
         entry.sequence = entry.sequence.saturating_add(1);
         entry.lines = snapshot.lines;
     }
+    entry.captured_at = Some(now);
+    entry.cached_state = snapshot.state.clone();
 
     let lines = if since.is_some_and(|value| value == entry.sequence) {
         Vec::new()
@@ -148,13 +204,52 @@ pub fn browser_task_pane_view<R: Registry>(
         entry.lines.clone()
     };
 
-    Ok(BrowserPaneSnapshot {
+    BrowserPaneSnapshot {
         sequence: entry.sequence,
         lines,
         truncated: snapshot.truncated,
         tmux_exists: true,
-        state: snapshot.state.map(browser_pane_state),
-    })
+        state: entry
+            .cached_state
+            .as_ref()
+            .map(|state| browser_pane_state(state.clone())),
+    }
+}
+
+pub fn browser_task_pane_view<R: Registry>(
+    context: &CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    sequences: &mut PaneSequenceState,
+    qualified_handle: &str,
+    since: Option<u64>,
+) -> Result<BrowserPaneSnapshot, PaneRouteError> {
+    match prepare_browser_task_pane_view(context, sequences, qualified_handle, since)? {
+        PanePrepareOutcome::Ready(snapshot) => Ok(snapshot),
+        PanePrepareOutcome::Capture(work) => {
+            let snapshot = core_pane::snapshot(
+                runner,
+                &work.tmux_session,
+                work.selected_agent,
+                Some(work.previous_lines.as_slice()),
+                PANE_LINE_LIMIT,
+            )
+            .map_err(map_pane_snapshot_error)?;
+            Ok(commit_browser_task_pane_view(
+                sequences,
+                qualified_handle,
+                since,
+                snapshot,
+            ))
+        }
+    }
+}
+
+fn map_pane_snapshot_error(error: core_pane::PaneError) -> PaneRouteError {
+    match error {
+        core_pane::PaneError::SessionMissing => PaneRouteError::SessionMissing,
+        core_pane::PaneError::InvalidKeys(message) => PaneRouteError::Command(message),
+        core_pane::PaneError::CommandRun(inner) => PaneRouteError::Command(inner.to_string()),
+    }
 }
 
 /// Capture the current structured prompt for a task (or `None` if there is no
@@ -346,7 +441,9 @@ fn prune_expired_inputs(inputs: &mut PaneInputState, now: Instant) {
 mod tests {
     use super::{browser_task_pane_view, PaneRouteError, PaneSequenceState};
     use ajax_core::{
-        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        adapters::{
+            CommandOutput, CommandRunError, CommandRunner, CommandSpec, CountingCommandRunner,
+        },
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{AgentClient, Task, TaskId},
@@ -384,6 +481,39 @@ mod tests {
         fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
             self.response.clone()
         }
+    }
+
+    #[test]
+    fn pane_view_reuses_fresh_snapshot_without_second_capture() {
+        let context = context_with_task();
+        let mut sequences = PaneSequenceState::default();
+        let mut runner = CountingCommandRunner::default();
+
+        let first = browser_task_pane_view(
+            &context,
+            &mut runner,
+            &mut sequences,
+            "web/fix-login",
+            Some(0),
+        )
+        .unwrap();
+        let second = browser_task_pane_view(
+            &context,
+            &mut runner,
+            &mut sequences,
+            "web/fix-login",
+            Some(first.sequence),
+        )
+        .unwrap();
+
+        assert_eq!(second.lines, Vec::<String>::new());
+        assert_eq!(
+            runner.count_matching(|command| {
+                command.args.first().map(String::as_str) == Some("capture-pane")
+            }),
+            1,
+            "unchanged pane requests inside the freshness window must not recapture tmux"
+        );
     }
 
     #[test]

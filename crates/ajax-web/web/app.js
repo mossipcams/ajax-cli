@@ -44,6 +44,8 @@ const RESTART_POLL_MS = 500;
 const RESTART_TIMEOUT_MS = 30000;
 const OFFLINE_STATUS = "Offline — last known state";
 const PANE_INTERVAL_DEFAULT_MS = 1000;
+const PANE_INTERVAL_IDLE_MS = 4000;
+const PANE_INTERVAL_UNCHANGED_MS = 2500;
 const MAX_LOG_ENTRIES = 24;
 
 const CONNECTION_STATES = {
@@ -1247,7 +1249,20 @@ async function sendAnswer(answer, fingerprint) {
 }
 
 function paneInterval() {
-  return PANE_INTERVAL_DEFAULT_MS;
+  if (document.hidden) return PANE_INTERVAL_IDLE_MS;
+  const stateKind = lastPaneData?.state?.kind;
+  if (!stateKind) return PANE_INTERVAL_DEFAULT_MS;
+  if (
+    stateKind === "WaitingForApproval" ||
+    stateKind === "WaitingForInput" ||
+    stateKind === "AgentRunning"
+  ) {
+    return PANE_INTERVAL_DEFAULT_MS;
+  }
+  if (stateKind === "Done" || stateKind === "Idle") {
+    return PANE_INTERVAL_IDLE_MS;
+  }
+  return PANE_INTERVAL_UNCHANGED_MS;
 }
 
 function clearPaneTimer() {

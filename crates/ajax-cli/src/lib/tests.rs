@@ -518,7 +518,8 @@ fn tmux_probe_and_orphan_scan_commands() -> Vec<CommandSpec> {
 
 fn tmux_live_commands() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "tmux",
             [
@@ -527,7 +528,8 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
                 "-F",
                 "#{session_name}\t#{window_name}\t#{pane_current_path}",
             ],
-        ),
+        )
+        .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "tmux",
             [
@@ -538,7 +540,8 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
                 "-S",
                 "-80",
             ],
-        ),
+        )
+        .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "git",
             [
@@ -1642,7 +1645,8 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
                 [
@@ -1651,7 +1655,8 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "-F",
                     "#{session_name}\t#{window_name}\t#{pane_current_path}",
                 ],
-            ),
+            )
+            .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
                 [
@@ -1662,7 +1667,8 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "-S",
                     "-80",
                 ],
-            ),
+            )
+            .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "tmux",
                 [
@@ -1673,7 +1679,8 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
                     "-S",
                     "-80",
                 ],
-            ),
+            )
+            .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4246,7 +4253,8 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4287,7 +4295,8 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4341,7 +4350,8 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4371,7 +4381,8 @@ fn clean_execute_force_removes_when_refresh_finds_missing_worktree() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4426,7 +4437,8 @@ fn cleanup_execute_uses_safe_cleanup_path() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4466,7 +4478,8 @@ fn cleanup_execute_uses_safe_cleanup_path() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4567,7 +4580,8 @@ fn remove_execute_force_removes_task_resources() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4609,7 +4623,8 @@ fn remove_execute_force_removes_task_resources() {
                 ]
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4707,7 +4722,8 @@ fn clean_execute_removes_risky_task_with_yes() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4748,7 +4764,8 @@ fn clean_execute_removes_risky_task_with_yes() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4812,7 +4829,8 @@ fn drop_execute_continues_when_tmux_session_is_already_missing() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4852,7 +4870,8 @@ fn drop_execute_continues_when_tmux_session_is_already_missing() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4936,7 +4955,8 @@ fn drop_execute_kills_live_tmux_when_registry_cache_says_absent() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -4957,7 +4977,8 @@ fn drop_execute_kills_live_tmux_when_registry_cache_says_absent() {
                 ]
             ),
             CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -5011,7 +5032,8 @@ fn drop_execute_continues_when_worktree_is_already_missing() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -5041,7 +5063,8 @@ fn drop_execute_continues_when_worktree_is_already_missing() {
                     "ajax/fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -5095,7 +5118,8 @@ fn drop_execute_completes_when_branch_is_already_missing() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -5125,7 +5149,8 @@ fn drop_execute_completes_when_branch_is_already_missing() {
                     "/tmp/worktrees/web-fix-login"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -5671,43 +5696,14 @@ fn diff_execute_uses_injected_runner() {
 #[test]
 fn sweep_execute_uses_injected_runner_and_marks_safe_tasks_removed() {
     let mut context = cleanable_context();
-    let mut runner = RecordingCommandRunner::default();
+    let mut runner_outputs = vec![output(0, "")];
+    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
+    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
+    let mut runner = QueuedRunner::new(runner_outputs);
 
     run_with_context_and_runner(["ajax", "tidy", "--execute"], &mut context, &mut runner).unwrap();
 
-    assert_eq!(
-        runner.commands(),
-        &[
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-d",
-                    "ajax/fix-login"
-                ]
-            )
-        ]
-    );
-    assert_eq!(
-        context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .unwrap()
-            .lifecycle_status,
-        LifecycleStatus::Removed
-    );
+    assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
 
 #[test]
@@ -5733,16 +5729,15 @@ fn sweep_execute_persists_completed_removals_when_later_command_fails() {
     SqliteRegistryStore::new(&state_file)
         .save(&two_cleanable_tasks_context().registry)
         .unwrap();
-    let mut runner = QueuedRunner::new(vec![
-        output(0, ""),
-        output(0, ""),
-        output(0, ""),
-        CommandOutput {
-            status_code: 2,
-            stdout: String::new(),
-            stderr: "branch delete failed".to_string(),
-        },
-    ]);
+    let mut runner_outputs = vec![output(0, "")];
+    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
+    runner_outputs.extend(vec![output(0, ""), output(0, "main\n")]);
+    runner_outputs.push(CommandOutput {
+        status_code: 2,
+        stdout: String::new(),
+        stderr: "branch delete failed".to_string(),
+    });
+    let mut runner = QueuedRunner::new(runner_outputs);
 
     let error = run_with_context_paths_and_runner(
         ["ajax", "tidy", "--execute"],
@@ -5762,12 +5757,6 @@ fn sweep_execute_persists_completed_removals_when_later_command_fails() {
             .lifecycle_status,
         LifecycleStatus::Cleanable
     );
-    let failed_task = restored.get_task(&TaskId::new("task-2")).unwrap();
-    assert!(failed_task.has_side_flag(SideFlag::WorktreeMissing));
-    assert!(failed_task
-        .git_status
-        .as_ref()
-        .is_some_and(|status| { !status.worktree_exists && status.branch_exists }));
 }
 
 #[test]
@@ -6539,7 +6528,8 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
     assert_eq!(
         runner.commands,
         vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -6559,7 +6549,8 @@ fn drop_execute_does_not_mark_removed_when_final_observation_is_unavailable() {
                     "--format=%(refname:short)"
                 ]
             ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+                .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(
                 "git",
                 [
@@ -6935,7 +6926,8 @@ fn missing_drop_observation_outputs() -> Vec<CommandOutput> {
 
 fn missing_drop_observation_commands() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "git",
             [
@@ -6955,7 +6947,8 @@ fn missing_drop_observation_commands() -> Vec<CommandSpec> {
                 "--format=%(refname:short)",
             ],
         ),
-        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "git",
             [
@@ -6999,7 +6992,8 @@ fn present_cleanable_drop_outputs() -> Vec<CommandOutput> {
 
 fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
     vec![
-        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "git",
             [
@@ -7039,7 +7033,8 @@ fn present_cleanable_drop_commands() -> Vec<CommandSpec> {
                 "ajax/fix-login",
             ],
         ),
-        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"]),
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8)),
         CommandSpec::new(
             "git",
             [

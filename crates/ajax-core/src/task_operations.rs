@@ -189,9 +189,17 @@ pub mod task_command {
         runner: &mut impl CommandRunner,
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         if kind == TaskCommandKind::Ship {
+            let plan = refresh_ship_plan_before_execute(
+                context,
+                qualified_handle,
+                plan,
+                confirmed,
+                runner,
+            )
+            .map_err(|error| (error, false))?;
             return execute_ship_task_command_operation(
                 context,
-                plan,
+                &plan,
                 confirmed,
                 runner,
                 qualified_handle,
@@ -232,6 +240,38 @@ pub mod task_command {
         };
 
         Ok((outputs, state_changed))
+    }
+
+    fn refresh_ship_plan_before_execute<R: Registry>(
+        context: &mut CommandContext<R>,
+        qualified_handle: &str,
+        plan: &CommandPlan,
+        confirmed: bool,
+        runner: &mut impl CommandRunner,
+    ) -> Result<CommandPlan, CommandError> {
+        if !plan.blocked_reasons.is_empty() {
+            return Ok(plan.clone());
+        }
+        if plan.requires_confirmation && !confirmed {
+            return Ok(plan.clone());
+        }
+        let has_cached_git = context
+            .registry
+            .list_tasks()
+            .into_iter()
+            .find(|task| task.qualified_handle() == qualified_handle)
+            .is_some_and(|task| task.git_status.is_some());
+        if !has_cached_git {
+            return Ok(plan.clone());
+        }
+
+        commands::refresh_git_evidence(context, qualified_handle, runner, false)?;
+        plan_task_command_operation(
+            context,
+            TaskCommandKind::Ship,
+            qualified_handle,
+            OpenMode::Attach,
+        )
     }
 
     fn execute_ship_task_command_operation<R: Registry>(
@@ -295,7 +335,9 @@ pub mod task_command {
             CommandRunError::NonZeroExit { stderr, .. } => {
                 stderr.to_ascii_lowercase().contains("conflict")
             }
-            CommandRunError::SpawnFailed(_) | CommandRunError::MissingStatusCode => false,
+            CommandRunError::SpawnFailed(_)
+            | CommandRunError::MissingStatusCode
+            | CommandRunError::TimedOut { .. } => false,
         }
     }
 
@@ -807,11 +849,15 @@ pub mod drop_task {
 }
 
 pub mod sweep_cleanup {
+    use std::collections::BTreeMap;
+
     use crate::{
-        adapters::{CommandOutput, CommandRunError, CommandRunner},
+        adapters::{CommandOutput, CommandRunError, CommandRunner, TmuxAdapter},
         commands::{self, CommandContext, CommandError},
         registry::Registry,
     };
+
+    use super::drop_task::{complete_drop_task_operation, DropTaskCompletion};
 
     pub fn execute_sweep_cleanup_operation<R: Registry>(
         context: &mut CommandContext<R>,
@@ -821,6 +867,13 @@ pub mod sweep_cleanup {
         let mut outputs = Vec::new();
         let mut state_changed = false;
         let candidates = commands::sweep_cleanup_candidates(context);
+        let tmux = TmuxAdapter::new("tmux");
+        let shared_sessions = runner
+            .run(&tmux.list_sessions())
+            .ok()
+            .filter(|output| output.status_code == 0)
+            .map(|output| output.stdout);
+        let mut repo_observations = BTreeMap::<String, commands::RepoDropObservationCache>::new();
 
         for candidate in &candidates {
             let plan = commands::clean_task_plan(context, candidate)
@@ -855,9 +908,30 @@ pub mod sweep_cleanup {
                     commands::mark_task_cleanup_step_completed(context, candidate, command)
                         .map_err(|error| (error, state_changed))?;
             }
-            commands::mark_task_removed(context, candidate)
-                .map_err(|error| (error, state_changed))?;
-            state_changed = true;
+
+            let task = context
+                .registry
+                .list_tasks()
+                .into_iter()
+                .find(|task| task.qualified_handle() == *candidate)
+                .cloned()
+                .ok_or_else(|| (CommandError::TaskNotFound(candidate.clone()), state_changed))?;
+            let repo_cache = repo_observations.entry(task.repo.clone()).or_default();
+            let observation = commands::observe_drop_resources_with_cache(
+                context,
+                &task,
+                runner,
+                shared_sessions.as_deref(),
+                repo_cache,
+            )
+            .map_err(|error| (error, state_changed))?;
+            match complete_drop_task_operation(context, candidate, &observation)
+                .map_err(|error| (error, state_changed))?
+            {
+                DropTaskCompletion::Removed | DropTaskCompletion::TeardownIncomplete { .. } => {
+                    state_changed = true;
+                }
+            }
         }
 
         Ok((outputs, state_changed))
@@ -1564,6 +1638,39 @@ mod tests {
     }
 
     #[test]
+    fn ship_task_operation_refreshes_git_evidence_before_merge_commands() {
+        let mut context = context_with_reviewable_task();
+        let ship_plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Ship,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let mut runner = RecordingQueuedRunner::new(vec![CommandOutput {
+            status_code: 0,
+            stdout: "## ajax/fix-login\n M src/lib.rs\n".to_string(),
+            stderr: String::new(),
+        }]);
+
+        let (error, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Ship,
+            "web/fix-login",
+            &ship_plan,
+            true,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(!state_changed);
+        assert!(matches!(error, CommandError::PlanBlocked(_)));
+        assert_eq!(runner.commands.len(), 1);
+        assert_eq!(runner.commands[0].program, "git");
+        assert!(runner.commands[0].args.contains(&"status".to_string()));
+    }
+
+    #[test]
     fn ship_task_operation_marks_merged_or_records_merge_failure() {
         let mut context = context_with_reviewable_task();
         let ship_plan = plan_task_command_operation(
@@ -1616,6 +1723,11 @@ mod tests {
         )
         .unwrap();
         let mut runner = RecordingQueuedRunner::new(vec![
+            CommandOutput {
+                status_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            },
             CommandOutput {
                 status_code: 0,
                 stdout: String::new(),
@@ -2154,33 +2266,116 @@ mod tests {
     }
 
     #[test]
+    fn sweep_cleanup_marks_teardown_incomplete_when_final_observation_still_finds_tmux() {
+        let mut context = context_with_cleanable_task();
+        let plan = crate::commands::clean_task_plan(&context, "web/fix-login").unwrap();
+        let mut runner_outputs = vec![output(0, "ajax-web-fix-login\n", "")];
+        runner_outputs.extend(plan.commands.iter().map(|_| output(0, "", "")));
+        let mut runner = RecordingQueuedRunner::new(runner_outputs);
+
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("task should remain when tmux is still present");
+        assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+        assert!(task
+            .metadata
+            .get("drop_failed_detail")
+            .is_some_and(|detail| detail.contains("tmux")));
+    }
+
+    #[test]
+    fn sweep_cleanup_batches_repo_observations_across_candidates() {
+        let mut context = context_with_two_cleanable_tasks();
+        let candidates = crate::commands::sweep_cleanup_candidates(&context);
+        assert_eq!(candidates.len(), 2);
+        let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
+
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+
+        let list_sessions = runner
+            .commands
+            .iter()
+            .filter(|command| command.args.first().map(String::as_str) == Some("list-sessions"))
+            .count();
+        let worktree_lists = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                command.program == "git"
+                    && command.args.iter().any(|arg| arg == "worktree")
+                    && command.args.iter().any(|arg| arg == "list")
+            })
+            .count();
+        let branch_lists = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                command.program == "git"
+                    && command
+                        .args
+                        .iter()
+                        .any(|arg| arg.contains("--format=%(refname:short)"))
+            })
+            .count();
+
+        assert_eq!(list_sessions, 1, "shared tmux listing should run once");
+        assert_eq!(
+            worktree_lists, 1,
+            "repo worktree observation should be reused"
+        );
+        assert_eq!(branch_lists, 1, "repo branch observation should be reused");
+    }
+
+    fn sweep_success_runner_outputs(
+        context: &CommandContext<InMemoryRegistry>,
+    ) -> Vec<CommandOutput> {
+        let candidates = crate::commands::sweep_cleanup_candidates(context);
+        let total_plan_commands = candidates
+            .iter()
+            .map(|candidate| {
+                crate::commands::clean_task_plan(context, candidate)
+                    .unwrap()
+                    .commands
+                    .len()
+            })
+            .sum();
+        let mut runner_outputs = vec![output(0, "", "")];
+        runner_outputs.extend((0..total_plan_commands).map(|_| output(0, "", "")));
+        runner_outputs.extend(absent_drop_observation_outputs().into_iter().skip(1));
+        runner_outputs
+    }
+
+    #[test]
     fn sweep_cleanup_operation_executes_candidates_and_reports_partial_failure_state() {
         let mut context = context_with_two_cleanable_tasks();
-        let plan = crate::commands::sweep_cleanup_plan(&context);
-        let mut runner =
-            RecordingQueuedRunner::new(plan.commands.iter().map(|_| output(0, "", "")).collect());
+        let candidates = crate::commands::sweep_cleanup_candidates(&context);
+        let total_plan_commands: usize = candidates
+            .iter()
+            .map(|candidate| {
+                crate::commands::clean_task_plan(&context, candidate)
+                    .unwrap()
+                    .commands
+                    .len()
+            })
+            .sum();
+        let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
 
         let (outputs, state_changed) =
             execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), plan.commands.len());
+        assert_eq!(outputs.len(), total_plan_commands);
         assert!(state_changed);
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("web/fix-login"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
-        assert_eq!(
-            context
-                .registry
-                .get_task(&TaskId::new("web/fix-sidebar"))
-                .unwrap()
-                .lifecycle_status,
-            LifecycleStatus::Removed
-        );
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none());
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-sidebar"))
+            .is_none());
 
         let mut context = context_with_two_cleanable_tasks();
         let candidates = crate::commands::sweep_cleanup_candidates(&context);
@@ -2189,9 +2384,10 @@ mod tests {
                 .unwrap()
                 .commands
                 .len();
-        let mut outputs: Vec<CommandOutput> = (0..first_candidate_command_count)
-            .map(|_| output(0, "", ""))
-            .collect();
+        let mut outputs: Vec<CommandOutput> = vec![output(0, "", "")];
+        outputs.extend(
+            (0..first_candidate_command_count.saturating_sub(1)).map(|_| output(0, "", "")),
+        );
         outputs.push(output(2, "", "branch delete failed"));
         let mut runner = RecordingQueuedRunner::new(outputs);
 
@@ -2210,15 +2406,15 @@ mod tests {
             context
                 .registry
                 .get_task(&TaskId::new("web/fix-login"))
-                .unwrap()
+                .expect("first candidate should remain after partial failure")
                 .lifecycle_status,
-            LifecycleStatus::Removed
+            LifecycleStatus::Cleanable
         );
         assert_eq!(
             context
                 .registry
                 .get_task(&TaskId::new("web/fix-sidebar"))
-                .unwrap()
+                .expect("second candidate should remain untouched")
                 .lifecycle_status,
             LifecycleStatus::Cleanable
         );

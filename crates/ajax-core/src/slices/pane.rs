@@ -143,6 +143,7 @@ pub fn send_keys(
         args,
         cwd: None,
         mode: crate::adapters::CommandMode::Capture,
+        timeout: None,
     };
     runner.run(&command).map_err(map_tmux_error)?;
 

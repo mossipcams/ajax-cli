@@ -491,6 +491,42 @@ shutdown, and process-level startup by composing `ajax-web::slices::*` with
 `ajax-web::adapters::*`. If `ajax-cli` starts Web Cockpit, the CLI launcher
 passes resolved runtime context to `ajax-web` explicitly.
 
+Post-startup Web Cockpit routes snapshot registry state under a short mutex hold,
+run external tmux/git probes outside the lock, then merge deltas back under the
+lock. `/api/cockpit` refresh and `/api/tasks/{handle}/pane` capture follow this
+pattern so lightweight routes such as `/api/health` and task detail reads stay
+responsive during slow substrate work. Mutating task operations remain
+serialized per task through the operation coordinator.
+
+### Post-startup runtime refresh
+
+`ajax-core::runtime_refresh` owns refresh tiers. Steady-state Cockpit polling
+uses `RefreshTier::Live`, which skips default orphan git discovery and
+per-task pane capture when agent status cache and runtime projections are
+fresh. `RefreshTier::Full` remains available for explicit recovery and
+maintenance. Agent status is hydrated once per refresh from the tmux-agent-status
+pane cache snapshot. Registered tmux sessions are matched by exact expected
+session names, not `ajax-{repo}-{handle}` parsing, so hyphenated repo names do
+not trigger false orphan discovery.
+
+External command specs for refresh, status, and pane probes carry bounded
+timeouts in `ajax-core::adapters`. `CountingCommandRunner` provides reusable
+command-budget fixtures for regression tests.
+
+### Native and Web persistence
+
+`ajax-cli::context` tracks SQLite mtime and the task IDs present at load time.
+`save_context_with_state` reloads and merges non-conflicting web companion
+changes before native final save. Divergent lifecycle updates for the same task
+surface an explicit conflict error instead of last-writer-wins overwrite. CLI
+entry points load through `TrackedContext` so native saves participate in the
+same merge contract as Web Cockpit.
+
+Ship, tidy, and drop task operations refresh or re-observe substrates in
+`ajax-core::task_operations` before planning destructive work. Web and CLI
+surfaces delegate to these core operations rather than duplicating preflight
+logic.
+
 The browser shell consumes the same Cockpit view model as the native TUI.
 Browser-specific DTOs may be narrower or differently named, but they are
 projections of core output contracts, not separate task models. Any

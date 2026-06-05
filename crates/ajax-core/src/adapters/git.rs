@@ -78,6 +78,7 @@ impl GitAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -93,6 +94,7 @@ impl GitAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -109,6 +111,7 @@ impl GitAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -124,6 +127,7 @@ impl GitAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -139,6 +143,7 @@ impl GitAdapter {
             ],
             cwd: None,
             mode: CommandMode::Capture,
+            timeout: None,
         }
     }
 
@@ -323,6 +328,7 @@ mod tests {
                 ],
                 cwd: None,
                 mode: CommandMode::Capture,
+                timeout: None,
             }
         );
     }

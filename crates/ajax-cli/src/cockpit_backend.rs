@@ -15,7 +15,7 @@ use std::{
 };
 
 use crate::{
-    agent_status_cache::TmuxAgentStatusCache,
+    agent_status_cache::TmuxAgentStatusSnapshot,
     cockpit_actions::{
         execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
         tui_cockpit_action, tui_cockpit_confirmed_action,
@@ -343,7 +343,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    if let Some(cache) = TmuxAgentStatusCache::from_default_location() {
+    if let Some(cache) = TmuxAgentStatusSnapshot::from_default_location() {
         refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
             .map_err(crate::command_error)
     } else {
