@@ -1426,12 +1426,12 @@ mod tests {
         assert_eq!(intent.worktrunk_window, "worktrunk");
         assert_eq!(intent.selected_agent, AgentClient::Codex);
         assert_eq!(plan.title, "create task: Fix login");
-        assert_eq!(plan.commands.len(), 6);
+        assert_eq!(plan.commands.len(), 5);
         assert!(crate::commands::is_git_worktree_add_command(
-            &plan.commands[2]
+            &plan.commands[1]
         ));
         assert!(crate::commands::is_new_task_husky_hook_command(
-            &plan.commands[3]
+            &plan.commands[2]
         ));
     }
 

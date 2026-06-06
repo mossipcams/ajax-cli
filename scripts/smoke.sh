@@ -56,6 +56,15 @@ assert_log_contains() {
   fi
 }
 
+assert_log_not_contains() {
+  local unexpected="$1"
+  if grep -Fq "$unexpected" "$AJAX_SMOKE_COMMAND_LOG"; then
+    printf 'expected command log not to contain %s\nfull log:\n' "$unexpected" >&2
+    cat "$AJAX_SMOKE_COMMAND_LOG" >&2
+    exit 1
+  fi
+}
+
 write_fake_tools() {
   mkdir -p "$FAKE_BIN"
 
@@ -299,8 +308,8 @@ run_recovery_journey() {
   assert_json_contains "$tasks" '"lifecycle_status": "Error"' "recovery tasks"
   assert_json_contains "$tasks" '"needs_attention": true' "recovery tasks"
   assert_log_contains "git -C $REPO fetch origin main"
-  assert_log_contains "git -C $REPO fetch origin main:main"
-  assert_log_contains "git -C $REPO worktree add -b ajax/fix-login $WORKTREE main"
+  assert_log_not_contains "git -C $REPO fetch origin main:main"
+  assert_log_contains "git -C $REPO worktree add -b ajax/fix-login $WORKTREE origin/main"
   assert_log_contains "tmux new-session -d -s ajax-web-fix-login -n worktrunk -c $WORKTREE"
 
   echo "+ ajax recovery state export"

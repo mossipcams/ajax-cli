@@ -81,8 +81,6 @@ pub fn new_task_plan<R: Registry>(
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
     plan.commands
         .push(git.fetch_origin_branch(&repo_path, &repo.default_branch));
-    plan.commands
-        .push(git.sync_default_branch_from_origin(&repo_path, &repo.default_branch));
     if let Some(graphify_update) = &repo.graphify_update {
         plan.commands
             .push(CommandSpec::new("sh", ["-lc", graphify_update.as_str()]).with_cwd(&repo.path));
@@ -91,7 +89,7 @@ pub fn new_task_plan<R: Registry>(
         &repo_path,
         &worktree_path_string,
         &branch,
-        &repo.default_branch,
+        &format!("origin/{}", repo.default_branch),
     ));
     plan.commands
         .push(install_husky_hooks_command(&worktree_path));
@@ -528,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    fn new_task_plan_syncs_default_branch_from_origin_before_worktree_add() {
+    fn new_task_plan_fetches_origin_and_branches_from_remote_tracking_ref() {
         let context = context();
         let request = NewTaskRequest {
             repo: "web".to_string(),
@@ -545,9 +543,13 @@ mod tests {
         );
         assert_eq!(
             plan.commands[1],
-            git.sync_default_branch_from_origin("/repo/web", "main")
+            git.add_worktree(
+                "/repo/web",
+                "/repo/web__worktrees/ajax-fix-login",
+                "ajax/fix-login",
+                "origin/main"
+            )
         );
-        assert!(is_git_worktree_add_command(&plan.commands[2]));
     }
 
     #[test]
@@ -570,10 +572,10 @@ mod tests {
         let plan = new_task_plan(&context, request).unwrap();
 
         assert_eq!(
-            plan.commands[2],
+            plan.commands[1],
             CommandSpec::new("sh", ["-lc", "graphify extract --update"]).with_cwd("/repo/web")
         );
-        assert!(is_git_worktree_add_command(&plan.commands[3]));
+        assert!(is_git_worktree_add_command(&plan.commands[2]));
     }
 
     #[test]

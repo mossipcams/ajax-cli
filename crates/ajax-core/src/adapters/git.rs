@@ -44,19 +44,6 @@ impl GitAdapter {
         CommandSpec::new(&self.program, ["-C", repo_path, "fetch", "origin", branch])
     }
 
-    pub fn sync_default_branch_from_origin(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec::new(
-            &self.program,
-            [
-                "-C",
-                repo_path,
-                "fetch",
-                "origin",
-                &format!("{branch}:{branch}"),
-            ],
-        )
-    }
-
     pub fn add_worktree(
         &self,
         repo_path: &str,
@@ -304,10 +291,6 @@ mod tests {
         assert_eq!(
             adapter.fetch_origin_branch("/repos/web", "main"),
             CommandSpec::new("git", ["-C", "/repos/web", "fetch", "origin", "main"])
-        );
-        assert_eq!(
-            adapter.sync_default_branch_from_origin("/repos/web", "main"),
-            CommandSpec::new("git", ["-C", "/repos/web", "fetch", "origin", "main:main"])
         );
     }
 
