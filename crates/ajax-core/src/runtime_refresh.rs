@@ -188,10 +188,15 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 task.remove_side_flag(crate::models::SideFlag::AgentRunning);
-                live::apply_observation(
-                    task,
-                    LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
-                );
+                if !matches!(
+                    task.lifecycle_status,
+                    LifecycleStatus::Removing | LifecycleStatus::TeardownIncomplete
+                ) {
+                    live::apply_observation(
+                        task,
+                        LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
+                    );
+                }
                 refresh_cached_annotations(task);
                 changed = true;
             }
@@ -416,6 +421,8 @@ fn should_probe_live_substrate(task: &Task) -> bool {
             | LifecycleStatus::Active
             | LifecycleStatus::Waiting
             | LifecycleStatus::Reviewable
+            | LifecycleStatus::Removing
+            | LifecycleStatus::TeardownIncomplete
     ) || has_recoverable_error_live_status(task)
         || task.has_side_flag(crate::models::SideFlag::AgentRunning)
         || task.has_side_flag(crate::models::SideFlag::TmuxMissing)
@@ -907,6 +914,26 @@ mod tests {
         CommandContext::new(config, CountingRegistry::from_registry(registry))
     }
 
+    fn context_with_teardown_incomplete_task() -> CommandContext<CountingRegistry> {
+        let mut context = context_with_task_for_missing_session();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::TeardownIncomplete;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "drop incomplete at delete branch",
+        ));
+        task.metadata
+            .insert("drop_failed_step".to_string(), "delete branch".to_string());
+        task.metadata.insert(
+            "drop_failed_detail".to_string(),
+            "branch still present".to_string(),
+        );
+        context
+    }
+
     #[derive(Default)]
     struct MissingSessionRunner {
         commands: Vec<CommandSpec>,
@@ -1046,6 +1073,32 @@ mod tests {
         assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
         ));
+    }
+
+    #[test]
+    fn missing_session_refresh_preserves_teardown_incomplete_failure_status() {
+        let mut context = context_with_teardown_incomplete_task();
+        let mut runner = MissingSessionRunner::default();
+
+        refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+        assert_eq!(
+            task.tmux_status.as_ref().map(|status| status.exists),
+            Some(false)
+        );
+        assert!(task.has_side_flag(SideFlag::TmuxMissing));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CommandFailed)
+        );
+        assert_eq!(
+            task.live_status
+                .as_ref()
+                .map(|status| status.summary.as_str()),
+            Some("drop incomplete at delete branch")
+        );
     }
 
     #[test]
