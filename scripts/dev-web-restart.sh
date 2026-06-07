@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
-# Pull latest main, install ajax-cli from this workspace, restart dev web.
+# Force-sync local main, install ajax-cli from its worktree, restart dev web.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+main_worktree() {
+  git -C "$REPO_ROOT" for-each-ref --format='%(worktreepath)' refs/heads/main
+}
+
+ROOT="$(main_worktree)"
+if [[ -z "$ROOT" ]]; then
+  echo "local main worktree not found for repository: $REPO_ROOT" >&2
+  exit 1
+fi
+GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir)"
 RUN_DIR="$ROOT/.ajax-dev-web"
 PID_FILE="$RUN_DIR/dev-web.pid"
 LOG_FILE="$RUN_DIR/dev-web.log"
@@ -18,13 +29,13 @@ usage() {
   cat <<'EOF'
 Usage: scripts/dev-web-restart.sh [OPTIONS]
 
-Pull latest origin/main into the current branch, install ajax-cli from this
-repo (unless --no-install), stop the previous dev web server on the chosen
-port, and start ajax-cli web with the dev profile.
+Force-sync the local main worktree to origin/main, install ajax-cli from that
+worktree (unless --no-install), stop the previous managed dev web server, and
+start ajax-cli web with the dev profile.
 
 Options:
   --foreground       Run the server in the foreground (do not detach)
-  --no-pull          Skip `git fetch` / `git pull origin main`
+  --no-pull          Skip fetching and force-syncing main to origin/main
   --no-install       Skip `cargo install --path crates/ajax-cli --locked`
   --host HOST        Bind address (default: 0.0.0.0)
   --port PORT        Listen port (default: 8788 for dev profile)
@@ -73,27 +84,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-mkdir -p "$RUN_DIR"
-
-pull_from_main() {
-  if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "not a git repository: $ROOT" >&2
-    exit 1
-  fi
-  if [[ -n "$(git -C "$ROOT" status --porcelain)" ]]; then
-    echo "refusing to pull: working tree has uncommitted changes" >&2
-    git -C "$ROOT" status --short >&2
-    exit 1
-  fi
+sync_main() {
   echo "Fetching origin/main ..."
-  git -C "$ROOT" fetch origin main
-  echo "Pulling origin/main into $(git -C "$ROOT" branch --show-current) ..."
-  git -C "$ROOT" pull origin main --no-rebase
+  git -C "$REPO_ROOT" fetch origin main:refs/remotes/origin/main
+  echo "Force-syncing local main worktree to origin/main ..."
+  git --git-dir="$GIT_DIR" --work-tree="$ROOT" reset --hard origin/main
+  git --git-dir="$GIT_DIR" --work-tree="$ROOT" clean -fd
 }
 
 if [[ "$PULL" -eq 1 ]]; then
-  pull_from_main
+  sync_main
 fi
+
+mkdir -p "$RUN_DIR"
 
 if [[ "$INSTALL" -eq 1 ]]; then
   echo "Installing ajax-cli from $ROOT ..."
@@ -107,17 +110,8 @@ stop_listener() {
   if [[ -z "$pids" ]]; then
     return 0
   fi
-  echo "Stopping listener(s) on port $port: $pids"
-  # shellcheck disable=SC2086
-  kill $pids 2>/dev/null || true
-  sleep 1
-  pids="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)"
-  if [[ -n "$pids" ]]; then
-    echo "Force-stopping listener(s) on port $port: $pids" >&2
-    # shellcheck disable=SC2086
-    kill -9 $pids 2>/dev/null || true
-    sleep 1
-  fi
+  echo "refusing to stop unmanaged listener(s) on port $port: $pids" >&2
+  exit 1
 }
 
 stop_pid_file() {
@@ -125,8 +119,14 @@ stop_pid_file() {
     return 0
   fi
   local old_pid
+  local old_command
   old_pid="$(cat "$PID_FILE")"
   if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+    old_command="$(ps -p "$old_pid" -o command= 2>/dev/null || true)"
+    if [[ "$old_command" != *ajax-cli* || "$old_command" != *web* ]]; then
+      echo "refusing to stop pid-file process $old_pid; not an ajax-cli web process" >&2
+      exit 1
+    fi
     echo "Stopping previous dev web (pid $old_pid) ..."
     kill "$old_pid" 2>/dev/null || true
     sleep 1
