@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.17.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.2...ajax-cli-v0.17.3) (2026-06-07)
+
+
+### Bug Fixes
+
+* make dev web restart safer ([#148](https://github.com/mossipcams/ajax-cli/issues/148)) ([388d947](https://github.com/mossipcams/ajax-cli/commit/388d947adea0c1323f06173bb6d69cf222c2bb7b))
+
 ## [0.17.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.1...ajax-cli-v0.17.2) (2026-06-07)
 
 
