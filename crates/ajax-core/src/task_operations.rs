@@ -762,17 +762,48 @@ pub mod drop_task {
         qualified_handle: &str,
         observation: &DropObservation,
     ) -> Result<Vec<DropOp>, CommandError> {
-        let task_id = task(context, qualified_handle)?.id.clone();
-        let receipts = context
+        let task = task(context, qualified_handle)?;
+        let mut receipts = context
             .registry
-            .step_receipts_for_task(&task_id)
+            .step_receipts_for_task(&task.id)
             .into_iter()
             .cloned()
             .collect::<Vec<_>>();
+        if let Some(failed_step_key) = task.metadata.get("drop_failed_step_key") {
+            receipts.retain(|receipt| {
+                receipt.step_key != *failed_step_key
+                    || !receipt_matches_present_resource(receipt.step_key.as_str(), observation)
+            });
+        }
         Ok(commands::plan_drop_from_observation_for_task(
             observation,
             &receipts,
         ))
+    }
+
+    fn receipt_matches_present_resource(step_key: &str, observation: &DropObservation) -> bool {
+        matches!(
+            (step_key, observation),
+            (
+                "tmux_session_absent",
+                DropObservation {
+                    tmux_session: ResourceState::Present,
+                    ..
+                }
+            ) | (
+                "worktree_absent",
+                DropObservation {
+                    worktree: ResourceState::Present,
+                    ..
+                }
+            ) | (
+                "branch_absent",
+                DropObservation {
+                    branch: ResourceState::Present,
+                    ..
+                }
+            )
+        )
     }
 
     fn mark_observed_drop_failure<R: Registry>(
@@ -2069,6 +2100,63 @@ mod tests {
         assert!(runner.commands.iter().any(|command| {
             command.program == "tmux" && command.args.iter().any(|arg| arg == "kill-session")
         }));
+    }
+
+    #[test]
+    fn drop_retry_repeats_receipted_step_when_fresh_observation_finds_resource_present() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("web/fix-login");
+        context
+            .registry
+            .get_task_mut(&task_id)
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::TeardownIncomplete;
+        context
+            .registry
+            .get_task_mut(&task_id)
+            .unwrap()
+            .metadata
+            .insert(
+                "drop_failed_step_key".to_string(),
+                "branch_absent".to_string(),
+            );
+        context
+            .registry
+            .record_step_receipt(StepReceipt::succeeded(
+                task_id,
+                TaskOperationKind::Drop,
+                "branch_absent",
+                "ajax/fix-login",
+                "{}",
+            ))
+            .unwrap();
+        let mut outputs = absent_drop_observation_outputs();
+        outputs[2] = output(0, "ajax/fix-login\n", "");
+        outputs.push(output(0, "", ""));
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(completion, DropTaskCompletion::Removed);
+        assert!(runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.contains(&"branch".to_string())
+                && command.args.contains(&"ajax/fix-login".to_string())
+        }));
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none());
     }
 
     #[test]
