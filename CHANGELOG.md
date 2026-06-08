@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.17.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.3...ajax-cli-v0.17.4) (2026-06-08)
+
+
+### Bug Fixes
+
+* harden concurrent saves and web operation coordination ([#150](https://github.com/mossipcams/ajax-cli/issues/150)) ([a19e8fb](https://github.com/mossipcams/ajax-cli/commit/a19e8fb114d44de3301fe6b3eec7a0db53719c21))
+
 ## [0.17.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.2...ajax-cli-v0.17.3) (2026-06-07)
 
 
