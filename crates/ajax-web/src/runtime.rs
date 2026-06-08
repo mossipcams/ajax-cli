@@ -66,6 +66,57 @@ impl<C, B> Clone for WebAppState<C, B> {
     }
 }
 
+impl<C, B> WebAppState<C, B>
+where
+    C: Clone,
+    B: Clone,
+{
+    /// Run `operate` against a clone of the shared state without holding the
+    /// `shared` lock across the call, then commit the result only if no other
+    /// request advanced the revision in the meantime. A losing writer leaves
+    /// shared state untouched and returns a `409` conflict instead.
+    fn run_optimistic(
+        &self,
+        request_id: Option<&str>,
+        conflict_message: &str,
+        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> Response,
+    ) -> Response {
+        let (mut context, mut runner, mut bridge, base_revision) = {
+            let guard = self
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        let response = operate(&mut context, &mut runner, &mut bridge);
+        let mut guard = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            response
+        } else {
+            operation_response_with_request_id(
+                json_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": conflict_message }),
+                )
+                .unwrap_or_else(|error| response_from_web_error(error, request_id)),
+                request_id,
+            )
+        }
+    }
+}
+
 impl<C, B> WebAppState<C, B> {
     pub fn new(
         context: CommandContext<InMemoryRegistry>,
@@ -295,8 +346,8 @@ async fn axum_task_detail<C, B>(
     handle: String,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let guard = state
         .shared
@@ -323,7 +374,7 @@ async fn axum_task_pane<C, B>(
 ) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let prepared = {
         let guard = state
@@ -394,6 +445,7 @@ where
                 &mut guard.pane_sequences,
                 &handle,
                 query.since,
+                work.previous_sequence,
                 snapshot,
             )
         }
@@ -409,7 +461,7 @@ async fn axum_task_get<C, B>(
 ) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     if let Some(task_handle) = handle.strip_suffix("/pane") {
         return axum_task_pane::<C, B>(State(state), task_handle.to_string(), Query(query)).await;
@@ -423,8 +475,8 @@ async fn axum_task_post<C, B>(
     body: Bytes,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     if let Some(task_handle) = handle.strip_suffix("/answer") {
         return axum_task_answer::<C, B>(State(state), task_handle.to_string(), body).await;
@@ -441,8 +493,8 @@ async fn axum_task_answer<C, B>(
     body: Bytes,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let request: crate::slices::pane::TaskAnswerRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -522,37 +574,66 @@ async fn axum_start_task<C, B>(
     Json(request): Json<crate::slices::operate::StartTaskRequest>,
 ) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let mut guard = state
-        .shared
+    let request_id = request.request_id.trim().to_string();
+    if request_id.is_empty() {
+        return json_value_response(
+            400,
+            serde_json::json!({ "ok": false, "error": "request_id is required" }),
+        );
+    }
+    let task_key = format!("start:{}:{}", request.repo, request.title.trim());
+    {
+        let mut operations = state
+            .operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(response) = operations.completed.get(&request_id) {
+            return response.clone().into_axum_response();
+        }
+        if !operations.in_flight_requests.insert(request_id.clone())
+            || !operations.in_flight_tasks.insert(task_key.clone())
+        {
+            operations.in_flight_requests.remove(&request_id);
+            return json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": "task start already in progress",
+                }),
+            );
+        }
+    }
+    let response = state.run_optimistic(
+        Some(&request_id),
+        "cockpit state changed while task start was running",
+        |context, runner, bridge| match handle_start_task_request(
+            &serde_json::to_string(&request).unwrap_or_default(),
+            context,
+            runner,
+            bridge,
+        ) {
+            Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
+            Err(error) => response_from_web_error(error, Some(&request_id)),
+        },
+    );
+    let mut operations = state
+        .operations
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        runner,
-        bridge,
-        revision,
-        ..
-    } = &mut *guard;
-    let response = match handle_start_task_request(
-        &serde_json::to_string(&request).unwrap_or_default(),
-        context,
-        runner,
-        bridge,
-    ) {
-        Ok(response) => response.into_axum_response(),
-        Err(error) => web_error_response(error),
-    };
-    *revision = revision.saturating_add(1);
-    response
+    operations.in_flight_requests.remove(&request_id);
+    operations.in_flight_tasks.remove(&task_key);
+    operations.completed.insert(request_id, response.clone());
+    response.into_axum_response()
 }
 
 async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
 where
-    C: CommandRunner + Send + 'static,
-    B: RuntimeBridge<C> + Send + 'static,
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let request: MobileActionRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
@@ -603,28 +684,19 @@ where
         }
     }
 
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        runner,
-        bridge,
-        revision,
-        ..
-    } = &mut *guard;
-    let response = match handle_action_request(
-        &serde_json::to_string(&request).unwrap_or_default(),
-        context,
-        runner,
-        bridge,
-    ) {
-        Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-        Err(error) => response_from_web_error(error, request_id.as_deref()),
-    };
-    *revision = revision.saturating_add(1);
-    drop(guard);
+    let response = state.run_optimistic(
+        request_id.as_deref(),
+        "cockpit state changed while operation was running",
+        |context, runner, bridge| match handle_action_request(
+            &serde_json::to_string(&request).unwrap_or_default(),
+            context,
+            runner,
+            bridge,
+        ) {
+            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+            Err(error) => response_from_web_error(error, request_id.as_deref()),
+        },
+    );
 
     let mut operations = state
         .operations
@@ -1053,6 +1125,7 @@ mod tests {
         refresh_delay: Duration,
         operate_result: Result<OperateOutcome, ActionFailure>,
         start: Option<crate::slices::operate::StartTaskRequest>,
+        start_count: usize,
         start_result: Result<OperateOutcome, ActionFailure>,
     }
 
@@ -1070,6 +1143,7 @@ mod tests {
                     output: String::new(),
                 }),
                 start: None,
+                start_count: 0,
                 start_result: Ok(OperateOutcome {
                     state_changed: true,
                     output: String::new(),
@@ -1121,6 +1195,7 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
         ) -> Result<OperateOutcome, ActionFailure> {
+            self.start_count += 1;
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -1154,6 +1229,7 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut SlowPaneRunner,
         ) -> Result<OperateOutcome, ActionFailure> {
+            self.start_count += 1;
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -1187,6 +1263,7 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut PaneRunner,
         ) -> Result<OperateOutcome, ActionFailure> {
+            self.start_count += 1;
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -1431,6 +1508,41 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(guard.bridge.operate_count, 1);
+    }
+
+    #[tokio::test]
+    async fn axum_task_starts_are_idempotent_by_request_id() {
+        let state = super::WebAppState::new(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-start-idempotency"),
+        );
+        let app = super::axum_app(state.clone());
+        let request =
+            r#"{"request_id":"start-1","repo":"web","title":"Fix login","agent":"codex"}"#;
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .method("POST")
+                        .uri("/api/tasks")
+                        .header("content-type", "application/json")
+                        .body(Body::from(request))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.start_count, 1);
     }
 
     #[tokio::test]

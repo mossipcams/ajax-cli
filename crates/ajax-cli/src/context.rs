@@ -1,13 +1,13 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
-    models::{LifecycleStatus, Task, TaskId},
+    models::LifecycleStatus,
     registry::{
         InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
     },
 };
 use clap::ArgMatches;
-use std::{collections::BTreeSet, path::PathBuf, time::SystemTime};
+use std::{path::PathBuf, time::SystemTime};
 
 use crate::CliError;
 
@@ -250,8 +250,16 @@ pub(crate) struct TrackedContext {
 
 pub(crate) fn load_tracked_context(paths: &CliContextPaths) -> Result<TrackedContext, CliError> {
     let context = load_context(paths)?;
+    let mut save_state = context_save_state_from_registry(&context.registry);
+    save_state.loaded_revision = if paths.state_file.exists() {
+        SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .map_err(|error| CliError::ContextLoad(format!("state revision failed: {error}")))?
+    } else {
+        0
+    };
     Ok(TrackedContext {
-        save_state: context_save_state_from_registry(&context.registry, state_file_mtime(paths)),
+        save_state,
         context,
     })
 }
@@ -265,8 +273,8 @@ pub(crate) fn save_tracked_context(
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ContextSaveState {
-    pub loaded_mtime: Option<SystemTime>,
-    pub loaded_task_ids: BTreeSet<TaskId>,
+    pub loaded_registry: InMemoryRegistry,
+    pub loaded_revision: u64,
 }
 
 pub(crate) fn state_file_mtime(paths: &CliContextPaths) -> Option<SystemTime> {
@@ -288,68 +296,76 @@ pub(crate) fn save_context_with_state(
             .map_err(|error| CliError::ContextSave(error.to_string()))?;
     }
 
-    let disk_mtime = state_file_mtime(paths);
-    let registry = if matches!(
-        (disk_mtime, save_state.loaded_mtime),
-        (Some(disk), Some(loaded)) if disk > loaded
-    ) {
+    let store = SqliteRegistryStore::new(&paths.state_file);
+    let disk_revision = if paths.state_file.exists() {
+        store
+            .current_revision()
+            .map_err(|error| CliError::ContextLoad(format!("state revision failed: {error}")))?
+    } else {
+        0
+    };
+    let registry = if disk_revision != save_state.loaded_revision {
         let disk_context = load_context(paths)?;
-        save_state.loaded_mtime = disk_mtime;
         merge_registries(
             disk_context.registry,
             &context.registry,
-            &save_state.loaded_task_ids,
+            &save_state.loaded_registry,
         )?
     } else {
         context.registry.clone()
     };
 
-    SqliteRegistryStore::new(&paths.state_file)
-        .save(&registry)
+    let next_revision = store
+        .save_if_revision(&registry, disk_revision)
         .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))?;
-    save_state.loaded_mtime = state_file_mtime(paths);
+    save_state.loaded_registry = registry;
+    save_state.loaded_revision = next_revision;
     Ok(())
 }
 
-pub(crate) fn context_save_state_from_registry(
-    registry: &InMemoryRegistry,
-    loaded_mtime: Option<SystemTime>,
-) -> ContextSaveState {
+pub(crate) fn context_save_state_from_registry(registry: &InMemoryRegistry) -> ContextSaveState {
     ContextSaveState {
-        loaded_mtime,
-        loaded_task_ids: registry
-            .list_tasks()
-            .into_iter()
-            .map(|task| task.id.clone())
-            .collect(),
+        loaded_registry: registry.clone(),
+        loaded_revision: 0,
     }
 }
 
 fn merge_registries(
     disk: InMemoryRegistry,
     in_memory: &InMemoryRegistry,
-    loaded_task_ids: &BTreeSet<TaskId>,
+    baseline: &InMemoryRegistry,
 ) -> Result<InMemoryRegistry, CliError> {
-    let mut merged = in_memory.clone();
-    for disk_task in disk.list_tasks() {
-        if in_memory.get_task(&disk_task.id).is_some() {
-            if tasks_conflict(
-                in_memory
-                    .get_task(&disk_task.id)
-                    .expect("task should exist"),
-                disk_task,
-            ) {
+    let mut merged = disk.clone();
+    for memory_task in in_memory.list_tasks() {
+        let disk_task = disk.get_task(&memory_task.id);
+        let baseline_task = baseline.get_task(&memory_task.id);
+        if disk_task.is_some_and(|disk_task| {
+            disk_task.lifecycle_status != memory_task.lifecycle_status
+                && disk_task.lifecycle_status != LifecycleStatus::Removed
+                && memory_task.lifecycle_status != LifecycleStatus::Removed
+        }) {
+            return Err(CliError::ContextSave(format!(
+                "state conflict for {}: disk and in-memory lifecycle diverged",
+                memory_task.qualified_handle()
+            )));
+        }
+        match (disk_task, baseline_task) {
+            (Some(disk_task), Some(baseline_task)) if disk_task == baseline_task => {
+                *merged.get_task_mut(&memory_task.id).expect("disk task") = memory_task.clone();
+            }
+            (Some(_), Some(baseline_task)) if memory_task == baseline_task => {}
+            (Some(disk_task), _) if disk_task == memory_task => {}
+            (None, None) => {
+                merged.create_task(memory_task.clone()).map_err(|error| {
+                    CliError::ContextSave(format!("state merge failed: {error}"))
+                })?;
+            }
+            _ => {
                 return Err(CliError::ContextSave(format!(
-                    "state conflict for {}: disk and in-memory lifecycle diverged",
-                    disk_task.qualified_handle()
+                    "state conflict for {}: disk and in-memory task facts diverged",
+                    memory_task.qualified_handle()
                 )));
             }
-            continue;
-        }
-        if !loaded_task_ids.contains(&disk_task.id) {
-            merged
-                .create_task(disk_task.clone())
-                .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
         }
     }
 
@@ -365,20 +381,15 @@ fn merge_registries(
             .record_event(event.task_id.clone(), event.kind, &event.message)
             .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
     }
+    for task in in_memory.list_tasks() {
+        for receipt in in_memory.step_receipts_for_task(&task.id) {
+            merged
+                .record_step_receipt(receipt.clone())
+                .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+        }
+    }
 
     Ok(merged)
-}
-
-fn tasks_conflict(disk: &Task, memory: &Task) -> bool {
-    if disk.lifecycle_status == memory.lifecycle_status {
-        return false;
-    }
-    if disk.lifecycle_status == LifecycleStatus::Removed
-        || memory.lifecycle_status == LifecycleStatus::Removed
-    {
-        return false;
-    }
-    true
 }
 
 #[cfg(test)]

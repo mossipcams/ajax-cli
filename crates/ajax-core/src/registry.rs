@@ -315,6 +315,7 @@ pub enum RegistrySnapshotError {
     Decode(String),
     Database(String),
     Io(String),
+    RevisionConflict { expected: u64, actual: u64 },
     IncompatibleSchema { found: i64, supported: i64 },
     LegacySqlitePayloadSchema,
 }
@@ -326,6 +327,10 @@ impl fmt::Display for RegistrySnapshotError {
             Self::Decode(message) => write!(formatter, "state decode failed: {message}"),
             Self::Database(message) => write!(formatter, "database error: {message}"),
             Self::Io(message) => write!(formatter, "I/O error: {message}"),
+            Self::RevisionConflict { expected, actual } => write!(
+                formatter,
+                "state revision conflict: expected {expected}, found {actual}"
+            ),
             Self::IncompatibleSchema { found, supported } => write!(
                 formatter,
                 "incompatible state schema: found {found}, supported {supported}"

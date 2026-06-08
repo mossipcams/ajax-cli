@@ -514,12 +514,18 @@ command-budget fixtures for regression tests.
 
 ### Native and Web persistence
 
-`ajax-cli::context` tracks SQLite mtime and the task IDs present at load time.
-`save_context_with_state` reloads and merges non-conflicting web companion
-changes before native final save. Divergent lifecycle updates for the same task
-surface an explicit conflict error instead of last-writer-wins overwrite. CLI
-entry points load through `TrackedContext` so native saves participate in the
-same merge contract as Web Cockpit.
+`ajax-cli::context` uses an Ajax-owned SQLite revision for optimistic
+concurrency. Snapshot saves compare and advance that revision in the same
+transaction; stale writers reload and merge independently added durable facts,
+while incompatible same-task changes surface an explicit conflict instead of
+last-writer-wins overwrite. SQLite mtime remains only a reload optimization.
+CLI entry points load through `TrackedContext` so native saves participate in
+the same merge contract as Web Cockpit.
+
+Start execution exposes persistence checkpoints after provisional intent and
+each successful provisioning receipt. The CLI Web adapter persists those
+checkpoints before later external effects, so interrupted starts remain
+observable and resumable.
 
 Ship, tidy, and drop task operations refresh or re-observe substrates in
 `ajax-core::task_operations` before planning destructive work. Web and CLI
@@ -535,6 +541,13 @@ remains responsible for deciding which task actions are valid for a task.
 Web Cockpit may use HTTP, TLS, filesystem storage for certificates, and static
 asset embedding inside `ajax-web`. Those mechanisms must not move into
 `ajax-core` or `ajax-tui`.
+
+Web operations are coordinated by request ID and task key. External operation
+and pane work runs outside the global shared-state lock, then commits against
+the prepared revision or pane generation; stale commits return conflicts
+instead of replacing newer state. Pane control commands are bounded by
+timeouts. Supervisor cancellation terminates and awaits the child process
+before reporting completion, with a bounded wait.
 
 ## Cockpit Architecture
 

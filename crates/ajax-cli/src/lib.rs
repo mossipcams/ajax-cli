@@ -319,10 +319,7 @@ fn load_tracked_context_for_matches(
     }) {
         let context = load_context_with_events(paths)?;
         Ok(TrackedContext {
-            save_state: context::context_save_state_from_registry(
-                &context.registry,
-                context::state_file_mtime(paths),
-            ),
+            save_state: context::context_save_state_from_registry(&context.registry),
             context,
         })
     } else {
