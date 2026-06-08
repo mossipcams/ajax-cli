@@ -155,10 +155,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
                 save_context_with_state(
                     paths,
                     context,
-                    &mut crate::context::context_save_state_from_registry(
-                        &context.registry,
-                        self.last_loaded_mtime,
-                    ),
+                    &mut crate::context::context_save_state_from_registry(&context.registry),
                 )
                 .map_err(web_error_from_cli)?;
                 self.last_loaded_mtime = state_file_mtime(paths);
@@ -183,10 +180,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         runner: &mut C,
     ) -> Result<OperateOutcome, ActionFailure> {
         let paths = self.paths.clone();
-        let mut save_state = crate::context::context_save_state_from_registry(
-            &context.registry,
-            self.last_loaded_mtime,
-        );
+        let mut save_state = crate::context::context_save_state_from_registry(&context.registry);
         let result = start_task_with_checkpoint(context, runner, request, |checkpoint_context| {
             let Some(paths) = paths.as_ref() else {
                 return Ok(());
@@ -238,7 +232,6 @@ impl CliRuntimeBridge {
                             context,
                             &mut crate::context::context_save_state_from_registry(
                                 &context.registry,
-                                self.last_loaded_mtime,
                             ),
                         )
                         .map_err(action_failure_from_cli)?;
@@ -256,7 +249,6 @@ impl CliRuntimeBridge {
                             context,
                             &mut crate::context::context_save_state_from_registry(
                                 &context.registry,
-                                self.last_loaded_mtime,
                             ),
                         )
                         .map_err(action_failure_from_cli)?;

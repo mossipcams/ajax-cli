@@ -1,13 +1,13 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
-    models::{LifecycleStatus, TaskId},
+    models::LifecycleStatus,
     registry::{
         InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
     },
 };
 use clap::ArgMatches;
-use std::{collections::BTreeSet, path::PathBuf, time::SystemTime};
+use std::{path::PathBuf, time::SystemTime};
 
 use crate::CliError;
 
@@ -250,8 +250,7 @@ pub(crate) struct TrackedContext {
 
 pub(crate) fn load_tracked_context(paths: &CliContextPaths) -> Result<TrackedContext, CliError> {
     let context = load_context(paths)?;
-    let mut save_state =
-        context_save_state_from_registry(&context.registry, state_file_mtime(paths));
+    let mut save_state = context_save_state_from_registry(&context.registry);
     save_state.loaded_revision = if paths.state_file.exists() {
         SqliteRegistryStore::new(&paths.state_file)
             .current_revision()
@@ -274,8 +273,6 @@ pub(crate) fn save_tracked_context(
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ContextSaveState {
-    pub loaded_mtime: Option<SystemTime>,
-    pub loaded_task_ids: BTreeSet<TaskId>,
     pub loaded_registry: InMemoryRegistry,
     pub loaded_revision: u64,
 }
@@ -321,28 +318,13 @@ pub(crate) fn save_context_with_state(
     let next_revision = store
         .save_if_revision(&registry, disk_revision)
         .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))?;
-    save_state.loaded_mtime = state_file_mtime(paths);
-    save_state.loaded_task_ids = registry
-        .list_tasks()
-        .into_iter()
-        .map(|task| task.id.clone())
-        .collect();
     save_state.loaded_registry = registry;
     save_state.loaded_revision = next_revision;
     Ok(())
 }
 
-pub(crate) fn context_save_state_from_registry(
-    registry: &InMemoryRegistry,
-    loaded_mtime: Option<SystemTime>,
-) -> ContextSaveState {
+pub(crate) fn context_save_state_from_registry(registry: &InMemoryRegistry) -> ContextSaveState {
     ContextSaveState {
-        loaded_mtime,
-        loaded_task_ids: registry
-            .list_tasks()
-            .into_iter()
-            .map(|task| task.id.clone())
-            .collect(),
         loaded_registry: registry.clone(),
         loaded_revision: 0,
     }

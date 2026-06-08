@@ -66,6 +66,57 @@ impl<C, B> Clone for WebAppState<C, B> {
     }
 }
 
+impl<C, B> WebAppState<C, B>
+where
+    C: Clone,
+    B: Clone,
+{
+    /// Run `operate` against a clone of the shared state without holding the
+    /// `shared` lock across the call, then commit the result only if no other
+    /// request advanced the revision in the meantime. A losing writer leaves
+    /// shared state untouched and returns a `409` conflict instead.
+    fn run_optimistic(
+        &self,
+        request_id: Option<&str>,
+        conflict_message: &str,
+        operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> Response,
+    ) -> Response {
+        let (mut context, mut runner, mut bridge, base_revision) = {
+            let guard = self
+                .shared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            (
+                guard.context.clone(),
+                guard.runner.clone(),
+                guard.bridge.clone(),
+                guard.revision,
+            )
+        };
+        let response = operate(&mut context, &mut runner, &mut bridge);
+        let mut guard = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.runner = runner;
+            guard.bridge = bridge;
+            guard.revision = guard.revision.saturating_add(1);
+            response
+        } else {
+            operation_response_with_request_id(
+                json_response(
+                    409,
+                    serde_json::json!({ "ok": false, "error": conflict_message }),
+                )
+                .unwrap_or_else(|error| response_from_web_error(error, request_id)),
+                request_id,
+            )
+        }
+    }
+}
+
 impl<C, B> WebAppState<C, B> {
     pub fn new(
         context: CommandContext<InMemoryRegistry>,
@@ -556,51 +607,19 @@ where
             );
         }
     }
-    let (mut context, mut runner, mut bridge, base_revision) = {
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (
-            guard.context.clone(),
-            guard.runner.clone(),
-            guard.bridge.clone(),
-            guard.revision,
-        )
-    };
-    let mut response = match handle_start_task_request(
-        &serde_json::to_string(&request).unwrap_or_default(),
-        &mut context,
-        &mut runner,
-        &mut bridge,
-    ) {
-        Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
-        Err(error) => response_from_web_error(error, Some(&request_id)),
-    };
-    {
-        let mut guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if guard.revision == base_revision {
-            guard.context = context;
-            guard.runner = runner;
-            guard.bridge = bridge;
-            guard.revision = guard.revision.saturating_add(1);
-        } else {
-            response = operation_response_with_request_id(
-                json_response(
-                    409,
-                    serde_json::json!({
-                        "ok": false,
-                        "error": "cockpit state changed while task start was running",
-                    }),
-                )
-                .unwrap_or_else(|error| response_from_web_error(error, Some(&request_id))),
-                Some(&request_id),
-            );
-        }
-    }
+    let response = state.run_optimistic(
+        Some(&request_id),
+        "cockpit state changed while task start was running",
+        |context, runner, bridge| match handle_start_task_request(
+            &serde_json::to_string(&request).unwrap_or_default(),
+            context,
+            runner,
+            bridge,
+        ) {
+            Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
+            Err(error) => response_from_web_error(error, Some(&request_id)),
+        },
+    );
     let mut operations = state
         .operations
         .lock()
@@ -665,51 +684,19 @@ where
         }
     }
 
-    let (mut context, mut runner, mut bridge, base_revision) = {
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (
-            guard.context.clone(),
-            guard.runner.clone(),
-            guard.bridge.clone(),
-            guard.revision,
-        )
-    };
-    let mut response = match handle_action_request(
-        &serde_json::to_string(&request).unwrap_or_default(),
-        &mut context,
-        &mut runner,
-        &mut bridge,
-    ) {
-        Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
-        Err(error) => response_from_web_error(error, request_id.as_deref()),
-    };
-    {
-        let mut guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if guard.revision == base_revision {
-            guard.context = context;
-            guard.runner = runner;
-            guard.bridge = bridge;
-            guard.revision = guard.revision.saturating_add(1);
-        } else {
-            response = operation_response_with_request_id(
-                json_response(
-                    409,
-                    serde_json::json!({
-                        "ok": false,
-                        "error": "cockpit state changed while operation was running",
-                    }),
-                )
-                .unwrap_or_else(|error| response_from_web_error(error, request_id.as_deref())),
-                request_id.as_deref(),
-            );
-        }
-    }
+    let response = state.run_optimistic(
+        request_id.as_deref(),
+        "cockpit state changed while operation was running",
+        |context, runner, bridge| match handle_action_request(
+            &serde_json::to_string(&request).unwrap_or_default(),
+            context,
+            runner,
+            bridge,
+        ) {
+            Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
+            Err(error) => response_from_web_error(error, request_id.as_deref()),
+        },
+    );
 
     let mut operations = state
         .operations
