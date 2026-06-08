@@ -81,6 +81,10 @@ let paneInFlight = false;
 let paneTimer = null;
 let paneAvailable = false;
 let lastInteractKind = null;
+// Survive re-renders so disclosures stay open once opened. The interact panel is
+// rebuilt on every pane poll and the whole detail view on every detail refresh.
+let terminalDetailsOpen = false;
+let metaDetailsOpen = false;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -627,91 +631,53 @@ function renderDetail(detail) {
 
   detailContainer.append(renderInteractPanel(detail, lastPaneData));
 
-  const liveSection = el("section", "detail-section");
-  liveSection.append(el("h2", null, "Live status"));
-  const liveGrid = el("dl", "detail-grid");
-  appendGridRow(liveGrid, "Handle", detail.qualified_handle);
-  appendGridRow(liveGrid, "State", detail.ui_state || "—");
-  appendGridRow(liveGrid, "Lifecycle", detail.lifecycle || "—");
-  appendGridRow(liveGrid, "Status", detail.status_label || "—");
-  if (detail.live_status_kind) appendGridRow(liveGrid, "Live kind", detail.live_status_kind);
-  if (detail.live_status_summary) appendGridRow(liveGrid, "Live note", detail.live_status_summary);
-  liveSection.append(liveGrid);
-  detailContainer.append(liveSection);
+  const meta = document.createElement("details");
+  meta.className = "meta-details";
+  meta.open = metaDetailsOpen;
+  meta.addEventListener("toggle", () => {
+    metaDetailsOpen = meta.open;
+  });
+  const metaSummary = document.createElement("summary");
+  metaSummary.textContent = "Task details";
+  meta.append(metaSummary);
 
-  const gitSection = el("section", "detail-section");
-  gitSection.append(el("h2", null, "Branch"));
+  meta.append(el("div", "meta-group-label", "Branch"));
   const gitGrid = el("dl", "detail-grid");
-  appendGridRow(gitGrid, "Branch", detail.branch);
+  appendCopyRow(gitGrid, "Branch", detail.branch);
   appendGridRow(gitGrid, "Base", detail.base_branch);
-  appendGridRow(gitGrid, "Worktree", detail.worktree_path);
-  if (detail.git) {
-    const ahead = detail.git.ahead || 0;
-    const behind = detail.git.behind || 0;
-    const dirty = detail.git.dirty ? "dirty" : "clean";
-    appendGridRow(gitGrid, "Diff", `${ahead} ahead · ${behind} behind · ${dirty}`);
-    if (detail.git.unpushed_commits) {
-      appendGridRow(gitGrid, "Unpushed", String(detail.git.unpushed_commits));
-    }
+  appendCopyRow(gitGrid, "Worktree", detail.worktree_path);
+  if (detail.git && detail.git.unpushed_commits) {
+    appendGridRow(gitGrid, "Unpushed", String(detail.git.unpushed_commits));
   }
-  gitSection.append(gitGrid);
-  detailContainer.append(gitSection);
+  meta.append(gitGrid);
 
-  const agentSection = el("section", "detail-section");
-  agentSection.append(el("h2", null, "Agent"));
+  meta.append(el("div", "meta-group-label", "Agent"));
   const agentGrid = el("dl", "detail-grid");
   appendGridRow(agentGrid, "Client", detail.agent);
   appendGridRow(agentGrid, "Runtime", detail.agent_status);
   appendGridRow(agentGrid, "Tmux", detail.tmux_session);
-  agentSection.append(agentGrid);
+  meta.append(agentGrid);
 
-  if (detail.agent_attempts && detail.agent_attempts.length) {
-    const attemptsHeading = el("h2", null, "Recent attempts");
-    attemptsHeading.style.marginTop = "16px";
-    agentSection.append(attemptsHeading);
-    const list = el("ul", "attempt-list");
-    for (const attempt of detail.agent_attempts.slice(-5).reverse()) {
-      const li = el("li", "attempt");
-      li.append(el("span", null, attempt.outcome));
-      const started = new Date(attempt.started_unix_secs * 1000);
-      li.append(el("time", null, started.toLocaleString()));
-      list.append(li);
-    }
-    agentSection.append(list);
-  }
-  detailContainer.append(agentSection);
-
-  const states = actionStatesForCard(detail);
-  const supported = states.filter((state) => state.status === "supported");
-  if (states.length) {
-    const actions = el("div", "detail-actions");
-    for (const state of states) {
-      const btn = actionButtonFromState(state, detail.qualified_handle, false);
-      if (state.action === detail.primary_action && state.status === "supported") {
-        btn.classList.add("primary");
-      }
-      actions.append(btn);
-    }
-    detailContainer.append(actions);
-
-    const disabled = states.filter((state) => state.status !== "supported");
-    if (disabled.length) {
-      const notes = el("div", "action-notes");
-      for (const state of disabled) {
-        if (!state.reason) continue;
-        const note = el("p", "action-note");
-        note.textContent = `${titleCase(state.action)}: ${state.reason}`;
-        notes.append(note);
-      }
-      if (notes.childElementCount) detailContainer.append(notes);
-    }
-  }
+  detailContainer.append(meta);
 }
 
 function appendGridRow(grid, label, value) {
   if (value == null || value === "") return;
   grid.append(el("dt", null, label));
   grid.append(el("dd", null, String(value)));
+}
+
+function appendCopyRow(grid, label, value) {
+  if (value == null || value === "") return;
+  grid.append(el("dt", null, label));
+  const dd = el("dd", "meta-copy-cell");
+  dd.append(el("span", "meta-copy-value", String(value)));
+  const copy = el("button", "meta-copy", "Copy");
+  copy.type = "button";
+  copy.dataset.copyValue = String(value);
+  copy.setAttribute("aria-label", `Copy ${label.toLowerCase()}`);
+  dd.append(copy);
+  grid.append(dd);
 }
 
 async function loadDetail() {
@@ -969,7 +935,7 @@ function renderInteractPanel(detail, pane) {
   const copy = interactStateCopy(kind);
   lastInteractKind = kind;
 
-  const stateRow = el("div", "interact-state");
+  const stateRow = el("div", "interact-state is-hero");
   const pill = el("span", `interact-pill tone-${copy.tone}`, copy.label);
   stateRow.append(pill);
   if (detail.live_status_summary) {
@@ -977,10 +943,12 @@ function renderInteractPanel(detail, pane) {
   }
   panel.append(stateRow);
 
+  const band = renderNextActionBand(detail);
+  if (band) panel.append(band);
+
   const cards = el("div", "dashboard-card-grid");
   cards.append(renderDashboardCard("Current status", renderCurrentStatus(detail, pane)));
   cards.append(renderDashboardCard("Needs from you", renderNeedsFromYou(detail, pane, tmuxMissing)));
-  cards.append(renderDashboardCard("Best next step", renderBestNextStep(detail)));
   cards.append(renderDashboardCard("Recent milestones", renderMilestones(detail, pane)));
   panel.append(cards);
 
@@ -1050,15 +1018,34 @@ function renderNeedsFromYou(detail, pane, tmuxMissing) {
   return wrap;
 }
 
-function renderBestNextStep(detail) {
-  const wrap = el("div", "dashboard-card-body");
-  const primary = actionStatesForCard(detail).find((state) => state.action === detail.primary_action);
-  const message = nextStepMessage(detail, primary);
-  wrap.append(el("p", "interact-card-body", message));
-  if (primary && primary.status === "supported") {
-    wrap.append(el("span", "dashboard-chip", actionLabel(primary.action, primary)));
+function renderNextActionBand(detail) {
+  const states = actionStatesForCard(detail);
+  if (!states.length) return null;
+
+  const band = el("section", "next-action");
+  band.append(el("div", "interact-card-label", "Next action"));
+
+  const primary = states.find((state) => state.action === detail.primary_action);
+  band.append(el("p", "next-action-hint", nextStepMessage(detail, primary)));
+
+  const row = el("div", "next-action-row");
+  for (const state of states) {
+    const isPrimary =
+      state.status === "supported" && state.action === detail.primary_action;
+    row.append(actionButtonFromState(state, detail.qualified_handle, isPrimary));
   }
-  return wrap;
+  band.append(row);
+
+  const disabled = states.filter((state) => state.status !== "supported" && state.reason);
+  if (disabled.length) {
+    const notes = el("div", "action-notes");
+    for (const state of disabled) {
+      notes.append(el("p", "action-note", `${titleCase(state.action)}: ${state.reason}`));
+    }
+    band.append(notes);
+  }
+
+  return band;
 }
 
 function nextStepMessage(detail, primary) {
@@ -1115,6 +1102,10 @@ function milestoneEntries(detail, pane) {
 function renderTerminalDetails(detail, pane, tmuxMissing) {
   const details = document.createElement("details");
   details.className = "terminal-details";
+  details.open = terminalDetailsOpen;
+  details.addEventListener("toggle", () => {
+    terminalDetailsOpen = details.open;
+  });
   const summary = document.createElement("summary");
   summary.textContent = "View terminal details";
   details.append(summary);
@@ -1595,6 +1586,11 @@ document.addEventListener("click", (event) => {
   const shortcut = event.target.closest("[data-terminal-shortcut]");
   if (shortcut) {
     runTerminalShortcut(shortcut.dataset.terminalShortcut);
+    return;
+  }
+  const copyButton = event.target.closest("[data-copy-value]");
+  if (copyButton) {
+    copyTextResult(copyButton.dataset.copyValue, "Copied", "Nothing to copy");
     return;
   }
   const openTask = event.target.closest("[data-open-task]");
