@@ -530,7 +530,6 @@ mod tests {
         for expected in [
             "Current status",
             "Needs from you",
-            "Best next step",
             "Recent milestones",
             "View terminal details",
             "terminalDetailsOpen",
@@ -548,11 +547,58 @@ mod tests {
             "Live note",
             "Recent attempts",
             "\"Diff\"",
+            "Best next step",
         ] {
             assert!(
                 !script.contains(removed),
                 "app.js should not foreground pane UI copy {removed}"
             );
         }
+    }
+
+    #[test]
+    fn task_detail_leads_with_next_action_and_folds_meta() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+
+        // Task 1: a prominent next-action band, surfaced above the metadata.
+        assert!(script.contains("next-action"), "missing next-action band");
+        assert!(script.contains("Next action"), "missing next-action label");
+        assert!(css.contains(".next-action"), "missing next-action style");
+
+        // Task 2: Branch + Agent fold into one open-state-persistent disclosure.
+        assert!(
+            script.contains("meta-details"),
+            "missing meta-details disclosure"
+        );
+        assert!(
+            script.contains("Task details"),
+            "missing Task details summary"
+        );
+        assert!(
+            script.contains("metaDetailsOpen"),
+            "meta disclosure must survive detail re-render"
+        );
+        assert!(css.contains(".meta-details"), "missing meta-details style");
+
+        // Task 3: iOS-sized touch targets and copy-on-tap escape hatch.
+        assert!(
+            css.contains(".terminal-shortcuts .pill {\n  min-height: 44px;"),
+            "terminal shortcuts must use 44px touch targets"
+        );
+        assert!(
+            script.contains("data-copy-value"),
+            "worktree/branch should be tap-to-copy"
+        );
+
+        // Task 4: the status row reads as the page lede.
+        assert!(
+            css.contains(".interact-state.is-hero"),
+            "missing status hero style"
+        );
+        assert!(
+            script.contains("is-hero"),
+            "status row must take the hero class"
+        );
     }
 }
