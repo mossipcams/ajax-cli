@@ -150,6 +150,10 @@ pub async fn supervise_process_with_cancellation<P: ProcessProtocol>(
             stderr_task.abort();
             return match changed {
                 Ok(()) if *cancel.borrow() => {
+                    child.start_kill()?;
+                    tokio::time::timeout(Duration::from_secs(2), child.wait())
+                        .await
+                        .map_err(|_| SupervisorError::Process("cancelled process did not exit".to_string()))??;
                     Err(SupervisorError::Process("process cancelled".to_string()))
                 }
                 Ok(()) => Err(SupervisorError::Process("process cancellation channel changed".to_string())),

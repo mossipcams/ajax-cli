@@ -107,6 +107,7 @@ pub struct PaneCaptureWork {
     pub tmux_session: String,
     pub selected_agent: ajax_core::models::AgentClient,
     pub previous_lines: Vec<String>,
+    pub previous_sequence: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -158,6 +159,7 @@ pub fn prepare_browser_task_pane_view<R: Registry>(
         tmux_session: task.tmux_session.clone(),
         selected_agent: task.selected_agent,
         previous_lines,
+        previous_sequence: sequences.sequence_for(qualified_handle),
     }))
 }
 
@@ -179,6 +181,7 @@ pub fn commit_browser_task_pane_view(
     sequences: &mut PaneSequenceState,
     qualified_handle: &str,
     since: Option<u64>,
+    expected_sequence: u64,
     snapshot: core_pane::PaneSnapshot,
 ) -> BrowserPaneSnapshot {
     let now = Instant::now();
@@ -191,6 +194,19 @@ pub fn commit_browser_task_pane_view(
             captured_at: None,
             cached_state: None,
         });
+    if entry.sequence != expected_sequence {
+        return BrowserPaneSnapshot {
+            sequence: entry.sequence,
+            lines: if since == Some(entry.sequence) {
+                Vec::new()
+            } else {
+                entry.lines.clone()
+            },
+            truncated: false,
+            tmux_exists: true,
+            state: entry.cached_state.clone().map(browser_pane_state),
+        };
+    }
     if snapshot.sequence_changed {
         entry.sequence = entry.sequence.saturating_add(1);
         entry.lines = snapshot.lines;
@@ -238,6 +254,7 @@ pub fn browser_task_pane_view<R: Registry>(
                 sequences,
                 qualified_handle,
                 since,
+                work.previous_sequence,
                 snapshot,
             ))
         }
@@ -439,7 +456,9 @@ fn prune_expired_inputs(inputs: &mut PaneInputState, now: Instant) {
 }
 #[cfg(test)]
 mod tests {
-    use super::{browser_task_pane_view, PaneRouteError, PaneSequenceState};
+    use super::{
+        browser_task_pane_view, commit_browser_task_pane_view, PaneRouteError, PaneSequenceState,
+    };
     use ajax_core::{
         adapters::{
             CommandOutput, CommandRunError, CommandRunner, CommandSpec, CountingCommandRunner,
@@ -548,6 +567,31 @@ mod tests {
         assert_eq!(first.sequence, 1);
         assert_eq!(second.sequence, 1);
         assert_eq!(second.lines, Vec::<String>::new());
+    }
+
+    #[test]
+    fn stale_pane_capture_cannot_replace_newer_snapshot() {
+        let mut sequences = PaneSequenceState::default();
+        let newer = ajax_core::slices::pane::PaneSnapshot {
+            sequence_changed: true,
+            lines: vec!["newer".to_string()],
+            truncated: false,
+            state: None,
+        };
+        let older = ajax_core::slices::pane::PaneSnapshot {
+            sequence_changed: true,
+            lines: vec!["older".to_string()],
+            truncated: false,
+            state: None,
+        };
+
+        let committed =
+            commit_browser_task_pane_view(&mut sequences, "web/fix-login", None, 0, newer);
+        let stale = commit_browser_task_pane_view(&mut sequences, "web/fix-login", None, 0, older);
+
+        assert_eq!(committed.sequence, 1);
+        assert_eq!(stale.sequence, 1);
+        assert_eq!(stale.lines, vec!["newer".to_string()]);
     }
 
     #[test]

@@ -11,8 +11,8 @@ use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
     slices::operate::{
-        format_operate_error, operate, start_task, OperateError, OperateOutcome, OperateRequest,
-        StartTaskRequest,
+        format_operate_error, operate, start_task_with_checkpoint, OperateError, OperateOutcome,
+        OperateRequest, StartTaskRequest,
     },
     WebError,
 };
@@ -182,7 +182,27 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<OperateOutcome, ActionFailure> {
-        self.persist_operate(start_task(context, runner, request), context)
+        let paths = self.paths.clone();
+        let mut save_state = crate::context::context_save_state_from_registry(
+            &context.registry,
+            self.last_loaded_mtime,
+        );
+        let result = start_task_with_checkpoint(context, runner, request, |checkpoint_context| {
+            let Some(paths) = paths.as_ref() else {
+                return Ok(());
+            };
+            save_context_with_state(paths, checkpoint_context, &mut save_state).map_err(|error| {
+                ajax_core::commands::CommandError::CommandRun(
+                    ajax_core::adapters::CommandRunError::SpawnFailed(format!(
+                        "persist start checkpoint: {error}"
+                    )),
+                )
+            })
+        });
+        if paths.is_some() {
+            self.last_loaded_mtime = paths.as_ref().and_then(state_file_mtime);
+        }
+        self.persist_operate(result, context)
     }
 }
 

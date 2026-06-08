@@ -4,8 +4,10 @@ use crate::{
     live::classify_pane,
     models::{AgentClient, LiveStatusKind},
 };
+use std::time::Duration;
 
 const DEFAULT_WORKTRUNK_WINDOW: &str = "worktrunk";
+const PANE_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneSnapshot {
@@ -96,6 +98,7 @@ fn capture_command(session: &str) -> CommandSpec {
             "-200",
         ],
     )
+    .with_timeout(PANE_COMMAND_TIMEOUT)
 }
 
 /// Re-capture the pane and parse the current structured prompt for `agent`,
@@ -143,7 +146,7 @@ pub fn send_keys(
         args,
         cwd: None,
         mode: crate::adapters::CommandMode::Capture,
-        timeout: None,
+        timeout: Some(PANE_COMMAND_TIMEOUT),
     };
     runner.run(&command).map_err(map_tmux_error)?;
 
@@ -307,7 +310,10 @@ fn strip_ansi(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{send_keys, snapshot, PaneChoice, PaneSnapshot, PaneState, SendKeysOutcome};
+    use super::{
+        send_keys, snapshot, PaneChoice, PaneSnapshot, PaneState, SendKeysOutcome,
+        PANE_COMMAND_TIMEOUT,
+    };
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         agent_prompt::{ChoiceRole, Confidence},
@@ -398,6 +404,7 @@ last line\n";
             .and_then(|s| s.fingerprint.as_ref())
             .is_some());
         assert_eq!(runner.commands.len(), 1);
+        assert_eq!(runner.commands[0].timeout, Some(PANE_COMMAND_TIMEOUT));
         assert_eq!(
             runner.commands[0].args,
             vec![
@@ -476,6 +483,7 @@ last line\n";
 
         assert_eq!(outcome, SendKeysOutcome { submitted: true });
         assert_eq!(runner.commands.len(), 1);
+        assert_eq!(runner.commands[0].timeout, Some(PANE_COMMAND_TIMEOUT));
         assert_eq!(
             runner.commands[0].args,
             vec![

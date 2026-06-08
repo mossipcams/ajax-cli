@@ -163,12 +163,55 @@ impl SqliteRegistryStore {
                     created_at_subsec_nanos INTEGER NOT NULL,
                     PRIMARY KEY (task_id, operation, step_key, target)
                 );
+
+                CREATE TABLE IF NOT EXISTS registry_meta (
+                    key TEXT PRIMARY KEY NOT NULL,
+                    value INTEGER NOT NULL
+                );
+                INSERT OR IGNORE INTO registry_meta (key, value) VALUES ('revision', 0);
                 "#,
             )
             .map_err(database_error)?;
         connection
             .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
             .map_err(database_error)
+    }
+
+    pub fn current_revision(&self) -> Result<u64, RegistrySnapshotError> {
+        let connection = self.open()?;
+        Self::migrate(&connection)?;
+        revision(&connection)
+    }
+
+    pub fn save_if_revision(
+        &self,
+        registry: &InMemoryRegistry,
+        expected_revision: u64,
+    ) -> Result<u64, RegistrySnapshotError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
+        }
+        let mut connection = self.open()?;
+        Self::migrate(&connection)?;
+        let transaction = connection.transaction().map_err(database_error)?;
+        let actual = revision(&transaction)?;
+        if actual != expected_revision {
+            return Err(RegistrySnapshotError::RevisionConflict {
+                expected: expected_revision,
+                actual,
+            });
+        }
+        save_registry(&transaction, registry)?;
+        let next = actual.saturating_add(1);
+        transaction
+            .execute(
+                "UPDATE registry_meta SET value = ?1 WHERE key = 'revision'",
+                [next as i64],
+            )
+            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)?;
+        Ok(next)
     }
 }
 
@@ -264,76 +307,103 @@ impl RegistryStore for SqliteRegistryStore {
         let mut connection = self.open()?;
         Self::migrate(&connection)?;
         let transaction = connection.transaction().map_err(database_error)?;
+        save_registry(&transaction, registry)?;
         transaction
-            .execute("DELETE FROM registry_events", [])
+            .execute(
+                "UPDATE registry_meta SET value = value + 1 WHERE key = 'revision'",
+                [],
+            )
             .map_err(database_error)?;
-        transaction
-            .execute("DELETE FROM registry_agent_attempts", [])
-            .map_err(database_error)?;
-        transaction
-            .execute("DELETE FROM registry_task_metadata", [])
-            .map_err(database_error)?;
-        transaction
-            .execute("DELETE FROM registry_task_side_flags", [])
-            .map_err(database_error)?;
-        transaction
-            .execute("DELETE FROM registry_tasks", [])
-            .map_err(database_error)?;
-        transaction
-            .execute("DELETE FROM step_receipts", [])
-            .map_err(database_error)?;
+        transaction.commit().map_err(database_error)
+    }
+}
 
-        let live_task_ids = registry
-            .tasks
-            .values()
-            .filter(|task| !is_registry_ghost_task(task))
-            .map(|task| task.id.clone())
-            .collect::<BTreeSet<_>>();
+fn save_registry(
+    transaction: &Transaction<'_>,
+    registry: &InMemoryRegistry,
+) -> Result<(), RegistrySnapshotError> {
+    transaction
+        .execute("DELETE FROM registry_events", [])
+        .map_err(database_error)?;
+    transaction
+        .execute("DELETE FROM registry_agent_attempts", [])
+        .map_err(database_error)?;
+    transaction
+        .execute("DELETE FROM registry_task_metadata", [])
+        .map_err(database_error)?;
+    transaction
+        .execute("DELETE FROM registry_task_side_flags", [])
+        .map_err(database_error)?;
+    transaction
+        .execute("DELETE FROM registry_tasks", [])
+        .map_err(database_error)?;
+    transaction
+        .execute("DELETE FROM step_receipts", [])
+        .map_err(database_error)?;
 
-        for task in registry
-            .tasks
-            .values()
-            .filter(|task| !is_registry_ghost_task(task))
-        {
-            save_task(&transaction, task)?;
-        }
+    let live_task_ids = registry
+        .tasks
+        .values()
+        .filter(|task| !is_registry_ghost_task(task))
+        .map(|task| task.id.clone())
+        .collect::<BTreeSet<_>>();
 
-        for (sequence, event) in registry
-            .events
-            .iter()
-            .filter(|event| live_task_ids.contains(&event.task_id))
-            .enumerate()
-        {
-            let (occurred_at_seconds, occurred_at_nanos) =
-                system_time_to_unix_parts(event.occurred_at)?;
-            transaction
-                .execute(
-                    "INSERT INTO registry_events \
+    for task in registry
+        .tasks
+        .values()
+        .filter(|task| !is_registry_ghost_task(task))
+    {
+        save_task(transaction, task)?;
+    }
+
+    for (sequence, event) in registry
+        .events
+        .iter()
+        .filter(|event| live_task_ids.contains(&event.task_id))
+        .enumerate()
+    {
+        let (occurred_at_seconds, occurred_at_nanos) =
+            system_time_to_unix_parts(event.occurred_at)?;
+        transaction
+            .execute(
+                "INSERT INTO registry_events \
                      (sequence, task_id, kind, message, occurred_at_unix_seconds, \
                       occurred_at_subsec_nanos) \
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![
-                        sequence as i64,
-                        event.task_id.as_str(),
-                        registry_event_kind_name(event.kind),
-                        event.message,
-                        occurred_at_seconds,
-                        occurred_at_nanos,
-                    ],
-                )
-                .map_err(database_error)?;
-        }
-
-        for receipt in registry
-            .step_receipts
-            .values()
-            .filter(|receipt| live_task_ids.contains(&receipt.task_id))
-        {
-            save_step_receipt(&transaction, receipt)?;
-        }
-
-        transaction.commit().map_err(database_error)
+                params![
+                    sequence as i64,
+                    event.task_id.as_str(),
+                    registry_event_kind_name(event.kind),
+                    event.message,
+                    occurred_at_seconds,
+                    occurred_at_nanos,
+                ],
+            )
+            .map_err(database_error)?;
     }
+
+    for receipt in registry
+        .step_receipts
+        .values()
+        .filter(|receipt| live_task_ids.contains(&receipt.task_id))
+    {
+        save_step_receipt(transaction, receipt)?;
+    }
+
+    Ok(())
+}
+
+fn revision(connection: &Connection) -> Result<u64, RegistrySnapshotError> {
+    connection
+        .query_row(
+            "SELECT value FROM registry_meta WHERE key = 'revision'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(database_error)
+        .and_then(|value| {
+            u64::try_from(value).map_err(|error| RegistrySnapshotError::Decode(error.to_string()))
+        })
 }
 
 fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotError> {
@@ -2325,6 +2395,44 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
 
         assert_eq!(error, RegistrySnapshotError::LegacySqlitePayloadSchema);
+    }
+
+    #[test]
+    fn sqlite_store_rejects_stale_expected_revision_without_overwriting_newer_state() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-stale-revision.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+        let mut first = InMemoryRegistry::default();
+        first
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        store.save(&first).unwrap();
+        let revision = store.current_revision().unwrap();
+
+        let mut newer = first.clone();
+        newer.get_task_mut(&TaskId::new("task-1")).unwrap().title = "newer".to_string();
+        store.save_if_revision(&newer, revision).unwrap();
+
+        let error = store.save_if_revision(&first, revision).unwrap_err();
+        assert_eq!(
+            error,
+            RegistrySnapshotError::RevisionConflict {
+                expected: revision,
+                actual: revision + 1,
+            }
+        );
+        assert_eq!(
+            store
+                .load()
+                .unwrap()
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .title,
+            "newer"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 
     fn table_columns(connection: &rusqlite::Connection, table: &str) -> Vec<String> {

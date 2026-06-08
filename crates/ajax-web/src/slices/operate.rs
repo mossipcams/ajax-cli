@@ -11,7 +11,7 @@ use ajax_core::{
             execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
             DropTaskCompletion,
         },
-        start::{execute_start_task_operation, plan_start_task_operation},
+        start::plan_start_task_operation,
         task_command::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
@@ -81,6 +81,15 @@ pub fn start_task<R: Registry>(
     runner: &mut impl CommandRunner,
     request: StartTaskRequest,
 ) -> Result<OperateOutcome, OperateError> {
+    start_task_with_checkpoint(context, runner, request, |_| Ok(()))
+}
+
+pub fn start_task_with_checkpoint<R: Registry>(
+    context: &mut CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    request: StartTaskRequest,
+    checkpoint: impl FnMut(&CommandContext<R>) -> Result<(), ajax_core::commands::CommandError>,
+) -> Result<OperateOutcome, OperateError> {
     if request.title.trim().is_empty() {
         return Err(OperateError::UnsupportedCapability(
             "start requires a non-empty task title",
@@ -95,13 +104,14 @@ pub fn start_task<R: Registry>(
     let (_intent, plan) = plan_start_task_operation(context, core_request.clone())
         .map_err(|error| OperateError::Command(error, false))?;
     let confirmed = !plan.requires_confirmation;
-    execute_start_task_operation(
+    ajax_core::task_operations::start::execute_start_task_operation_with_checkpoint(
         context,
         runner,
         &core_request,
         &plan,
         confirmed,
         OpenMode::NoAttach,
+        checkpoint,
     )
     .map_err(|error| OperateError::Command(error, true))?;
 
