@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.17.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.4...ajax-cli-v0.17.5) (2026-06-08)
+
+
+### Bug Fixes
+
+* declutter web task page and fix terminal disclosure auto-collapse ([#152](https://github.com/mossipcams/ajax-cli/issues/152)) ([403dbfd](https://github.com/mossipcams/ajax-cli/commit/403dbfdb6cfaded7c803803bd6c8eb1274a02d2b))
+
 ## [0.17.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.3...ajax-cli-v0.17.4) (2026-06-08)
 
 
