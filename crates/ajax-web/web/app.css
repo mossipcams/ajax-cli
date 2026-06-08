@@ -989,31 +989,6 @@ body.view-settings .settings-view {
   color: var(--ink-muted);
 }
 
-.attempt-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.attempt {
-  padding: 9px 0;
-  border-bottom: 1px solid var(--rule);
-  font-size: 12px;
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  color: var(--ink-soft);
-}
-
-.attempt:last-child {
-  border-bottom: none;
-}
-
-.attempt time {
-  color: var(--ink-muted);
-  font-feature-settings: "tnum";
-}
-
 .activity-excerpt {
   margin: 0;
   padding: 12px 14px;

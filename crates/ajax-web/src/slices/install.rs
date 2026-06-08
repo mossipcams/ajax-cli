@@ -533,6 +533,8 @@ mod tests {
             "Best next step",
             "Recent milestones",
             "View terminal details",
+            "terminalDetailsOpen",
+            "\"toggle\"",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }
@@ -542,6 +544,10 @@ mod tests {
             "Pinned to bottom",
             "Type your response",
             "Send to agent",
+            "Live kind",
+            "Live note",
+            "Recent attempts",
+            "\"Diff\"",
         ] {
             assert!(
                 !script.contains(removed),

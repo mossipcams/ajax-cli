@@ -81,6 +81,8 @@ let paneInFlight = false;
 let paneTimer = null;
 let paneAvailable = false;
 let lastInteractKind = null;
+// Survives pane-poll re-renders so the terminal disclosure stays open once opened.
+let terminalDetailsOpen = false;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -627,32 +629,14 @@ function renderDetail(detail) {
 
   detailContainer.append(renderInteractPanel(detail, lastPaneData));
 
-  const liveSection = el("section", "detail-section");
-  liveSection.append(el("h2", null, "Live status"));
-  const liveGrid = el("dl", "detail-grid");
-  appendGridRow(liveGrid, "Handle", detail.qualified_handle);
-  appendGridRow(liveGrid, "State", detail.ui_state || "—");
-  appendGridRow(liveGrid, "Lifecycle", detail.lifecycle || "—");
-  appendGridRow(liveGrid, "Status", detail.status_label || "—");
-  if (detail.live_status_kind) appendGridRow(liveGrid, "Live kind", detail.live_status_kind);
-  if (detail.live_status_summary) appendGridRow(liveGrid, "Live note", detail.live_status_summary);
-  liveSection.append(liveGrid);
-  detailContainer.append(liveSection);
-
   const gitSection = el("section", "detail-section");
   gitSection.append(el("h2", null, "Branch"));
   const gitGrid = el("dl", "detail-grid");
   appendGridRow(gitGrid, "Branch", detail.branch);
   appendGridRow(gitGrid, "Base", detail.base_branch);
   appendGridRow(gitGrid, "Worktree", detail.worktree_path);
-  if (detail.git) {
-    const ahead = detail.git.ahead || 0;
-    const behind = detail.git.behind || 0;
-    const dirty = detail.git.dirty ? "dirty" : "clean";
-    appendGridRow(gitGrid, "Diff", `${ahead} ahead · ${behind} behind · ${dirty}`);
-    if (detail.git.unpushed_commits) {
-      appendGridRow(gitGrid, "Unpushed", String(detail.git.unpushed_commits));
-    }
+  if (detail.git && detail.git.unpushed_commits) {
+    appendGridRow(gitGrid, "Unpushed", String(detail.git.unpushed_commits));
   }
   gitSection.append(gitGrid);
   detailContainer.append(gitSection);
@@ -664,21 +648,6 @@ function renderDetail(detail) {
   appendGridRow(agentGrid, "Runtime", detail.agent_status);
   appendGridRow(agentGrid, "Tmux", detail.tmux_session);
   agentSection.append(agentGrid);
-
-  if (detail.agent_attempts && detail.agent_attempts.length) {
-    const attemptsHeading = el("h2", null, "Recent attempts");
-    attemptsHeading.style.marginTop = "16px";
-    agentSection.append(attemptsHeading);
-    const list = el("ul", "attempt-list");
-    for (const attempt of detail.agent_attempts.slice(-5).reverse()) {
-      const li = el("li", "attempt");
-      li.append(el("span", null, attempt.outcome));
-      const started = new Date(attempt.started_unix_secs * 1000);
-      li.append(el("time", null, started.toLocaleString()));
-      list.append(li);
-    }
-    agentSection.append(list);
-  }
   detailContainer.append(agentSection);
 
   const states = actionStatesForCard(detail);
@@ -1115,6 +1084,10 @@ function milestoneEntries(detail, pane) {
 function renderTerminalDetails(detail, pane, tmuxMissing) {
   const details = document.createElement("details");
   details.className = "terminal-details";
+  details.open = terminalDetailsOpen;
+  details.addEventListener("toggle", () => {
+    terminalDetailsOpen = details.open;
+  });
   const summary = document.createElement("summary");
   summary.textContent = "View terminal details";
   details.append(summary);
