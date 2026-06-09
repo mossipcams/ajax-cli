@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.18.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.6...ajax-cli-v0.18.0) (2026-06-09)
+
+
+### Features
+
+* adopt agent-deck-inspired status derivation ([#156](https://github.com/mossipcams/ajax-cli/issues/156)) ([20d62ff](https://github.com/mossipcams/ajax-cli/commit/20d62ff23cf46c8e9f1d52c557f428990abb3843))
+
 ## [0.17.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.5...ajax-cli-v0.17.6) (2026-06-09)
 
 
