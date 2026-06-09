@@ -1,7 +1,349 @@
+use std::time::{Duration, SystemTime};
+
 pub use crate::live_application::{
-    apply_authoritative_observation, apply_observation, apply_trusted_observation,
+    acknowledge_attention, apply_authoritative_observation, apply_observation,
+    apply_trusted_observation,
 };
-pub use crate::models::{LiveObservation, LiveStatusKind};
+pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
+
+/// Freshness window for a Codex `working` hook value.
+const CODEX_WORKING_FRESH_FOR: Duration = Duration::from_secs(20);
+/// Freshness window for hook waiting/approval values and Claude hook states.
+const HOOK_DEFAULT_FRESH_FOR: Duration = Duration::from_secs(120);
+/// Freshness window for an active runtime-wrapper heartbeat.
+const WRAPPER_RUNNING_FRESH_FOR: Duration = Duration::from_secs(30);
+
+/// Value-typed input for the pure per-agent hook freshness decision.
+///
+/// The decision is intentionally free of lifecycle, task mutation, and clock
+/// access so callers can inject `now` and test it deterministically.
+#[derive(Clone, Copy, Debug)]
+pub struct HookDecisionInput<'a> {
+    pub selected_agent: AgentClient,
+    pub prior: Option<&'a LiveObservation>,
+    pub value: &'a str,
+    pub observed_at: SystemTime,
+    pub acknowledged_at: Option<SystemTime>,
+    pub now: SystemTime,
+}
+
+/// Result of [`decide_hook_observation`].
+///
+/// `applied` reports whether the hook produced eligible evidence. When it does
+/// not, `observation` carries the preserved prior observation unchanged.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HookDecision {
+    pub applied: bool,
+    pub observation: Option<LiveObservation>,
+}
+
+/// Decide whether a single hook value is eligible for the selected agent.
+pub fn decide_hook_observation(input: HookDecisionInput<'_>) -> HookDecision {
+    let preserved = HookDecision {
+        applied: false,
+        observation: input.prior.cloned(),
+    };
+
+    match hook_observation_if_eligible(
+        input.selected_agent,
+        input.value,
+        input.observed_at,
+        input.acknowledged_at,
+        input.now,
+    ) {
+        Some(observation) => HookDecision {
+            applied: true,
+            observation: Some(observation),
+        },
+        None => preserved,
+    }
+}
+
+/// Parse and freshness-check a hook value for the selected agent.
+///
+/// Returns the eligible observation, or `None` when the value is malformed,
+/// the agent ignores hooks, the value is stale, or a Claude waiting hook is at
+/// or before an acknowledgment.
+fn hook_observation_if_eligible(
+    agent: AgentClient,
+    value: &str,
+    observed_at: SystemTime,
+    acknowledged_at: Option<SystemTime>,
+    now: SystemTime,
+) -> Option<LiveObservation> {
+    if agent == AgentClient::Other {
+        return None;
+    }
+
+    let observation = classify_agent_status_value(value)?;
+    let window = hook_freshness_window(agent, observation.kind)?;
+    if !within_window(now, observed_at, window) {
+        return None;
+    }
+
+    if agent == AgentClient::Claude
+        && is_waiting_kind(observation.kind)
+        && acknowledged_at.is_some_and(|acknowledged_at| observed_at <= acknowledged_at)
+    {
+        return None;
+    }
+
+    Some(observation)
+}
+
+fn hook_freshness_window(agent: AgentClient, kind: LiveStatusKind) -> Option<Duration> {
+    match (agent, kind) {
+        (AgentClient::Other, _) => None,
+        (AgentClient::Codex, LiveStatusKind::AgentRunning) => Some(CODEX_WORKING_FRESH_FOR),
+        (
+            _,
+            LiveStatusKind::AgentRunning
+            | LiveStatusKind::WaitingForInput
+            | LiveStatusKind::WaitingForApproval
+            | LiveStatusKind::Done
+            | LiveStatusKind::CommandFailed,
+        ) => Some(HOOK_DEFAULT_FRESH_FOR),
+        _ => None,
+    }
+}
+
+/// Inclusive freshness check. A future `observed_at` is treated as fresh,
+/// matching the existing clock-skew behavior and the agent-deck reference.
+fn within_window(now: SystemTime, observed_at: SystemTime, window: Duration) -> bool {
+    match now.duration_since(observed_at) {
+        Ok(age) => age <= window,
+        Err(_) => true,
+    }
+}
+
+fn is_waiting_kind(kind: LiveStatusKind) -> bool {
+    matches!(
+        kind,
+        LiveStatusKind::WaitingForInput | LiveStatusKind::WaitingForApproval
+    )
+}
+
+/// Origin of an agent-status candidate considered by the status decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentEvidenceSource {
+    /// Ajax launch-wrapper runtime snapshot: trusted process evidence.
+    RuntimeWrapper,
+    /// Hook-backed status file: observational hint.
+    Hook,
+}
+
+/// A single agent-status candidate considered by [`select_status_observation`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatusCandidate {
+    pub source: AgentEvidenceSource,
+    pub value: String,
+    pub observed_at: SystemTime,
+}
+
+impl StatusCandidate {
+    pub fn new(
+        source: AgentEvidenceSource,
+        value: impl Into<String>,
+        observed_at: SystemTime,
+    ) -> Self {
+        Self {
+            source,
+            value: value.into(),
+            observed_at,
+        }
+    }
+}
+
+/// Value-typed input for the multi-source status decision.
+pub struct StatusDecisionInput<'a> {
+    pub selected_agent: AgentClient,
+    pub prior: Option<&'a LiveObservation>,
+    pub acknowledged_at: Option<SystemTime>,
+    pub now: SystemTime,
+    pub candidates: &'a [StatusCandidate],
+}
+
+/// Result of [`select_status_observation`].
+///
+/// `applied` reports whether stronger evidence than the prior observation was
+/// found. When it is `false`, `observation` carries the preserved prior and
+/// `source` is `None`, so the caller may fall through to pane capture.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StatusDecision {
+    pub applied: bool,
+    pub observation: Option<LiveObservation>,
+    pub source: Option<AgentEvidenceSource>,
+    /// True when no candidate applied because a fresh Claude waiting hook was
+    /// suppressed by an acknowledgment. The caller should hold the current
+    /// non-actionable state and skip pane capture rather than re-raise it.
+    pub acknowledged_hold: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EvidenceTier {
+    WrapperTerminal,
+    WrapperRunning,
+    Hook,
+}
+
+impl EvidenceTier {
+    fn priority(self) -> u8 {
+        match self {
+            Self::WrapperTerminal => 0,
+            Self::WrapperRunning => 1,
+            Self::Hook => 2,
+        }
+    }
+}
+
+/// Select the strongest eligible agent-status observation.
+///
+/// Source priority follows the decision table: trusted wrapper terminal
+/// evidence (any age) outranks an active wrapper heartbeat (30-second window),
+/// which outranks agent-specific hook evidence. Missing-substrate priors are
+/// preserved over any candidate. Malformed and stale candidates are filtered
+/// before timestamp selection, and equal timestamps fall back to a state
+/// tie-break where busy beats waiting and waiting beats approval.
+pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecision {
+    let preserved = StatusDecision {
+        applied: false,
+        observation: input.prior.cloned(),
+        source: None,
+        acknowledged_hold: false,
+    };
+
+    if input
+        .prior
+        .is_some_and(|prior| prior.kind.is_missing_substrate())
+    {
+        return preserved;
+    }
+
+    let mut best: Option<(EvidenceTier, &StatusCandidate, LiveObservation)> = None;
+    for candidate in input.candidates {
+        let Some((tier, observation)) = eligible_candidate(
+            input.selected_agent,
+            candidate,
+            input.acknowledged_at,
+            input.now,
+        ) else {
+            continue;
+        };
+
+        let better = match &best {
+            None => true,
+            Some((best_tier, best_candidate, best_observation)) => {
+                if tier.priority() != best_tier.priority() {
+                    tier.priority() < best_tier.priority()
+                } else if candidate.observed_at != best_candidate.observed_at {
+                    candidate.observed_at > best_candidate.observed_at
+                } else {
+                    state_tie_rank(observation.kind) > state_tie_rank(best_observation.kind)
+                }
+            }
+        };
+
+        if better {
+            best = Some((tier, candidate, observation));
+        }
+    }
+
+    match best {
+        Some((_tier, candidate, observation)) => StatusDecision {
+            applied: true,
+            observation: Some(observation),
+            source: Some(candidate.source),
+            acknowledged_hold: false,
+        },
+        None => {
+            let acknowledged_hold = input.candidates.iter().any(|candidate| {
+                is_acknowledged_waiting_hook(
+                    input.selected_agent,
+                    candidate,
+                    input.acknowledged_at,
+                    input.now,
+                )
+            });
+            StatusDecision {
+                acknowledged_hold,
+                ..preserved
+            }
+        }
+    }
+}
+
+/// True when a candidate is a fresh Claude waiting hook suppressed only because
+/// it is at or before the acknowledgment time.
+fn is_acknowledged_waiting_hook(
+    agent: AgentClient,
+    candidate: &StatusCandidate,
+    acknowledged_at: Option<SystemTime>,
+    now: SystemTime,
+) -> bool {
+    if agent != AgentClient::Claude || candidate.source != AgentEvidenceSource::Hook {
+        return false;
+    }
+    let Some(acknowledged_at) = acknowledged_at else {
+        return false;
+    };
+    let Some(observation) = classify_agent_status_value(&candidate.value) else {
+        return false;
+    };
+    if !is_waiting_kind(observation.kind) {
+        return false;
+    }
+    let Some(window) = hook_freshness_window(agent, observation.kind) else {
+        return false;
+    };
+    within_window(now, candidate.observed_at, window) && candidate.observed_at <= acknowledged_at
+}
+
+fn eligible_candidate(
+    agent: AgentClient,
+    candidate: &StatusCandidate,
+    acknowledged_at: Option<SystemTime>,
+    now: SystemTime,
+) -> Option<(EvidenceTier, LiveObservation)> {
+    match candidate.source {
+        AgentEvidenceSource::RuntimeWrapper => {
+            let observation = classify_agent_status_value(&candidate.value)?;
+            match observation.kind {
+                LiveStatusKind::Done | LiveStatusKind::CommandFailed => {
+                    Some((EvidenceTier::WrapperTerminal, observation))
+                }
+                LiveStatusKind::AgentRunning
+                | LiveStatusKind::CommandRunning
+                | LiveStatusKind::TestsRunning => {
+                    if within_window(now, candidate.observed_at, WRAPPER_RUNNING_FRESH_FOR) {
+                        Some((EvidenceTier::WrapperRunning, observation))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+        AgentEvidenceSource::Hook => hook_observation_if_eligible(
+            agent,
+            &candidate.value,
+            candidate.observed_at,
+            acknowledged_at,
+            now,
+        )
+        .map(|observation| (EvidenceTier::Hook, observation)),
+    }
+}
+
+fn state_tie_rank(kind: LiveStatusKind) -> u8 {
+    match kind {
+        LiveStatusKind::AgentRunning
+        | LiveStatusKind::CommandRunning
+        | LiveStatusKind::TestsRunning => 3,
+        LiveStatusKind::WaitingForInput => 2,
+        LiveStatusKind::WaitingForApproval => 1,
+        _ => 0,
+    }
+}
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
     let trimmed = pane.trim();
@@ -16,6 +358,106 @@ pub fn classify_pane(pane: &str) -> LiveObservation {
 
     classify_recent_evidence(&lines)
         .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
+}
+
+/// Agent-aware pane classification.
+///
+/// Recent busy indicators win over stale prompts, then agent-specific prompts,
+/// then explicit failure/completion evidence, and finally a passive/unknown
+/// fallback so the reducer can preserve prior credible state. `classify_pane`
+/// remains the generic compatibility entry point.
+pub fn classify_agent_pane(agent: AgentClient, pane: &str) -> LiveObservation {
+    let trimmed = pane.trim();
+    if trimmed.is_empty() {
+        return LiveObservation::new(LiveStatusKind::Unknown, "pane is empty");
+    }
+
+    let lines = meaningful_lines(trimmed);
+
+    if has_recent_busy_indicator(agent, &lines) {
+        return LiveObservation::new(LiveStatusKind::AgentRunning, "agent running");
+    }
+
+    if let Some(observation) = classify_agent_prompt(agent, &lines) {
+        return observation;
+    }
+
+    classify_recent_evidence(&lines)
+        .unwrap_or_else(|| LiveObservation::new(LiveStatusKind::Unknown, "unknown terminal state"))
+}
+
+const BUSY_WINDOW: usize = 8;
+
+fn has_recent_busy_indicator(agent: AgentClient, lines: &[&str]) -> bool {
+    lines.iter().rev().take(BUSY_WINDOW).any(|line| {
+        looks_like_active_agent_status(line)
+            || (agent == AgentClient::Claude && looks_like_claude_busy(line))
+    })
+}
+
+fn looks_like_claude_busy(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("to interrupt") || (line.contains('…') && lower.contains("tokens)"))
+}
+
+fn classify_agent_prompt(agent: AgentClient, lines: &[&str]) -> Option<LiveObservation> {
+    match agent {
+        AgentClient::Claude => classify_claude_prompt(lines),
+        AgentClient::Codex => classify_codex_prompt(lines),
+        AgentClient::Other => None,
+    }
+}
+
+fn classify_claude_prompt(lines: &[&str]) -> Option<LiveObservation> {
+    if looks_like_claude_permission(lines) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for approval",
+        ));
+    }
+
+    if lines
+        .last()
+        .is_some_and(|line| line.trim() == "❯" || line.trim() == ">")
+    {
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+    }
+
+    None
+}
+
+fn looks_like_claude_permission(lines: &[&str]) -> bool {
+    let recent: Vec<&str> = lines.iter().rev().take(BUSY_WINDOW).copied().collect();
+    let has_choice_marker = recent.iter().any(|line| line.trim_start().starts_with('❯'));
+    let has_cue = recent.iter().any(|line| {
+        let lower = line.to_ascii_lowercase();
+        contains_any(
+            &lower,
+            &[
+                "run this command?",
+                "do you want",
+                "allow",
+                "approve",
+                "permission",
+                "proceed?",
+                "esc to cancel",
+            ],
+        )
+    });
+    has_choice_marker && has_cue
+}
+
+fn classify_codex_prompt(lines: &[&str]) -> Option<LiveObservation> {
+    if looks_like_idle_codex_prompt(lines) {
+        return Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1314,6 +1756,552 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         assert_eq!(task.git_status, git_before);
         assert_eq!(task.tmux_status, tmux_before);
         assert_eq!(task.worktrunk_status, worktrunk_before);
+    }
+
+    use super::classify_agent_pane;
+
+    #[test]
+    fn claude_busy_indicator_beats_stale_permission_prompt() {
+        let pane = "\
+Run this command?
+❯ Yes
+  No
+ctrl+c to interrupt";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn claude_spinner_beats_stale_idle_prompt() {
+        let pane = "\
+❯
+
+✢ Clauding… (53s · ↓ 749 tokens)";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn claude_permission_dialog_is_waiting_for_approval() {
+        let pane = "\
+Run this command?
+❯ Yes
+  No
+Esc to cancel";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
+    }
+
+    #[test]
+    fn claude_standalone_prompt_is_waiting_for_input() {
+        let pane = "\
+Here is my plan.
+
+❯";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn codex_working_status_beats_visible_composer_prompt() {
+        let pane = "\
+› Fix the tests
+
+• Working (12s · esc to interrupt)
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax";
+
+        let observation = classify_agent_pane(AgentClient::Codex, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn codex_idle_composer_is_waiting_for_input() {
+        let pane = "\
+› Improve documentation in @filename
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti";
+
+        let observation = classify_agent_pane(AgentClient::Codex, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn agent_specific_prompt_markers_do_not_cross_classify() {
+        let claude_prompt = "\
+Here is my plan.
+
+❯";
+        let codex_composer = "\
+› Fix the tests
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax";
+
+        let claude_as_codex = classify_agent_pane(AgentClient::Codex, claude_prompt);
+        let codex_as_claude = classify_agent_pane(AgentClient::Claude, codex_composer);
+
+        assert_ne!(claude_as_codex.kind, LiveStatusKind::WaitingForInput);
+        assert_ne!(claude_as_codex.kind, LiveStatusKind::WaitingForApproval);
+        assert_ne!(codex_as_claude.kind, LiveStatusKind::WaitingForInput);
+        assert_ne!(codex_as_claude.kind, LiveStatusKind::WaitingForApproval);
+    }
+
+    #[test]
+    fn ambiguous_redraw_returns_unknown_for_reducer_fallback() {
+        let pane = "\
+┌──────────────┐
+│ Output panel │
+├──────────────┤
+The quick brown fox jumps over the lazy dog.
+Nothing actionable to report here.";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::Unknown);
+    }
+
+    fn hook_now() -> std::time::SystemTime {
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000)
+    }
+
+    fn decide(
+        agent: AgentClient,
+        prior: Option<&LiveObservation>,
+        value: &str,
+        observed_at: std::time::SystemTime,
+    ) -> super::HookDecision {
+        super::decide_hook_observation(super::HookDecisionInput {
+            selected_agent: agent,
+            prior,
+            value,
+            observed_at,
+            acknowledged_at: None,
+            now: hook_now(),
+        })
+    }
+
+    #[test]
+    fn codex_working_hook_is_fresh_through_twenty_seconds() {
+        let now = hook_now();
+        let decision = decide(
+            AgentClient::Codex,
+            None,
+            "working",
+            now - std::time::Duration::from_secs(20),
+        );
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn codex_working_hook_is_stale_after_twenty_seconds() {
+        let now = hook_now();
+        let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+        let decision = decide(
+            AgentClient::Codex,
+            Some(&prior),
+            "working",
+            now - std::time::Duration::from_secs(20) - std::time::Duration::from_nanos(1),
+        );
+
+        assert!(!decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn codex_wait_hook_is_fresh_through_two_minutes() {
+        let now = hook_now();
+        let decision = decide(
+            AgentClient::Codex,
+            None,
+            "wait",
+            now - std::time::Duration::from_secs(120),
+        );
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn codex_wait_hook_is_stale_after_two_minutes() {
+        let now = hook_now();
+        let prior = LiveObservation::new(LiveStatusKind::Done, "done");
+        let decision = decide(
+            AgentClient::Codex,
+            Some(&prior),
+            "wait",
+            now - std::time::Duration::from_secs(120) - std::time::Duration::from_nanos(1),
+        );
+
+        assert!(!decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+    }
+
+    #[test]
+    fn claude_working_hook_uses_two_minute_window() {
+        let now = hook_now();
+        let fresh = decide(
+            AgentClient::Claude,
+            None,
+            "working",
+            now - std::time::Duration::from_secs(120),
+        );
+        assert!(fresh.applied);
+        assert_eq!(
+            fresh.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+
+        let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+        let stale = decide(
+            AgentClient::Claude,
+            Some(&prior),
+            "working",
+            now - std::time::Duration::from_secs(120) - std::time::Duration::from_nanos(1),
+        );
+        assert!(!stale.applied);
+        assert_eq!(
+            stale.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn hook_future_timestamp_is_treated_as_fresh() {
+        let now = hook_now();
+        let decision = decide(
+            AgentClient::Codex,
+            None,
+            "working",
+            now + std::time::Duration::from_secs(5),
+        );
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn other_agent_ignores_hook_values() {
+        let now = hook_now();
+        let prior = LiveObservation::new(LiveStatusKind::Done, "done");
+        for value in ["working", "wait", "ask"] {
+            let decision = decide(AgentClient::Other, Some(&prior), value, now);
+
+            assert!(!decision.applied, "{value}");
+            assert_eq!(
+                decision
+                    .observation
+                    .as_ref()
+                    .map(|observation| observation.kind),
+                Some(LiveStatusKind::Done),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_hook_values_preserve_prior_observation() {
+        let now = hook_now();
+        let prior = LiveObservation::new(LiveStatusKind::Done, "done");
+        for value in ["", "   ", "unknown", "WAIT"] {
+            let decision = decide(AgentClient::Codex, Some(&prior), value, now);
+
+            assert!(!decision.applied, "{value:?}");
+            assert_eq!(
+                decision
+                    .observation
+                    .as_ref()
+                    .map(|observation| observation.kind),
+                Some(LiveStatusKind::Done),
+                "{value:?}"
+            );
+        }
+    }
+
+    fn candidate(
+        source: super::AgentEvidenceSource,
+        value: &str,
+        sub: std::time::Duration,
+    ) -> super::StatusCandidate {
+        super::StatusCandidate::new(source, value, hook_now() - sub)
+    }
+
+    fn select(
+        agent: AgentClient,
+        prior: Option<&LiveObservation>,
+        candidates: &[super::StatusCandidate],
+    ) -> super::StatusDecision {
+        super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: agent,
+            prior,
+            acknowledged_at: None,
+            now: hook_now(),
+            candidates,
+        })
+    }
+
+    #[test]
+    fn missing_substrate_outranks_wrapper_and_hook_activity() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let prior = LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux missing");
+        let secs = std::time::Duration::from_secs(1);
+        let candidates = [
+            candidate(RuntimeWrapper, "working", secs),
+            candidate(RuntimeWrapper, "done", secs),
+            candidate(Hook, "working", secs),
+        ];
+
+        let decision = select(AgentClient::Codex, Some(&prior), &candidates);
+
+        assert!(!decision.applied);
+        assert!(decision.source.is_none());
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
+    }
+
+    #[test]
+    fn old_wrapper_completion_outranks_newer_hook_working() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let candidates = [
+            candidate(
+                RuntimeWrapper,
+                "done",
+                std::time::Duration::from_secs(3_600),
+            ),
+            candidate(Hook, "working", std::time::Duration::from_secs(1)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.source,
+            Some(super::AgentEvidenceSource::RuntimeWrapper)
+        );
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+    }
+
+    #[test]
+    fn old_wrapper_failure_outranks_newer_hook_waiting() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let candidates = [
+            candidate(
+                RuntimeWrapper,
+                "failed",
+                std::time::Duration::from_secs(3_600),
+            ),
+            candidate(Hook, "wait", std::time::Duration::from_secs(1)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.source,
+            Some(super::AgentEvidenceSource::RuntimeWrapper)
+        );
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::CommandFailed)
+        );
+    }
+
+    #[test]
+    fn stale_wrapper_running_falls_through_to_fresh_hook() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let candidates = [
+            candidate(
+                RuntimeWrapper,
+                "working",
+                std::time::Duration::from_secs(31),
+            ),
+            candidate(Hook, "wait", std::time::Duration::from_secs(1)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(decision.source, Some(super::AgentEvidenceSource::Hook));
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn wrapper_running_is_fresh_through_thirty_seconds() {
+        use super::AgentEvidenceSource::RuntimeWrapper;
+        let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+
+        let fresh = select(
+            AgentClient::Codex,
+            Some(&prior),
+            &[candidate(
+                RuntimeWrapper,
+                "working",
+                std::time::Duration::from_secs(30),
+            )],
+        );
+        assert!(fresh.applied);
+        assert_eq!(
+            fresh.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+
+        let stale = select(
+            AgentClient::Codex,
+            Some(&prior),
+            &[super::StatusCandidate::new(
+                RuntimeWrapper,
+                "working",
+                hook_now()
+                    - std::time::Duration::from_secs(30)
+                    - std::time::Duration::from_nanos(1),
+            )],
+        );
+        assert!(!stale.applied);
+        assert_eq!(
+            stale.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn runtime_wrapper_wins_equal_timestamp_tie_with_hook() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let secs = std::time::Duration::from_secs(1);
+        for candidates in [
+            vec![
+                candidate(RuntimeWrapper, "done", secs),
+                candidate(Hook, "working", secs),
+            ],
+            vec![
+                candidate(Hook, "working", secs),
+                candidate(RuntimeWrapper, "done", secs),
+            ],
+        ] {
+            let decision = select(AgentClient::Codex, None, &candidates);
+
+            assert!(decision.applied);
+            assert_eq!(
+                decision.source,
+                Some(super::AgentEvidenceSource::RuntimeWrapper)
+            );
+            assert_eq!(
+                decision.observation.map(|observation| observation.kind),
+                Some(LiveStatusKind::Done)
+            );
+        }
+    }
+
+    #[test]
+    fn busy_hook_wins_equal_timestamp_tie_with_waiting_hook() {
+        use super::AgentEvidenceSource::Hook;
+        let secs = std::time::Duration::from_secs(1);
+        for candidates in [
+            vec![
+                candidate(Hook, "working", secs),
+                candidate(Hook, "wait", secs),
+                candidate(Hook, "ask", secs),
+            ],
+            vec![
+                candidate(Hook, "ask", secs),
+                candidate(Hook, "wait", secs),
+                candidate(Hook, "working", secs),
+            ],
+            vec![
+                candidate(Hook, "wait", secs),
+                candidate(Hook, "ask", secs),
+                candidate(Hook, "working", secs),
+            ],
+        ] {
+            let decision = select(AgentClient::Codex, None, &candidates);
+
+            assert!(decision.applied);
+            assert_eq!(
+                decision.observation.map(|observation| observation.kind),
+                Some(LiveStatusKind::AgentRunning)
+            );
+        }
+    }
+
+    #[test]
+    fn newest_malformed_entry_does_not_hide_older_valid_entry() {
+        use super::AgentEvidenceSource::Hook;
+        let candidates = [
+            candidate(Hook, "garbage", std::time::Duration::from_secs(1)),
+            candidate(Hook, "wait", std::time::Duration::from_secs(10)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn all_ineligible_candidates_preserve_prior_credible_state() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        for prior_kind in [
+            LiveStatusKind::Done,
+            LiveStatusKind::WaitingForInput,
+            LiveStatusKind::AgentRunning,
+        ] {
+            let prior = LiveObservation::new(prior_kind, "prior");
+            let candidates = [
+                candidate(
+                    RuntimeWrapper,
+                    "working",
+                    std::time::Duration::from_secs(31),
+                ),
+                candidate(Hook, "wait", std::time::Duration::from_secs(121)),
+                candidate(Hook, "garbage", std::time::Duration::from_secs(1)),
+            ];
+
+            let decision = select(AgentClient::Codex, Some(&prior), &candidates);
+
+            assert!(!decision.applied, "{prior_kind:?}");
+            assert!(decision.source.is_none(), "{prior_kind:?}");
+            assert_eq!(
+                decision.observation.map(|observation| observation.kind),
+                Some(prior_kind),
+                "{prior_kind:?}"
+            );
+        }
     }
 
     #[test]

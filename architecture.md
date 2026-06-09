@@ -76,8 +76,15 @@ authoritative sources for their own reality.
 
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence. Hook files and pane text are observational hints. When sources
-disagree, runtime refresh chooses the newest fresh evidence and gives trusted
-wrapper terminal events authority over stale hook or pane classifications.
+disagree, core's status decision applies an explicit precedence: explicit
+missing substrate stays authoritative; trusted runtime-wrapper terminal events
+(`done`/`failed`) outrank hooks and pane text regardless of age; an active
+wrapper heartbeat applies only inside its 30-second window; hook freshness is
+selected-agent and state specific (Codex `working` for 20 seconds, Codex
+`wait`/`ask` and all Claude hook states for 120 seconds, `AgentClient::Other`
+ignores hooks); and an agent-aware, busy-first pane fallback runs only when
+stronger evidence is absent or stale. Equal timestamps break to source priority,
+then to busy-over-waiting-over-approval; malformed values never participate.
 
 ## Task Operations
 
@@ -156,10 +163,14 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. Schema version 5 records
+SQLite is the fast read model for Ajax task state. Schema version 6 records
 expected runtime identity, last observed Git/tmux evidence, derived runtime
-health, observation source, observation time, probe error, and typed events. It
-also stores step receipts for Ajax-owned operation evidence. Git and tmux still
+health, observation source, observation time, probe error, the optional attention
+acknowledgment timestamp, and typed events. It also stores step receipts for
+Ajax-owned operation evidence. The acknowledgment timestamp uses nullable typed
+seconds/nanoseconds columns with strict pair validation, and `migrate_v5_to_v6`
+adds them; concurrent acknowledgment and live-status edits to the same task
+surface an explicit revision conflict rather than a silent overwrite. Git and tmux still
 own live substrate reality; Ajax reconciles their observations into SQLite so
 Cockpit, command planning, and JSON output can read one coherent task record.
 Loading legacy rows normalizes workflow `Waiting` into an active lifecycle with
@@ -266,6 +277,28 @@ only the trusted path may advance lifecycle on process start or successful
 completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
 text is neutral and does not overwrite the last known agent state or fabricate
 a probe failure.
+
+Pane classification is agent-aware and busy-first: `classify_agent_pane` applies
+recent busy indicators before stale prompts, then agent-specific prompts (Claude
+permission dialogs and standalone prompts, Codex composer prompts), then explicit
+failure/completion, then a passive/unknown fallback the reducer preserves.
+`classify_pane` remains the generic compatibility entry point.
+
+Opening a task persists an attention acknowledgment without changing lifecycle.
+`live_application::acknowledge_attention` records the acknowledgment time and, for
+a Claude task that is currently waiting for input or approval, clears the
+actionable waiting state (waiting live status, `AgentRuntimeStatus::Waiting`, and
+`SideFlag::NeedsInput`) without fabricating shell or process state. A Claude
+waiting hook at or before the acknowledgment is held idle and does not re-raise
+attention or trigger pane capture; Claude waiting evidence after the
+acknowledgment becomes actionable again. Codex waiting remains actionable despite
+acknowledgment while its hook is fresh, and falls through to agent-aware pane
+classification once the hook is stale. Running, failed, completed,
+missing-substrate, reviewable, and merged state is never erased merely because a
+task was opened.
+
+Agent-deck inspired this status model, but Ajax retains its own lifecycle,
+substrate, task-operation, and operator-projection boundaries.
 
 `ui_state::derive_operator_status` is the single operator-facing reduction over
 lifecycle, runtime health, freshness/probe errors, live status, and policy. CLI,

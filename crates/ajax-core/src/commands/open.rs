@@ -87,6 +87,23 @@ pub fn mark_task_opened<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
-    let _ = find_task(context, qualified_handle)?;
+    mark_task_opened_at(context, qualified_handle, std::time::SystemTime::now())
+}
+
+/// Clock-injected acknowledgment used by `mark_task_opened` and tests.
+///
+/// Opening a task records an attention acknowledgment without changing
+/// lifecycle. The acknowledgment reducer clears Claude waiting attention while
+/// leaving Codex waiting actionable, then cached annotations are refreshed.
+pub fn mark_task_opened_at<R: Registry>(
+    context: &mut CommandContext<R>,
+    qualified_handle: &str,
+    now: std::time::SystemTime,
+) -> Result<(), CommandError> {
+    let task_id = find_task(context, qualified_handle)?.id.clone();
+    if let Some(task) = context.registry.get_task_mut(&task_id) {
+        crate::live::acknowledge_attention(task, now);
+        task.annotations = crate::attention::annotate(task);
+    }
     Ok(())
 }

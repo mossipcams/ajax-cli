@@ -314,6 +314,78 @@ mod tests {
         )
     }
 
+    fn claude_active_task() -> Task {
+        let mut task = base_task();
+        task.selected_agent = AgentClient::Claude;
+        task.lifecycle_status = crate::models::LifecycleStatus::Active;
+        task
+    }
+
+    #[test]
+    fn acknowledged_claude_waiting_projects_idle() {
+        let mut task = claude_active_task();
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
+        );
+
+        let status = super::derive_operator_status(&task);
+
+        assert_eq!(status.kind, super::OperatorStatusKind::Idle);
+        assert_eq!(status.label, "idle");
+        assert_eq!(
+            task.lifecycle_status,
+            crate::models::LifecycleStatus::Active
+        );
+    }
+
+    #[test]
+    fn new_claude_waiting_after_acknowledgment_projects_needs_input() {
+        let mut task = claude_active_task();
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
+        );
+        // Waiting evidence newer than the acknowledgment.
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+
+        let status = super::derive_operator_status(&task);
+
+        assert_eq!(status.kind, super::OperatorStatusKind::NeedsInput);
+        assert_eq!(status.label, "waiting for input");
+    }
+
+    #[test]
+    fn acknowledgment_does_not_hide_failure_or_missing_substrate() {
+        // CommandFailed surfaces as a NeedsInput attention state and TmuxMissing
+        // as Failed; acknowledgment must change neither, so neither becomes Idle.
+        for status in [LiveStatusKind::CommandFailed, LiveStatusKind::TmuxMissing] {
+            let mut task = claude_active_task();
+            crate::live::apply_observation(&mut task, LiveObservation::new(status, "evidence"));
+            let before = super::derive_operator_status(&task);
+
+            crate::live::acknowledge_attention(
+                &mut task,
+                std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
+            );
+            let after = super::derive_operator_status(&task);
+
+            assert_eq!(after, before, "{status:?}");
+            assert_ne!(after.kind, super::OperatorStatusKind::Idle, "{status:?}");
+        }
+    }
+
     fn clean_git_status() -> GitStatus {
         GitStatus {
             worktree_exists: true,

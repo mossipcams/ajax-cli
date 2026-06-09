@@ -8141,7 +8141,9 @@ fn stale_wrapper_running_snapshot_cannot_keep_task_running() {
         task.live_status.as_ref().map(|status| status.kind),
         Some(LiveStatusKind::AgentRunning)
     );
-    assert_eq!(
+    // A stale wrapper-running snapshot is no longer a probe failure; core falls
+    // through to a successful agent-aware pane observation instead.
+    assert_ne!(
         task.runtime_projection.observation_error.as_deref(),
         Some("agent status stale")
     );

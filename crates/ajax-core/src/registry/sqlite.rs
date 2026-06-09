@@ -18,7 +18,7 @@ use crate::models::{
     StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 5;
+const SQLITE_SCHEMA_VERSION: i64 = 6;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -66,6 +66,9 @@ impl SqliteRegistryStore {
         }
         if sqlite_user_version(connection)? == 4 {
             migrate_v4_to_v5(connection)?;
+        }
+        if sqlite_user_version(connection)? == 5 {
+            migrate_v5_to_v6(connection)?;
         }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
@@ -118,7 +121,9 @@ impl SqliteRegistryStore {
                     runtime_observed_at_unix_seconds INTEGER NOT NULL,
                     runtime_observed_at_subsec_nanos INTEGER NOT NULL,
                     runtime_observation_source TEXT NOT NULL,
-                    runtime_observation_error TEXT
+                    runtime_observation_error TEXT,
+                    attention_acknowledged_at_unix_seconds INTEGER,
+                    attention_acknowledged_at_subsec_nanos INTEGER
                 );
 
                 CREATE TABLE IF NOT EXISTS registry_task_side_flags (
@@ -217,6 +222,41 @@ impl SqliteRegistryStore {
         transaction.commit().map_err(database_error)?;
         Ok(next)
     }
+}
+
+fn migrate_v5_to_v6(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    for column in [
+        "attention_acknowledged_at_unix_seconds",
+        "attention_acknowledged_at_subsec_nanos",
+    ] {
+        if !registry_tasks_has_column(connection, column)? {
+            connection
+                .execute_batch(&format!(
+                    "ALTER TABLE registry_tasks ADD COLUMN {column} INTEGER;"
+                ))
+                .map_err(database_error)?;
+        }
+    }
+    connection
+        .pragma_update(None, "user_version", 6)
+        .map_err(database_error)
+}
+
+fn registry_tasks_has_column(
+    connection: &Connection,
+    column: &str,
+) -> Result<bool, RegistrySnapshotError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(registry_tasks)")
+        .map_err(database_error)?;
+    let mut rows = statement.query([]).map_err(database_error)?;
+    while let Some(row) = rows.next().map_err(database_error)? {
+        let name: String = row.get(1).map_err(database_error)?;
+        if name == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn migrate_v4_to_v5(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -435,7 +475,8 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
-             runtime_observation_source, runtime_observation_error \
+             runtime_observation_source, runtime_observation_error, \
+             attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos \
              FROM registry_tasks WHERE lifecycle_status != 'Removed' ORDER BY task_id",
         )
         .map_err(database_error)?;
@@ -555,8 +596,27 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     task.tmux_status = tmux_status;
     task.worktrunk_status = worktrunk_status;
     task.runtime_projection = runtime_projection;
+    task.attention_acknowledged_at = attention_acknowledged_at_from_row(row)?;
 
     Ok(task)
+}
+
+fn attention_acknowledged_at_from_row(
+    row: &Row<'_>,
+) -> Result<Option<SystemTime>, RegistrySnapshotError> {
+    let seconds = row
+        .get::<_, Option<i64>>("attention_acknowledged_at_unix_seconds")
+        .map_err(database_error)?;
+    let nanos = row
+        .get::<_, Option<u32>>("attention_acknowledged_at_subsec_nanos")
+        .map_err(database_error)?;
+    match (seconds, nanos) {
+        (Some(seconds), Some(nanos)) => Ok(Some(unix_parts_to_system_time(seconds, nanos)?)),
+        (None, None) => Ok(None),
+        _ => Err(RegistrySnapshotError::Decode(
+            "attention acknowledgment timestamp is incomplete".to_string(),
+        )),
+    }
 }
 
 fn runtime_projection_from_row(row: &Row<'_>) -> Result<RuntimeProjection, RegistrySnapshotError> {
@@ -871,6 +931,10 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
         system_time_to_unix_parts(task.last_activity_at)?;
     let (runtime_observed_seconds, runtime_observed_nanos) =
         system_time_to_unix_parts(task.runtime_projection.observed_at)?;
+    let attention_acknowledged_parts = task
+        .attention_acknowledged_at
+        .map(system_time_to_unix_parts)
+        .transpose()?;
     transaction
         .execute(
             "INSERT INTO registry_tasks \
@@ -883,11 +947,12 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
               git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
               worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
               runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
-              runtime_observation_source, runtime_observation_error) \
+              runtime_observation_source, runtime_observation_error, \
+              attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos) \
              VALUES \
              (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
               ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, \
-              ?34, ?35, ?36, ?37, ?38, ?39, ?40)",
+              ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42)",
             params![
                 task.id.as_str(),
                 task.repo,
@@ -951,6 +1016,8 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 runtime_observed_nanos,
                 task.runtime_projection.source.as_str(),
                 task.runtime_projection.observation_error.as_deref(),
+                attention_acknowledged_parts.map(|(seconds, _)| seconds),
+                attention_acknowledged_parts.map(|(_, nanos)| nanos),
             ],
         )
         .map_err(database_error)?;
@@ -2180,7 +2247,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
@@ -2210,7 +2277,7 @@ mod tests {
         let columns = table_columns(&connection, "registry_tasks");
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert!(columns.contains(&"runtime_observation_error".to_string()));
     }
 
@@ -2408,7 +2475,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
         assert!(columns.contains(&"runtime_health".to_string()));
         assert!(columns.contains(&"runtime_observation_error".to_string()));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
@@ -2446,6 +2513,8 @@ mod tests {
             "agent_status",
             "created_at_unix_seconds",
             "last_activity_at_unix_seconds",
+            "attention_acknowledged_at_unix_seconds",
+            "attention_acknowledged_at_subsec_nanos",
         ] {
             assert!(task_columns.contains(&required.to_string()), "{required}");
         }
@@ -2458,6 +2527,172 @@ mod tests {
         ] {
             assert!(event_columns.contains(&required.to_string()), "{required}");
         }
+    }
+
+    #[test]
+    fn sqlite_registry_round_trips_attention_acknowledged_at() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "ack-round-trip"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        let mut seeded = task("task-1", "web", "fix-login");
+        let acknowledged_at = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_500, 123_456_789);
+        seeded.attention_acknowledged_at = Some(acknowledged_at);
+        registry.create_task(seeded).unwrap();
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .attention_acknowledged_at,
+            Some(acknowledged_at)
+        );
+    }
+
+    fn downgrade_to_v5_without_acknowledgment_columns(path: &std::path::Path) {
+        let connection = rusqlite::Connection::open(path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                ALTER TABLE registry_tasks DROP COLUMN attention_acknowledged_at_unix_seconds;
+                ALTER TABLE registry_tasks DROP COLUMN attention_acknowledged_at_subsec_nanos;
+                PRAGMA user_version = 5;
+                "#,
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn sqlite_registry_migrates_v5_with_null_attention_acknowledgment() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "ack-migrate-v5"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+        downgrade_to_v5_without_acknowledgment_columns(&path);
+
+        let restored = store.load().unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let columns = table_columns(&connection, "registry_tasks");
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(version, 6);
+        assert!(columns.contains(&"attention_acknowledged_at_unix_seconds".to_string()));
+        assert!(columns.contains(&"attention_acknowledged_at_subsec_nanos".to_string()));
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .attention_acknowledged_at,
+            None
+        );
+    }
+
+    #[test]
+    fn sqlite_registry_migration_preserves_existing_v5_task_state() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "ack-migrate-preserve"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        let mut seeded = task("task-1", "web", "fix-login");
+        seeded.lifecycle_status = LifecycleStatus::Active;
+        seeded.add_side_flag(SideFlag::NeedsInput);
+        seeded.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        registry.create_task(seeded).unwrap();
+        let expected_runtime = registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .runtime_projection
+            .clone();
+        registry
+            .record_event(TaskId::new("task-1"), RegistryEventKind::UserNote, "ready")
+            .unwrap();
+        registry
+            .record_step_receipt(StepReceipt::succeeded(
+                TaskId::new("task-1"),
+                TaskOperationKind::Drop,
+                "tmux_session_absent",
+                "ajax-web-fix-login",
+                r#"{"program":"tmux"}"#,
+            ))
+            .unwrap();
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+        downgrade_to_v5_without_acknowledgment_columns(&path);
+
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let task = restored.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(task.runtime_projection, expected_runtime);
+        assert!(restored
+            .events_for_task(&TaskId::new("task-1"))
+            .iter()
+            .any(|event| event.kind == RegistryEventKind::UserNote));
+        assert_eq!(
+            restored
+                .step_receipts_for_task(&TaskId::new("task-1"))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn sqlite_registry_rejects_half_present_acknowledgment_timestamp() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "ack-half-present"
+        ));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "UPDATE registry_tasks \
+                 SET attention_acknowledged_at_unix_seconds = 1700000000, \
+                     attention_acknowledged_at_subsec_nanos = NULL \
+                 WHERE task_id = 'task-1'",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let result = store.load();
+        std::fs::remove_file(&path).unwrap();
+
+        assert!(matches!(result, Err(RegistrySnapshotError::Decode(_))));
     }
 
     #[test]
@@ -2481,7 +2716,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 5
+                supported: 6
             }
         );
     }

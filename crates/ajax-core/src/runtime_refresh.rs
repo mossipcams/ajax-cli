@@ -313,15 +313,34 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
+        let now = SystemTime::now();
         let agent_status_entries = agent_status_cache
             .status_entries_for_task(&task_snapshot.id, &task_snapshot.tmux_session);
-        let latest_fresh_status = agent_status_entries
+        let candidates: Vec<live::StatusCandidate> = agent_status_entries
             .iter()
-            .filter(|entry| entry.fresh)
-            .max_by_key(|entry| entry.observed_at);
-        if let Some((entry, observation)) = latest_fresh_status.and_then(|entry| {
-            live::classify_agent_status_value(&entry.value).map(|observation| (entry, observation))
-        }) {
+            .map(|entry| {
+                live::StatusCandidate::new(
+                    match entry.source {
+                        AgentStatusCacheSource::Hook => live::AgentEvidenceSource::Hook,
+                        AgentStatusCacheSource::RuntimeWrapper => {
+                            live::AgentEvidenceSource::RuntimeWrapper
+                        }
+                    },
+                    entry.value.clone(),
+                    entry.observed_at,
+                )
+            })
+            .collect();
+        let decision = live::select_status_observation(live::StatusDecisionInput {
+            selected_agent: task_snapshot.selected_agent,
+            prior: task_snapshot.live_status.as_ref(),
+            acknowledged_at: task_snapshot.attention_acknowledged_at,
+            now,
+            candidates: &candidates,
+        });
+        if let (true, Some(observation), Some(source)) =
+            (decision.applied, decision.observation, decision.source)
+        {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 let live_status_unchanged = task
                     .live_status
@@ -335,11 +354,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
                 task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
-                match entry.source {
-                    AgentStatusCacheSource::Hook => {
+                match source {
+                    live::AgentEvidenceSource::Hook => {
                         live::apply_authoritative_observation(task, observation);
                     }
-                    AgentStatusCacheSource::RuntimeWrapper => {
+                    live::AgentEvidenceSource::RuntimeWrapper => {
                         live::apply_trusted_observation(task, observation);
                     }
                 }
@@ -349,14 +368,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
-        if !agent_status_entries.is_empty() && agent_status_entries.iter().all(|entry| !entry.fresh)
-        {
-            record_runtime_probe_failure(
-                context,
-                &task_id,
-                "agent status stale".to_string(),
-                &mut changed,
-            );
+        if decision.acknowledged_hold {
+            // A fresh Claude waiting hook is acknowledged: hold the current
+            // non-actionable state without probing the pane.
+            continue;
         }
 
         let pane_command =
@@ -385,7 +400,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 continue;
             }
         };
-        let observation = live::classify_pane(&pane_output);
+        let observation = live::classify_agent_pane(task_snapshot.selected_agent, &pane_output);
         if let Some(task) = context.registry.get_task_mut(&task_id) {
             let live_status_unchanged = task.live_status.as_ref() == Some(&observation);
             let had_recoverable_missing_flag = task
@@ -1145,6 +1160,409 @@ mod tests {
             Some(LiveStatusKind::Done)
         );
         assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    struct ScriptedAgentStatusCache {
+        entries: Vec<AgentStatusCacheEntry>,
+    }
+
+    impl AgentStatusCache for ScriptedAgentStatusCache {
+        fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
+            Vec::new()
+        }
+
+        fn status_entries_for_task(
+            &self,
+            _task_id: &TaskId,
+            _session: &str,
+        ) -> Vec<AgentStatusCacheEntry> {
+            self.entries.clone()
+        }
+    }
+
+    fn scripted_entry(
+        source: AgentStatusCacheSource,
+        value: &str,
+        ago: Duration,
+    ) -> AgentStatusCacheEntry {
+        AgentStatusCacheEntry {
+            value: value.to_string(),
+            observed_at: SystemTime::now() - ago,
+            fresh: true,
+            source,
+        }
+    }
+
+    fn captured_pane(runner: &HealthyRefreshRunner) -> usize {
+        runner
+            .commands
+            .iter()
+            .filter(|command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane"))
+            .count()
+    }
+
+    #[test]
+    fn missing_session_skips_wrapper_hook_and_pane_status_application() {
+        let mut context = context_with_task_for_missing_session();
+        let mut runner = MissingSessionRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![
+                scripted_entry(
+                    AgentStatusCacheSource::RuntimeWrapper,
+                    "done",
+                    Duration::from_secs(1),
+                ),
+                scripted_entry(
+                    AgentStatusCacheSource::Hook,
+                    "working",
+                    Duration::from_secs(1),
+                ),
+            ],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::TmuxMissing)
+        );
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
+        assert!(!runner.commands.iter().any(
+            |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
+        ));
+    }
+
+    #[test]
+    fn old_wrapper_completion_beats_new_hook_during_refresh() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![
+                scripted_entry(
+                    AgentStatusCacheSource::RuntimeWrapper,
+                    "done",
+                    Duration::from_secs(3_600),
+                ),
+                scripted_entry(
+                    AgentStatusCacheSource::Hook,
+                    "working",
+                    Duration::from_secs(1),
+                ),
+            ],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    #[test]
+    fn stale_codex_working_falls_through_to_agent_aware_pane_capture() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "working",
+                Duration::from_secs(21),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 1);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn fresh_codex_wait_skips_pane_capture() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "wait",
+                Duration::from_secs(119),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 0);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn stale_codex_wait_uses_pane_fallback() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "wait",
+                Duration::from_secs(121),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 1);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn unsupported_agent_hook_is_ignored_and_pane_is_captured() {
+        let mut context = context_with_active_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .selected_agent = AgentClient::Other;
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "working",
+                Duration::from_secs(1),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 1);
+    }
+
+    #[test]
+    fn malformed_newest_hook_does_not_hide_older_valid_wait() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![
+                scripted_entry(
+                    AgentStatusCacheSource::Hook,
+                    "garbage",
+                    Duration::from_secs(1),
+                ),
+                scripted_entry(
+                    AgentStatusCacheSource::Hook,
+                    "wait",
+                    Duration::from_secs(10),
+                ),
+            ],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 0);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn pane_capture_failure_preserves_prior_credible_live_status() {
+        struct FailingPaneRunner;
+        impl CommandRunner for FailingPaneRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                if command.args.first().map(String::as_str) == Some("capture-pane") {
+                    return Err(CommandRunError::SpawnFailed("pane unavailable".to_string()));
+                }
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: runtime_stdout(&command.args).to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        for (prior_kind, agent_status) in [
+            (LiveStatusKind::Done, AgentRuntimeStatus::Done),
+            (LiveStatusKind::WaitingForInput, AgentRuntimeStatus::Waiting),
+        ] {
+            let mut context = context_with_task_for_missing_session();
+            {
+                let task = context
+                    .registry
+                    .get_task_mut(&TaskId::new(TASK_ID))
+                    .unwrap();
+                task.live_status = Some(LiveObservation::new(prior_kind, "prior"));
+                task.agent_status = agent_status;
+            }
+            let mut runner = FailingPaneRunner;
+
+            refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+            let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+            assert_eq!(
+                task.live_status.as_ref().map(|status| status.kind),
+                Some(prior_kind),
+                "{prior_kind:?}"
+            );
+            assert_eq!(
+                task.runtime_projection.observation_error.as_deref(),
+                Some("tmux capture-pane probe failed: failed to start command: pane unavailable"),
+                "{prior_kind:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn acknowledged_old_claude_wait_stays_idle_without_pane_capture() {
+        let mut context = context_with_active_task();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            task.selected_agent = AgentClient::Claude;
+            task.agent_status = AgentRuntimeStatus::NotStarted;
+            task.live_status = None;
+            task.attention_acknowledged_at = Some(SystemTime::now() - Duration::from_secs(5));
+        }
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "wait",
+                Duration::from_secs(10),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 0);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.live_status, None);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn new_claude_wait_after_acknowledgment_restores_attention() {
+        let acknowledged_at = SystemTime::now() - Duration::from_secs(10);
+        let mut context = context_with_active_task();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            task.selected_agent = AgentClient::Claude;
+            task.agent_status = AgentRuntimeStatus::NotStarted;
+            task.live_status = None;
+            task.attention_acknowledged_at = Some(acknowledged_at);
+        }
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![AgentStatusCacheEntry {
+                value: "wait".to_string(),
+                observed_at: acknowledged_at + Duration::from_nanos(1),
+                fresh: true,
+                source: AgentStatusCacheSource::Hook,
+            }],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(task
+            .annotations
+            .iter()
+            .any(|annotation| annotation.kind == crate::models::AnnotationKind::NeedsMe));
+    }
+
+    #[test]
+    fn codex_wait_ignores_acknowledgment_while_fresh() {
+        let mut context = context_with_active_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap()
+            .attention_acknowledged_at = Some(SystemTime::now() - Duration::from_secs(1));
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::Hook,
+                "wait",
+                Duration::from_secs(10),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn status_decision_preserves_steady_state_command_budget() {
+        let mut context = context_with_unchanged_running_task();
+        let mut runner = GitSkippingRunner::default();
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        refresh_runtime_context_with_agent_status_cache_and_tier(
+            &mut context,
+            &mut runner,
+            &cache,
+            RefreshTier::Live,
+        )
+        .unwrap();
+
+        let git_worktree_lists = runner
+            .commands
+            .iter()
+            .filter(|command| git_worktree_list(&command.args))
+            .count();
+        let capture_panes = runner
+            .commands
+            .iter()
+            .filter(|command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane"))
+            .count();
+        let tmux_commands = runner
+            .commands
+            .iter()
+            .filter(|command| {
+                matches!(
+                    command.args.first().map(String::as_str),
+                    Some("list-sessions" | "list-windows")
+                )
+            })
+            .count();
+
+        assert_eq!(git_worktree_lists, 0);
+        assert_eq!(capture_panes, 0);
+        assert!(tmux_commands <= 2, "got {tmux_commands}");
     }
 
     #[test]

@@ -1014,8 +1014,8 @@ mod tests {
         },
         config::{Config, ManagedRepo, TestCommand},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task, TaskId,
-            TaskOperationKind, TmuxStatus, WorktrunkStatus,
+            AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, SideFlag, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -1688,6 +1688,144 @@ mod tests {
         assert_eq!(review_runner.commands.len(), 1);
         assert_eq!(review_outputs[0].stdout, "diff stat");
         assert!(!review_state_changed);
+    }
+
+    fn claude_waiting_context() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_reviewable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        context
+    }
+
+    #[test]
+    fn successful_resume_records_attention_acknowledgment() {
+        let mut context = claude_waiting_context();
+        let plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Resume,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let mut runner = RecordingQueuedRunner::new(
+            plan.commands
+                .iter()
+                .map(|_| CommandOutput {
+                    status_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+                .collect(),
+        );
+
+        execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Resume,
+            "web/fix-login",
+            &plan,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert!(task.attention_acknowledged_at.is_some());
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
+    }
+
+    #[test]
+    fn failed_resume_does_not_acknowledge_attention() {
+        let mut context = claude_waiting_context();
+        let plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Resume,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let mut runner = RecordingQueuedRunner::new(vec![CommandOutput {
+            status_code: 1,
+            stdout: String::new(),
+            stderr: "resume failed".to_string(),
+        }]);
+
+        let (_error, state_changed) = execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Resume,
+            "web/fix-login",
+            &plan,
+            true,
+            &mut runner,
+        )
+        .unwrap_err();
+
+        assert!(!state_changed);
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task.attention_acknowledged_at, None);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn review_operation_does_not_acknowledge_attention() {
+        let mut context = claude_waiting_context();
+        let plan = plan_task_command_operation(
+            &context,
+            TaskCommandKind::Review,
+            "web/fix-login",
+            OpenMode::Attach,
+        )
+        .unwrap();
+        let mut runner = RecordingQueuedRunner::new(
+            plan.commands
+                .iter()
+                .map(|_| CommandOutput {
+                    status_code: 0,
+                    stdout: "diff stat".to_string(),
+                    stderr: String::new(),
+                })
+                .collect(),
+        );
+
+        execute_task_command_operation(
+            &mut context,
+            TaskCommandKind::Review,
+            "web/fix-login",
+            &plan,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert_eq!(task.attention_acknowledged_at, None);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
     }
 
     #[test]

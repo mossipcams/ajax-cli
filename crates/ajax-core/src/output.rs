@@ -219,6 +219,41 @@ mod tests {
         registry::{InMemoryRegistry, Registry, RegistryEventKind},
     };
 
+    fn sample_task() -> Task {
+        Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        )
+    }
+
+    #[test]
+    fn task_json_without_acknowledgment_remains_backward_compatible() {
+        let task = sample_task();
+        assert_eq!(task.attention_acknowledged_at, None);
+
+        let json = serde_json::to_string(&task).unwrap();
+
+        assert!(!json.contains("attention_acknowledged_at"));
+    }
+
+    #[test]
+    fn task_json_deserializes_without_acknowledgment_field() {
+        let json = serde_json::to_string(&sample_task()).unwrap();
+        assert!(!json.contains("attention_acknowledged_at"));
+
+        let task: Task = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(task.attention_acknowledged_at, None);
+    }
+
     #[test]
     fn read_commands_serialize_as_json_contracts() {
         let repos = ReposResponse {

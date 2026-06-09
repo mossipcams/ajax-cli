@@ -24,7 +24,7 @@ pub use new_task::{
     record_new_task, start_provisioning_step_for_command, task_from_new_request, NewTaskRequest,
     StartProvisioningStep,
 };
-pub use open::{mark_task_opened, open_task_plan};
+pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use teardown::{
     clean_task_plan, drop_op_label, ensure_cleanup_git_status,
     format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
@@ -558,9 +558,10 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         live::LiveStatusKind,
         models::{
-            AgentClient, Annotation, AnnotationKind, Evidence, GitStatus, LifecycleStatus,
-            LiveObservation, OperatorAction, RuntimeHealth, RuntimeObservationSource,
-            RuntimeProjection, SideFlag, StepReceipt, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, GitStatus,
+            LifecycleStatus, LiveObservation, OperatorAction, RuntimeHealth,
+            RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt, Task, TaskId,
+            TmuxStatus, WorktrunkStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
@@ -1333,6 +1334,71 @@ mod tests {
 
         assert_eq!(review_queue(&context).tasks.len(), 1);
         assert!(cockpit_inbox(&context).items.is_empty());
+    }
+
+    fn claude_waiting_context() -> CommandContext<InMemoryRegistry> {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.selected_agent = AgentClient::Claude;
+        task.lifecycle_status = LifecycleStatus::Active;
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        task.annotations = crate::attention::annotate(task);
+        context
+    }
+
+    #[test]
+    fn cockpit_inbox_excludes_acknowledged_claude_waiting_task() {
+        let mut context = claude_waiting_context();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(900);
+
+        super::mark_task_opened_at(&mut context, "web/fix-login", at).unwrap();
+
+        assert!(cockpit_inbox(&context).items.is_empty());
+        let tasks = list_tasks(&context, None);
+        let summary = tasks
+            .tasks
+            .iter()
+            .find(|task| task.qualified_handle == "web/fix-login")
+            .expect("task remains visible in its repo");
+        assert!(!summary.needs_attention);
+    }
+
+    #[test]
+    fn cockpit_inbox_reincludes_task_after_new_waiting_evidence() {
+        let mut context = claude_waiting_context();
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(900);
+        super::mark_task_opened_at(&mut context, "web/fix-login", at).unwrap();
+        assert!(cockpit_inbox(&context).items.is_empty());
+
+        // New waiting evidence after the acknowledgment.
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            crate::live::apply_observation(
+                task,
+                LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            );
+            task.annotations = crate::attention::annotate(task);
+        }
+
+        let items = cockpit_inbox(&context).items;
+        assert_eq!(
+            items
+                .iter()
+                .filter(|item| item.task_handle == "web/fix-login")
+                .count(),
+            1
+        );
     }
 
     #[rstest]
@@ -2898,6 +2964,65 @@ mod tests {
                 status
             );
         }
+    }
+
+    #[test]
+    fn mark_task_opened_acknowledges_claude_attention_without_changing_lifecycle() {
+        let mut context = context_with_tasks();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.selected_agent = AgentClient::Claude;
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.agent_status = AgentRuntimeStatus::Waiting;
+            task.add_side_flag(SideFlag::NeedsInput);
+            task.live_status = Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "waiting for input",
+            ));
+        }
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(900);
+
+        super::mark_task_opened_at(&mut context, "web/fix-login", at).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.attention_acknowledged_at, Some(at));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn mark_task_opened_does_not_clear_codex_waiting() {
+        let mut context = context_with_tasks();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("task-1"))
+                .unwrap();
+            task.selected_agent = AgentClient::Codex;
+            task.lifecycle_status = LifecycleStatus::Active;
+            task.agent_status = AgentRuntimeStatus::Waiting;
+            task.add_side_flag(SideFlag::NeedsInput);
+            task.live_status = Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "waiting for input",
+            ));
+        }
+        let at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(900);
+
+        super::mark_task_opened_at(&mut context, "web/fix-login", at).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.attention_acknowledged_at, Some(at));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
     }
 
     #[test]

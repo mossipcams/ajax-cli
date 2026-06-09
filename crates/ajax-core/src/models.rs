@@ -247,6 +247,8 @@ pub struct Task {
     pub last_activity_at: SystemTime,
     pub metadata: HashMap<String, String>,
     pub agent_attempts: Vec<AgentAttempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attention_acknowledged_at: Option<SystemTime>,
     side_flags: BTreeSet<SideFlag>,
 }
 
@@ -289,8 +291,20 @@ impl Task {
             last_activity_at: now,
             metadata: HashMap::new(),
             agent_attempts: Vec::new(),
+            attention_acknowledged_at: None,
             side_flags: BTreeSet::new(),
         }
+    }
+
+    /// Record that the operator acknowledged this task's attention at `at`.
+    /// Keeps the latest timestamp so an earlier acknowledgment cannot override a
+    /// newer one.
+    pub fn record_attention_acknowledgment(&mut self, at: SystemTime) {
+        let latest = match self.attention_acknowledged_at {
+            Some(existing) if existing >= at => existing,
+            _ => at,
+        };
+        self.attention_acknowledged_at = Some(latest);
     }
 
     pub fn qualified_handle(&self) -> String {
@@ -976,6 +990,41 @@ mod tests {
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
+
+    fn acknowledgment_task() -> Task {
+        Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Claude,
+        )
+    }
+
+    #[test]
+    fn new_task_has_no_attention_acknowledgment() {
+        assert_eq!(acknowledgment_task().attention_acknowledged_at, None);
+    }
+
+    #[test]
+    fn task_attention_acknowledgment_uses_latest_timestamp() {
+        let mut task = acknowledgment_task();
+        let earlier = std::time::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        let later = std::time::UNIX_EPOCH + std::time::Duration::from_secs(200);
+
+        task.record_attention_acknowledgment(earlier);
+        task.record_attention_acknowledgment(later);
+        assert_eq!(task.attention_acknowledged_at, Some(later));
+
+        // An earlier acknowledgment must not override the newer one.
+        task.record_attention_acknowledgment(earlier);
+        assert_eq!(task.attention_acknowledged_at, Some(later));
+    }
 
     fn text_strategy() -> impl Strategy<Value = String> {
         "\\PC{0,64}"

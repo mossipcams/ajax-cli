@@ -267,6 +267,9 @@ mod tests {
 
     #[test]
     fn newest_fresh_agent_status_wins_over_older_working_value() {
+        // The adapter must not choose a winner between hook files: it preserves
+        // both entries with their exact values and timestamps, and core decides
+        // which observation applies.
         let root = temp_cache_root();
         let pane_dir = root.join("panes");
         fs::create_dir_all(&pane_dir).unwrap();
@@ -279,15 +282,170 @@ mod tests {
         set_modified(&done, now - Duration::from_secs(2));
 
         let cache = TmuxAgentStatusSnapshot::from_root_at(&root, now, Duration::from_secs(30));
+        let entries = cache.status_entries_for_session("ajax-web-fix-login");
 
-        let latest = cache
+        assert!(entries.iter().any(|entry| entry.value == "working"
+            && entry.observed_at == now - Duration::from_secs(10)
+            && entry.source == AgentStatusCacheSource::Hook));
+        assert!(entries.iter().any(|entry| entry.value == "done"
+            && entry.observed_at == now - Duration::from_secs(2)
+            && entry.source == AgentStatusCacheSource::Hook));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hook_snapshot_retains_entry_past_legacy_thirty_second_window() {
+        let root = temp_cache_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("ajax-web-fix-login.status");
+        fs::write(&path, "working\n").unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let observed_at = now - Duration::from_secs(119);
+        set_modified(&path, observed_at);
+
+        let cache = TmuxAgentStatusSnapshot::from_root_at(&root, now, Duration::from_secs(30));
+        let entries = cache.status_entries_for_session("ajax-web-fix-login");
+
+        let entry = entries
+            .iter()
+            .find(|entry| entry.value == "working")
+            .expect("working entry retained past 30s window");
+        assert_eq!(entry.observed_at, observed_at);
+        assert_eq!(entry.source, AgentStatusCacheSource::Hook);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hook_snapshot_retains_stale_entry_for_core_fallback_decision() {
+        let root = temp_cache_root();
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("ajax-web-fix-login.status");
+        fs::write(&path, "wait\n").unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let observed_at = now - Duration::from_secs(121);
+        set_modified(&path, observed_at);
+
+        let cache = TmuxAgentStatusSnapshot::from_root_at(&root, now, Duration::from_secs(30));
+        let entries = cache.status_entries_for_session("ajax-web-fix-login");
+
+        assert!(entries
+            .iter()
+            .any(|entry| entry.value == "wait" && entry.observed_at == observed_at));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_snapshot_keeps_old_terminal_exit_but_expires_old_running_heartbeat() {
+        let root = temp_cache_root();
+        let tmux_root = root.join("tmux-agent-status");
+        let runtime_root = root.join("agent-runtime");
+        fs::create_dir_all(&tmux_root).unwrap();
+        fs::create_dir_all(&runtime_root).unwrap();
+        // Both observed ten minutes ago.
+        let observed_millis = (1_000 - 600) * 1_000;
+        fs::write(
+            runtime_root.join("web__done.json"),
+            format!(
+                r#"{{"task_id":"web/done","state":"exited_success","observed_at_unix_millis":{observed_millis},"pid":42,"exit_code":0,"message":null}}"#
+            ),
+        )
+        .unwrap();
+        fs::write(
+            runtime_root.join("web__running.json"),
+            format!(
+                r#"{{"task_id":"web/running","state":"running","observed_at_unix_millis":{observed_millis},"pid":43,"exit_code":null,"message":null}}"#
+            ),
+        )
+        .unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+
+        let cache = TmuxAgentStatusSnapshot::from_roots_at(
+            &tmux_root,
+            &runtime_root,
+            now,
+            Duration::from_secs(30),
+        );
+
+        let terminal = cache.status_entries_for_task(&TaskId::new("web/done"), "ajax-web-done");
+        assert!(terminal.iter().any(|entry| entry.value == "done"
+            && entry.fresh
+            && entry.source == AgentStatusCacheSource::RuntimeWrapper));
+
+        let running =
+            cache.status_entries_for_task(&TaskId::new("web/running"), "ajax-web-running");
+        assert!(running.iter().any(|entry| entry.value == "working"
+            && !entry.fresh
+            && entry.source == AgentStatusCacheSource::RuntimeWrapper));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn merged_snapshot_preserves_source_and_timestamp_for_each_entry() {
+        let root = temp_cache_root();
+        let tmux_root = root.join("tmux-agent-status");
+        let runtime_root = root.join("agent-runtime");
+        fs::create_dir_all(&tmux_root).unwrap();
+        fs::create_dir_all(&runtime_root).unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        let hook = tmux_root.join("ajax-web-fix-login.status");
+        fs::write(&hook, "wait\n").unwrap();
+        let hook_observed = now - Duration::from_secs(50);
+        set_modified(&hook, hook_observed);
+        let runtime_observed_millis = (1_000 - 100) * 1_000;
+        let runtime_observed = now - Duration::from_secs(100);
+        fs::write(
+            runtime_root.join("web__fix-login.json"),
+            format!(
+                r#"{{"task_id":"web/fix-login","state":"exited_success","observed_at_unix_millis":{runtime_observed_millis},"pid":42,"exit_code":0,"message":null}}"#
+            ),
+        )
+        .unwrap();
+
+        let cache = TmuxAgentStatusSnapshot::from_roots_at(
+            &tmux_root,
+            &runtime_root,
+            now,
+            Duration::from_secs(30),
+        );
+        let entries =
+            cache.status_entries_for_task(&TaskId::new("web/fix-login"), "ajax-web-fix-login");
+
+        assert!(entries.iter().any(|entry| entry.value == "wait"
+            && entry.observed_at == hook_observed
+            && entry.source == AgentStatusCacheSource::Hook));
+        assert!(entries.iter().any(|entry| entry.value == "done"
+            && entry.observed_at == runtime_observed
+            && entry.source == AgentStatusCacheSource::RuntimeWrapper));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn snapshot_does_not_choose_a_winner_between_hook_files() {
+        let root = temp_cache_root();
+        let pane_dir = root.join("panes");
+        fs::create_dir_all(&pane_dir).unwrap();
+        let session = root.join("ajax-web-fix-login.status");
+        let pane = pane_dir.join("ajax-web-fix-login_%1.status");
+        fs::write(&session, "working\n").unwrap();
+        fs::write(&pane, "wait\n").unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        set_modified(&session, now - Duration::from_secs(5));
+        set_modified(&pane, now - Duration::from_secs(3));
+
+        let cache = TmuxAgentStatusSnapshot::from_root_at(&root, now, Duration::from_secs(30));
+        let mut values = cache
             .status_entries_for_session("ajax-web-fix-login")
             .into_iter()
-            .filter(|entry| entry.fresh)
-            .max_by_key(|entry| entry.observed_at)
-            .map(|entry| entry.value);
+            .map(|entry| entry.value)
+            .collect::<Vec<_>>();
+        values.sort();
 
-        assert_eq!(latest.as_deref(), Some("done"));
+        assert_eq!(values, vec!["wait", "working"]);
 
         fs::remove_dir_all(root).unwrap();
     }
