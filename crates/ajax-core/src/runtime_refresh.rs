@@ -17,8 +17,30 @@ use crate::{
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentStatusCacheEntry {
+    pub value: String,
+    pub observed_at: SystemTime,
+    pub fresh: bool,
+    pub source: AgentStatusCacheSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AgentStatusCacheSource {
+    Hook,
+    RuntimeWrapper,
+}
+
 pub trait AgentStatusCache {
-    fn status_values_for_session(&self, session: &str) -> Vec<String>;
+    fn status_entries_for_session(&self, session: &str) -> Vec<AgentStatusCacheEntry>;
+
+    fn status_entries_for_task(
+        &self,
+        _task_id: &TaskId,
+        session: &str,
+    ) -> Vec<AgentStatusCacheEntry> {
+        self.status_entries_for_session(session)
+    }
 }
 
 /// Controls how much substrate work a refresh pass performs.
@@ -35,7 +57,7 @@ pub enum RefreshTier {
 pub struct NoAgentStatusCache;
 
 impl AgentStatusCache for NoAgentStatusCache {
-    fn status_values_for_session(&self, _session: &str) -> Vec<String> {
+    fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
         Vec::new()
     }
 }
@@ -117,8 +139,23 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     let sessions_command = tmux.list_sessions();
     let sessions_output = match runner.run(&sessions_command) {
         Ok(output) if output.status_code == 0 => output.stdout,
-        Ok(_) => return Ok(changed),
-        Err(_) => String::new(),
+        Ok(output) => {
+            let reason = format!(
+                "tmux list-sessions probe failed: exited with status {}",
+                output.status_code
+            );
+            for task_id in &probe_task_ids {
+                record_runtime_probe_failure(context, task_id, reason.clone(), &mut changed);
+            }
+            return Ok(changed);
+        }
+        Err(error) => {
+            let reason = format!("tmux list-sessions probe failed: {error}");
+            for task_id in &probe_task_ids {
+                record_runtime_probe_failure(context, task_id, reason.clone(), &mut changed);
+            }
+            return Ok(changed);
+        }
     };
 
     let task_lookup: BTreeMap<TaskId, Task> = tasks
@@ -141,7 +178,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         let windows_command = tmux.list_all_windows();
         match runner.run(&windows_command) {
             Ok(output) if output.status_code == 0 => Some(Ok(output.stdout)),
-            Ok(_) | Err(_) => Some(Err(())),
+            Ok(output) => Some(Err(format!(
+                "tmux list-windows probe failed: exited with status {}",
+                output.status_code
+            ))),
+            Err(error) => Some(Err(format!("tmux list-windows probe failed: {error}"))),
         }
     } else {
         None
@@ -217,27 +258,12 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         }
 
         let Some(Ok(windows_output)) = windows_output.as_ref() else {
-            context
-                .registry
-                .update_worktrunk_status(
-                    &task_id,
-                    Some(WorktrunkStatus {
-                        exists: false,
-                        window_name: task_snapshot.worktrunk_window.clone(),
-                        current_path: task_snapshot.worktree_path.clone(),
-                        points_at_expected_path: false,
-                    }),
-                )
-                .map_err(CommandError::Registry)?;
-            refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
-            if let Some(task) = context.registry.get_task_mut(&task_id) {
-                live::apply_observation(
-                    task,
-                    LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
-                );
-                refresh_cached_annotations(task);
-                changed = true;
-            }
+            let reason = windows_output
+                .as_ref()
+                .and_then(|output| output.as_ref().err())
+                .cloned()
+                .unwrap_or_else(|| "tmux list-windows probe failed: not observed".to_string());
+            record_runtime_probe_failure(context, &task_id, reason, &mut changed);
             continue;
         };
         let all_windows_output_empty = windows_output.trim().is_empty();
@@ -287,11 +313,15 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         }
 
-        let agent_status_values =
-            agent_status_cache.status_values_for_session(&task_snapshot.tmux_session);
-        if let Some(observation) =
-            live::reduce_agent_status_values(agent_status_values.iter().map(String::as_str))
-        {
+        let agent_status_entries = agent_status_cache
+            .status_entries_for_task(&task_snapshot.id, &task_snapshot.tmux_session);
+        let latest_fresh_status = agent_status_entries
+            .iter()
+            .filter(|entry| entry.fresh)
+            .max_by_key(|entry| entry.observed_at);
+        if let Some((entry, observation)) = latest_fresh_status.and_then(|entry| {
+            live::classify_agent_status_value(&entry.value).map(|observation| (entry, observation))
+        }) {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 let live_status_unchanged = task
                     .live_status
@@ -305,26 +335,53 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
                 task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
-                live::apply_authoritative_observation(task, observation);
+                match entry.source {
+                    AgentStatusCacheSource::Hook => {
+                        live::apply_authoritative_observation(task, observation);
+                    }
+                    AgentStatusCacheSource::RuntimeWrapper => {
+                        live::apply_trusted_observation(task, observation);
+                    }
+                }
                 refresh_cached_annotations(task);
                 changed |= *task != previous;
             }
             continue;
         }
 
+        if !agent_status_entries.is_empty() && agent_status_entries.iter().all(|entry| !entry.fresh)
+        {
+            record_runtime_probe_failure(
+                context,
+                &task_id,
+                "agent status stale".to_string(),
+                &mut changed,
+            );
+        }
+
         let pane_command =
             tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window);
         let pane_output = match runner.run(&pane_command) {
             Ok(output) if output.status_code == 0 => output.stdout,
-            Ok(_) | Err(_) => {
-                if let Some(task) = context.registry.get_task_mut(&task_id) {
-                    live::apply_observation(
-                        task,
-                        LiveObservation::new(LiveStatusKind::CommandFailed, "live refresh failed"),
-                    );
-                    refresh_cached_annotations(task);
-                    changed = true;
-                }
+            Ok(output) => {
+                record_runtime_probe_failure(
+                    context,
+                    &task_id,
+                    format!(
+                        "tmux capture-pane probe failed: exited with status {}",
+                        output.status_code
+                    ),
+                    &mut changed,
+                );
+                continue;
+            }
+            Err(error) => {
+                record_runtime_probe_failure(
+                    context,
+                    &task_id,
+                    format!("tmux capture-pane probe failed: {error}"),
+                    &mut changed,
+                );
                 continue;
             }
         };
@@ -456,6 +513,20 @@ fn refresh_runtime_projection_from_tmux_probe<R: Registry>(
         let previous_health = task.runtime_projection.health;
         task.refresh_runtime_projection_from_source(RuntimeObservationSource::TmuxProbe);
         *changed |= task.runtime_projection.health != previous_health;
+    }
+}
+
+fn record_runtime_probe_failure<R: Registry>(
+    context: &mut CommandContext<R>,
+    task_id: &TaskId,
+    reason: String,
+    changed: &mut bool,
+) {
+    if let Some(task) = context.registry.get_task_mut(task_id) {
+        let previous = task.runtime_projection.clone();
+        task.record_runtime_probe_failure(RuntimeObservationSource::TmuxProbe, reason);
+        refresh_cached_annotations(task);
+        *changed |= task.runtime_projection != previous;
     }
 }
 
@@ -608,7 +679,8 @@ mod tests {
     use super::{
         refresh_runtime_context, refresh_runtime_context_with_agent_status_cache,
         refresh_runtime_context_with_agent_status_cache_and_tier,
-        refresh_runtime_context_with_tier, AgentStatusCache, NoAgentStatusCache, RefreshTier,
+        refresh_runtime_context_with_tier, AgentStatusCache, AgentStatusCacheEntry,
+        AgentStatusCacheSource, NoAgentStatusCache, RefreshTier,
     };
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
@@ -637,8 +709,17 @@ mod tests {
     const TASK_WINDOW: &str = "worktrunk";
 
     impl AgentStatusCache for StaticAgentStatusCache {
-        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
-            self.values.clone()
+        fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
+            self.values
+                .iter()
+                .cloned()
+                .map(|value| AgentStatusCacheEntry {
+                    value,
+                    observed_at: SystemTime::now(),
+                    fresh: true,
+                    source: AgentStatusCacheSource::Hook,
+                })
+                .collect()
         }
     }
 
@@ -1017,6 +1098,56 @@ mod tests {
     }
 
     #[test]
+    fn wrapper_completion_beats_stale_hook_working_status() {
+        struct MixedAgentStatusCache;
+
+        impl AgentStatusCache for MixedAgentStatusCache {
+            fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
+                Vec::new()
+            }
+
+            fn status_entries_for_task(
+                &self,
+                _task_id: &TaskId,
+                _session: &str,
+            ) -> Vec<AgentStatusCacheEntry> {
+                vec![
+                    AgentStatusCacheEntry {
+                        value: "working".to_string(),
+                        observed_at: SystemTime::UNIX_EPOCH,
+                        fresh: false,
+                        source: AgentStatusCacheSource::Hook,
+                    },
+                    AgentStatusCacheEntry {
+                        value: "done".to_string(),
+                        observed_at: SystemTime::now(),
+                        fresh: true,
+                        source: AgentStatusCacheSource::RuntimeWrapper,
+                    },
+                ]
+            }
+        }
+
+        let mut context = context_with_task_for_missing_session();
+        let mut runner = HealthyRefreshRunner::default();
+
+        let changed = refresh_runtime_context_with_agent_status_cache(
+            &mut context,
+            &mut runner,
+            &MixedAgentStatusCache,
+        )
+        .unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    #[test]
     fn hook_working_status_reactivates_previously_done_task() {
         let mut context = context_with_active_task();
         let task = context
@@ -1378,7 +1509,7 @@ mod tests {
     }
 
     #[test]
-    fn tmux_probe_failure_marks_missing_session() {
+    fn tmux_probe_failure_preserves_session_and_records_probe_error() {
         struct FailingTmuxRunner {
             inner: MissingSessionRunner,
         }
@@ -1405,9 +1536,93 @@ mod tests {
 
         assert!(changed);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| status.exists));
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
         assert_eq!(
+            task.runtime_projection.observation_error.as_deref(),
+            Some("tmux list-sessions probe failed: failed to start command: tmux unavailable")
+        );
+    }
+
+    #[test]
+    fn window_probe_failure_preserves_task_window_evidence() {
+        struct FailingWindowRunner;
+
+        impl CommandRunner for FailingWindowRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                match command.args.first().map(String::as_str) {
+                    Some("list-sessions") => Ok(CommandOutput {
+                        status_code: 0,
+                        stdout: format!("{TASK_SESSION}\n"),
+                        stderr: String::new(),
+                    }),
+                    Some("list-windows") => Err(CommandRunError::SpawnFailed(
+                        "tmux windows unavailable".to_string(),
+                    )),
+                    _ => Ok(CommandOutput {
+                        status_code: 0,
+                        stdout: runtime_stdout(&command.args).to_string(),
+                        stderr: String::new(),
+                    }),
+                }
+            }
+        }
+
+        let mut context = context_with_task_for_missing_session();
+        let mut runner = FailingWindowRunner;
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert!(task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| status.exists && status.points_at_expected_path));
+        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert_eq!(
+            task.runtime_projection.observation_error.as_deref(),
+            Some(
+                "tmux list-windows probe failed: failed to start command: tmux windows unavailable"
+            )
+        );
+    }
+
+    #[test]
+    fn pane_probe_failure_does_not_report_agent_command_failure() {
+        struct FailingPaneRunner;
+
+        impl CommandRunner for FailingPaneRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                if command.args.first().map(String::as_str) == Some("capture-pane") {
+                    return Err(CommandRunError::SpawnFailed("pane unavailable".to_string()));
+                }
+
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: runtime_stdout(&command.args).to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let mut context = context_with_task_for_missing_session();
+        let mut runner = FailingPaneRunner;
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_ne!(
             task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::TmuxMissing)
+            Some(LiveStatusKind::CommandFailed)
+        );
+        assert_eq!(
+            task.runtime_projection.observation_error.as_deref(),
+            Some("tmux capture-pane probe failed: failed to start command: pane unavailable")
         );
     }
 

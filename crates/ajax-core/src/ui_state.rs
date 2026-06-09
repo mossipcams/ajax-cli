@@ -18,6 +18,49 @@ pub enum UiState {
     Archived,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OperatorStatusKind {
+    Blocked,
+    NeedsInput,
+    Running,
+    ReviewReady,
+    SafeMerge,
+    Cleanable,
+    Idle,
+    Failed,
+    ObservationFailed,
+    Archived,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OperatorStatus {
+    pub kind: OperatorStatusKind,
+    pub label: String,
+}
+
+impl OperatorStatus {
+    fn new(kind: OperatorStatusKind, label: impl Into<String>) -> Self {
+        Self {
+            kind,
+            label: label.into(),
+        }
+    }
+
+    pub const fn ui_state(&self) -> UiState {
+        match self.kind {
+            OperatorStatusKind::Blocked => UiState::Blocked,
+            OperatorStatusKind::NeedsInput => UiState::NeedsInput,
+            OperatorStatusKind::Running => UiState::Running,
+            OperatorStatusKind::ReviewReady => UiState::ReviewReady,
+            OperatorStatusKind::SafeMerge => UiState::SafeMerge,
+            OperatorStatusKind::Cleanable => UiState::Cleanable,
+            OperatorStatusKind::Idle => UiState::Idle,
+            OperatorStatusKind::Failed | OperatorStatusKind::ObservationFailed => UiState::Failed,
+            OperatorStatusKind::Archived => UiState::Archived,
+        }
+    }
+}
+
 impl UiState {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -35,36 +78,70 @@ impl UiState {
 }
 
 pub fn derive_ui_state(task: &Task) -> UiState {
+    derive_operator_status(task).ui_state()
+}
+
+pub fn derive_operator_status(task: &Task) -> OperatorStatus {
     if task.lifecycle_status == LifecycleStatus::Removed {
-        return UiState::Archived;
+        return OperatorStatus::new(OperatorStatusKind::Archived, "archived");
+    }
+    if task.lifecycle_status == LifecycleStatus::Removing {
+        return OperatorStatus::new(OperatorStatusKind::Cleanable, "removing");
+    }
+    if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
+        return OperatorStatus::new(OperatorStatusKind::Failed, "teardown incomplete");
+    }
+    if let Some(error) = task.runtime_projection.observation_error.as_deref() {
+        return OperatorStatus::new(
+            OperatorStatusKind::ObservationFailed,
+            format!("status unavailable: {error}"),
+        );
+    }
+    if let Some(label) = missing_substrate_label(task) {
+        return OperatorStatus::new(OperatorStatusKind::Failed, label);
     }
     if is_blocked(task) {
-        return UiState::Blocked;
+        return OperatorStatus::new(
+            OperatorStatusKind::Blocked,
+            live_summary(task).unwrap_or_else(|| "blocked".to_string()),
+        );
     }
     if needs_input(task) {
-        return UiState::NeedsInput;
+        return OperatorStatus::new(
+            OperatorStatusKind::NeedsInput,
+            live_summary(task).unwrap_or_else(|| "needs input".to_string()),
+        );
     }
     if is_failed(task) {
-        return UiState::Failed;
+        return OperatorStatus::new(
+            OperatorStatusKind::Failed,
+            live_summary(task).unwrap_or_else(|| "failed".to_string()),
+        );
     }
     match task.lifecycle_status {
-        LifecycleStatus::Error => UiState::Failed,
-        LifecycleStatus::TeardownIncomplete => UiState::Failed,
-        LifecycleStatus::Mergeable => UiState::SafeMerge,
-        LifecycleStatus::Removing => UiState::Cleanable,
-        LifecycleStatus::Cleanable => UiState::Cleanable,
+        LifecycleStatus::Error => OperatorStatus::new(OperatorStatusKind::Failed, "failed"),
+        LifecycleStatus::TeardownIncomplete => {
+            OperatorStatus::new(OperatorStatusKind::Failed, "teardown incomplete")
+        }
+        LifecycleStatus::Mergeable => {
+            OperatorStatus::new(OperatorStatusKind::SafeMerge, "safe merge")
+        }
+        LifecycleStatus::Removing => OperatorStatus::new(OperatorStatusKind::Cleanable, "removing"),
+        LifecycleStatus::Cleanable => {
+            OperatorStatus::new(OperatorStatusKind::Cleanable, "cleanable")
+        }
         LifecycleStatus::Merged => {
             if is_clean_for_cleanup(task) {
-                UiState::Cleanable
+                OperatorStatus::new(OperatorStatusKind::Cleanable, "cleanable")
             } else {
-                UiState::Idle
+                OperatorStatus::new(OperatorStatusKind::Idle, "merged")
             }
         }
         LifecycleStatus::Reviewable => {
             if merge_safety(task).classification == SafetyClassification::Safe {
-                UiState::SafeMerge
+                OperatorStatus::new(OperatorStatusKind::SafeMerge, "safe merge")
             } else {
-                UiState::ReviewReady
+                OperatorStatus::new(OperatorStatusKind::ReviewReady, "review ready")
             }
         }
         LifecycleStatus::Created
@@ -73,13 +150,49 @@ pub fn derive_ui_state(task: &Task) -> UiState {
         | LifecycleStatus::Waiting
         | LifecycleStatus::Orphaned => {
             if is_running(task) {
-                UiState::Running
+                OperatorStatus::new(
+                    OperatorStatusKind::Running,
+                    live_summary(task).unwrap_or_else(|| "running".to_string()),
+                )
             } else {
-                UiState::Idle
+                OperatorStatus::new(OperatorStatusKind::Idle, "idle")
             }
         }
-        LifecycleStatus::Removed => UiState::Archived,
+        LifecycleStatus::Removed => OperatorStatus::new(OperatorStatusKind::Archived, "archived"),
     }
+}
+
+fn live_summary(task: &Task) -> Option<String> {
+    task.live_status
+        .as_ref()
+        .filter(|live| live.kind != LiveStatusKind::Unknown)
+        .map(|live| live.summary.clone())
+}
+
+fn missing_substrate_label(task: &Task) -> Option<&'static str> {
+    if task.has_side_flag(SideFlag::WorktreeMissing)
+        || task.runtime_projection.health == crate::models::RuntimeHealth::MissingWorktree
+    {
+        return Some("worktree missing");
+    }
+    if task.has_side_flag(SideFlag::BranchMissing) {
+        return Some("branch missing");
+    }
+    if task.has_side_flag(SideFlag::TmuxMissing)
+        || task.runtime_projection.health == crate::models::RuntimeHealth::MissingSession
+    {
+        return Some("tmux session missing");
+    }
+    if task.has_side_flag(SideFlag::WorktrunkMissing)
+        || matches!(
+            task.runtime_projection.health,
+            crate::models::RuntimeHealth::MissingTaskWindow
+                | crate::models::RuntimeHealth::WrongTaskWindowPath
+        )
+    {
+        return Some("task window missing");
+    }
+    None
 }
 
 fn is_blocked(task: &Task) -> bool {
@@ -102,7 +215,10 @@ fn needs_input(task: &Task) -> bool {
     if task.has_side_flag(SideFlag::NeedsInput) {
         return true;
     }
-    if task.agent_status == AgentRuntimeStatus::Waiting {
+    if matches!(
+        task.agent_status,
+        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
+    ) {
         return true;
     }
     task.live_status
@@ -178,8 +294,8 @@ mod tests {
             mark_reviewable,
         },
         models::{
-            AgentClient, AgentRuntimeStatus, GitStatus, LiveObservation, LiveStatusKind, SideFlag,
-            Task, TaskId,
+            AgentClient, AgentRuntimeStatus, GitStatus, LiveObservation, LiveStatusKind,
+            RuntimeObservationSource, SideFlag, Task, TaskId,
         },
     };
 
@@ -283,6 +399,22 @@ mod tests {
         task.mark_resource_missing(SideFlag::WorktreeMissing);
 
         assert_eq!(derive_ui_state(&task), UiState::Failed);
+    }
+
+    #[test]
+    fn runtime_probe_failure_is_failed_without_changing_lifecycle() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.record_runtime_probe_failure(
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+
+        assert_eq!(derive_ui_state(&task), UiState::Failed);
+        assert_eq!(
+            task.lifecycle_status,
+            crate::models::LifecycleStatus::Active
+        );
     }
 
     #[test]

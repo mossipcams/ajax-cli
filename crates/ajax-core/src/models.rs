@@ -331,7 +331,7 @@ impl Task {
     pub fn mark_resource_missing(&mut self, flag: SideFlag) {
         self.add_side_flag(flag);
         if flag.is_missing_substrate() {
-            self.agent_status = AgentRuntimeStatus::Unknown;
+            self.agent_status = AgentRuntimeStatus::Dead;
             self.remove_side_flag(SideFlag::AgentRunning);
         }
     }
@@ -415,6 +415,20 @@ impl Task {
             },
             SystemTime::now(),
             source,
+        );
+    }
+
+    pub fn record_runtime_probe_failure(
+        &mut self,
+        source: RuntimeObservationSource,
+        error: impl Into<String>,
+    ) {
+        let previous_health = self.runtime_projection.health;
+        self.runtime_projection = RuntimeProjection::with_observation_error(
+            previous_health,
+            SystemTime::now(),
+            source,
+            error,
         );
     }
 }
@@ -651,6 +665,8 @@ pub struct RuntimeProjection {
     pub health: RuntimeHealth,
     pub observed_at: SystemTime,
     pub source: RuntimeObservationSource,
+    #[serde(default)]
+    pub observation_error: Option<String>,
 }
 
 impl RuntimeProjection {
@@ -663,12 +679,27 @@ impl RuntimeProjection {
             health,
             observed_at,
             source,
+            observation_error: None,
+        }
+    }
+
+    pub fn with_observation_error(
+        health: RuntimeHealth,
+        observed_at: SystemTime,
+        source: RuntimeObservationSource,
+        observation_error: impl Into<String>,
+    ) -> Self {
+        Self {
+            health,
+            observed_at,
+            source,
+            observation_error: Some(observation_error.into()),
         }
     }
 
     pub fn requires_refresh(&self, now: SystemTime, max_age: Duration) -> bool {
-        if self.source == RuntimeObservationSource::Unknown {
-            return false;
+        if self.source == RuntimeObservationSource::Unknown || self.observation_error.is_some() {
+            return true;
         }
         if self.health == RuntimeHealth::Unobservable {
             return true;
@@ -689,6 +720,7 @@ impl Default for RuntimeProjection {
             health: RuntimeHealth::Unobservable,
             observed_at: SystemTime::UNIX_EPOCH,
             source: RuntimeObservationSource::Unknown,
+            observation_error: None,
         }
     }
 }
@@ -814,9 +846,11 @@ pub enum SubstrateGap {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum Evidence {
     LiveStatus(LiveStatusKind),
+    AgentStatus(AgentRuntimeStatus),
     SideFlag(SideFlag),
     Lifecycle(LifecycleStatus),
     Substrate(SubstrateGap),
+    RuntimeObservationFailed,
 }
 
 impl Evidence {
@@ -841,6 +875,15 @@ impl Evidence {
                 | LiveStatusKind::AgentRunning
                 | LiveStatusKind::CiFailed => "ci failed",
                 LiveStatusKind::Unknown => "live status",
+            },
+            Evidence::AgentStatus(status) => match status {
+                AgentRuntimeStatus::NotStarted => "agent not started",
+                AgentRuntimeStatus::Running => "agent running",
+                AgentRuntimeStatus::Waiting => "agent waiting",
+                AgentRuntimeStatus::Blocked => "agent blocked",
+                AgentRuntimeStatus::Done => "agent done",
+                AgentRuntimeStatus::Dead => "agent dead",
+                AgentRuntimeStatus::Unknown => "agent status not observed",
             },
             Evidence::SideFlag(flag) => match flag {
                 SideFlag::Dirty => "dirty",
@@ -877,6 +920,7 @@ impl Evidence {
                 SubstrateGap::WorktrunkMissing => "worktrunk missing",
                 SubstrateGap::BranchMissing => "branch missing",
             },
+            Evidence::RuntimeObservationFailed => "status unavailable",
         }
     }
 
@@ -1259,7 +1303,7 @@ mod tests {
 
             prop_assert!(task.has_side_flag(flag));
             if flag.is_missing_substrate() {
-                prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+                prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
                 prop_assert!(!task.has_side_flag(SideFlag::AgentRunning));
             } else {
                 prop_assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
@@ -1308,7 +1352,7 @@ mod tests {
 
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(task.has_missing_substrate());
-        assert_eq!(task.agent_status, super::AgentRuntimeStatus::Unknown);
+        assert_eq!(task.agent_status, super::AgentRuntimeStatus::Dead);
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
     }
 

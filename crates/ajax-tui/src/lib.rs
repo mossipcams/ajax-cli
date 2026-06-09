@@ -880,6 +880,20 @@ mod tests {
         assert!(!content.contains("LiveStatus"), "{content}");
     }
 
+    #[test]
+    fn cockpit_row_renders_probe_failure_status_verbatim() {
+        let mut tasks = sample_tasks();
+        tasks[0].status_label = "status unavailable: tmux server unavailable".to_string();
+
+        let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
+
+        assert!(
+            content.contains("status unavailable: tmux server unavailable"),
+            "{content}"
+        );
+        assert!(!content.contains("unknown"), "{content}");
+    }
+
     #[rstest]
     #[case(Evidence::SideFlag(ajax_core::models::SideFlag::NeedsInput))]
     #[case(Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput))]

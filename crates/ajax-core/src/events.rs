@@ -131,7 +131,7 @@ pub fn apply_monitor_event_to_task(task: &mut crate::models::Task, event: &Monit
         return changed;
     };
 
-    crate::live::apply_observation(task, observation);
+    crate::live::apply_trusted_observation(task, observation);
     true
 }
 
@@ -150,7 +150,25 @@ pub fn apply_monitor_event_to_registry<R: Registry>(
         return Ok(changed);
     };
 
-    registry.apply_live_observation(task_id, observation)?;
+    let previous_lifecycle = registry
+        .get_task(task_id)
+        .map(|task| task.lifecycle_status)
+        .ok_or_else(|| RegistryError::TaskNotFound(task_id.clone()))?;
+    let current_lifecycle = {
+        let task = registry
+            .get_task_mut(task_id)
+            .ok_or_else(|| RegistryError::TaskNotFound(task_id.clone()))?;
+        crate::live::apply_trusted_observation(task, observation);
+        task.annotations = crate::attention::annotate(task);
+        task.lifecycle_status
+    };
+    if current_lifecycle != previous_lifecycle {
+        registry.record_event(
+            task_id.clone(),
+            crate::registry::RegistryEventKind::LifecycleChanged,
+            format!("lifecycle changed to {current_lifecycle:?}"),
+        )?;
+    }
     Ok(true)
 }
 
@@ -371,7 +389,7 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::WaitingForApproval)
         );
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Waiting);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
 
         assert!(apply_monitor_event_to_task(
@@ -400,7 +418,7 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CommandFailed)
         );
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
 
@@ -410,6 +428,36 @@ mod tests {
                 && annotation.evidence
                     == crate::models::Evidence::LiveStatus(LiveStatusKind::CommandFailed)
         }));
+    }
+
+    #[test]
+    fn trusted_monitor_completion_advances_active_task_to_reviewable() {
+        let mut task = task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Completed)
+        ));
+
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+    }
+
+    #[test]
+    fn trusted_process_failure_preserves_workflow_lifecycle() {
+        let mut task = task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Process(ProcessEvent::Exited { code: Some(42) })
+        ));
+
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::CommandFailed)
+        );
     }
 
     #[test]
@@ -489,17 +537,15 @@ mod tests {
         assert!(changed);
         let task = registry.get_task(&TaskId::new("task-1")).unwrap();
         assert_eq!(task.git_status, Some(status));
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::MergeConflict)
         );
         let events = registry.events_for_task(&TaskId::new("task-1"));
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
         assert_eq!(events[1].kind, RegistryEventKind::SubstrateChanged);
         assert_eq!(events[1].message, "git evidence changed");
-        assert_eq!(events[2].kind, RegistryEventKind::LifecycleChanged);
-        assert_eq!(events[2].message, "lifecycle changed to Error");
     }
 }

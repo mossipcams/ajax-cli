@@ -168,6 +168,9 @@ case "$1" in
   switch-client)
     exit 0
     ;;
+  list-sessions)
+    exit 0
+    ;;
   *)
     printf 'unexpected tmux args: %s\n' "$*" >&2
     exit 2
@@ -578,7 +581,8 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         worktree = worktree.display()
     )));
     assert!(lifecycle_log.contains(&format!(
-        "args=send-keys -t ajax-web-fix-login:worktrunk codex --cd {worktree} Enter",
+        "args=send-keys -t ajax-web-fix-login:worktrunk ajax-cli __agent-runtime --task-id web/fix-login --state-root {state_root} -- codex --cd {worktree} Enter",
+        state_root = home.root.join(".cache/ajax/agent-runtime").display(),
         worktree = worktree.display()
     )));
     assert!(
@@ -596,7 +600,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         home.state_file().display()
     );
 
-    let tasks_output = home.ajax(["tasks", "--json"]);
+    let tasks_output = home.ajax_with_fake_tools(["tasks", "--json"]);
 
     assert!(
         tasks_output.status.success(),
@@ -614,6 +618,8 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
                 "qualified_handle": "web/fix-login",
                 "title": "Fix Login!",
                 "lifecycle_status": "Active",
+                "status_label": "running",
+                "runtime_observation_error": null,
                 "needs_attention": false,
                 "live_status": null
             }

@@ -1191,7 +1191,7 @@ fn status_command_refreshes_live_state_from_tmux() {
     let output =
         run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
 
-    assert!(output.contains("web/fix-login\tWaiting\tFix login"));
+    assert!(output.contains("web/fix-login\twaiting for approval\tFix login"));
     assert!(context
         .registry
         .get_task(&TaskId::new("task-1"))
@@ -1593,16 +1593,20 @@ fn live_refresh_reports_changed_when_same_status_updates_activity() {
 }
 
 #[test]
-fn live_refresh_ignores_nonzero_session_listing_without_mutation() {
+fn live_refresh_records_nonzero_session_listing_as_probe_failure() {
     let mut context = sample_context();
     let mut runner = QueuedRunner::new(vec![output(1, "ajax-web-fix-login\n")]);
 
     let changed = crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
     let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
 
-    assert!(!changed);
+    assert!(changed);
     assert!(task.tmux_status.is_none());
     assert!(task.worktrunk_status.is_none());
+    assert_eq!(
+        task.runtime_projection.observation_error.as_deref(),
+        Some("tmux list-sessions probe failed: exited with status 1")
+    );
     assert_eq!(runner.commands, vec![tmux_live_commands()[0].clone()]);
 }
 
@@ -1687,7 +1691,7 @@ fn live_refresh_lists_tmux_windows_once_for_multiple_active_tasks() {
 }
 
 #[test]
-fn live_refresh_nonzero_window_listing_stops_before_pane_capture() {
+fn live_refresh_nonzero_window_listing_preserves_evidence_and_stops_before_pane_capture() {
     let mut context = sample_context();
     let task = context
         .registry
@@ -1709,17 +1713,16 @@ fn live_refresh_nonzero_window_listing_stops_before_pane_capture() {
     assert!(changed);
     let expected_commands = tmux_live_commands();
     assert_eq!(runner.commands, expected_commands[..2]);
-    assert!(task.has_side_flag(SideFlag::WorktrunkMissing));
+    assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+    assert!(task.worktrunk_status.is_none());
     assert_eq!(
-        task.live_status
-            .as_ref()
-            .map(|status| status.summary.as_str()),
-        Some("worktrunk missing")
+        task.runtime_projection.observation_error.as_deref(),
+        Some("tmux list-windows probe failed: exited with status 1")
     );
 }
 
 #[test]
-fn live_refresh_nonzero_pane_capture_reports_command_failure() {
+fn live_refresh_nonzero_pane_capture_reports_probe_failure() {
     let mut context = sample_context();
     let task = context
         .registry
@@ -1741,11 +1744,10 @@ fn live_refresh_nonzero_pane_capture_reports_command_failure() {
 
     assert!(changed);
     assert_eq!(runner.commands, tmux_live_commands());
+    assert!(task.live_status.is_none());
     assert_eq!(
-        task.live_status
-            .as_ref()
-            .map(|status| status.summary.as_str()),
-        Some("live refresh failed")
+        task.runtime_projection.observation_error.as_deref(),
+        Some("tmux capture-pane probe failed: exited with status 1")
     );
 }
 
@@ -3455,7 +3457,7 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
                 "send-keys",
                 "-t",
                 "ajax-web-fix-login:worktrunk",
-                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
                 "Enter",
             ],
         ),
@@ -3553,7 +3555,7 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
                 "send-keys",
                 "-t",
                 "ajax-web-fix-login:worktrunk",
-                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
                 "Enter",
             ],
         ),
@@ -3870,7 +3872,7 @@ fn new_execute_allows_reusing_removed_task_handle() {
                 "send-keys",
                 "-t",
                 "ajax-web-fix-login:worktrunk",
-                "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
+                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
                 "Enter",
             ],
         ),
@@ -6231,7 +6233,7 @@ fn pending_new_task_action_runs_after_title_is_collected() {
                 "send-keys",
                 "-t",
                 "ajax-api-fix-login:worktrunk",
-                "codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
+                "ajax-cli __agent-runtime --task-id api/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
                 "Enter",
             ],
         ),
@@ -7981,4 +7983,230 @@ fn removed_reconcile_command_does_not_touch_registry_snapshot() {
         restored.list_tasks().len(),
         sample_context().registry.list_tasks().len()
     );
+}
+
+#[test]
+fn agent_runtime_command_runs_without_loading_ajax_context() {
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-agent-runtime-command-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+
+    let output = super::run_with_args([
+        "ajax",
+        "--config",
+        "/definitely/missing/ajax-config.toml",
+        "__agent-runtime",
+        "--task-id",
+        "web/fix-login",
+        "--state-root",
+        directory.to_str().unwrap(),
+        "--",
+        "/bin/sh",
+        "-c",
+        "exit 0",
+    ])
+    .unwrap();
+
+    assert!(output.is_empty());
+    let latest = std::fs::read_to_string(directory.join("web__fix-login.json")).unwrap();
+    assert!(latest.contains("\"state\":\"exited_success\""));
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+fn runtime_snapshot_directory(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "ajax-cli-runtime-snapshot-{}-{}-{label}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
+fn write_runtime_snapshot(cache_dir: &Path, state: &str, observed_at_unix_millis: u128) {
+    let runtime_dir = cache_dir.join("agent-runtime");
+    std::fs::create_dir_all(&runtime_dir).unwrap();
+    std::fs::write(
+        runtime_dir.join("task-1.json"),
+        serde_json::json!({
+            "task_id": "task-1",
+            "state": state,
+            "observed_at_unix_millis": observed_at_unix_millis,
+            "pid": 42,
+            "exit_code": if state == "exited_failure" { Some(9) } else { None::<i32> },
+            "message": null
+        })
+        .to_string(),
+    )
+    .unwrap();
+}
+
+fn active_runtime_context(cache_dir: &Path) -> CommandContext<InMemoryRegistry> {
+    let mut context = sample_context();
+    context.runtime_paths.cache_dir = cache_dir.to_path_buf();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    task.lifecycle_status = LifecycleStatus::Active;
+    task.live_status = None;
+    task.agent_status = AgentRuntimeStatus::NotStarted;
+    task.remove_side_flag(SideFlag::NeedsInput);
+    context
+}
+
+#[test]
+fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
+    let directory = runtime_snapshot_directory("running");
+    let now_millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    write_runtime_snapshot(&directory, "running", now_millis);
+    let mut context = active_runtime_context(&directory);
+    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+    assert_eq!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::AgentRunning)
+    );
+    assert_eq!(
+        ajax_core::commands::cockpit_view(&context).cards[0].status_label,
+        "agent running"
+    );
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
+    let directory = runtime_snapshot_directory("failed");
+    write_runtime_snapshot(&directory, "exited_failure", 1);
+    let mut context = active_runtime_context(&directory);
+    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_ne!(task.agent_status, AgentRuntimeStatus::Unknown);
+    assert_eq!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::CommandFailed)
+    );
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn cockpit_refresh_promotes_wrapper_completion_to_reviewable() {
+    let directory = runtime_snapshot_directory("completed");
+    write_runtime_snapshot(&directory, "exited_success", 1);
+    let mut context = active_runtime_context(&directory);
+    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+    assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stale_wrapper_running_snapshot_cannot_keep_task_running() {
+    let directory = runtime_snapshot_directory("stale");
+    write_runtime_snapshot(&directory, "running", 1);
+    let mut context = active_runtime_context(&directory);
+    let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_ne!(task.agent_status, AgentRuntimeStatus::Running);
+    assert_ne!(
+        task.live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::AgentRunning)
+    );
+    assert_eq!(
+        task.runtime_projection.observation_error.as_deref(),
+        Some("agent status stale")
+    );
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn tmux_probe_failure_renders_unavailable_without_marking_session_missing() {
+    struct FailingTmuxRunner;
+
+    impl CommandRunner for FailingTmuxRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            assert_eq!(
+                command.args.first().map(String::as_str),
+                Some("list-sessions")
+            );
+            Err(CommandRunError::SpawnFailed("tmux unavailable".to_string()))
+        }
+    }
+
+    let directory = runtime_snapshot_directory("tmux-failed");
+    let mut context = active_runtime_context(&directory);
+    context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap()
+        .tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
+    let mut runner = FailingTmuxRunner;
+
+    crate::cockpit_backend::refresh_live_context(&mut context, &mut runner).unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert!(!task.has_side_flag(SideFlag::TmuxMissing));
+    assert!(task
+        .tmux_status
+        .as_ref()
+        .is_some_and(|status| status.exists));
+    assert_eq!(
+        ajax_core::commands::cockpit_view(&context).cards[0].status_label,
+        "status unavailable: tmux list-sessions probe failed: failed to start command: tmux unavailable"
+    );
+}
+
+#[test]
+fn confirmed_agent_stop_records_dead_instead_of_unknown() {
+    let mut context = sample_context();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    task.agent_status = AgentRuntimeStatus::Running;
+    task.add_side_flag(SideFlag::AgentRunning);
+    task.agent_attempts.push(ajax_core::models::AgentAttempt {
+        agent: AgentClient::Codex,
+        launch_target: "tmux:%1".to_string(),
+        started_at: SystemTime::UNIX_EPOCH,
+        finished_at: None,
+        status: AgentRuntimeStatus::Running,
+    });
+
+    ajax_core::commands::mark_drop_agent_stopped(&mut context, "web/fix-login").unwrap();
+
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
+    assert_eq!(task.agent_attempts[0].status, AgentRuntimeStatus::Dead);
+    assert!(!task.has_side_flag(SideFlag::AgentRunning));
 }

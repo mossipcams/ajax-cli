@@ -18,7 +18,7 @@ use crate::models::{
     StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 4;
+const SQLITE_SCHEMA_VERSION: i64 = 5;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -63,6 +63,9 @@ impl SqliteRegistryStore {
         }
         if sqlite_user_version(connection)? == 3 {
             migrate_v3_to_v4(connection)?;
+        }
+        if sqlite_user_version(connection)? == 4 {
+            migrate_v4_to_v5(connection)?;
         }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
@@ -114,7 +117,8 @@ impl SqliteRegistryStore {
                     runtime_health TEXT NOT NULL,
                     runtime_observed_at_unix_seconds INTEGER NOT NULL,
                     runtime_observed_at_subsec_nanos INTEGER NOT NULL,
-                    runtime_observation_source TEXT NOT NULL
+                    runtime_observation_source TEXT NOT NULL,
+                    runtime_observation_error TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS registry_task_side_flags (
@@ -213,6 +217,19 @@ impl SqliteRegistryStore {
         transaction.commit().map_err(database_error)?;
         Ok(next)
     }
+}
+
+fn migrate_v4_to_v5(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    connection
+        .execute_batch(
+            r#"
+            ALTER TABLE registry_tasks
+                ADD COLUMN runtime_observation_error TEXT;
+
+            PRAGMA user_version = 5;
+            "#,
+        )
+        .map_err(database_error)
 }
 
 fn migrate_v3_to_v4(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -418,7 +435,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
-             runtime_observation_source \
+             runtime_observation_source, runtime_observation_error \
              FROM registry_tasks WHERE lifecycle_status != 'Removed' ORDER BY task_id",
         )
         .map_err(database_error)?;
@@ -459,11 +476,11 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
         &row.get::<_, String>("selected_agent")
             .map_err(database_error)?,
     )?;
-    let lifecycle_status = parse_lifecycle_status(
+    let persisted_lifecycle_status = parse_lifecycle_status(
         &row.get::<_, String>("lifecycle_status")
             .map_err(database_error)?,
     )?;
-    let agent_status = parse_agent_runtime_status(
+    let mut agent_status = parse_agent_runtime_status(
         &row.get::<_, String>("agent_status")
             .map_err(database_error)?,
     )?;
@@ -479,11 +496,43 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
         row.get::<_, u32>("last_activity_at_subsec_nanos")
             .map_err(database_error)?,
     )?;
-    let live_status = live_status_from_row(row)?;
+    let mut live_status = live_status_from_row(row)?;
     let git_status = git_status_from_row(row)?;
     let tmux_status = tmux_status_from_row(row)?;
     let worktrunk_status = worktrunk_status_from_row(row)?;
-    let runtime_projection = runtime_projection_from_row(row)?;
+    let mut runtime_projection = runtime_projection_from_row(row)?;
+
+    let lifecycle_status = if persisted_lifecycle_status == LifecycleStatus::Waiting {
+        if !matches!(
+            live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput)
+        ) {
+            live_status = Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "waiting for input",
+            ));
+        }
+        LifecycleStatus::Active
+    } else {
+        persisted_lifecycle_status
+    };
+
+    let legacy_agent_unknown = agent_status == AgentRuntimeStatus::Unknown;
+    let legacy_live_unknown = matches!(
+        live_status.as_ref().map(|status| status.kind),
+        Some(LiveStatusKind::Unknown)
+    );
+    if legacy_agent_unknown {
+        agent_status = AgentRuntimeStatus::NotStarted;
+    }
+    if legacy_live_unknown {
+        live_status = None;
+    }
+    if (legacy_agent_unknown || legacy_live_unknown)
+        && runtime_projection.observation_error.is_none()
+    {
+        runtime_projection.observation_error = Some("agent status not observed".to_string());
+    }
 
     let mut task = Task::new(
         task_id,
@@ -526,7 +575,16 @@ fn runtime_projection_from_row(row: &Row<'_>) -> Result<RuntimeProjection, Regis
             .map_err(database_error)?,
     )?;
 
-    Ok(RuntimeProjection::new(health, observed_at, source))
+    let observation_error = row
+        .get::<_, Option<String>>("runtime_observation_error")
+        .map_err(database_error)?;
+
+    Ok(match observation_error {
+        Some(error) => {
+            RuntimeProjection::with_observation_error(health, observed_at, source, error)
+        }
+        None => RuntimeProjection::new(health, observed_at, source),
+    })
 }
 
 fn live_status_from_row(row: &Row<'_>) -> Result<Option<LiveObservation>, RegistrySnapshotError> {
@@ -825,11 +883,11 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
               git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
               worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
               runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
-              runtime_observation_source) \
+              runtime_observation_source, runtime_observation_error) \
              VALUES \
              (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
               ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, \
-              ?34, ?35, ?36, ?37, ?38, ?39)",
+              ?34, ?35, ?36, ?37, ?38, ?39, ?40)",
             params![
                 task.id.as_str(),
                 task.repo,
@@ -892,6 +950,7 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 runtime_observed_seconds,
                 runtime_observed_nanos,
                 task.runtime_projection.source.as_str(),
+                task.runtime_projection.observation_error.as_deref(),
             ],
         )
         .map_err(database_error)?;
@@ -1787,7 +1846,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(restored_task.lifecycle_status, LifecycleStatus::Waiting);
+        assert_eq!(restored_task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(restored_task.agent_status, AgentRuntimeStatus::Blocked);
         assert_eq!(
             restored_task.created_at,
@@ -1840,6 +1899,96 @@ mod tests {
         assert_eq!(
             restored_task.runtime_projection,
             expected_runtime_projection
+        );
+    }
+
+    #[test]
+    fn sqlite_registry_store_round_trips_runtime_probe_failure() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let expected_runtime_projection = RuntimeProjection::with_observation_error(
+            RuntimeHealth::Healthy,
+            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_110, 654),
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+        registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .runtime_projection = expected_runtime_projection.clone();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}-probe-error.db",
+            std::process::id(),
+            "runtime"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-1"))
+                .unwrap()
+                .runtime_projection,
+            expected_runtime_projection
+        );
+    }
+
+    #[test]
+    fn sqlite_registry_store_normalizes_legacy_waiting_to_active_runtime_condition() {
+        let mut registry = InMemoryRegistry::default();
+        let mut legacy_task = task("task-1", "web", "fix-login");
+        legacy_task.lifecycle_status = LifecycleStatus::Waiting;
+        legacy_task.agent_status = AgentRuntimeStatus::Waiting;
+        registry.create_task(legacy_task).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-legacy-waiting.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(restored_task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(
+            restored_task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn sqlite_registry_store_normalizes_legacy_unknown_to_not_observed() {
+        let mut registry = InMemoryRegistry::default();
+        let mut legacy_task = task("task-1", "web", "fix-login");
+        legacy_task.agent_status = AgentRuntimeStatus::Unknown;
+        legacy_task.live_status = Some(LiveObservation::new(LiveStatusKind::Unknown, "unknown"));
+        registry.create_task(legacy_task).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-legacy-unknown.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
+
+        assert_eq!(restored_task.agent_status, AgentRuntimeStatus::NotStarted);
+        assert!(restored_task.live_status.is_none());
+        assert_eq!(
+            restored_task
+                .runtime_projection
+                .observation_error
+                .as_deref(),
+            Some("agent status not observed")
         );
     }
 
@@ -2031,7 +2180,38 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
+    }
+
+    #[test]
+    fn sqlite_registry_store_migrates_v4_probe_error_column() {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-v4-probe-error.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&InMemoryRegistry::default()).unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+                ALTER TABLE registry_tasks DROP COLUMN runtime_observation_error;
+                PRAGMA user_version = 4;
+                "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        store.load().unwrap();
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let version: i64 = connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        let columns = table_columns(&connection, "registry_tasks");
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(version, 5);
+        assert!(columns.contains(&"runtime_observation_error".to_string()));
     }
 
     #[test]
@@ -2228,8 +2408,9 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(columns.contains(&"runtime_health".to_string()));
+        assert!(columns.contains(&"runtime_observation_error".to_string()));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
     }
 
@@ -2300,7 +2481,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 4
+                supported: 5
             }
         );
     }

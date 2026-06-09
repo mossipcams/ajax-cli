@@ -62,7 +62,9 @@ composition of:
 - Task events — Ajax-owned history: task creation, lifecycle decisions,
   operation progress, substrate-change records, and incomplete teardown notes.
 - Substrate observations — observed Git, tmux, worktree, task-window, and agent
-  facts. These are source-tagged and rebuildable from external substrates.
+  facts. These are source-tagged, freshness-aware, and rebuildable from
+  external substrates. Observation state distinguishes observed presence,
+  observed absence, probe failure, stale evidence, and not-yet-observed facts.
 - Task projection — the disposable read model used by CLI, JSON output, and
   Cockpit. It includes lifecycle, runtime health, live status, annotations, and
   recommended operator actions.
@@ -71,6 +73,11 @@ SQLite may cache substrate observations and projections so commands and Cockpit
 can render quickly. Cached substrate evidence must be treated as staleable
 evidence, not authority. Git, tmux, and supervised processes remain the
 authoritative sources for their own reality.
+
+Agent runtime snapshots written by the Ajax launch wrapper are trusted process
+evidence. Hook files and pane text are observational hints. When sources
+disagree, runtime refresh chooses the newest fresh evidence and gives trusted
+wrapper terminal events authority over stale hook or pane classifications.
 
 ## Task Operations
 
@@ -149,12 +156,15 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. It records expected runtime
-identity, last observed Git/tmux evidence, derived runtime health, and typed
-events. It also stores step receipts for Ajax-owned operation evidence. Git and
-tmux still own live substrate reality; Ajax reconciles their observations into
-SQLite so Cockpit, command planning, and JSON output can read one coherent task
-record.
+SQLite is the fast read model for Ajax task state. Schema version 5 records
+expected runtime identity, last observed Git/tmux evidence, derived runtime
+health, observation source, observation time, probe error, and typed events. It
+also stores step receipts for Ajax-owned operation evidence. Git and tmux still
+own live substrate reality; Ajax reconciles their observations into SQLite so
+Cockpit, command planning, and JSON output can read one coherent task record.
+Loading legacy rows normalizes workflow `Waiting` into an active lifecycle with
+waiting runtime evidence, and normalizes legacy `Unknown` sentinels into
+explicit not-observed evidence.
 
 Registry ghosts are tasks that should not survive SQLite save/load and should
 not appear in Cockpit. `ajax-core::ghost_task` is the single classifier for that
@@ -166,8 +176,14 @@ substrate are pruned as ghosts.
 
 ### Lifecycle
 
-Lifecycle state is modeled in `ajax-core::lifecycle`. Commands and live-status
-application request lifecycle transitions through the lifecycle boundary.
+Lifecycle state is modeled in `ajax-core::lifecycle`. Lifecycle answers where
+the task is in the operator workflow; it does not encode transient agent
+attention. Task operations and trusted process terminal events request
+lifecycle transitions through the lifecycle boundary. Ordinary pane text,
+hooks, prompts, blockers, probe failures, and missing-resource observations
+update runtime evidence and attention without changing lifecycle. A trusted
+wrapper completion may move an active task to `Reviewable`; waiting or blocked
+runtime evidence leaves it `Active`.
 
 Annotations are task properties derived from lifecycle state, live status, side
 flags, and substrate evidence. Operator actions are projected from those
@@ -208,10 +224,12 @@ fields.
 Runtime refresh lives in `runtime_refresh`. It probes Git and tmux, reconciles
 runtime evidence, refreshes cached annotations, and recovers missing task
 records from observed Ajax worktrees. Core also accepts a small external
-agent-status cache port for hook-backed status values; adapters read filesystem
-or terminal cache formats and core reduces those values into live observations.
-Cockpit invokes runtime refresh through the CLI adapter but does not own the
-refresh algorithm.
+agent-status cache port; adapters merge hook-backed status files with Ajax agent
+runtime snapshots, attach source/time/freshness metadata, and core reduces the
+newest fresh value into a live observation. Probe command failure preserves the
+last known substrate value and records an explicit observation error; it never
+pretends that a resource was observed missing. Cockpit invokes runtime refresh
+through the CLI adapter but does not own the refresh algorithm.
 
 #### Runtime refresh and registry persistence
 
@@ -242,7 +260,18 @@ mutating operation persisted to disk.
 `live.rs` reduces observations into live-status classifications.
 
 `live_application.rs` applies reduced observations to task state, agent status,
-side flags, activity timestamps, and visible live status.
+side flags, activity timestamps, and visible live status. The application path
+separates ordinary observations from trusted wrapper/supervisor observations so
+only the trusted path may advance lifecycle on process start or successful
+completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
+text is neutral and does not overwrite the last known agent state or fabricate
+a probe failure.
+
+`ui_state::derive_operator_status` is the single operator-facing reduction over
+lifecycle, runtime health, freshness/probe errors, live status, and policy. CLI,
+Native Cockpit, Web Cockpit, annotations, and recommended actions consume its
+label and UI state. Compatibility JSON continues to include raw lifecycle and
+live fields alongside `status_label` and `runtime_observation_error`.
 
 Core remains browser-agnostic. It may expose Cockpit projections, action policy,
 task-operation outcomes, runtime reconciliation, and typed output contracts that
@@ -325,7 +354,13 @@ task-operation commands or separate operator domains.
   the launcher passes explicit runtime context to `ajax-web` and must not
   reinterpret task state or duplicate web server internals.
 - `agent_status_cache` owns filesystem reads for hook-backed agent status caches
-  such as `tmux-agent-status`; core owns the status value interpretation.
+  such as `tmux-agent-status` and Ajax runtime snapshots; core owns status value
+  interpretation and authority reduction.
+- `agent_runtime` owns the hidden `__agent-runtime` launch wrapper. Normal task
+  start commands run the selected agent through this wrapper, which preserves
+  inherited terminal I/O while atomically writing the latest starting/running/
+  exited snapshot and appending runtime history under the selected runtime
+  cache directory.
 - `task_session` owns interactive task PTY entry from Cockpit. Ajax owns the
   foreground task bridge, forwards normal input to the attached tmux client,
   filters Cockpit-owned shortcuts such as Ctrl-Q and Ctrl-T without installing

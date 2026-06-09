@@ -7,7 +7,7 @@ use crate::{
     },
     recommended::{available_operator_actions, operator_action},
     remediation::remediations_for_task,
-    ui_state::derive_ui_state,
+    ui_state::derive_operator_status,
 };
 
 pub(super) fn cockpit_summary(
@@ -58,11 +58,14 @@ pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
 }
 
 pub(super) fn task_summary(task: &Task) -> TaskSummary {
+    let operator_status = derive_operator_status(task);
     TaskSummary {
         id: task.id.as_str().to_string(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
+        status_label: operator_status.label,
+        runtime_observation_error: task.runtime_projection.observation_error.clone(),
         needs_attention: !annotations_for_task(task).is_empty(),
         live_status: task.live_status.clone(),
         actions: task_actions(task),
@@ -77,16 +80,15 @@ fn task_actions(task: &Task) -> Vec<String> {
 }
 
 pub(super) fn task_card(task: &Task) -> TaskCard {
-    let ui_state = derive_ui_state(task);
+    let operator_status = derive_operator_status(task);
     let plan = operator_action(task);
     let annotations = annotations_for_task(task);
-    let status_label = task_status_label(task, ui_state);
     TaskCard {
         id: task.id.clone(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
-        ui_state,
-        status_label,
+        ui_state: operator_status.ui_state(),
+        status_label: operator_status.label,
         lifecycle: task.lifecycle_status,
         annotations,
         primary_action: plan.action,
@@ -94,13 +96,6 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
         remediations: remediations_for_task(task),
         live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
     }
-}
-
-fn task_status_label(task: &Task, ui_state: crate::ui_state::UiState) -> String {
-    task.live_status
-        .as_ref()
-        .map(|live| live.summary.clone())
-        .unwrap_or_else(|| ui_state.as_str().to_string())
 }
 
 pub(super) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
@@ -150,7 +145,7 @@ mod tests {
         lifecycle::{mark_active, mark_reviewable},
         models::{
             AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, SideFlag, Task, TaskId,
+            LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, Task, TaskId,
         },
         output::CockpitSummary,
         remediation::{FIX_CI, RESOLVE_MERGE_CONFLICTS},
@@ -283,6 +278,24 @@ mod tests {
         let running_card = task_card(&running);
 
         assert_eq!(running_card.status_label, "tests running");
+    }
+
+    #[test]
+    fn task_card_names_probe_failure_instead_of_showing_unknown_or_idle() {
+        let mut task = task("probe-failed");
+        mark_active(&mut task).unwrap();
+        task.record_runtime_probe_failure(
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+
+        let card = task_card(&task);
+
+        assert_eq!(
+            card.status_label,
+            "status unavailable: tmux server unavailable"
+        );
+        assert!(!card.status_label.contains("unknown"));
     }
 
     #[test]

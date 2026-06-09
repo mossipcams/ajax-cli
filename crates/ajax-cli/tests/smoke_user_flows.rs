@@ -809,8 +809,9 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:worktrunk codex --cd {} Enter",
-            worktree.display()
+            "tmux send-keys -t ajax-web-fix-login:worktrunk ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            sandbox.root.join("cache/agent-runtime").display(),
+            worktree.display(),
         )),
         "fake tmux log should include agent launch:\n{log}"
     );

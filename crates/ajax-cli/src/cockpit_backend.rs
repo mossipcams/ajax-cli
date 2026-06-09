@@ -2,7 +2,7 @@ use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext},
     registry::InMemoryRegistry,
-    runtime_refresh::{refresh_runtime_context, refresh_runtime_context_with_agent_status_cache},
+    runtime_refresh::refresh_runtime_context_with_agent_status_cache,
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
@@ -343,12 +343,9 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
 ) -> Result<bool, CliError> {
-    if let Some(cache) = TmuxAgentStatusSnapshot::from_default_location() {
-        refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
-            .map_err(crate::command_error)
-    } else {
-        refresh_runtime_context(context, runner).map_err(crate::command_error)
-    }
+    let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&context.runtime_paths.cache_dir);
+    refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
+        .map_err(crate::command_error)
 }
 
 fn cached_snapshot_needs_rebuild(
@@ -756,8 +753,20 @@ mod tests {
     }
 
     impl AgentStatusCache for StaticAgentStatusCache {
-        fn status_values_for_session(&self, _session: &str) -> Vec<String> {
-            self.values.clone()
+        fn status_entries_for_session(
+            &self,
+            _session: &str,
+        ) -> Vec<ajax_core::runtime_refresh::AgentStatusCacheEntry> {
+            self.values
+                .iter()
+                .cloned()
+                .map(|value| ajax_core::runtime_refresh::AgentStatusCacheEntry {
+                    value,
+                    observed_at: std::time::SystemTime::now(),
+                    fresh: true,
+                    source: ajax_core::runtime_refresh::AgentStatusCacheSource::Hook,
+                })
+                .collect()
         }
     }
 
@@ -917,7 +926,7 @@ mod tests {
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(task.has_side_flag(SideFlag::TmuxMissing));
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
         assert_eq!(
             task.tmux_status.as_ref().map(|status| status.exists),
             Some(false)

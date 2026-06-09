@@ -15,6 +15,22 @@ pub fn apply_authoritative_observation(task: &mut Task, observation: LiveObserva
     apply_reduced_observation(task, observation);
 }
 
+pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) {
+    let kind = observation.kind;
+    apply_reduced_observation(task, observation);
+
+    let lifecycle = match kind {
+        LiveStatusKind::AgentRunning
+        | LiveStatusKind::CommandRunning
+        | LiveStatusKind::TestsRunning => Some(LifecycleStatus::Active),
+        LiveStatusKind::Done => Some(LifecycleStatus::Reviewable),
+        _ => None,
+    };
+    if let Some(lifecycle) = lifecycle {
+        let _ = transition_lifecycle(task, lifecycle, LifecycleTransitionReason::OperationResult);
+    }
+}
+
 fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
     let refresh_activity = refreshes_activity(observation.kind);
     let has_missing_substrate_flag = has_missing_substrate_flag(task);
@@ -34,19 +50,17 @@ fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning => {
             if has_missing_substrate_flag {
-                task.agent_status = AgentRuntimeStatus::Unknown;
+                task.agent_status = AgentRuntimeStatus::Dead;
                 task.remove_side_flag(SideFlag::AgentRunning);
             } else {
                 task.agent_status = AgentRuntimeStatus::Running;
                 task.add_side_flag(SideFlag::AgentRunning);
-                update_live_lifecycle(task, LifecycleStatus::Active);
             }
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentDead);
         }
         LiveStatusKind::WaitingForApproval | LiveStatusKind::WaitingForInput => {
             task.agent_status = AgentRuntimeStatus::Waiting;
-            update_live_lifecycle(task, LifecycleStatus::Waiting);
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
@@ -56,37 +70,43 @@ fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
         | LiveStatusKind::CommandFailed
         | LiveStatusKind::Blocked => {
             task.agent_status = AgentRuntimeStatus::Blocked;
-            update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::CiFailed => {
             task.agent_status = AgentRuntimeStatus::Blocked;
-            update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::TestsFailed);
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::MergeConflict => {
             task.agent_status = AgentRuntimeStatus::Blocked;
-            update_live_lifecycle(task, LifecycleStatus::Error);
             task.add_side_flag(SideFlag::Conflicted);
             task.remove_side_flag(SideFlag::NeedsInput);
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::ShellIdle => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
+            task.agent_status = if matches!(
+                task.agent_status,
+                AgentRuntimeStatus::Running
+                    | AgentRuntimeStatus::Waiting
+                    | AgentRuntimeStatus::Blocked
+            ) {
+                AgentRuntimeStatus::Dead
+            } else {
+                AgentRuntimeStatus::NotStarted
+            };
             task.remove_side_flag(SideFlag::AgentRunning);
         }
         LiveStatusKind::Done => {
             task.agent_status = AgentRuntimeStatus::Done;
-            update_live_lifecycle(task, LifecycleStatus::Reviewable);
             task.remove_side_flag(SideFlag::AgentRunning);
             task.remove_side_flag(SideFlag::NeedsInput);
         }
         LiveStatusKind::Unknown => {
-            task.agent_status = AgentRuntimeStatus::Unknown;
             task.remove_side_flag(SideFlag::AgentRunning);
+            task.live_status = None;
+            return;
         }
     }
 
@@ -148,11 +168,77 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
     )
 }
 
-fn update_live_lifecycle(task: &mut Task, status: LifecycleStatus) {
-    if let Err(_error) =
-        transition_lifecycle(task, status, LifecycleTransitionReason::OperationResult)
-    {
-        // Live evidence can lag lifecycle state; invalid evidence-driven edges leave
-        // the lifecycle unchanged while still allowing live status projection.
+#[cfg(test)]
+mod tests {
+    use super::apply_observation;
+    use crate::models::{
+        AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
+        SideFlag, Task, TaskId,
+    };
+
+    fn active_task() -> Task {
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
+
+    #[test]
+    fn low_confidence_done_observation_does_not_mark_task_reviewable() {
+        let mut task = active_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Done, "done"),
+        );
+
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Done);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::Done)
+        );
+    }
+
+    #[test]
+    fn attention_observations_do_not_mark_task_error() {
+        for status in [
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::AuthRequired,
+            LiveStatusKind::RateLimited,
+            LiveStatusKind::ContextLimit,
+        ] {
+            let mut task = active_task();
+
+            apply_observation(&mut task, LiveObservation::new(status, "needs attention"));
+
+            assert_eq!(task.lifecycle_status, LifecycleStatus::Active, "{status:?}");
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked, "{status:?}");
+            assert!(task.has_side_flag(SideFlag::NeedsInput), "{status:?}");
+        }
+    }
+
+    #[test]
+    fn waiting_observation_does_not_mark_task_waiting_lifecycle() {
+        let mut task = active_task();
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting"),
+        );
+
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
     }
 }

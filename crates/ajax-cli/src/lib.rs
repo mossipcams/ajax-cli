@@ -1,3 +1,4 @@
+mod agent_runtime;
 #[cfg(feature = "interactive")]
 mod agent_status_cache;
 #[cfg(feature = "interactive")]
@@ -122,6 +123,10 @@ pub fn run_with_args(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
+    if let Some(("__agent-runtime", subcommand)) = matches.subcommand() {
+        return agent_runtime::run_agent_runtime_command(subcommand);
+    }
+
     let paths = context_paths_from_matches(&matches)?;
     if let Some(("runtime", subcommand)) = matches.subcommand() {
         return snapshot_dispatch::render_runtime_paths(
@@ -161,6 +166,11 @@ pub fn run_with_args_to_writer(
         ParsedArgs::Matches(matches) => matches,
         ParsedArgs::Message(message) => return write_command_output(writer, &message),
     };
+
+    if let Some(("__agent-runtime", subcommand)) = matches.subcommand() {
+        let output = agent_runtime::run_agent_runtime_command(subcommand)?;
+        return write_command_output(writer, &output);
+    }
 
     let paths = context_paths_from_matches(&matches)?;
     let mut tracked = load_tracked_context_for_matches(&paths, &matches)?;

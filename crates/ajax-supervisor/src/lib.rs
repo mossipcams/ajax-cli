@@ -431,7 +431,7 @@ mod tests {
             &mut task,
             &MonitorEvent::Agent(AgentEvent::WaitingForApproval { command: None })
         ));
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Waiting);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
 
         assert!(apply_monitor_event_to_task(

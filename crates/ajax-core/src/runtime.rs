@@ -7,6 +7,163 @@ use crate::models::{
 
 pub const RUNTIME_PROJECTION_FRESH_FOR: Duration = Duration::from_secs(30);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObservationConfidence {
+    Authoritative,
+    High,
+    Low,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeEvidenceSource {
+    OperationResult,
+    GitProbe,
+    TmuxProbe,
+    AgentWrapper,
+    AgentStatusCache,
+    PaneClassifier,
+    SupervisorEvent,
+    FilesystemEvent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResourcePresence {
+    Present,
+    Missing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum RuntimeEvidence<T> {
+    Observed {
+        value: T,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+        confidence: ObservationConfidence,
+    },
+    NotObserved {
+        reason: String,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+    },
+    ProbeFailed {
+        reason: String,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+    },
+    Stale {
+        value: T,
+        observed_at: SystemTime,
+        stale_at: SystemTime,
+        source: RuntimeEvidenceSource,
+        confidence: ObservationConfidence,
+    },
+}
+
+impl<T> RuntimeEvidence<T> {
+    pub fn observed(
+        value: T,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+        confidence: ObservationConfidence,
+    ) -> Self {
+        Self::Observed {
+            value,
+            observed_at,
+            source,
+            confidence,
+        }
+    }
+
+    pub fn not_observed(
+        reason: impl Into<String>,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+    ) -> Self {
+        Self::NotObserved {
+            reason: reason.into(),
+            observed_at,
+            source,
+        }
+    }
+
+    pub fn probe_failed(
+        reason: impl Into<String>,
+        observed_at: SystemTime,
+        source: RuntimeEvidenceSource,
+    ) -> Self {
+        Self::ProbeFailed {
+            reason: reason.into(),
+            observed_at,
+            source,
+        }
+    }
+
+    pub fn stale(
+        value: T,
+        observed_at: SystemTime,
+        stale_at: SystemTime,
+        source: RuntimeEvidenceSource,
+        confidence: ObservationConfidence,
+    ) -> Self {
+        Self::Stale {
+            value,
+            observed_at,
+            stale_at,
+            source,
+            confidence,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeEvidenceStatus {
+    Present,
+    Missing,
+    ProbeFailed,
+    NotObserved,
+    Stale,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReducedRuntimeEvidence {
+    pub status: RuntimeEvidenceStatus,
+    pub label: String,
+}
+
+pub fn reduce_resource_evidence(
+    resource: &str,
+    evidence: &RuntimeEvidence<ResourcePresence>,
+) -> ReducedRuntimeEvidence {
+    match evidence {
+        RuntimeEvidence::Observed {
+            value: ResourcePresence::Present,
+            ..
+        } => ReducedRuntimeEvidence {
+            status: RuntimeEvidenceStatus::Present,
+            label: format!("{resource} present"),
+        },
+        RuntimeEvidence::Observed {
+            value: ResourcePresence::Missing,
+            ..
+        } => ReducedRuntimeEvidence {
+            status: RuntimeEvidenceStatus::Missing,
+            label: format!("{resource} missing"),
+        },
+        RuntimeEvidence::ProbeFailed { reason, .. } => ReducedRuntimeEvidence {
+            status: RuntimeEvidenceStatus::ProbeFailed,
+            label: format!("{resource} probe failed: {reason}"),
+        },
+        RuntimeEvidence::NotObserved { reason, .. } => ReducedRuntimeEvidence {
+            status: RuntimeEvidenceStatus::NotObserved,
+            label: format!("{resource} not observed: {reason}"),
+        },
+        RuntimeEvidence::Stale { .. } => ReducedRuntimeEvidence {
+            status: RuntimeEvidenceStatus::Stale,
+            label: format!("{resource} status stale"),
+        },
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedTaskRuntime {
     pub git_status: Option<GitStatus>,
@@ -52,7 +209,10 @@ fn runtime_health(observed: &ObservedTaskRuntime) -> RuntimeHealth {
 
 #[cfg(test)]
 mod tests {
-    use super::{reconcile_runtime, ObservedTaskRuntime};
+    use super::{
+        reconcile_runtime, reduce_resource_evidence, ObservationConfidence, ObservedTaskRuntime,
+        ResourcePresence, RuntimeEvidence, RuntimeEvidenceSource, RuntimeEvidenceStatus,
+    };
     use crate::models::{
         GitStatus, RuntimeHealth, RuntimeObservationSource, TmuxStatus, WorktrunkStatus,
     };
@@ -161,6 +321,55 @@ mod tests {
             assert_eq!(projection.health, expected_health);
             assert_eq!(projection.observed_at, now);
             assert_eq!(projection.source, source);
+        }
+    }
+
+    #[test]
+    fn runtime_evidence_keeps_missing_probe_failed_not_observed_and_stale_distinct() {
+        let observed_at = SystemTime::UNIX_EPOCH;
+        let stale_at = observed_at + std::time::Duration::from_secs(60);
+        let source = RuntimeEvidenceSource::TmuxProbe;
+        let confidence = ObservationConfidence::High;
+        let cases = [
+            (
+                RuntimeEvidence::observed(
+                    ResourcePresence::Missing,
+                    observed_at,
+                    source,
+                    confidence,
+                ),
+                RuntimeEvidenceStatus::Missing,
+                "tmux session missing",
+            ),
+            (
+                RuntimeEvidence::probe_failed("tmux list-sessions exited 1", observed_at, source),
+                RuntimeEvidenceStatus::ProbeFailed,
+                "tmux session probe failed: tmux list-sessions exited 1",
+            ),
+            (
+                RuntimeEvidence::not_observed("tmux was not queried", observed_at, source),
+                RuntimeEvidenceStatus::NotObserved,
+                "tmux session not observed: tmux was not queried",
+            ),
+            (
+                RuntimeEvidence::stale(
+                    ResourcePresence::Present,
+                    observed_at,
+                    stale_at,
+                    source,
+                    confidence,
+                ),
+                RuntimeEvidenceStatus::Stale,
+                "tmux session status stale",
+            ),
+        ];
+
+        for (evidence, expected_status, expected_label) in cases {
+            let reduced = reduce_resource_evidence("tmux session", &evidence);
+
+            assert_eq!(reduced.status, expected_status);
+            assert_eq!(reduced.label, expected_label);
+            assert_ne!(reduced.label, "unknown");
         }
     }
 }

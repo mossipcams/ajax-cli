@@ -785,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn live_observation_updates_record_lifecycle_events() {
+    fn live_observation_updates_runtime_without_lifecycle_event() {
         let mut registry = InMemoryRegistry::default();
         let mut task = task("task-1", "web", "fix-login");
         task.lifecycle_status = LifecycleStatus::Active;
@@ -799,11 +799,14 @@ mod tests {
             .unwrap();
 
         let task = registry.get_task(&TaskId::new("task-1")).unwrap();
-        assert_eq!(task.lifecycle_status, LifecycleStatus::Waiting);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(crate::live::LiveStatusKind::WaitingForInput)
+        );
         let events = registry.events_for_task(&TaskId::new("task-1"));
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[1].kind, RegistryEventKind::LifecycleChanged);
-        assert_eq!(events[1].message, "lifecycle changed to Waiting");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, RegistryEventKind::TaskCreated);
     }
 
     #[test]
