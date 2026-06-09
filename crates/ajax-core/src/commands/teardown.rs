@@ -290,11 +290,11 @@ pub fn mark_drop_agent_stopped<R: Registry>(
         .registry
         .get_task_mut(&task_id)
         .ok_or_else(|| CommandError::TaskNotFound(qualified_handle.to_string()))?;
-    task.agent_status = AgentRuntimeStatus::Unknown;
+    task.agent_status = AgentRuntimeStatus::Dead;
     task.remove_side_flag(SideFlag::AgentRunning);
     for attempt in &mut task.agent_attempts {
         if attempt.status == AgentRuntimeStatus::Running {
-            attempt.status = AgentRuntimeStatus::Unknown;
+            attempt.status = AgentRuntimeStatus::Dead;
         }
     }
     context

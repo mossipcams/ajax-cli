@@ -1,4 +1,6 @@
-pub use crate::live_application::{apply_authoritative_observation, apply_observation};
+pub use crate::live_application::{
+    apply_authoritative_observation, apply_observation, apply_trusted_observation,
+};
 pub use crate::models::{LiveObservation, LiveStatusKind};
 
 pub fn classify_pane(pane: &str) -> LiveObservation {
@@ -533,7 +535,7 @@ fn is_completion_line(lower: &str) -> bool {
 
 pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
     match value.trim() {
-        "working" => Some(LiveObservation::new(
+        "starting" | "working" => Some(LiveObservation::new(
             LiveStatusKind::AgentRunning,
             "agent running",
         )),
@@ -546,6 +548,10 @@ pub fn classify_agent_status_value(value: &str) -> Option<LiveObservation> {
             "waiting for approval",
         )),
         "done" | "parked" => Some(LiveObservation::new(LiveStatusKind::Done, "done")),
+        "failed" => Some(LiveObservation::new(
+            LiveStatusKind::CommandFailed,
+            "agent failed",
+        )),
         _ => None,
     }
 }
@@ -1064,7 +1070,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
 
             apply_observation(&mut task, LiveObservation::new(status, "resource missing"));
 
-            assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown, "{status:?}");
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Dead, "{status:?}");
             assert!(!task.has_side_flag(SideFlag::AgentRunning), "{status:?}");
         }
     }
@@ -1079,7 +1085,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         );
 
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Unknown);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
         assert!(!task.has_side_flag(SideFlag::AgentRunning));
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
     }

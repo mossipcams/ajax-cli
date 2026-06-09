@@ -47,6 +47,7 @@ pub fn build_cli() -> Command {
         .subcommand(state_command())
         .subcommand(json_command("doctor").about("Check local Ajax dependencies and health"))
         .subcommand(supervise_command())
+        .subcommand(agent_runtime_command())
         .subcommand(web_command())
         .subcommand(cockpit_alias_command("stable"))
         .subcommand(cockpit_alias_command("dev"))
@@ -128,6 +129,36 @@ fn supervise_command() -> Command {
                 .long("cursor-bin")
                 .value_name("PATH")
                 .hide(true),
+        )
+}
+
+fn agent_runtime_command() -> Command {
+    Command::new("__agent-runtime")
+        .hide(true)
+        .arg(
+            Arg::new("task-id")
+                .long("task-id")
+                .value_name("TASK_ID")
+                .required(true),
+        )
+        .arg(
+            Arg::new("state-root")
+                .long("state-root")
+                .value_name("PATH")
+                .required(true),
+        )
+        .arg(
+            Arg::new("program")
+                .value_name("PROGRAM")
+                .required(true)
+                .allow_hyphen_values(true),
+        )
+        .arg(
+            Arg::new("agent-args")
+                .value_name("ARGS")
+                .num_args(0..)
+                .trailing_var_arg(true)
+                .allow_hyphen_values(true),
         )
 }
 

@@ -110,6 +110,7 @@ pub struct BrowserTaskDetail {
     pub agent_status: String,
     pub ui_state: String,
     pub status_label: String,
+    pub runtime_observation_error: Option<String>,
     pub primary_action: String,
     pub available_actions: Vec<String>,
     pub action_states: Vec<WebActionState>,
@@ -172,6 +173,7 @@ pub fn browser_task_detail_view<R: Registry>(
         agent_status: format!("{:?}", task.agent_status),
         ui_state: card.ui_state.as_str().to_string(),
         status_label: card.status_label.clone(),
+        runtime_observation_error: task.runtime_projection.observation_error.clone(),
         primary_action,
         available_actions,
         action_states,
@@ -224,7 +226,7 @@ mod tests {
         config::Config,
         models::{
             AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
-            SideFlag, Task, TaskId,
+            RuntimeObservationSource, SideFlag, Task, TaskId,
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry as _},
@@ -316,6 +318,44 @@ mod tests {
     }
 
     #[test]
+    fn task_detail_exposes_runtime_probe_failure_reason() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(task).unwrap();
+        registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .record_runtime_probe_failure(
+                RuntimeObservationSource::TmuxProbe,
+                "tmux server unavailable",
+            );
+        let context = CommandContext::new(Config::default(), registry);
+
+        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
+
+        assert_eq!(
+            detail.status_label,
+            "status unavailable: tmux server unavailable"
+        );
+        assert_eq!(
+            detail.runtime_observation_error.as_deref(),
+            Some("tmux server unavailable")
+        );
+    }
+
+    #[test]
     fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
@@ -340,7 +380,7 @@ mod tests {
         assert_eq!(detail.qualified_handle, "web/fix-login");
         assert_eq!(detail.primary_action, "drop");
         assert_eq!(detail.available_actions, vec!["drop".to_string()]);
-        assert_eq!(detail.status_label, "failed");
+        assert_eq!(detail.status_label, "worktree missing");
     }
 
     #[test]

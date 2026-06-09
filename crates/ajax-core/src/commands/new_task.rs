@@ -70,12 +70,17 @@ pub fn new_task_plan<R: Registry>(
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);
     let agent = AgentAdapter::new(&request.agent);
-    let launch = agent.launch(
+    let agent_launch = agent.launch(
         selected_agent,
         &AgentLaunch {
             worktree_path: worktree_path_string.clone(),
             prompt: String::new(),
         },
+    );
+    let launch = agent_runtime_command(
+        &qualified_handle,
+        &context.runtime_paths.cache_dir.join("agent-runtime"),
+        agent_launch,
     );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
@@ -410,6 +415,30 @@ fn command_line(command: &CommandSpec) -> String {
         .join(" ")
 }
 
+fn agent_runtime_command(
+    task_id: &str,
+    state_root: &Path,
+    agent_command: CommandSpec,
+) -> CommandSpec {
+    let mut args = vec![
+        "__agent-runtime".to_string(),
+        "--task-id".to_string(),
+        task_id.to_string(),
+        "--state-root".to_string(),
+        state_root.display().to_string(),
+        "--".to_string(),
+        agent_command.program,
+    ];
+    args.extend(agent_command.args);
+    CommandSpec {
+        program: "ajax-cli".to_string(),
+        args,
+        cwd: agent_command.cwd,
+        mode: agent_command.mode,
+        timeout: agent_command.timeout,
+    }
+}
+
 fn shell_quote(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -506,7 +535,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(agent_send_keys_line(&plan), "claude");
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- claude"));
+        assert!(!launch.contains("--cd"));
     }
 
     #[test]
@@ -522,7 +554,36 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(agent_send_keys_line(&plan), "cursor agent");
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with("-- cursor agent"));
+    }
+
+    #[test]
+    fn new_task_plan_launches_agent_through_runtime_wrapper() {
+        let context = CommandContext::with_runtime_paths(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+            RuntimePathRequest::new("/home/test").resolve(),
+        );
+
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            agent_send_keys_line(&plan),
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root /home/test/.cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
+        );
     }
 
     #[test]

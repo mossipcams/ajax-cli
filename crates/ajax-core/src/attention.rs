@@ -2,9 +2,33 @@ use crate::models::{
     AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusKind,
     RuntimeHealth, SideFlag, SubstrateGap, Task,
 };
+use crate::ui_state::{derive_operator_status, OperatorStatusKind};
 
 pub fn annotate(task: &Task) -> Vec<Annotation> {
     let mut annotations = Vec::new();
+    let operator_status = derive_operator_status(task);
+
+    if operator_status.kind == OperatorStatusKind::ObservationFailed {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(AnnotationKind::Broken, Evidence::RuntimeObservationFailed),
+        );
+    }
+
+    if operator_status.kind == OperatorStatusKind::NeedsInput
+        && matches!(
+            task.agent_status,
+            AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
+        )
+    {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(
+                AnnotationKind::NeedsMe,
+                Evidence::AgentStatus(task.agent_status),
+            ),
+        );
+    }
 
     if let Some(live_status) = task.live_status.as_ref() {
         if let Some(kind) = annotation_kind_for_live_status(live_status.kind) {
@@ -68,21 +92,25 @@ fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
     match kind {
         AnnotationKind::NeedsMe => match evidence {
             Evidence::LiveStatus(_) => 0,
-            Evidence::SideFlag(_) => 1,
-            Evidence::Lifecycle(_) => 2,
-            Evidence::Substrate(_) => 3,
+            Evidence::AgentStatus(_) => 1,
+            Evidence::SideFlag(_) => 2,
+            Evidence::Lifecycle(_) => 3,
+            Evidence::Substrate(_) | Evidence::RuntimeObservationFailed => 4,
         },
         AnnotationKind::Broken => match evidence {
             Evidence::LiveStatus(_) => 0,
             Evidence::Substrate(_) => 1,
-            Evidence::SideFlag(_) => 2,
-            Evidence::Lifecycle(_) => 3,
+            Evidence::RuntimeObservationFailed => 2,
+            Evidence::SideFlag(_) => 3,
+            Evidence::AgentStatus(_) => 4,
+            Evidence::Lifecycle(_) => 5,
         },
         AnnotationKind::Reviewable | AnnotationKind::Cleanable => match evidence {
             Evidence::Lifecycle(_) => 0,
             Evidence::LiveStatus(_) => 1,
-            Evidence::SideFlag(_) => 2,
-            Evidence::Substrate(_) => 3,
+            Evidence::AgentStatus(_) => 2,
+            Evidence::SideFlag(_) => 3,
+            Evidence::Substrate(_) | Evidence::RuntimeObservationFailed => 4,
         },
     }
 }
@@ -178,7 +206,8 @@ mod tests {
     use crate::lifecycle::{mark_active, mark_cleanable, mark_merged, mark_reviewable};
     use crate::models::{
         AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LiveObservation,
-        LiveStatusKind, OperatorAction, SideFlag, SubstrateGap, Task, TaskId,
+        LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, SubstrateGap, Task,
+        TaskId,
     };
 
     fn task_with_flags(handle: &str, flags: &[SideFlag]) -> Task {
@@ -244,6 +273,37 @@ mod tests {
                 AnnotationKind::Broken,
                 Evidence::Substrate(SubstrateGap::WorktreeMissing),
             )]
+        );
+    }
+
+    #[test]
+    fn annotate_emits_broken_for_runtime_probe_failure() {
+        let mut task = task_with_flags("probe-failed", &[]);
+        task.record_runtime_probe_failure(
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+
+        let annotations = super::annotate(&task);
+
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].kind, AnnotationKind::Broken);
+        assert_eq!(annotations[0].suggests, OperatorAction::Repair);
+    }
+
+    #[test]
+    fn blocked_agent_needs_attention_without_lifecycle_error() {
+        let mut task = task_with_flags("blocked", &[]);
+        mark_active(&mut task).unwrap();
+        task.agent_status = AgentRuntimeStatus::Blocked;
+
+        let annotations = super::annotate(&task);
+
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].kind, AnnotationKind::NeedsMe);
+        assert_eq!(
+            task.lifecycle_status,
+            crate::models::LifecycleStatus::Active
         );
     }
 

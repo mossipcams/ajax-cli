@@ -4,7 +4,7 @@ use crate::{
         SideFlag, Task,
     },
     operation::{task_operation_eligibility, TaskOperation},
-    ui_state::{derive_ui_state, UiState},
+    ui_state::{derive_operator_status, derive_ui_state, OperatorStatusKind, UiState},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +68,15 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             | LiveStatusKind::AgentRunning
             | LiveStatusKind::Unknown => "live_status",
         },
+        Evidence::AgentStatus(status) => match status {
+            AgentRuntimeStatus::NotStarted => "agent_not_started",
+            AgentRuntimeStatus::Running => "agent_running",
+            AgentRuntimeStatus::Waiting => "agent_waiting",
+            AgentRuntimeStatus::Blocked => "agent_blocked",
+            AgentRuntimeStatus::Done => "agent_done",
+            AgentRuntimeStatus::Dead => "agent_dead",
+            AgentRuntimeStatus::Unknown => "agent_status_not_observed",
+        },
         Evidence::SideFlag(flag) => match flag {
             SideFlag::Dirty => "dirty",
             SideFlag::AgentRunning => "agent_running",
@@ -103,10 +112,14 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             crate::models::SubstrateGap::WorktrunkMissing => "worktrunk_missing",
             crate::models::SubstrateGap::BranchMissing => "branch_missing",
         },
+        Evidence::RuntimeObservationFailed => "runtime_observation_failed",
     }
 }
 
 fn fallback_operator_action(task: &Task) -> OperatorAction {
+    if derive_operator_status(task).kind == OperatorStatusKind::ObservationFailed {
+        return OperatorAction::Repair;
+    }
     match derive_ui_state(task) {
         UiState::SafeMerge => OperatorAction::Ship,
         UiState::Cleanable | UiState::Archived => OperatorAction::Drop,
@@ -142,7 +155,9 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         return vec![OperatorAction::Repair];
     }
 
-    let mut actions = if task.has_missing_substrate() {
+    let mut actions = if task.has_missing_substrate()
+        || derive_operator_status(task).kind == OperatorStatusKind::ObservationFailed
+    {
         vec![OperatorAction::Repair]
     } else {
         Vec::new()
@@ -261,8 +276,8 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth, SideFlag, Task,
-            TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth,
+            RuntimeObservationSource, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
         },
     };
 
@@ -331,6 +346,23 @@ mod tests {
                 plan.available_actions
             );
         }
+    }
+
+    #[test]
+    fn runtime_probe_failure_recommends_repair_instead_of_drop() {
+        let mut t = task("probe-failed");
+        mark_active(&mut t).unwrap();
+        t.record_runtime_probe_failure(
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+
+        let plan = operator_action(&t);
+
+        assert_eq!(plan.action, OperatorAction::Repair);
+        assert_eq!(plan.reason, "runtime_observation_failed");
+        assert!(plan.available_actions.contains(&OperatorAction::Repair));
+        assert_ne!(plan.action, OperatorAction::Drop);
     }
 
     #[test]

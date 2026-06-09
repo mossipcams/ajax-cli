@@ -71,6 +71,10 @@ pub struct TaskSummary {
     pub qualified_handle: String,
     pub title: String,
     pub lifecycle_status: String,
+    #[serde(default)]
+    pub status_label: String,
+    #[serde(default)]
+    pub runtime_observation_error: Option<String>,
     pub needs_attention: bool,
     pub live_status: Option<LiveObservation>,
     #[serde(default, skip_serializing)]
@@ -233,6 +237,8 @@ mod tests {
                 qualified_handle: "web/fix-login".to_string(),
                 title: "Fix login".to_string(),
                 lifecycle_status: "active".to_string(),
+                status_label: "waiting for approval".to_string(),
+                runtime_observation_error: None,
                 needs_attention: false,
                 live_status: Some(LiveObservation::new(
                     LiveStatusKind::WaitingForApproval,
@@ -304,6 +310,8 @@ mod tests {
                     "qualified_handle": "web/fix-login",
                     "title": "Fix login",
                     "lifecycle_status": "active",
+                    "status_label": "waiting for approval",
+                    "runtime_observation_error": null,
                     "needs_attention": false,
                     "live_status": {
                         "kind": "WaitingForApproval",

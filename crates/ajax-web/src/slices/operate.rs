@@ -501,7 +501,10 @@ mod tests {
         .unwrap();
 
         let line = agent_send_keys_line(runner.commands());
-        assert_eq!(line, "cursor agent");
+        assert_eq!(
+            line,
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent"
+        );
         assert!(!line.contains("--cd"));
     }
 
@@ -522,7 +525,10 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(agent_send_keys_line(runner.commands()), "claude");
+        assert_eq!(
+            agent_send_keys_line(runner.commands()),
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- claude"
+        );
     }
 
     #[test]

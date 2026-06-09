@@ -115,7 +115,7 @@ pub(crate) fn render_doctor_human(response: &DoctorResponse) -> String {
 fn render_task_summary(task: &TaskSummary) -> String {
     format!(
         "{}\t{}\t{}",
-        task.qualified_handle, task.lifecycle_status, task.title
+        task.qualified_handle, task.status_label, task.title
     )
 }
 
@@ -181,10 +181,13 @@ mod tests {
         adapters::CommandSpec,
         commands::CommandPlan,
         models::{OperatorAction, TaskId},
-        output::{AnnotationItem, InboxResponse, InspectResponse, TaskSummary},
+        output::{AnnotationItem, InboxResponse, InspectResponse, TaskSummary, TasksResponse},
     };
 
-    use super::{render_inbox_human, render_inspect_human, render_plan, render_plan_human};
+    use super::{
+        render_inbox_human, render_inspect_human, render_plan, render_plan_human,
+        render_tasks_human,
+    };
 
     #[test]
     fn render_plan_quotes_shell_words_for_copy_paste_safe_human_output() {
@@ -229,6 +232,8 @@ mod tests {
                 qualified_handle: "web/fix-login".to_string(),
                 title: "Fix login".to_string(),
                 lifecycle_status: "Reviewable".to_string(),
+                status_label: "review ready".to_string(),
+                runtime_observation_error: None,
                 needs_attention: true,
                 live_status: None,
                 actions: vec!["resume".to_string()],
@@ -241,8 +246,31 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "web/fix-login\tReviewable\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
+            "web/fix-login\treview ready\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
         );
+    }
+
+    #[test]
+    fn task_human_renders_probe_failure_status_instead_of_lifecycle() {
+        let rendered = render_tasks_human(&TasksResponse {
+            tasks: vec![TaskSummary {
+                id: "task-1".to_string(),
+                qualified_handle: "web/fix-login".to_string(),
+                title: "Fix login".to_string(),
+                lifecycle_status: "Active".to_string(),
+                status_label: "status unavailable: tmux server unavailable".to_string(),
+                runtime_observation_error: Some("tmux server unavailable".to_string()),
+                needs_attention: true,
+                live_status: None,
+                actions: vec!["repair".to_string()],
+            }],
+        });
+
+        assert_eq!(
+            rendered,
+            "web/fix-login\tstatus unavailable: tmux server unavailable\tFix login"
+        );
+        assert!(!rendered.contains("Unknown"));
     }
 
     #[test]

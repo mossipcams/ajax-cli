@@ -1,8 +1,10 @@
+#[cfg(not(feature = "interactive"))]
+use ajax_core::runtime_refresh::{refresh_runtime_context_with_tier, NoAgentStatusCache};
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
     registry::InMemoryRegistry,
-    runtime_refresh::{refresh_runtime_context_with_tier, NoAgentStatusCache, RefreshTier},
+    runtime_refresh::RefreshTier,
 };
 #[cfg(test)]
 use ajax_web::runtime::Request;
@@ -110,16 +112,16 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     {
         use ajax_core::runtime_refresh::refresh_runtime_context_with_agent_status_cache_and_tier;
 
-        if let Some(cache) =
-            crate::agent_status_cache::TmuxAgentStatusSnapshot::from_default_location()
-        {
-            return refresh_runtime_context_with_agent_status_cache_and_tier(
-                context, runner, &cache, tier,
-            );
-        }
+        let cache = crate::agent_status_cache::TmuxAgentStatusSnapshot::from_runtime_cache(
+            &context.runtime_paths.cache_dir,
+        );
+        refresh_runtime_context_with_agent_status_cache_and_tier(context, runner, &cache, tier)
     }
 
-    refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
+    #[cfg(not(feature = "interactive"))]
+    {
+        refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
+    }
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {

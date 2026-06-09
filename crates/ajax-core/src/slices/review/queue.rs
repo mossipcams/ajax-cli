@@ -26,11 +26,14 @@ pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
 }
 
 fn task_summary(task: &Task) -> TaskSummary {
+    let operator_status = crate::ui_state::derive_operator_status(task);
     TaskSummary {
         id: task.id.as_str().to_string(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
+        status_label: operator_status.label,
+        runtime_observation_error: task.runtime_projection.observation_error.clone(),
         needs_attention: !annotate(task).is_empty(),
         live_status: task.live_status.clone(),
         actions: available_operator_actions(task)

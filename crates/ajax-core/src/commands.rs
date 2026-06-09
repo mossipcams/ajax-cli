@@ -852,12 +852,23 @@ mod tests {
                 .find(|command| super::is_agent_send_keys_command(command))
                 .expect("agent send-keys command");
             let worktree_path = worktree_command.args[6].clone();
+            let handle = worktree_command.args[5]
+                .strip_prefix("ajax/")
+                .expect("generated task branch");
+            let task_id = format!("web/{handle}");
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
             prop_assert_eq!(send_keys.args[0].as_str(), "send-keys");
             prop_assert_eq!(
                 shell_words(&send_keys.args[3]),
                 vec![
+                    "ajax-cli".to_string(),
+                    "__agent-runtime".to_string(),
+                    "--task-id".to_string(),
+                    task_id,
+                    "--state-root".to_string(),
+                    ".cache/ajax/agent-runtime".to_string(),
+                    "--".to_string(),
                     "codex".to_string(),
                     "--cd".to_string(),
                     worktree_path,
@@ -2002,7 +2013,7 @@ mod tests {
                         "send-keys",
                         "-t",
                         "ajax-web-fix-logout:worktrunk",
-                        "codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout",
+                        "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout",
                         "Enter"
                     ]
                 )
@@ -2051,6 +2062,13 @@ mod tests {
         assert_eq!(
             shell_words(&plan.commands[4].args[3]),
             vec![
+                "ajax-cli",
+                "__agent-runtime",
+                "--task-id",
+                "web/fix-login",
+                "--state-root",
+                ".cache/ajax/agent-runtime",
+                "--",
                 "codex",
                 "--cd",
                 "/Users/matt/projects/web app__worktrees/ajax-fix-login",
@@ -2137,7 +2155,7 @@ mod tests {
         assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:worktrunk");
         assert_eq!(
             send_keys.args[3],
-            "codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
+            "ajax-cli __agent-runtime --task-id api/ship-oauth-v2 --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
 
         let active_duplicate = new_task_plan(
