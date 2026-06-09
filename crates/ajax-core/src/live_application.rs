@@ -3,7 +3,7 @@ use std::time::SystemTime;
 use crate::{
     lifecycle::{transition_lifecycle, LifecycleTransitionReason},
     live::{reduce_live_observation, LiveObservation, LiveStatusKind},
-    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
+    models::{AgentClient, AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
 };
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
@@ -28,6 +28,26 @@ pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) 
     };
     if let Some(lifecycle) = lifecycle {
         let _ = transition_lifecycle(task, lifecycle, LifecycleTransitionReason::OperationResult);
+    }
+}
+
+/// Acknowledge operator attention on a task without changing lifecycle.
+///
+/// Records the acknowledgment time. When a Claude task is actively waiting for
+/// input or approval, clears the actionable waiting state — the waiting live
+/// status, `AgentRuntimeStatus::Waiting`, and `SideFlag::NeedsInput` — without
+/// fabricating shell or process state. Codex waiting remains actionable; running,
+/// failed, completed, and missing-substrate evidence is never erased.
+pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
+    task.record_attention_acknowledgment(at);
+
+    if task.selected_agent == AgentClient::Claude
+        && task.agent_status == AgentRuntimeStatus::Waiting
+    {
+        task.agent_status = AgentRuntimeStatus::NotStarted;
+        task.remove_side_flag(SideFlag::NeedsInput);
+        task.remove_side_flag(SideFlag::AgentDead);
+        task.live_status = None;
     }
 }
 
@@ -170,11 +190,103 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_observation;
+    use super::{acknowledge_attention, apply_observation};
     use crate::models::{
         AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
         SideFlag, Task, TaskId,
     };
+    use std::time::{Duration, UNIX_EPOCH};
+
+    fn claude_active_task() -> Task {
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
+
+    #[test]
+    fn acknowledging_claude_waiting_clears_actionable_state_without_marking_dead() {
+        let mut task = claude_active_task();
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        let at = UNIX_EPOCH + Duration::from_secs(500);
+
+        acknowledge_attention(&mut task, at);
+
+        assert_eq!(task.live_status, None);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert!(!task.has_side_flag(SideFlag::AgentDead));
+        assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
+        assert_eq!(task.attention_acknowledged_at, Some(at));
+    }
+
+    #[test]
+    fn acknowledging_nonwaiting_state_does_not_erase_runtime_evidence() {
+        for status in [
+            LiveStatusKind::AgentRunning,
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::Done,
+            LiveStatusKind::TmuxMissing,
+        ] {
+            let mut task = claude_active_task();
+            apply_observation(&mut task, LiveObservation::new(status, "evidence"));
+            let agent_before = task.agent_status;
+            let lifecycle_before = task.lifecycle_status;
+            let flags_before: Vec<SideFlag> = task.side_flags().collect();
+            let live_before = task.live_status.clone();
+            let at = UNIX_EPOCH + Duration::from_secs(500);
+
+            acknowledge_attention(&mut task, at);
+
+            assert_eq!(task.attention_acknowledged_at, Some(at), "{status:?}");
+            assert_eq!(task.agent_status, agent_before, "{status:?}");
+            assert_eq!(task.lifecycle_status, lifecycle_before, "{status:?}");
+            assert_eq!(
+                task.side_flags().collect::<Vec<_>>(),
+                flags_before,
+                "{status:?}"
+            );
+            assert_eq!(task.live_status, live_before, "{status:?}");
+        }
+    }
+
+    #[test]
+    fn acknowledging_codex_waiting_records_time_but_keeps_attention() {
+        let mut task = claude_active_task();
+        task.selected_agent = AgentClient::Codex;
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.add_side_flag(SideFlag::NeedsInput);
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for input",
+        ));
+        let at = UNIX_EPOCH + Duration::from_secs(500);
+
+        acknowledge_attention(&mut task, at);
+
+        assert_eq!(task.attention_acknowledged_at, Some(at));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
 
     fn active_task() -> Task {
         let mut task = Task::new(

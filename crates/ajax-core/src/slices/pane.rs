@@ -1,7 +1,7 @@
 use crate::{
     adapters::{CommandRunError, CommandRunner, CommandSpec},
     agent_prompt::{self, AgentPrompt, ChoiceRole, Confidence, PromptKind},
-    live::classify_pane,
+    live::classify_agent_pane,
     models::{AgentClient, LiveStatusKind},
 };
 use std::time::Duration;
@@ -229,7 +229,7 @@ fn classify_state(lines: &[String], agent: AgentClient) -> Option<PaneState> {
     }
 
     let joined = lines.join("\n");
-    let mut observation = classify_pane(&joined);
+    let mut observation = classify_agent_pane(agent, &joined);
     if observation.kind == LiveStatusKind::Unknown {
         observation.kind = LiveStatusKind::AgentRunning;
         observation.summary = "agent running".to_string();
@@ -471,6 +471,82 @@ last line\n";
         assert_eq!(state.kind, LiveStatusKind::WaitingForInput);
         assert!(state.prompt.is_some());
         // The composer is low confidence: surfaced but not answerable.
+        assert!(state.choices.is_empty());
+        assert_eq!(state.confidence, Some(Confidence::Low));
+    }
+
+    #[test]
+    fn pane_snapshot_keeps_claude_busy_when_permission_text_remains_visible() {
+        let pane = "Run this command?\n❯ Yes\n  No\nctrl+c to interrupt\n";
+        let mut runner = StubRunner::with_stdout(pane);
+
+        let snapshot = snapshot(
+            &mut runner,
+            "ajax-web-fix-login",
+            AgentClient::Claude,
+            None,
+            12,
+        )
+        .unwrap();
+        let state = snapshot.state.expect("state");
+
+        assert_eq!(state.kind, LiveStatusKind::AgentRunning);
+        assert_eq!(state.prompt, None);
+        assert!(state.choices.is_empty());
+    }
+
+    #[test]
+    fn pane_snapshot_exposes_live_claude_permission_prompt() {
+        // Claude reaches WaitingForApproval through the agent-aware classifier,
+        // while structured choices/command/fingerprint stay owned by
+        // `agent_prompt`. The Claude adapter recognizes no structured prompt, so
+        // the snapshot must not fabricate answerable choices.
+        let pane = "Run this command?\n❯ Yes\n  No\nEsc to cancel\n";
+        let mut runner = StubRunner::with_stdout(pane);
+
+        let snapshot = snapshot(
+            &mut runner,
+            "ajax-web-fix-login",
+            AgentClient::Claude,
+            None,
+            12,
+        )
+        .unwrap();
+        let state = snapshot.state.expect("state");
+
+        assert_eq!(state.kind, LiveStatusKind::WaitingForApproval);
+        assert_eq!(
+            state.command,
+            crate::agent_prompt::parse_prompt(
+                AgentClient::Claude,
+                &["Run this command?".to_string(), "❯ Yes".to_string()]
+            )
+            .and_then(|prompt| prompt.command)
+        );
+        assert!(state.choices.is_empty());
+        assert_eq!(state.confidence, None);
+        assert_eq!(state.fingerprint, None);
+    }
+
+    #[test]
+    fn pane_snapshot_keeps_existing_codex_composer_contract() {
+        let pane = "\u{1b}[2m─ Worked for 7m ─\u{1b}[0m\n\
+                    › Write tests for @filename\n\
+                    gpt-5.4 high · ~/projects/web\n";
+        let mut runner = StubRunner::with_stdout(pane);
+
+        let snapshot = snapshot(
+            &mut runner,
+            "ajax-web-fix-login",
+            AgentClient::Codex,
+            None,
+            12,
+        )
+        .unwrap();
+        let state = snapshot.state.expect("state");
+
+        assert_eq!(state.kind, LiveStatusKind::WaitingForInput);
+        assert!(state.prompt.is_some());
         assert!(state.choices.is_empty());
         assert_eq!(state.confidence, Some(Confidence::Low));
     }

@@ -3,8 +3,8 @@ use std::{path::PathBuf, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    live::classify_pane,
-    models::{GitStatus, LiveObservation, LiveStatusKind},
+    live::{classify_agent_pane, classify_pane},
+    models::{AgentClient, GitStatus, LiveObservation, LiveStatusKind},
     registry::{Registry, RegistryError},
 };
 
@@ -48,18 +48,41 @@ pub enum MonitorEvent {
     Process(ProcessEvent),
 }
 
+/// Generic compatibility entry point. Text-bearing events are classified with
+/// the agent-agnostic `classify_pane`.
 pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservation> {
+    live_observation_from_event_inner(event, &|text, fallback| {
+        classify_text_or_else(text, fallback)
+    })
+}
+
+/// Agent-aware event mapping. Text-bearing events are classified with the
+/// busy-first, agent-specific `classify_agent_pane` so a Claude busy indicator
+/// beats stale prompt text and Codex prompts are detected for Codex only.
+pub fn live_observation_from_event_for_agent(
+    agent: AgentClient,
+    event: &MonitorEvent,
+) -> Option<LiveObservation> {
+    live_observation_from_event_inner(event, &|text, fallback| {
+        classify_agent_text_or_else(agent, text, fallback)
+    })
+}
+
+fn live_observation_from_event_inner(
+    event: &MonitorEvent,
+    classify: &dyn Fn(&str, LiveObservation) -> LiveObservation,
+) -> Option<LiveObservation> {
     match event {
         MonitorEvent::Agent(AgentEvent::Started { .. })
         | MonitorEvent::Agent(AgentEvent::Thinking) => Some(LiveObservation::new(
             LiveStatusKind::AgentRunning,
             "agent running",
         )),
-        MonitorEvent::Agent(AgentEvent::Message { text }) => Some(classify_text_or_else(
+        MonitorEvent::Agent(AgentEvent::Message { text }) => Some(classify(
             text,
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         )),
-        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(classify_text_or_else(
+        MonitorEvent::Agent(AgentEvent::ToolCall { name }) => Some(classify(
             name,
             LiveObservation::new(
                 LiveStatusKind::CommandRunning,
@@ -77,7 +100,7 @@ pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservati
         MonitorEvent::Agent(AgentEvent::Completed) => {
             Some(LiveObservation::new(LiveStatusKind::Done, "done"))
         }
-        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(classify_text_or_else(
+        MonitorEvent::Agent(AgentEvent::Failed { message }) => Some(classify(
             message,
             LiveObservation::new(
                 LiveStatusKind::CommandFailed,
@@ -88,11 +111,11 @@ pub fn live_observation_from_event(event: &MonitorEvent) -> Option<LiveObservati
             LiveStatusKind::CommandRunning,
             "process running",
         )),
-        MonitorEvent::Process(ProcessEvent::Stdout { line }) => Some(classify_text_or_else(
+        MonitorEvent::Process(ProcessEvent::Stdout { line }) => Some(classify(
             line,
             LiveObservation::new(LiveStatusKind::CommandRunning, "process running"),
         )),
-        MonitorEvent::Process(ProcessEvent::Stderr { line }) => Some(classify_text_or_else(
+        MonitorEvent::Process(ProcessEvent::Stderr { line }) => Some(classify(
             line,
             LiveObservation::new(LiveStatusKind::CommandRunning, format!("stderr: {line}")),
         )),
@@ -127,7 +150,8 @@ pub fn apply_monitor_event_to_task(task: &mut crate::models::Task, event: &Monit
         changed = true;
     }
 
-    let Some(observation) = live_observation_from_event(event) else {
+    let Some(observation) = live_observation_from_event_for_agent(task.selected_agent, event)
+    else {
         return changed;
     };
 
@@ -146,7 +170,11 @@ pub fn apply_monitor_event_to_registry<R: Registry>(
         changed = true;
     }
 
-    let Some(observation) = live_observation_from_event(event) else {
+    let agent = registry
+        .get_task(task_id)
+        .map(|task| task.selected_agent)
+        .ok_or_else(|| RegistryError::TaskNotFound(task_id.clone()))?;
+    let Some(observation) = live_observation_from_event_for_agent(agent, event) else {
         return Ok(changed);
     };
 
@@ -185,6 +213,19 @@ fn classify_text_or_else(text: &str, fallback: LiveObservation) -> LiveObservati
     }
 }
 
+fn classify_agent_text_or_else(
+    agent: AgentClient,
+    text: &str,
+    fallback: LiveObservation,
+) -> LiveObservation {
+    let observation = classify_agent_pane(agent, text);
+    if observation.kind == LiveStatusKind::Unknown {
+        fallback
+    } else {
+        observation
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -214,6 +255,97 @@ mod tests {
         );
         task.lifecycle_status = LifecycleStatus::Active;
         task
+    }
+
+    fn claude_task() -> Task {
+        let mut task = Task::new(
+            TaskId::new("task-claude"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/tmp/worktrees/web-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Claude,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
+
+    #[test]
+    fn claude_message_busy_indicator_beats_stale_prompt_text() {
+        let mut task = claude_task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Message {
+                text: "Run this command?\n❯ Yes\nctrl+c to interrupt".to_string(),
+            })
+        ));
+
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn codex_message_uses_codex_specific_prompt_detection() {
+        let mut task = task();
+
+        assert!(apply_monitor_event_to_task(
+            &mut task,
+            &MonitorEvent::Agent(AgentEvent::Message {
+                text: "› Fix the tests\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax".to_string(),
+            })
+        ));
+
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn generic_live_observation_wrapper_preserves_existing_behavior() {
+        for (event, expected) in [
+            (
+                MonitorEvent::Agent(AgentEvent::Started {
+                    agent: "codex".to_string(),
+                }),
+                LiveStatusKind::AgentRunning,
+            ),
+            (
+                MonitorEvent::Agent(AgentEvent::Completed),
+                LiveStatusKind::Done,
+            ),
+            (
+                MonitorEvent::Agent(AgentEvent::Failed {
+                    message: "please login to continue".to_string(),
+                }),
+                LiveStatusKind::AuthRequired,
+            ),
+            (
+                MonitorEvent::Process(ProcessEvent::Started { pid: Some(7) }),
+                LiveStatusKind::CommandRunning,
+            ),
+            (
+                MonitorEvent::Process(ProcessEvent::Exited { code: Some(0) }),
+                LiveStatusKind::Done,
+            ),
+            (
+                MonitorEvent::Process(ProcessEvent::Exited { code: Some(1) }),
+                LiveStatusKind::CommandFailed,
+            ),
+        ] {
+            let observation = live_observation_from_event(&event)
+                .expect("event should map to a live observation");
+
+            assert_eq!(observation.kind, expected);
+        }
     }
 
     #[test]

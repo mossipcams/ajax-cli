@@ -240,6 +240,77 @@ mod tests {
         task
     }
 
+    fn claude_active_task() -> Task {
+        let mut task = task_with_flags("ack", &[]);
+        task.selected_agent = AgentClient::Claude;
+        mark_active(&mut task).unwrap();
+        task
+    }
+
+    fn ack_at() -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(500)
+    }
+
+    #[test]
+    fn acknowledged_claude_waiting_has_no_needs_me_annotation() {
+        let mut task = claude_active_task();
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+        crate::live::acknowledge_attention(&mut task, ack_at());
+
+        let annotations = super::annotate(&task);
+
+        assert!(!annotations
+            .iter()
+            .any(|annotation| annotation.kind == AnnotationKind::NeedsMe));
+    }
+
+    #[test]
+    fn new_waiting_after_acknowledgment_restores_needs_me_annotation() {
+        let mut task = claude_active_task();
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+        crate::live::acknowledge_attention(&mut task, ack_at());
+        crate::live::apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+        );
+
+        let annotations = super::annotate(&task);
+
+        assert_eq!(
+            annotations
+                .iter()
+                .filter(|annotation| annotation.kind == AnnotationKind::NeedsMe)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn acknowledgment_does_not_remove_broken_or_reviewable_annotations() {
+        let mut conflict = claude_active_task();
+        crate::live::apply_observation(
+            &mut conflict,
+            LiveObservation::new(LiveStatusKind::MergeConflict, "merge conflict"),
+        );
+        crate::live::acknowledge_attention(&mut conflict, ack_at());
+        assert!(super::annotate(&conflict)
+            .iter()
+            .any(|annotation| annotation.kind == AnnotationKind::Broken));
+
+        let mut reviewable = claude_active_task();
+        mark_reviewable(&mut reviewable).unwrap();
+        crate::live::acknowledge_attention(&mut reviewable, ack_at());
+        assert!(super::annotate(&reviewable)
+            .iter()
+            .any(|annotation| annotation.kind == AnnotationKind::Reviewable));
+    }
+
     #[test]
     fn annotate_collapses_blocker_evidence_into_needs_me() {
         let mut task = task_with_flags("blocked", &[SideFlag::NeedsInput, SideFlag::AgentDead]);

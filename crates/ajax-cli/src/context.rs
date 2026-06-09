@@ -655,4 +655,69 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn save_context_reports_conflict_for_concurrent_ack_and_live_status_change() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-ack-conflict-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        let mut native_task = sample_task("web/fix-login", "fix-login", "Fix login");
+        native_task.lifecycle_status = LifecycleStatus::Active;
+        baseline.create_task(native_task).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        // Native writer changes the same task's live status.
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("native task")
+            .live_status = Some(ajax_core::models::LiveObservation::new(
+            ajax_core::models::LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+
+        // Concurrent writer records an acknowledgment and persists first.
+        let acknowledged_at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_900);
+        let mut web_registry = baseline.clone();
+        web_registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("web task")
+            .record_attention_acknowledgment(acknowledged_at);
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&web_registry)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        let error = save_tracked_context(&paths, &mut tracked).unwrap_err();
+        assert!(error.to_string().contains("state conflict"));
+        assert!(error.to_string().contains("web/fix-login"));
+
+        // The first writer's acknowledgment is preserved; no last-writer-wins.
+        let reloaded = load_context(&paths).expect("reload");
+        let reloaded_task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("reloaded task");
+        assert_eq!(
+            reloaded_task.attention_acknowledged_at,
+            Some(acknowledged_at)
+        );
+        assert_ne!(
+            reloaded_task.live_status.as_ref().map(|status| status.kind),
+            Some(ajax_core::models::LiveStatusKind::AgentRunning)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
