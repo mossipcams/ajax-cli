@@ -168,6 +168,9 @@ case "$1" in
   switch-client)
     exit 0
     ;;
+  list-sessions)
+    exit 0
+    ;;
   *)
     printf 'unexpected tmux args: %s\n' "$*" >&2
     exit 2
@@ -597,7 +600,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
         home.state_file().display()
     );
 
-    let tasks_output = home.ajax(["tasks", "--json"]);
+    let tasks_output = home.ajax_with_fake_tools(["tasks", "--json"]);
 
     assert!(
         tasks_output.status.success(),
