@@ -174,7 +174,7 @@ pub(crate) fn render_matches_mut(
         )),
         #[cfg(feature = "interactive")]
         Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) => {
-            render_cockpit_entry_command(name, matches, subcommand, context, runner, None)
+            render_cockpit_entry_command(name, matches, subcommand, context, runner, None, None)
         }
         #[cfg(not(feature = "interactive"))]
         Some(("cockpit" | "stable" | "dev", _)) => Err(CliError::CommandFailed(
@@ -268,11 +268,16 @@ pub(crate) fn render_matches_mut_with_paths(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
+    save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<RenderedCommand, CliError> {
     #[cfg(feature = "interactive")]
     if let Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) = matches.subcommand() {
-        return render_cockpit_entry_command(name, matches, subcommand, context, runner, paths);
+        return render_cockpit_entry_command(
+            name, matches, subcommand, context, runner, paths, save_state,
+        );
     }
+    #[cfg(not(feature = "interactive"))]
+    let _ = save_state;
 
     if let Some(("web", subcommand)) = matches.subcommand() {
         let host = subcommand
@@ -321,6 +326,7 @@ fn render_cockpit_entry_command<R: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     paths: Option<&CliContextPaths>,
+    save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<RenderedCommand, CliError> {
     if subcommand.get_flag("watch") {
         return render_live_cockpit_command(context, subcommand, runner);
@@ -337,6 +343,7 @@ fn render_cockpit_entry_command<R: CommandRunner>(
         runner,
         mobile_web_port_for_cockpit_entry(name, paths),
         paths,
+        save_state,
     )
 }
 

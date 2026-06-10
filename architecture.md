@@ -611,6 +611,15 @@ last-writer-wins overwrite. SQLite mtime remains only a reload optimization.
 CLI entry points load through `TrackedContext` so native saves participate in
 the same merge contract as Web Cockpit.
 
+Native Cockpit's interactive loop shares the same reload-on-mtime and
+save-on-operator-action contract Web Cockpit uses. Each cockpit refresh checks
+the state file mtime and reloads SQLite into the in-memory registry when it
+has advanced (typically because the Web Cockpit companion or another writer
+has persisted a change), and each pending cockpit action that mutates state is
+persisted through `save_context_with_state` before the next iteration. The
+exit-time `save_tracked_context` in `run_with_args_to_writer` remains as a
+defensive backstop for state that escaped the loop's per-iteration save path.
+
 Start execution exposes persistence checkpoints after provisional intent and
 each successful provisioning receipt. The CLI Web adapter persists those
 checkpoints before later external effects, so interrupted starts remain
