@@ -446,7 +446,8 @@ mod tests {
         assert!(script.contains("request_id"));
         assert!(script.contains("structureFingerprint"));
         assert!(script.contains("updateLiveSummaries"));
-        assert!(script.contains("action_states"));
+        assert!(script.contains("card.actions"));
+        assert!(!script.contains("card.action_states"));
         assert!(script.contains("#/settings"));
         assert!(script.contains("/api/server/restart"));
     }
@@ -614,8 +615,15 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
-        assert_eq!(body["cards"][0]["live_summary"], "agent running");
-        assert!(body["cards"][0]["action_states"].is_array());
+        assert_eq!(body["cards"][0]["status"], "running");
+        assert_eq!(body["cards"][0]["status_explanation"], "Agent working");
+        assert!(body["cards"][0]["actions"].is_array());
+        for legacy in ["ui_state", "status_label", "live_summary", "action_states"] {
+            assert!(
+                body["cards"][0].get(legacy).is_none(),
+                "legacy field {legacy}"
+            );
+        }
     }
 
     #[test]
@@ -650,7 +658,8 @@ mod tests {
 
         assert_eq!(response.status_code, 200);
         assert_eq!(body["cards"][0]["qualified_handle"], "web/fix-login");
-        assert_eq!(body["cards"][0]["live_summary"], "agent running");
+        assert_eq!(body["cards"][0]["status"], "running");
+        assert_eq!(body["cards"][0]["status_explanation"], "Agent working");
 
         let _ = std::fs::remove_dir_all(root);
     }

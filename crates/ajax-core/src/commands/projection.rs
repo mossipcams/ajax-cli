@@ -45,7 +45,13 @@ pub(super) fn count_active_tasks(tasks: &[&Task]) -> u32 {
 pub(super) fn count_attention_items(tasks: &[&Task]) -> u32 {
     tasks
         .iter()
-        .filter(|task| is_cockpit_menu_task(task) && !annotate(task).is_empty())
+        .filter(|task| {
+            is_cockpit_menu_task(task)
+                && matches!(
+                    derive_operator_status(task).status,
+                    crate::ui_state::TaskStatus::Waiting | crate::ui_state::TaskStatus::Error
+                )
+        })
         .count() as u32
 }
 
@@ -64,9 +70,11 @@ pub(super) fn task_summary(task: &Task) -> TaskSummary {
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
-        status_label: operator_status.label,
+        status: operator_status.status,
+        status_explanation: operator_status.explanation.clone(),
+        status_label: operator_status.status.as_str().to_string(),
         runtime_observation_error: task.runtime_projection.observation_error.clone(),
-        needs_attention: !annotations_for_task(task).is_empty(),
+        needs_attention: !annotate(task).is_empty(),
         live_status: task.live_status.clone(),
         actions: task_actions(task),
     }
@@ -87,14 +95,13 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
         id: task.id.clone(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
-        ui_state: operator_status.ui_state(),
-        status_label: operator_status.label,
+        status: operator_status.status,
+        status_explanation: operator_status.explanation.clone(),
         lifecycle: task.lifecycle_status,
         annotations,
         primary_action: plan.action,
         available_actions: plan.available_actions,
         remediations: remediations_for_task(task),
-        live_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
     }
 }
 
@@ -127,7 +134,8 @@ pub(super) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> Co
         .map(|(_, card, annotation)| CockpitNextStep {
             task_id: card.id.clone(),
             task_handle: card.qualified_handle.clone(),
-            ui_state: card.ui_state,
+            status: card.status,
+            status_explanation: card.status_explanation.clone(),
             action: annotation.suggests,
             reason: format!("{:?}", annotation.evidence),
         });
@@ -257,7 +265,7 @@ mod tests {
     }
 
     #[test]
-    fn task_card_status_label_comes_from_live_or_ui_state_not_annotation_row() {
+    fn task_card_explanation_comes_from_canonical_status_not_annotation_row() {
         let mut review_task = task("review");
         mark_active(&mut review_task).unwrap();
         mark_reviewable(&mut review_task).unwrap();
@@ -265,8 +273,11 @@ mod tests {
 
         let card = task_card(&review_task);
 
-        assert_eq!(card.status_label, "review ready");
-        assert_ne!(card.status_label, card.annotations[0].row_label());
+        assert_eq!(card.status_explanation.as_deref(), Some("Ready for review"));
+        assert_ne!(
+            card.status_explanation.as_deref(),
+            Some(card.annotations[0].row_label().as_str())
+        );
 
         let mut running = task("running");
         mark_active(&mut running).unwrap();
@@ -277,7 +288,28 @@ mod tests {
 
         let running_card = task_card(&running);
 
-        assert_eq!(running_card.status_label, "tests running");
+        assert_eq!(
+            running_card.status_explanation.as_deref(),
+            Some("Running tests")
+        );
+    }
+
+    #[test]
+    fn task_card_carries_canonical_status_and_explanation() {
+        let mut task = task("waiting");
+        mark_active(&mut task).unwrap();
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "raw approval summary",
+        ));
+
+        let card = task_card(&task);
+
+        assert_eq!(card.status, crate::ui_state::TaskStatus::Waiting);
+        assert_eq!(
+            card.status_explanation.as_deref(),
+            Some("Waiting for approval")
+        );
     }
 
     #[test]
@@ -292,10 +324,13 @@ mod tests {
         let card = task_card(&task);
 
         assert_eq!(
-            card.status_label,
-            "status unavailable: tmux server unavailable"
+            card.status_explanation.as_deref(),
+            Some("Status unavailable")
         );
-        assert!(!card.status_label.contains("unknown"));
+        assert!(!card
+            .status_explanation
+            .as_deref()
+            .is_some_and(|explanation| explanation.contains("unknown")));
     }
 
     #[test]
@@ -352,7 +387,7 @@ mod tests {
 
         let card = task_card(&task);
 
-        assert_eq!(card.status_label, "review ready");
+        assert_eq!(card.status_explanation.as_deref(), Some("Ready for review"));
         assert_eq!(card.primary_action, OperatorAction::Review);
         assert!(card
             .annotations

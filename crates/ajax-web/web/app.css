@@ -36,9 +36,12 @@
   --radius-sm: 6px;
 }
 
-/* TONE SYSTEM — every status maps to one accent the dots, badges, and rails
-   read from var(--tone) / var(--tone-bg). */
+/* Canonical task status tones. Other component tones remain below for
+   non-status feedback such as confirmations and connection health. */
 .tone-running { --tone: var(--teal-bright); --tone-bg: rgba(82, 160, 149, 0.16); }
+.tone-waiting { --tone: var(--mustard); --tone-bg: rgba(201, 162, 74, 0.15); }
+.tone-idle { --tone: var(--ink-muted); --tone-bg: rgba(153, 143, 127, 0.12); }
+.tone-error { --tone: var(--terracotta-bright); --tone-bg: rgba(214, 121, 80, 0.16); }
 .tone-ready { --tone: var(--mustard-bright); --tone-bg: rgba(226, 187, 98, 0.15); }
 .tone-attention { --tone: var(--mustard); --tone-bg: rgba(201, 162, 74, 0.15); }
 .tone-danger { --tone: var(--terracotta-bright); --tone-bg: rgba(214, 121, 80, 0.16); }
@@ -1078,6 +1081,24 @@ body.view-settings .settings-view {
   border-radius: 50%;
   background: var(--teal-bright);
   animation: pulse 2.2s ease-in-out infinite;
+}
+
+.interact-pill.tone-waiting {
+  background: rgba(201, 162, 74, 0.18);
+  border-color: var(--mustard);
+  color: var(--mustard-bright);
+}
+
+.interact-pill.tone-error {
+  background: rgba(188, 92, 62, 0.18);
+  border-color: var(--terracotta);
+  color: var(--terracotta-bright);
+}
+
+.interact-pill.tone-idle {
+  background: transparent;
+  border-color: var(--rule-strong);
+  color: var(--ink-muted);
 }
 
 .interact-pill.tone-attention {

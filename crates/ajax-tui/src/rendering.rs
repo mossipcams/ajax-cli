@@ -1,7 +1,7 @@
 use ajax_core::{
     models::Annotation,
     output::{RepoSummary, TaskCard},
-    ui_state::UiState,
+    ui_state::TaskStatus,
 };
 use ratatui::{
     layout::{Constraint, Layout, Rect},
@@ -73,17 +73,31 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
     render_status_bar(frame, app, chunks[idx]);
 }
 
-pub(crate) fn ui_state_bucket(state: UiState) -> StatusBucket {
-    match state {
-        UiState::Blocked => StatusBucket::NeedsYou,
-        UiState::NeedsInput => StatusBucket::NeedsYou,
-        UiState::Running => StatusBucket::Active,
-        UiState::ReviewReady => StatusBucket::NeedsYou,
-        UiState::SafeMerge => StatusBucket::Done,
-        UiState::Cleanable => StatusBucket::Done,
-        UiState::Failed => StatusBucket::Stuck,
-        UiState::Idle => StatusBucket::Idle,
-        UiState::Archived => StatusBucket::Idle,
+pub(crate) fn task_status_text(card: &TaskCard) -> String {
+    let status = match card.status {
+        TaskStatus::Running => "Running",
+        TaskStatus::Waiting => "Waiting",
+        TaskStatus::Idle => "Idle",
+        TaskStatus::Error => "Error",
+    };
+    card.status_explanation
+        .as_deref()
+        .map(|explanation| format!("{status} - {explanation}"))
+        .unwrap_or_else(|| status.to_string())
+}
+
+pub(crate) fn task_card_bucket(card: &TaskCard) -> StatusBucket {
+    match card.status {
+        TaskStatus::Running => StatusBucket::Active,
+        TaskStatus::Waiting => StatusBucket::NeedsYou,
+        TaskStatus::Error => StatusBucket::Stuck,
+        TaskStatus::Idle => match card.lifecycle {
+            ajax_core::models::LifecycleStatus::Merged
+            | ajax_core::models::LifecycleStatus::Cleanable
+            | ajax_core::models::LifecycleStatus::Removing
+            | ajax_core::models::LifecycleStatus::Removed => StatusBucket::Done,
+            _ => StatusBucket::Idle,
+        },
     }
 }
 
@@ -199,7 +213,7 @@ pub(crate) fn render_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 pub(crate) fn task_glyph(card: &TaskCard) -> Span<'static> {
-    let bucket = ui_state_bucket(card.ui_state);
+    let bucket = task_card_bucket(card);
     Span::styled(
         bucket_glyph(bucket),
         Style::default()
@@ -368,11 +382,11 @@ pub(crate) fn render_selectable(s: &SelectableKind, is_selected: bool) -> ListIt
                     Span::styled(
                         t.qualified_handle.clone(),
                         Style::default()
-                            .fg(bucket_color(ui_state_bucket(t.ui_state)))
+                            .fg(bucket_color(task_card_bucket(t)))
                             .add_modifier(bold),
                     ),
                     column_separator(),
-                    Span::styled(t.status_label.clone(), Style::default().fg(muted_text())),
+                    Span::styled(task_status_text(t), Style::default().fg(muted_text())),
                     column_separator(),
                     Span::styled(action_label, chrome.label_style),
                     Span::raw(" "),
@@ -531,7 +545,7 @@ fn expanded_card_for<'a>(
     let open = app.expanded_task.as_ref()?;
     let (task_id, row_reason) = match s {
         SelectableKind::Task(card) if &card.id == open => {
-            (&card.id, Some(card.status_label.clone()))
+            (&card.id, card.status_explanation.clone())
         }
         SelectableKind::Inbox(item) if &item.task_id == open => {
             (&item.task_id, Some(item.reason.clone()))

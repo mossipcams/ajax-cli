@@ -66,8 +66,11 @@ composition of:
   external substrates. Observation state distinguishes observed presence,
   observed absence, probe failure, stale evidence, and not-yet-observed facts.
 - Task projection — the disposable read model used by CLI, JSON output, and
-  Cockpit. It includes lifecycle, runtime health, live status, annotations, and
-  recommended operator actions.
+  Cockpit. It includes the canonical operator status, lifecycle, runtime health,
+  live status, annotations, and recommended operator actions. Status is exactly
+  `Running`, `Waiting`, `Idle`, or `Error`, with one optional presentation-ready
+  explanation; lifecycle and annotations remain separate typed inputs rather
+  than additional visible statuses.
 
 SQLite may cache substrate observations and projections so commands and Cockpit
 can render quickly. Cached substrate evidence must be treated as staleable
@@ -163,14 +166,17 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. Schema version 6 records
+SQLite is the fast read model for Ajax task state. Schema version 7 records
 expected runtime identity, last observed Git/tmux evidence, derived runtime
 health, observation source, observation time, probe error, the optional attention
-acknowledgment timestamp, and typed events. It also stores step receipts for
-Ajax-owned operation evidence. The acknowledgment timestamp uses nullable typed
-seconds/nanoseconds columns with strict pair validation, and `migrate_v5_to_v6`
-adds them; concurrent acknowledgment and live-status edits to the same task
-surface an explicit revision conflict rather than a silent overwrite. Git and tmux still
+acknowledgment timestamp, the reduced live-status observation timestamp, and
+typed events. It also stores step receipts for Ajax-owned operation evidence.
+Both timestamps use nullable typed seconds/nanoseconds columns with strict pair
+validation. `migrate_v5_to_v6` adds acknowledgment and runtime-observation
+fields; `migrate_v6_to_v7` adds reduced-live observation time and backfills it
+from `last_activity_at` only for rows that already contain live status.
+Concurrent acknowledgment and live-status edits to the same task surface an
+explicit revision conflict rather than a silent overwrite. Git and tmux still
 own live substrate reality; Ajax reconciles their observations into SQLite so
 Cockpit, command planning, and JSON output can read one coherent task record.
 Loading legacy rows normalizes workflow `Waiting` into an active lifecycle with
@@ -271,7 +277,8 @@ mutating operation persisted to disk.
 `live.rs` reduces observations into live-status classifications.
 
 `live_application.rs` applies reduced observations to task state, agent status,
-side flags, activity timestamps, and visible live status. The application path
+side flags, activity timestamps, visible live status, and the live evidence's
+own durable `observed_at` timestamp. The application path
 separates ordinary observations from trusted wrapper/supervisor observations so
 only the trusted path may advance lifecycle on process start or successful
 completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
@@ -284,27 +291,34 @@ permission dialogs and standalone prompts, Codex composer prompts), then explici
 failure/completion, then a passive/unknown fallback the reducer preserves.
 `classify_pane` remains the generic compatibility entry point.
 
-Opening a task persists an attention acknowledgment without changing lifecycle.
-`live_application::acknowledge_attention` records the acknowledgment time and, for
-a Claude task that is currently waiting for input or approval, clears the
-actionable waiting state (waiting live status, `AgentRuntimeStatus::Waiting`, and
-`SideFlag::NeedsInput`) without fabricating shell or process state. A Claude
-waiting hook at or before the acknowledgment is held idle and does not re-raise
-attention or trigger pane capture; Claude waiting evidence after the
-acknowledgment becomes actionable again. Codex waiting remains actionable despite
-acknowledgment while its hook is fresh, and falls through to agent-aware pane
-classification once the hook is stale. Running, failed, completed,
-missing-substrate, reviewable, and merged state is never erased merely because a
-task was opened.
+Opening a task persists an attention acknowledgment without changing lifecycle
+or deleting evidence. `live_application::acknowledge_attention` is agent-neutral:
+waiting or completion evidence is suppressed only when its durable
+`observed_at` is at or before the acknowledgment. Newer same-kind evidence is
+accepted and becomes visible normally. Acknowledgment never clears failures,
+missing substrate, flags, agent state, or live status, and it never fabricates
+shell/process state. Reviewable and mergeable lifecycle also remain intact so
+their valid Review or Ship capabilities survive acknowledgment.
 
 Agent-deck inspired this status model, but Ajax retains its own lifecycle,
 substrate, task-operation, and operator-projection boundaries.
 
 `ui_state::derive_operator_status` is the single operator-facing reduction over
-lifecycle, runtime health, freshness/probe errors, live status, and policy. CLI,
-Native Cockpit, Web Cockpit, annotations, and recommended actions consume its
-label and UI state. Compatibility JSON continues to include raw lifecycle and
-live fields alongside `status_label` and `runtime_observation_error`.
+lifecycle, runtime health, freshness/probe errors, live status, and
+acknowledgment. It emits only `Running`, `Waiting`, `Idle`, or `Error`, plus an
+optional explanation. Error evidence wins over running evidence, running wins
+over unacknowledged waiting/completion evidence, and otherwise the task is idle.
+Cleanup/terminal lifecycles (`Merged`, `Cleanable`, `Removing`, and hidden
+`Removed`) remain idle unless current error or running evidence overrides them.
+
+Lifecycle remains workflow authority. Annotations remain typed attention and
+diagnostic evidence. Operation eligibility and action policy remain capability
+authority. Cockpit inbox membership is derived from canonical `Waiting` and
+`Error` status, while Review, Ship, Drop, and remediation availability continue
+to follow lifecycle, operation eligibility, and policy. CLI and Native Cockpit
+consume the canonical pair directly. Compatibility CLI JSON may retain
+`status_label` as the compact canonical enum label and annotation-based
+`needs_attention`; neither field is derived from a second UI-state reducer.
 
 Core remains browser-agnostic. It may expose Cockpit projections, action policy,
 task-operation outcomes, runtime reconciliation, and typed output contracts that
@@ -517,7 +531,14 @@ feature needs a concrete external mechanism.
 
 Owns the browser Cockpit read experience. It builds browser DTOs from the core
 Cockpit projection, supports projection snapshot or stream delivery, and
-preserves the same task/action meaning as Native Cockpit.
+preserves the same task/action meaning as Native Cockpit. Cards and details share
+one status contract (`status`, `status_explanation`) and one ordered `actions`
+collection containing only browser-executable action metadata. Unsupported
+actions, legacy UI states, and action support-state records are absent. Raw live,
+lifecycle, pane, and runtime values may remain detail diagnostics, but browser
+JavaScript must not derive or override headline status from them. The browser may
+style the first returned action as prominent; it does not receive or invent a
+separate `primary_action` contract.
 
 ### `ajax-web::slices::operate`
 

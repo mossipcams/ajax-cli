@@ -1,172 +1,190 @@
-use crate::{
-    models::{
-        AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, SafetyClassification, SideFlag, Task,
-    },
-    policy::merge_safety,
-};
+use crate::models::{AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task};
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UiState {
-    Blocked,
-    NeedsInput,
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TaskStatus {
     Running,
-    ReviewReady,
-    SafeMerge,
-    Cleanable,
+    Waiting,
     Idle,
-    Failed,
-    Archived,
+    Error,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OperatorStatusKind {
-    Blocked,
-    NeedsInput,
-    Running,
-    ReviewReady,
-    SafeMerge,
-    Cleanable,
-    Idle,
-    Failed,
-    ObservationFailed,
-    Archived,
+impl TaskStatus {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Waiting => "waiting",
+            Self::Idle => "idle",
+            Self::Error => "error",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperatorStatus {
-    pub kind: OperatorStatusKind,
-    pub label: String,
-}
-
-impl OperatorStatus {
-    fn new(kind: OperatorStatusKind, label: impl Into<String>) -> Self {
-        Self {
-            kind,
-            label: label.into(),
-        }
-    }
-
-    pub const fn ui_state(&self) -> UiState {
-        match self.kind {
-            OperatorStatusKind::Blocked => UiState::Blocked,
-            OperatorStatusKind::NeedsInput => UiState::NeedsInput,
-            OperatorStatusKind::Running => UiState::Running,
-            OperatorStatusKind::ReviewReady => UiState::ReviewReady,
-            OperatorStatusKind::SafeMerge => UiState::SafeMerge,
-            OperatorStatusKind::Cleanable => UiState::Cleanable,
-            OperatorStatusKind::Idle => UiState::Idle,
-            OperatorStatusKind::Failed | OperatorStatusKind::ObservationFailed => UiState::Failed,
-            OperatorStatusKind::Archived => UiState::Archived,
-        }
-    }
-}
-
-impl UiState {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Blocked => "blocked",
-            Self::NeedsInput => "needs input",
-            Self::Running => "running",
-            Self::ReviewReady => "review ready",
-            Self::SafeMerge => "safe merge",
-            Self::Cleanable => "cleanable",
-            Self::Idle => "idle",
-            Self::Failed => "failed",
-            Self::Archived => "archived",
-        }
-    }
-}
-
-pub fn derive_ui_state(task: &Task) -> UiState {
-    derive_operator_status(task).ui_state()
+    pub status: TaskStatus,
+    pub explanation: Option<String>,
 }
 
 pub fn derive_operator_status(task: &Task) -> OperatorStatus {
-    if task.lifecycle_status == LifecycleStatus::Removed {
-        return OperatorStatus::new(OperatorStatusKind::Archived, "archived");
-    }
-    if task.lifecycle_status == LifecycleStatus::Removing {
-        return OperatorStatus::new(OperatorStatusKind::Cleanable, "removing");
-    }
-    if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
-        return OperatorStatus::new(OperatorStatusKind::Failed, "teardown incomplete");
-    }
-    if let Some(error) = task.runtime_projection.observation_error.as_deref() {
-        return OperatorStatus::new(
-            OperatorStatusKind::ObservationFailed,
-            format!("status unavailable: {error}"),
-        );
-    }
-    if let Some(label) = missing_substrate_label(task) {
-        return OperatorStatus::new(OperatorStatusKind::Failed, label);
-    }
-    if is_blocked(task) {
-        return OperatorStatus::new(
-            OperatorStatusKind::Blocked,
-            live_summary(task).unwrap_or_else(|| "blocked".to_string()),
-        );
-    }
-    if needs_input(task) {
-        return OperatorStatus::new(
-            OperatorStatusKind::NeedsInput,
-            live_summary(task).unwrap_or_else(|| "needs input".to_string()),
-        );
-    }
-    if is_failed(task) {
-        return OperatorStatus::new(
-            OperatorStatusKind::Failed,
-            live_summary(task).unwrap_or_else(|| "failed".to_string()),
-        );
-    }
-    match task.lifecycle_status {
-        LifecycleStatus::Error => OperatorStatus::new(OperatorStatusKind::Failed, "failed"),
-        LifecycleStatus::TeardownIncomplete => {
-            OperatorStatus::new(OperatorStatusKind::Failed, "teardown incomplete")
-        }
-        LifecycleStatus::Mergeable => {
-            OperatorStatus::new(OperatorStatusKind::SafeMerge, "safe merge")
-        }
-        LifecycleStatus::Removing => OperatorStatus::new(OperatorStatusKind::Cleanable, "removing"),
-        LifecycleStatus::Cleanable => {
-            OperatorStatus::new(OperatorStatusKind::Cleanable, "cleanable")
-        }
-        LifecycleStatus::Merged => {
-            if is_clean_for_cleanup(task) {
-                OperatorStatus::new(OperatorStatusKind::Cleanable, "cleanable")
-            } else {
-                OperatorStatus::new(OperatorStatusKind::Idle, "merged")
-            }
-        }
-        LifecycleStatus::Reviewable => {
-            if merge_safety(task).classification == SafetyClassification::Safe {
-                OperatorStatus::new(OperatorStatusKind::SafeMerge, "safe merge")
-            } else {
-                OperatorStatus::new(OperatorStatusKind::ReviewReady, "review ready")
-            }
-        }
-        LifecycleStatus::Created
-        | LifecycleStatus::Provisioning
-        | LifecycleStatus::Active
-        | LifecycleStatus::Waiting
-        | LifecycleStatus::Orphaned => {
-            if is_running(task) {
-                OperatorStatus::new(
-                    OperatorStatusKind::Running,
-                    live_summary(task).unwrap_or_else(|| "running".to_string()),
-                )
-            } else {
-                OperatorStatus::new(OperatorStatusKind::Idle, "idle")
-            }
-        }
-        LifecycleStatus::Removed => OperatorStatus::new(OperatorStatusKind::Archived, "archived"),
+    let (status, explanation) = derive_task_status(task);
+    OperatorStatus {
+        status,
+        explanation,
     }
 }
 
-fn live_summary(task: &Task) -> Option<String> {
-    task.live_status
-        .as_ref()
-        .filter(|live| live.kind != LiveStatusKind::Unknown)
-        .map(|live| live.summary.clone())
+fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
+    if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
+        return canonical(TaskStatus::Error, "Teardown incomplete");
+    }
+    if task.runtime_projection.observation_error.is_some() {
+        return canonical(TaskStatus::Error, "Status unavailable");
+    }
+    if let Some(explanation) = canonical_missing_substrate_explanation(task) {
+        return canonical(TaskStatus::Error, explanation);
+    }
+    if let Some(live) = task.live_status.as_ref() {
+        if let Some(explanation) = canonical_error_explanation(live.kind) {
+            return canonical(TaskStatus::Error, explanation);
+        }
+    }
+    if task.has_side_flag(SideFlag::TestsFailed) {
+        return canonical(TaskStatus::Error, "Tests failed");
+    }
+    if task.has_side_flag(SideFlag::Conflicted) {
+        return canonical(TaskStatus::Error, "Merge conflict");
+    }
+    if task.has_side_flag(SideFlag::AgentDead) || task.agent_status == AgentRuntimeStatus::Dead {
+        return canonical(TaskStatus::Error, "Agent unavailable");
+    }
+    if task.lifecycle_status == LifecycleStatus::Error {
+        return canonical(TaskStatus::Error, "Task failed");
+    }
+
+    if let Some(live) = task.live_status.as_ref() {
+        if let Some(explanation) = canonical_running_explanation(live.kind) {
+            return canonical(TaskStatus::Running, explanation);
+        }
+    }
+    if task.agent_status == AgentRuntimeStatus::Running
+        || task.has_side_flag(SideFlag::AgentRunning)
+    {
+        return canonical(TaskStatus::Running, "Agent working");
+    }
+
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Merged
+            | LifecycleStatus::Cleanable
+            | LifecycleStatus::Removing
+            | LifecycleStatus::Removed
+    ) {
+        return (TaskStatus::Idle, None);
+    }
+
+    let live_acknowledged = live_evidence_is_acknowledged(task);
+    if !live_acknowledged {
+        if let Some(live) = task.live_status.as_ref() {
+            if let Some(explanation) = canonical_waiting_explanation(live.kind) {
+                return canonical(TaskStatus::Waiting, explanation);
+            }
+        }
+    }
+
+    if matches!(
+        task.lifecycle_status,
+        LifecycleStatus::Reviewable | LifecycleStatus::Mergeable
+    ) && !workflow_boundary_is_acknowledged(task)
+    {
+        return canonical(TaskStatus::Waiting, "Ready for review");
+    }
+    if !live_acknowledged
+        && (task.has_side_flag(SideFlag::NeedsInput)
+            || task.agent_status == AgentRuntimeStatus::Waiting)
+    {
+        return canonical(TaskStatus::Waiting, "Waiting for input");
+    }
+    if !live_acknowledged && task.agent_status == AgentRuntimeStatus::Blocked {
+        return canonical(TaskStatus::Error, "Agent blocked");
+    }
+    if !live_acknowledged && task.agent_status == AgentRuntimeStatus::Done {
+        return canonical(TaskStatus::Waiting, "Response ready");
+    }
+
+    (TaskStatus::Idle, None)
+}
+
+fn canonical(status: TaskStatus, explanation: impl Into<String>) -> (TaskStatus, Option<String>) {
+    (status, Some(explanation.into()))
+}
+
+fn live_evidence_is_acknowledged(task: &Task) -> bool {
+    let Some(live) = task.live_status.as_ref() else {
+        return false;
+    };
+    if !matches!(
+        live.kind,
+        LiveStatusKind::WaitingForApproval
+            | LiveStatusKind::WaitingForInput
+            | LiveStatusKind::AuthRequired
+            | LiveStatusKind::RateLimited
+            | LiveStatusKind::ContextLimit
+            | LiveStatusKind::Done
+    ) {
+        return false;
+    }
+    matches!(
+        (task.live_status_observed_at, task.attention_acknowledged_at),
+        (Some(observed_at), Some(acknowledged_at)) if observed_at <= acknowledged_at
+    )
+}
+
+fn workflow_boundary_is_acknowledged(task: &Task) -> bool {
+    task.attention_acknowledged_at
+        .is_some_and(|acknowledged_at| acknowledged_at >= task.last_activity_at)
+}
+
+fn canonical_running_explanation(kind: LiveStatusKind) -> Option<&'static str> {
+    match kind {
+        LiveStatusKind::AgentRunning => Some("Agent working"),
+        LiveStatusKind::CommandRunning => Some("Running command"),
+        LiveStatusKind::TestsRunning => Some("Running tests"),
+        _ => None,
+    }
+}
+
+fn canonical_waiting_explanation(kind: LiveStatusKind) -> Option<&'static str> {
+    match kind {
+        LiveStatusKind::WaitingForApproval => Some("Waiting for approval"),
+        LiveStatusKind::WaitingForInput => Some("Waiting for input"),
+        LiveStatusKind::AuthRequired => Some("Authentication required"),
+        LiveStatusKind::RateLimited => Some("Rate limited"),
+        LiveStatusKind::ContextLimit => Some("Context limit reached"),
+        LiveStatusKind::Done => Some("Response ready"),
+        _ => None,
+    }
+}
+
+fn canonical_error_explanation(kind: LiveStatusKind) -> Option<&'static str> {
+    match kind {
+        LiveStatusKind::CiFailed => Some("CI failed"),
+        LiveStatusKind::MergeConflict => Some("Merge conflict"),
+        LiveStatusKind::CommandFailed => Some("Command failed"),
+        LiveStatusKind::Blocked => Some("Agent blocked"),
+        _ => None,
+    }
+}
+
+fn canonical_missing_substrate_explanation(task: &Task) -> Option<&'static str> {
+    missing_substrate_label(task).map(|label| match label {
+        "worktree missing" => "Worktree missing",
+        "branch missing" => "Branch missing",
+        "tmux session missing" => "Tmux session missing",
+        "task window missing" => "Task window missing",
+        _ => "Runtime resource missing",
+    })
 }
 
 fn missing_substrate_label(task: &Task) -> Option<&'static str> {
@@ -195,99 +213,9 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
     None
 }
 
-fn is_blocked(task: &Task) -> bool {
-    if task.has_side_flag(SideFlag::TestsFailed) || task.has_side_flag(SideFlag::Conflicted) {
-        return true;
-    }
-    task.live_status
-        .as_ref()
-        .is_some_and(|live| is_blocking_live_status(live.kind))
-}
-
-fn is_blocking_live_status(kind: LiveStatusKind) -> bool {
-    matches!(
-        kind,
-        LiveStatusKind::MergeConflict | LiveStatusKind::CiFailed
-    )
-}
-
-fn needs_input(task: &Task) -> bool {
-    if task.has_side_flag(SideFlag::NeedsInput) {
-        return true;
-    }
-    if matches!(
-        task.agent_status,
-        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
-    ) {
-        return true;
-    }
-    task.live_status
-        .as_ref()
-        .is_some_and(|live| is_input_live_status(live.kind))
-}
-
-fn is_input_live_status(kind: LiveStatusKind) -> bool {
-    matches!(
-        kind,
-        LiveStatusKind::WaitingForApproval
-            | LiveStatusKind::WaitingForInput
-            | LiveStatusKind::AuthRequired
-            | LiveStatusKind::RateLimited
-            | LiveStatusKind::ContextLimit
-    )
-}
-
-fn is_failed(task: &Task) -> bool {
-    if task.has_missing_substrate() || task.has_side_flag(SideFlag::AgentDead) {
-        return true;
-    }
-    if task.agent_status == AgentRuntimeStatus::Dead {
-        return true;
-    }
-    task.live_status
-        .as_ref()
-        .is_some_and(|live| is_failed_live_status(live.kind))
-}
-
-fn is_failed_live_status(kind: LiveStatusKind) -> bool {
-    matches!(
-        kind,
-        LiveStatusKind::CommandFailed | LiveStatusKind::Blocked
-    )
-}
-
-fn is_running(task: &Task) -> bool {
-    if task.agent_status == AgentRuntimeStatus::Running {
-        return true;
-    }
-    if task.has_side_flag(SideFlag::AgentRunning) {
-        return true;
-    }
-    task.live_status.as_ref().is_some_and(|live| {
-        matches!(
-            live.kind,
-            LiveStatusKind::AgentRunning
-                | LiveStatusKind::CommandRunning
-                | LiveStatusKind::TestsRunning
-        )
-    })
-}
-
-pub(crate) fn is_clean_for_cleanup(task: &Task) -> bool {
-    if task.has_side_flag(SideFlag::Dirty)
-        || task.has_side_flag(SideFlag::Conflicted)
-        || task.has_side_flag(SideFlag::Unpushed)
-    {
-        return false;
-    }
-    task.git_status.as_ref().is_some_and(|git| {
-        !git.dirty && !git.conflicted && !git.has_unpushed_work() && git.untracked_files == 0
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{derive_ui_state, UiState};
+    use super::{derive_operator_status, TaskStatus};
     use crate::{
         lifecycle::{
             mark_active, mark_cleanable, mark_error, mark_mergeable, mark_merged, mark_removed,
@@ -324,9 +252,10 @@ mod tests {
     #[test]
     fn acknowledged_claude_waiting_projects_idle() {
         let mut task = claude_active_task();
-        crate::live::apply_observation(
+        crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
         );
         crate::live::acknowledge_attention(
             &mut task,
@@ -335,8 +264,8 @@ mod tests {
 
         let status = super::derive_operator_status(&task);
 
-        assert_eq!(status.kind, super::OperatorStatusKind::Idle);
-        assert_eq!(status.label, "idle");
+        assert_eq!(status.status, TaskStatus::Idle);
+        assert_eq!(status.explanation, None);
         assert_eq!(
             task.lifecycle_status,
             crate::models::LifecycleStatus::Active
@@ -346,24 +275,26 @@ mod tests {
     #[test]
     fn new_claude_waiting_after_acknowledgment_projects_needs_input() {
         let mut task = claude_active_task();
-        crate::live::apply_observation(
+        crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
         );
         crate::live::acknowledge_attention(
             &mut task,
             std::time::UNIX_EPOCH + std::time::Duration::from_secs(500),
         );
         // Waiting evidence newer than the acknowledgment.
-        crate::live::apply_observation(
+        crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(600),
         );
 
         let status = super::derive_operator_status(&task);
 
-        assert_eq!(status.kind, super::OperatorStatusKind::NeedsInput);
-        assert_eq!(status.label, "waiting for input");
+        assert_eq!(status.status, TaskStatus::Waiting);
+        assert_eq!(status.explanation.as_deref(), Some("Waiting for input"));
     }
 
     #[test]
@@ -382,7 +313,7 @@ mod tests {
             let after = super::derive_operator_status(&task);
 
             assert_eq!(after, before, "{status:?}");
-            assert_ne!(after.kind, super::OperatorStatusKind::Idle, "{status:?}");
+            assert_ne!(after.status, TaskStatus::Idle, "{status:?}");
         }
     }
 
@@ -412,7 +343,7 @@ mod tests {
         task.add_side_flag(SideFlag::NeedsInput);
         task.add_side_flag(SideFlag::Dirty);
 
-        assert_eq!(derive_ui_state(&task), UiState::Archived);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
     }
 
     #[test]
@@ -421,7 +352,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.add_side_flag(SideFlag::NeedsInput);
 
-        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
@@ -430,7 +361,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.add_side_flag(SideFlag::NeedsInput);
 
-        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
@@ -440,7 +371,7 @@ mod tests {
         mark_reviewable(&mut task).unwrap();
         task.add_side_flag(SideFlag::Conflicted);
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
     }
 
     #[test]
@@ -449,7 +380,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.agent_status = AgentRuntimeStatus::Waiting;
 
-        assert_eq!(derive_ui_state(&task), UiState::NeedsInput);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
@@ -461,7 +392,7 @@ mod tests {
             "conflict",
         ));
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
     }
 
     #[test]
@@ -470,7 +401,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.mark_resource_missing(SideFlag::WorktreeMissing);
 
-        assert_eq!(derive_ui_state(&task), UiState::Failed);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
     }
 
     #[test]
@@ -482,7 +413,7 @@ mod tests {
             "tmux server unavailable",
         );
 
-        assert_eq!(derive_ui_state(&task), UiState::Failed);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
         assert_eq!(
             task.lifecycle_status,
             crate::models::LifecycleStatus::Active
@@ -500,35 +431,46 @@ mod tests {
             task.live_status = Some(LiveObservation::new(live_status, "waiting"));
 
             assert_eq!(
-                derive_ui_state(&task),
-                UiState::NeedsInput,
+                derive_operator_status(&task).status,
+                TaskStatus::Waiting,
                 "{live_status:?}"
             );
         }
     }
 
     #[test]
-    fn only_failed_ci_and_merge_conflicts_are_blocked() {
-        for live_status in [LiveStatusKind::CiFailed, LiveStatusKind::MergeConflict] {
+    fn failure_live_statuses_project_error_and_operator_boundaries_project_waiting() {
+        for live_status in [
+            LiveStatusKind::CiFailed,
+            LiveStatusKind::MergeConflict,
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::Blocked,
+        ] {
             let mut task = base_task();
             mark_active(&mut task).unwrap();
             task.live_status = Some(LiveObservation::new(live_status, "blocked"));
 
-            assert_eq!(derive_ui_state(&task), UiState::Blocked, "{live_status:?}");
+            assert_eq!(
+                derive_operator_status(&task).status,
+                TaskStatus::Error,
+                "{live_status:?}"
+            );
         }
 
         for live_status in [
             LiveStatusKind::AuthRequired,
             LiveStatusKind::RateLimited,
             LiveStatusKind::ContextLimit,
-            LiveStatusKind::CommandFailed,
-            LiveStatusKind::Blocked,
         ] {
             let mut task = base_task();
             mark_active(&mut task).unwrap();
             task.live_status = Some(LiveObservation::new(live_status, "attention"));
 
-            assert_ne!(derive_ui_state(&task), UiState::Blocked, "{live_status:?}");
+            assert_eq!(
+                derive_operator_status(&task).status,
+                TaskStatus::Waiting,
+                "{live_status:?}"
+            );
         }
     }
 
@@ -537,7 +479,7 @@ mod tests {
         let mut task = base_task();
         mark_error(&mut task).unwrap();
 
-        assert_eq!(derive_ui_state(&task), UiState::Failed);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
     }
 
     #[test]
@@ -547,7 +489,7 @@ mod tests {
         mark_reviewable(&mut task).unwrap();
         mark_mergeable(&mut task).unwrap();
 
-        assert_eq!(derive_ui_state(&task), UiState::SafeMerge);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
@@ -558,7 +500,7 @@ mod tests {
         mark_mergeable(&mut task).unwrap();
         task.add_side_flag(SideFlag::Conflicted);
 
-        assert_eq!(derive_ui_state(&task), UiState::Blocked);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
     }
 
     #[test]
@@ -569,7 +511,7 @@ mod tests {
         mark_merged(&mut task).unwrap();
         mark_cleanable(&mut task).unwrap();
 
-        assert_eq!(derive_ui_state(&task), UiState::Cleanable);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
     }
 
     #[test]
@@ -580,7 +522,7 @@ mod tests {
         mark_merged(&mut task).unwrap();
         task.git_status = Some(clean_git_status());
 
-        assert_eq!(derive_ui_state(&task), UiState::Cleanable);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
     }
 
     #[test]
@@ -594,7 +536,7 @@ mod tests {
         task.git_status = Some(git);
         task.add_side_flag(SideFlag::Dirty);
 
-        assert_eq!(derive_ui_state(&task), UiState::Idle);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
     }
 
     #[test]
@@ -606,7 +548,7 @@ mod tests {
         git.merged = false;
         task.git_status = Some(git);
 
-        assert_eq!(derive_ui_state(&task), UiState::SafeMerge);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
@@ -615,18 +557,18 @@ mod tests {
         mark_active(&mut task).unwrap();
         mark_reviewable(&mut task).unwrap();
 
-        assert_eq!(derive_ui_state(&task), UiState::ReviewReady);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Waiting);
     }
 
     #[test]
-    fn reviewable_lifecycle_with_agent_running_stays_review_ready() {
+    fn running_evidence_outranks_reviewable_lifecycle() {
         let mut task = base_task();
         mark_active(&mut task).unwrap();
         mark_reviewable(&mut task).unwrap();
         task.agent_status = AgentRuntimeStatus::Running;
         task.add_side_flag(SideFlag::AgentRunning);
 
-        assert_eq!(derive_ui_state(&task), UiState::ReviewReady);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Running);
     }
 
     #[test]
@@ -636,7 +578,7 @@ mod tests {
         task.agent_status = AgentRuntimeStatus::Running;
         task.add_side_flag(SideFlag::AgentRunning);
 
-        assert_eq!(derive_ui_state(&task), UiState::Running);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Running);
     }
 
     #[test]
@@ -645,7 +587,7 @@ mod tests {
         mark_active(&mut task).unwrap();
         task.live_status = Some(LiveObservation::new(LiveStatusKind::TestsRunning, "tests"));
 
-        assert_eq!(derive_ui_state(&task), UiState::Running);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Running);
     }
 
     #[test]
@@ -653,22 +595,117 @@ mod tests {
         let mut task = base_task();
         mark_active(&mut task).unwrap();
 
-        assert_eq!(derive_ui_state(&task), UiState::Idle);
+        assert_eq!(derive_operator_status(&task).status, TaskStatus::Idle);
+    }
+
+    #[rstest::rstest]
+    #[case(
+        LiveStatusKind::AgentRunning,
+        TaskStatus::Running,
+        Some("Agent working")
+    )]
+    #[case(
+        LiveStatusKind::CommandRunning,
+        TaskStatus::Running,
+        Some("Running command")
+    )]
+    #[case(
+        LiveStatusKind::TestsRunning,
+        TaskStatus::Running,
+        Some("Running tests")
+    )]
+    #[case(
+        LiveStatusKind::WaitingForApproval,
+        TaskStatus::Waiting,
+        Some("Waiting for approval")
+    )]
+    #[case(
+        LiveStatusKind::WaitingForInput,
+        TaskStatus::Waiting,
+        Some("Waiting for input")
+    )]
+    #[case(LiveStatusKind::Done, TaskStatus::Waiting, Some("Response ready"))]
+    #[case(
+        LiveStatusKind::CommandFailed,
+        TaskStatus::Error,
+        Some("Command failed")
+    )]
+    #[case(LiveStatusKind::CiFailed, TaskStatus::Error, Some("CI failed"))]
+    #[case(
+        LiveStatusKind::MergeConflict,
+        TaskStatus::Error,
+        Some("Merge conflict")
+    )]
+    fn canonical_status_maps_live_evidence(
+        #[case] live_kind: LiveStatusKind,
+        #[case] expected_status: TaskStatus,
+        #[case] expected_explanation: Option<&str>,
+    ) {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(live_kind, "raw summary"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(100),
+        );
+
+        let status = super::derive_operator_status(&task);
+
+        assert_eq!(status.status, expected_status);
+        assert_eq!(status.explanation.as_deref(), expected_explanation);
     }
 
     #[test]
-    fn ui_state_labels_are_stable_and_unique() {
+    fn acknowledged_waiting_evidence_projects_idle_without_deleting_evidence() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        let observed_at = std::time::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+            observed_at,
+        );
+        crate::live::acknowledge_attention(
+            &mut task,
+            observed_at + std::time::Duration::from_secs(1),
+        );
+
+        let status = super::derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Idle);
+        assert_eq!(status.explanation, None);
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn reviewable_lifecycle_is_waiting_until_acknowledged() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+
+        let before = super::derive_operator_status(&task);
+        assert_eq!(before.status, TaskStatus::Waiting);
+        assert_eq!(before.explanation.as_deref(), Some("Ready for review"));
+
+        let acknowledged_at = task.last_activity_at + std::time::Duration::from_secs(1);
+        crate::live::acknowledge_attention(&mut task, acknowledged_at);
+        let after = super::derive_operator_status(&task);
+        assert_eq!(after.status, TaskStatus::Idle);
+        assert_eq!(after.explanation, None);
+    }
+
+    #[test]
+    fn canonical_status_labels_are_stable_and_unique() {
         let labels = [
-            UiState::Blocked,
-            UiState::Running,
-            UiState::ReviewReady,
-            UiState::SafeMerge,
-            UiState::Cleanable,
-            UiState::Idle,
-            UiState::Failed,
-            UiState::Archived,
+            TaskStatus::Running,
+            TaskStatus::Waiting,
+            TaskStatus::Idle,
+            TaskStatus::Error,
         ]
-        .map(UiState::as_str);
+        .map(TaskStatus::as_str);
 
         let mut sorted = labels.to_vec();
         sorted.sort();

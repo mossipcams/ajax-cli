@@ -4,7 +4,8 @@ use crate::{
         SideFlag, Task,
     },
     operation::{task_operation_eligibility, TaskOperation},
-    ui_state::{derive_operator_status, derive_ui_state, OperatorStatusKind, UiState},
+    policy::merge_safety,
+    ui_state::derive_operator_status,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,8 +29,10 @@ pub fn operator_action(task: &Task) -> OperatorActionPlan {
     let primary_annotation = annotations
         .iter()
         .min_by_key(|annotation| annotation.severity);
+    let available_actions = available_operator_actions(task);
     let action = primary_annotation
         .map(|annotation| annotation.suggests)
+        .filter(|action| available_actions.contains(action))
         .unwrap_or_else(|| fallback_operator_action(task));
     let reason = primary_annotation
         .map(annotation_reason)
@@ -38,7 +41,7 @@ pub fn operator_action(task: &Task) -> OperatorActionPlan {
     OperatorActionPlan {
         action,
         reason,
-        available_actions: available_operator_actions(task),
+        available_actions,
     }
 }
 
@@ -117,32 +120,49 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
 }
 
 fn fallback_operator_action(task: &Task) -> OperatorAction {
-    if derive_operator_status(task).kind == OperatorStatusKind::ObservationFailed {
+    if task.runtime_projection.observation_error.is_some() {
         return OperatorAction::Repair;
     }
-    match derive_ui_state(task) {
-        UiState::SafeMerge => OperatorAction::Ship,
-        UiState::Cleanable | UiState::Archived => OperatorAction::Drop,
-        UiState::ReviewReady => OperatorAction::Review,
-        UiState::Blocked
-        | UiState::NeedsInput
-        | UiState::Running
-        | UiState::Idle
-        | UiState::Failed => OperatorAction::Resume,
+    match task.lifecycle_status {
+        LifecycleStatus::Mergeable => OperatorAction::Ship,
+        LifecycleStatus::Reviewable
+            if merge_safety(task).classification == crate::models::SafetyClassification::Safe =>
+        {
+            OperatorAction::Ship
+        }
+        LifecycleStatus::Reviewable => OperatorAction::Review,
+        LifecycleStatus::Cleanable | LifecycleStatus::Removing | LifecycleStatus::Removed => {
+            OperatorAction::Drop
+        }
+        LifecycleStatus::Merged
+            if task_operation_eligibility(task, TaskOperation::Clean).is_allowed()
+                || task_operation_eligibility(task, TaskOperation::Remove).is_allowed() =>
+        {
+            OperatorAction::Drop
+        }
+        _ => OperatorAction::Resume,
     }
 }
 
 fn fallback_operator_reason(task: &Task) -> &'static str {
-    match derive_ui_state(task) {
-        UiState::Blocked => primary_blocker_reason(task).unwrap_or("resolve_blocker"),
-        UiState::NeedsInput => "needs_input",
-        UiState::Running => "monitor",
-        UiState::ReviewReady => "review",
-        UiState::SafeMerge => "ship",
-        UiState::Cleanable => "drop",
-        UiState::Idle => "resume",
-        UiState::Failed => "repair",
-        UiState::Archived => "drop",
+    if task.runtime_projection.observation_error.is_some() {
+        return "repair";
+    }
+    match fallback_operator_action(task) {
+        OperatorAction::Ship => "ship",
+        OperatorAction::Review => "review",
+        OperatorAction::Drop => "drop",
+        OperatorAction::Repair => primary_blocker_reason(task).unwrap_or("repair"),
+        OperatorAction::Resume | OperatorAction::Start => {
+            match derive_operator_status(task).status {
+                crate::ui_state::TaskStatus::Running => "monitor",
+                crate::ui_state::TaskStatus::Waiting => "needs_input",
+                crate::ui_state::TaskStatus::Error => {
+                    primary_blocker_reason(task).unwrap_or("resolve_blocker")
+                }
+                crate::ui_state::TaskStatus::Idle => "resume",
+            }
+        }
     }
 }
 
@@ -155,13 +175,12 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         return vec![OperatorAction::Repair];
     }
 
-    let mut actions = if task.has_missing_substrate()
-        || derive_operator_status(task).kind == OperatorStatusKind::ObservationFailed
-    {
-        vec![OperatorAction::Repair]
-    } else {
-        Vec::new()
-    };
+    let mut actions =
+        if task.has_missing_substrate() || task.runtime_projection.observation_error.is_some() {
+            vec![OperatorAction::Repair]
+        } else {
+            Vec::new()
+        };
     actions.extend(
         [
             (TaskOperation::Open, OperatorAction::Resume),

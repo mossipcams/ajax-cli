@@ -556,7 +556,7 @@ mod tests {
 
         let annotations = crate::attention::annotate(&task);
         assert!(annotations.iter().any(|annotation| {
-            annotation.kind == crate::models::AnnotationKind::NeedsMe
+            annotation.kind == crate::models::AnnotationKind::Broken
                 && annotation.evidence
                     == crate::models::Evidence::LiveStatus(LiveStatusKind::CommandFailed)
         }));

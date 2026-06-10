@@ -22,10 +22,11 @@ use cockpit_state::{AppView, SelectableKind, Severity};
 #[cfg(test)]
 use input::{handle_action_result, handle_cockpit_event, EventLoopAction};
 pub(crate) use layout::{feed_screen_rows, feed_top_row, selectable_row_layout};
+use rendering::task_status_text;
 #[cfg(test)]
 use rendering::{
     action_glyph, bucket_color, bucket_glyph, priority_accent, project_subtitle, render_ui,
-    task_glyph, ui_state_bucket, StatusBucket,
+    task_glyph, StatusBucket,
 };
 pub use runtime::{
     run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
@@ -48,7 +49,9 @@ pub fn render_cockpit(repos: &ReposResponse, cards: &[TaskCard], inbox: &InboxRe
         lines.extend(cards.iter().map(|card| {
             format!(
                 "{}\t{}\t{}",
-                card.qualified_handle, card.status_label, card.title
+                card.qualified_handle,
+                task_status_text(card),
+                card.title
             )
         }));
     }
@@ -154,8 +157,8 @@ mod tests {
     use super::{
         action_glyph, bucket_color, bucket_glyph, feed_top_row, handle_cockpit_event,
         priority_accent, project_subtitle, render_cockpit, render_ui, selectable_row_layout,
-        task_glyph, ui_state_bucket, ActionOutcome, App, AppView, CockpitEventHandler,
-        CockpitSnapshot, EventLoopAction, PendingAction, SelectableKind, StatusBucket,
+        task_glyph, ActionOutcome, App, AppView, CockpitEventHandler, CockpitSnapshot,
+        EventLoopAction, PendingAction, SelectableKind, StatusBucket,
     };
     use ajax_core::{
         models::{
@@ -163,7 +166,7 @@ mod tests {
             OperatorAction, TaskId,
         },
         output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
-        ui_state::UiState,
+        ui_state::TaskStatus,
     };
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MouseButton,
@@ -287,21 +290,20 @@ mod tests {
         id: &str,
         handle: &str,
         title: &str,
-        ui_state: UiState,
+        status: TaskStatus,
         lifecycle: LifecycleStatus,
     ) -> TaskCard {
         TaskCard {
             id: TaskId::new(id),
             qualified_handle: handle.to_string(),
             title: title.to_string(),
-            ui_state,
-            status_label: ui_state.as_str().to_string(),
+            status,
+            status_explanation: Some(status.as_str().to_string()),
             lifecycle,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
             remediations: Vec::new(),
-            live_summary: None,
         }
     }
 
@@ -310,7 +312,7 @@ mod tests {
             "task-1",
             "web/fix-login",
             "Fix login",
-            UiState::Blocked,
+            TaskStatus::Waiting,
             LifecycleStatus::Active,
         )]
     }
@@ -322,7 +324,7 @@ mod tests {
                     &format!("task-{idx}"),
                     &format!("web/task-{idx}"),
                     &format!("Task {idx}"),
-                    UiState::Idle,
+                    TaskStatus::Idle,
                     LifecycleStatus::Active,
                 )
             })
@@ -438,20 +440,6 @@ mod tests {
     fn status_buckets_have_stable_glyphs(#[case] bucket: StatusBucket, #[case] glyph: &str) {
         assert_eq!(bucket_glyph(bucket), glyph);
         assert_eq!(crate::rendering::bucket_glyph(bucket), glyph);
-    }
-
-    #[rstest]
-    #[case(UiState::Blocked, StatusBucket::NeedsYou)]
-    #[case(UiState::NeedsInput, StatusBucket::NeedsYou)]
-    #[case(UiState::Running, StatusBucket::Active)]
-    #[case(UiState::ReviewReady, StatusBucket::NeedsYou)]
-    #[case(UiState::SafeMerge, StatusBucket::Done)]
-    #[case(UiState::Cleanable, StatusBucket::Done)]
-    #[case(UiState::Failed, StatusBucket::Stuck)]
-    #[case(UiState::Idle, StatusBucket::Idle)]
-    #[case(UiState::Archived, StatusBucket::Idle)]
-    fn ui_states_map_to_status_buckets(#[case] state: UiState, #[case] bucket: StatusBucket) {
-        assert_eq!(ui_state_bucket(state), bucket);
     }
 
     #[test]
@@ -717,8 +705,8 @@ mod tests {
     #[test]
     fn task_rows_render_live_status_when_present() {
         let mut tasks = sample_tasks();
-        tasks[0].live_summary = Some("waiting for approval".to_string());
-        tasks[0].status_label = "waiting for approval".to_string();
+        tasks[0].status = ajax_core::ui_state::TaskStatus::Waiting;
+        tasks[0].status_explanation = Some("waiting for approval".to_string());
         let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
         app.activate_selected();
 
@@ -732,14 +720,17 @@ mod tests {
     #[test]
     fn waiting_for_input_task_attention_uses_needs_you_chrome() {
         let mut tasks = sample_tasks();
-        tasks[0].ui_state = UiState::Blocked;
+        tasks[0].status = ajax_core::ui_state::TaskStatus::Waiting;
         tasks[0].annotations = vec![Annotation::new(
             AnnotationKind::NeedsMe,
             Evidence::LiveStatus(ajax_core::models::LiveStatusKind::WaitingForInput),
         )];
         let card = &tasks[0];
 
-        assert_eq!(ui_state_bucket(card.ui_state), StatusBucket::NeedsYou);
+        assert_eq!(
+            crate::rendering::task_card_bucket(card),
+            StatusBucket::NeedsYou
+        );
         assert_eq!(
             task_glyph(card).style.fg,
             Some(bucket_color(StatusBucket::NeedsYou))
@@ -866,7 +857,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_row_uses_card_status_label_instead_of_annotation_label() {
+    fn cockpit_row_uses_canonical_status_instead_of_annotation_label() {
         let mut tasks = sample_tasks();
         tasks[0].annotations = vec![Annotation::new(
             AnnotationKind::NeedsMe,
@@ -875,7 +866,8 @@ mod tests {
 
         let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-        assert!(content.contains("blocked"), "{content}");
+        assert!(content.contains("Waiting - waiting"), "{content}");
+        assert!(!content.contains("blocked"), "{content}");
         assert!(!content.contains("needs input"), "{content}");
         assert!(!content.contains("LiveStatus"), "{content}");
     }
@@ -883,7 +875,9 @@ mod tests {
     #[test]
     fn cockpit_row_renders_probe_failure_status_verbatim() {
         let mut tasks = sample_tasks();
-        tasks[0].status_label = "status unavailable: tmux server unavailable".to_string();
+        tasks[0].status = ajax_core::ui_state::TaskStatus::Error;
+        tasks[0].status_explanation =
+            Some("status unavailable: tmux server unavailable".to_string());
 
         let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
@@ -925,7 +919,8 @@ mod tests {
     fn task_row_renders_primary_action_label_and_chrome() {
         let mut tasks = sample_tasks();
         tasks[0].primary_action = OperatorAction::Review;
-        tasks[0].status_label = "review ready".to_string();
+        tasks[0].status = ajax_core::ui_state::TaskStatus::Waiting;
+        tasks[0].status_explanation = Some("review ready".to_string());
         tasks[0].annotations = vec![Annotation::new(
             AnnotationKind::Reviewable,
             Evidence::Lifecycle(LifecycleStatus::Reviewable),
@@ -956,14 +951,14 @@ mod tests {
             "task-review",
             "web/review",
             "Review task",
-            UiState::ReviewReady,
+            TaskStatus::Waiting,
             LifecycleStatus::Reviewable,
         );
         let needs_me = sample_card(
             "task-needs-me",
             "web/needs-me",
             "Needs me",
-            UiState::Blocked,
+            TaskStatus::Waiting,
             LifecycleStatus::Active,
         );
 
@@ -1123,8 +1118,8 @@ mod tests {
         app.select_next();
         let selected_before = app.selected;
         let mut refreshed_tasks = sample_tasks();
-        refreshed_tasks[0].live_summary = Some("waiting for approval".to_string());
-        refreshed_tasks[0].status_label = "waiting for approval".to_string();
+        refreshed_tasks[0].status = ajax_core::ui_state::TaskStatus::Waiting;
+        refreshed_tasks[0].status_explanation = Some("waiting for approval".to_string());
 
         app.apply_refresh(CockpitSnapshot {
             repos: sample_repos(),
@@ -1978,7 +1973,8 @@ mod tests {
         let content = render_to_string(80, 30, &app);
 
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("blocked"));
+        assert!(content.contains("Waiting - waiting"));
+        assert!(!content.contains("blocked"));
         assert!(!content.contains("> web"));
     }
 
@@ -2583,7 +2579,8 @@ mod tests {
         assert_eq!(app.expanded_task.as_ref(), Some(&task_id));
 
         let mut archived = sample_tasks();
-        archived[0].ui_state = UiState::Archived;
+        archived[0].status = ajax_core::ui_state::TaskStatus::Idle;
+        archived[0].lifecycle = LifecycleStatus::Removed;
         app.apply_refresh(CockpitSnapshot {
             repos: sample_repos(),
             cards: archived,
@@ -2927,14 +2924,14 @@ mod tests {
                 "task-1",
                 "web/fix-login",
                 "Fix login",
-                UiState::Blocked,
+                TaskStatus::Waiting,
                 LifecycleStatus::Active,
             ),
             sample_card(
                 "task-2",
                 "api/add-cache",
                 "Add cache",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
         ];
@@ -3592,14 +3589,14 @@ mod tests {
                 "task-1",
                 "web/fix-login",
                 "Fix login",
-                UiState::Blocked,
+                TaskStatus::Waiting,
                 LifecycleStatus::Active,
             ),
             sample_card(
                 "task-2",
                 "web/add-search",
                 "Add search",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
         ];
@@ -3645,28 +3642,28 @@ mod tests {
                 "task-1",
                 "web/a",
                 "A",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
             sample_card(
                 "task-2",
                 "web/b",
                 "B",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
             sample_card(
                 "task-3",
                 "web/c",
                 "C",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
             sample_card(
                 "task-4",
                 "web/d",
                 "D",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Active,
             ),
         ];
@@ -3704,28 +3701,28 @@ mod tests {
                 "task-1",
                 "web/a",
                 "A",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Reviewable,
             ),
             sample_card(
                 "task-2",
                 "web/b",
                 "B",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Reviewable,
             ),
             sample_card(
                 "task-3",
                 "web/c",
                 "C",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Reviewable,
             ),
             sample_card(
                 "task-4",
                 "web/d",
                 "D",
-                UiState::Idle,
+                TaskStatus::Idle,
                 LifecycleStatus::Reviewable,
             ),
         ];
@@ -3940,7 +3937,7 @@ mod tests {
             Evidence::SideFlag(ajax_core::models::SideFlag::NeedsInput),
         );
         let row_label = annotation.row_label();
-        tasks[0].status_label = row_label.clone();
+        tasks[0].status_explanation = Some(row_label.clone());
         tasks[0].annotations = vec![annotation];
         let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
         for _ in 0..app.selectables.len() {

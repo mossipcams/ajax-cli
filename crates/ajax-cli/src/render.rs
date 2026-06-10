@@ -113,10 +113,18 @@ pub(crate) fn render_doctor_human(response: &DoctorResponse) -> String {
 }
 
 fn render_task_summary(task: &TaskSummary) -> String {
-    format!(
-        "{}\t{}\t{}",
-        task.qualified_handle, task.status_label, task.title
-    )
+    let status = match task.status {
+        ajax_core::ui_state::TaskStatus::Running => "Running",
+        ajax_core::ui_state::TaskStatus::Waiting => "Waiting",
+        ajax_core::ui_state::TaskStatus::Idle => "Idle",
+        ajax_core::ui_state::TaskStatus::Error => "Error",
+    };
+    let status = task
+        .status_explanation
+        .as_deref()
+        .map(|explanation| format!("{status} - {explanation}"))
+        .unwrap_or_else(|| status.to_string());
+    format!("{}\t{}\t{}", task.qualified_handle, status, task.title)
 }
 
 fn render_annotation_item_human(item: &ajax_core::output::AnnotationItem) -> String {
@@ -232,7 +240,9 @@ mod tests {
                 qualified_handle: "web/fix-login".to_string(),
                 title: "Fix login".to_string(),
                 lifecycle_status: "Reviewable".to_string(),
-                status_label: "review ready".to_string(),
+                status: ajax_core::ui_state::TaskStatus::Waiting,
+                status_explanation: Some("Ready for review".to_string()),
+                status_label: "Ready for review".to_string(),
                 runtime_observation_error: None,
                 needs_attention: true,
                 live_status: None,
@@ -246,7 +256,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "web/fix-login\treview ready\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
+            "web/fix-login\tWaiting - Ready for review\tFix login\nbranch: ajax/fix-login\nworktree: /tmp/worktrees/web-fix-login\ntmux: ajax-web-fix-login\nflags: needs-input, dirty"
         );
     }
 
@@ -258,7 +268,9 @@ mod tests {
                 qualified_handle: "web/fix-login".to_string(),
                 title: "Fix login".to_string(),
                 lifecycle_status: "Active".to_string(),
-                status_label: "status unavailable: tmux server unavailable".to_string(),
+                status: ajax_core::ui_state::TaskStatus::Error,
+                status_explanation: Some("Status unavailable".to_string()),
+                status_label: "Status unavailable".to_string(),
                 runtime_observation_error: Some("tmux server unavailable".to_string()),
                 needs_attention: true,
                 live_status: None,
@@ -268,7 +280,7 @@ mod tests {
 
         assert_eq!(
             rendered,
-            "web/fix-login\tstatus unavailable: tmux server unavailable\tFix login"
+            "web/fix-login\tError - Status unavailable\tFix login"
         );
         assert!(!rendered.contains("Unknown"));
     }

@@ -443,10 +443,44 @@ mod tests {
             "function renderAttentionSummary",
             "function copyTaskSummary",
             "data-copy-summary",
+            "blocked: { tone:",
+            "\"needs input\": { tone:",
+            "\"review ready\": { tone:",
+            "\"safe merge\": { tone:",
+            "cleanable: { tone:",
+            "archived: { tone:",
         ] {
             assert!(
                 !script.contains(gone),
                 "app.js must not contain retired list code: {gone}"
+            );
+        }
+    }
+
+    #[test]
+    fn browser_uses_canonical_status_and_executable_actions_only() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        for expected in ["card.status", "card.status_explanation", "card.actions"] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+        for forbidden in [
+            "INTERACT_STATE_COPY",
+            "card.ui_state",
+            "card.status_label",
+            "card.live_summary",
+            "card.primary_action",
+            "card.available_actions",
+            "card.action_states",
+            "detail.ui_state",
+            "detail.status_label",
+            "detail.primary_action",
+            "detail.available_actions",
+            "detail.action_states",
+        ] {
+            assert!(
+                !script.contains(forbidden),
+                "app.js must not derive status/actions from {forbidden}"
             );
         }
     }

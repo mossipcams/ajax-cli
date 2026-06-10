@@ -54,7 +54,7 @@ fn expanded_annotation_rows(selectable: &SelectableKind, app: &App) -> usize {
     };
     let (task_id, row_reason) = match selectable {
         SelectableKind::Task(card) if &card.id == open => {
-            (&card.id, Some(card.status_label.clone()))
+            (&card.id, Some(crate::rendering::task_status_text(card)))
         }
         SelectableKind::Inbox(item) if &item.task_id == open => {
             (&item.task_id, Some(item.reason.clone()))

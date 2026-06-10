@@ -1,4 +1,4 @@
-// Ajax Cockpit — mobile operator client driven by server action_states.
+// Ajax Cockpit mobile operator client driven by canonical task cards.
 const loadedAppVersion =
   document.querySelector('meta[name="ajax-app-version"]')?.content || null;
 const inbox = document.getElementById("inbox");
@@ -123,19 +123,8 @@ function severityBucket(value) {
   return "low";
 }
 
-function supportedActionStates(card) {
-  return (card.action_states || []).filter((state) => state.status === "supported");
-}
-
-function actionStatesForCard(card) {
-  if (card.action_states && card.action_states.length) return card.action_states;
-  return (card.available_actions || []).map((action) => ({
-    action,
-    status: "supported",
-    reason: null,
-    destructive: action === "drop",
-    confirmation_required: action === "drop",
-  }));
+function actionsForCard(card) {
+  return card.actions || [];
 }
 
 function showResult(message, output, isError) {
@@ -221,37 +210,20 @@ async function forceBackendHealthCheck(reason) {
 
 // LIST VIEW -----------------------------------------------------------------
 
-// Status vocabulary — one tone + display label per backend ui_state. Tones map
-// to the walnut palette accents in app.css (tone-running/ready/attention/
-// danger/done/muted). The backend emits lowercase ui_state strings.
+// The backend owns status derivation. The browser only renders its four-state
+// contract and the accompanying explanation.
 const STATUS_META = {
-  blocked: { tone: "danger", label: "Blocked" },
-  failed: { tone: "danger", label: "Failed" },
-  "needs input": { tone: "attention", label: "Needs input" },
-  "review ready": { tone: "ready", label: "Review" },
-  "safe merge": { tone: "ready", label: "Safe merge" },
   running: { tone: "running", label: "Running" },
-  cleanable: { tone: "done", label: "Cleanable" },
-  idle: { tone: "muted", label: "Idle" },
-  archived: { tone: "muted", label: "Archived" },
+  waiting: { tone: "waiting", label: "Waiting" },
+  idle: { tone: "idle", label: "Idle" },
+  error: { tone: "error", label: "Error" },
 };
 
-// Order tasks in the calm list so the most active sit on top.
-const STATUS_ORDER = [
-  "running",
-  "review ready",
-  "safe merge",
-  "needs input",
-  "blocked",
-  "failed",
-  "cleanable",
-  "idle",
-  "archived",
-];
+const STATUS_ORDER = ["running", "waiting", "error", "idle"];
 
 function statusMeta(state) {
   const key = (state || "").toLowerCase();
-  return STATUS_META[key] || { tone: "muted", label: titleCase(state || "—") };
+  return STATUS_META[key] || STATUS_META.idle;
 }
 
 function statusRank(state) {
@@ -276,26 +248,20 @@ function sectionHead(title, count, options) {
   return head;
 }
 
-function actionButtonFromState(state, handle, isPrimary) {
-  const supported = state.status === "supported";
+function actionButton(action, handle, isPrimary) {
   const button = el(
     "button",
     isPrimary ? "action primary" : "action",
-    actionLabel(state.action, state),
+    actionLabel(action.action, action),
   );
-  if (state.action === "fix-ci" || state.action === "resolve-merge-conflicts") {
+  if (action.action === "fix-ci" || action.action === "resolve-merge-conflicts") {
     button.classList.add("remediation-action");
   }
   button.type = "button";
-  button.dataset.action = state.action;
+  button.dataset.action = action.action;
   button.dataset.task = handle;
-  if (state.destructive) button.dataset.destructive = "true";
-  if (state.confirmation_required) button.dataset.confirmRequired = "true";
-  if (!supported) {
-    button.disabled = true;
-    button.classList.add("is-disabled");
-    if (state.reason) button.title = state.reason;
-  }
+  if (action.destructive) button.dataset.destructive = "true";
+  if (action.confirmation_required) button.dataset.confirmRequired = "true";
   applyPendingConfirm(button);
   return button;
 }
@@ -339,28 +305,25 @@ function cardMatchesProject(card) {
 // operator can clear the blocker in one tap. Tapping the card body (not a
 // button) opens the detail view — "tap to learn more".
 function inboxActionRow(card) {
-  const states = actionStatesForCard(card);
-  const supported = states.filter((state) => state.status === "supported");
-  const primaryState =
-    supported.find((state) => state.action === card.primary_action) || supported[0];
+  const actions = actionsForCard(card);
+  const primary = actions[0];
 
   const row = el("div", "inbox-card-actions");
-  if (primaryState) {
-    row.append(actionButtonFromState(primaryState, card.qualified_handle, true));
+  if (primary) {
+    row.append(actionButton(primary, card.qualified_handle, true));
   }
   const open = el("button", "action", "Open");
   open.type = "button";
   open.setAttribute("data-open-task", card.qualified_handle);
   row.append(open);
-  for (const state of supported) {
-    if (primaryState && state.action === primaryState.action) continue;
-    row.append(actionButtonFromState(state, card.qualified_handle, false));
+  for (const action of actions.slice(1)) {
+    row.append(actionButton(action, card.qualified_handle, false));
   }
   return row;
 }
 
 function inboxCard(card, item) {
-  const meta = statusMeta(card.ui_state);
+  const meta = statusMeta(card.status);
   const article = el("article", `inbox-card tone-${meta.tone}`);
   article.dataset.handle = card.qualified_handle;
   article.dataset.severity = severityBucket(item.severity || 999);
@@ -371,7 +334,7 @@ function inboxCard(card, item) {
   head.append(statusBadge(meta));
   article.append(head);
 
-  const reason = item.reason || card.live_summary || card.status_label;
+  const reason = card.status_explanation;
   if (reason) article.append(el("p", "inbox-card-reason", reason));
 
   article.append(inboxActionRow(card));
@@ -381,7 +344,7 @@ function inboxCard(card, item) {
 // Task rows are deliberately light: a status dot, the handle, an optional live
 // sub-line, and the status label. The whole row is the open-detail target.
 function taskRow(card) {
-  const meta = statusMeta(card.ui_state);
+  const meta = statusMeta(card.status);
   const row = el("button", `task-row tone-${meta.tone}`);
   row.type = "button";
   row.dataset.handle = card.qualified_handle;
@@ -391,7 +354,7 @@ function taskRow(card) {
 
   const main = el("div", "task-row-main");
   main.append(el("span", "task-row-handle", card.qualified_handle));
-  const sub = card.live_summary || card.status_label;
+  const sub = card.status_explanation;
   if (sub && sub.toLowerCase() !== meta.label.toLowerCase()) {
     main.append(el("span", "task-row-sub", sub));
   }
@@ -444,7 +407,7 @@ function renderTasks(data) {
       .slice()
       .sort(
         (a, b) =>
-          statusRank(a.ui_state) - statusRank(b.ui_state) ||
+          statusRank(a.status) - statusRank(b.status) ||
           a.qualified_handle.localeCompare(b.qualified_handle),
       );
 
@@ -480,17 +443,17 @@ function summarize(data) {
 }
 
 function actionStructureSignature(card) {
-  const states = card.action_states || card.available_actions || [];
-  return states.map((state) => {
-    if (typeof state === "string") return [state, "supported"];
-    return [state.action, state.status];
-  });
+  return (card.actions || []).map((action) => [
+    action.action,
+    action.label,
+    action.destructive,
+    action.confirmation_required,
+  ]);
 }
 
 function structureFingerprint(data) {
   const cards = data.cards.map((c) => [
     c.qualified_handle,
-    c.primary_action,
     JSON.stringify(actionStructureSignature(c)),
   ]);
   const items = (data.inbox && data.inbox.items) || [];
@@ -502,8 +465,7 @@ function structureFingerprint(data) {
 }
 
 function cardSummaryText(card, inboxItem) {
-  if (inboxItem && inboxItem.reason) return inboxItem.reason;
-  return card.live_summary || card.status_label || card.title || "";
+  return card.status_explanation || card.title || "";
 }
 
 function updateLiveSummaries(data, cardsByHandle) {
@@ -514,7 +476,7 @@ function updateLiveSummaries(data, cardsByHandle) {
     const card = cardsByHandle.get(article.dataset.handle);
     if (!card) continue;
     const inboxItem = inboxByHandle.get(card.qualified_handle);
-    const meta = statusMeta(card.ui_state);
+    const meta = statusMeta(card.status);
     article.className = `inbox-card tone-${meta.tone}`;
     if (inboxItem) article.dataset.severity = severityBucket(inboxItem.severity || 999);
     const dot = article.querySelector(".status-dot");
@@ -538,7 +500,7 @@ function updateLiveSummaries(data, cardsByHandle) {
   for (const row of document.querySelectorAll(".task-row[data-handle]")) {
     const card = cardsByHandle.get(row.dataset.handle);
     if (!card) continue;
-    const meta = statusMeta(card.ui_state);
+    const meta = statusMeta(card.status);
     row.className = `task-row tone-${meta.tone}`;
     const dot = row.querySelector(".status-dot");
     if (dot) dot.className = `status-dot tone-${meta.tone}`;
@@ -546,7 +508,7 @@ function updateLiveSummaries(data, cardsByHandle) {
     if (status) status.textContent = meta.label;
     const sub = row.querySelector(".task-row-sub");
     if (sub) {
-      const subText = card.live_summary || card.status_label;
+      const subText = card.status_explanation;
       if (subText && subText.toLowerCase() !== meta.label.toLowerCase()) {
         sub.textContent = subText;
         sub.hidden = false;
@@ -891,27 +853,6 @@ copyDiagnosticsButton.addEventListener("click", () => {
 
 // INTERACT PANEL ------------------------------------------------------------
 
-const INTERACT_STATE_COPY = {
-  WaitingForApproval: { label: "Needs your approval", tone: "attention" },
-  WaitingForInput: { label: "Asking you", tone: "attention" },
-  AgentRunning: { label: "Working", tone: "running" },
-  CommandRunning: { label: "Running command", tone: "running" },
-  TestsRunning: { label: "Running tests", tone: "running" },
-  Thinking: { label: "Thinking", tone: "running" },
-  Done: { label: "Idle — done", tone: "success" },
-  CommandFailed: { label: "Command failed", tone: "danger" },
-  Blocked: { label: "Blocked", tone: "danger" },
-  AuthRequired: { label: "Needs sign-in", tone: "danger" },
-  RateLimited: { label: "Rate limited", tone: "danger" },
-  MergeConflict: { label: "Merge conflict", tone: "danger" },
-  CiFailed: { label: "CI failed", tone: "danger" },
-  Unknown: { label: "Status unknown", tone: "muted" },
-};
-
-function interactStateCopy(kind) {
-  return INTERACT_STATE_COPY[kind] || { label: kind || "—", tone: "muted" };
-}
-
 function interactCommand(detail, pane) {
   if (pane && pane.state && pane.state.command) return pane.state.command;
   if (detail && detail.live_status_kind === "WaitingForApproval" && detail.live_status_summary) {
@@ -932,14 +873,14 @@ function renderInteractPanel(detail, pane) {
   const panel = el("section", "interact-panel");
   const tmuxMissing = pane && pane.tmux_exists === false;
   const kind = detail.live_status_kind || "Unknown";
-  const copy = interactStateCopy(kind);
+  const meta = statusMeta(detail.status);
   lastInteractKind = kind;
 
   const stateRow = el("div", "interact-state is-hero");
-  const pill = el("span", `interact-pill tone-${copy.tone}`, copy.label);
+  const pill = el("span", `interact-pill tone-${meta.tone}`, meta.label);
   stateRow.append(pill);
-  if (detail.live_status_summary) {
-    stateRow.append(el("span", "interact-summary", detail.live_status_summary));
+  if (detail.status_explanation) {
+    stateRow.append(el("span", "interact-summary", detail.status_explanation));
   }
   panel.append(stateRow);
 
@@ -966,11 +907,11 @@ function renderDashboardCard(title, body) {
 
 function renderCurrentStatus(detail, pane) {
   const wrap = el("div", "dashboard-card-body");
-  wrap.append(el("p", "interact-card-body", detail.live_status_summary || detail.status_label || "No live summary yet."));
+  wrap.append(el("p", "interact-card-body", detail.status_explanation || "No status explanation."));
   const meta = el("dl", "dashboard-meta");
   appendGridRow(meta, "Task", detail.qualified_handle);
   appendGridRow(meta, "Lifecycle", detail.lifecycle || "—");
-  appendGridRow(meta, "State", detail.ui_state || "—");
+  appendGridRow(meta, "State", statusMeta(detail.status).label);
   if (paneAvailable && pane && pane.truncated) {
     appendGridRow(meta, "Terminal", "Live snapshot available");
   }
@@ -1019,31 +960,20 @@ function renderNeedsFromYou(detail, pane, tmuxMissing) {
 }
 
 function renderNextActionBand(detail) {
-  const states = actionStatesForCard(detail);
-  if (!states.length) return null;
+  const actions = actionsForCard(detail);
+  if (!actions.length) return null;
 
   const band = el("section", "next-action");
   band.append(el("div", "interact-card-label", "Next action"));
 
-  const primary = states.find((state) => state.action === detail.primary_action);
+  const primary = actions[0];
   band.append(el("p", "next-action-hint", nextStepMessage(detail, primary)));
 
   const row = el("div", "next-action-row");
-  for (const state of states) {
-    const isPrimary =
-      state.status === "supported" && state.action === detail.primary_action;
-    row.append(actionButtonFromState(state, detail.qualified_handle, isPrimary));
+  for (const [index, action] of actions.entries()) {
+    row.append(actionButton(action, detail.qualified_handle, index === 0));
   }
   band.append(row);
-
-  const disabled = states.filter((state) => state.status !== "supported" && state.reason);
-  if (disabled.length) {
-    const notes = el("div", "action-notes");
-    for (const state of disabled) {
-      notes.append(el("p", "action-note", `${titleCase(state.action)}: ${state.reason}`));
-    }
-    band.append(notes);
-  }
 
   return band;
 }
@@ -1079,7 +1009,7 @@ function renderMilestones(detail, pane) {
 
 function milestoneEntries(detail, pane) {
   const entries = [];
-  entries.push(detail.live_status_summary || detail.status_label || "Task opened in Cockpit.");
+  entries.push(detail.status_explanation || detail.live_status_summary || "Task opened in Cockpit.");
   if (detail.git) {
     entries.push(
       `${detail.git.ahead || 0} ahead · ${detail.git.behind || 0} behind · ${detail.git.dirty ? "dirty worktree" : "clean worktree"}`,

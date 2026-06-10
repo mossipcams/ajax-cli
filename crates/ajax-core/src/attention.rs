@@ -2,20 +2,20 @@ use crate::models::{
     AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusKind,
     RuntimeHealth, SideFlag, SubstrateGap, Task,
 };
-use crate::ui_state::{derive_operator_status, OperatorStatusKind};
+use crate::ui_state::{derive_operator_status, TaskStatus};
 
 pub fn annotate(task: &Task) -> Vec<Annotation> {
     let mut annotations = Vec::new();
     let operator_status = derive_operator_status(task);
 
-    if operator_status.kind == OperatorStatusKind::ObservationFailed {
+    if task.runtime_projection.observation_error.is_some() {
         push_collapsed_annotation(
             &mut annotations,
             Annotation::new(AnnotationKind::Broken, Evidence::RuntimeObservationFailed),
         );
     }
 
-    if operator_status.kind == OperatorStatusKind::NeedsInput
+    if operator_status.status == TaskStatus::Waiting
         && matches!(
             task.agent_status,
             AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Blocked
@@ -69,6 +69,26 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
         );
     }
 
+    if operator_status.status == TaskStatus::Error
+        && !annotations
+            .iter()
+            .any(|annotation| annotation.kind == AnnotationKind::Broken)
+    {
+        push_collapsed_annotation(
+            &mut annotations,
+            Annotation::new(
+                AnnotationKind::Broken,
+                Evidence::Lifecycle(task.lifecycle_status),
+            ),
+        );
+    }
+
+    annotations.retain(|annotation| match annotation.kind {
+        AnnotationKind::NeedsMe => operator_status.status == TaskStatus::Waiting,
+        AnnotationKind::Broken => operator_status.status == TaskStatus::Error,
+        AnnotationKind::Reviewable | AnnotationKind::Cleanable => true,
+    });
+
     annotations.sort_by_key(|annotation| annotation.severity);
     annotations
 }
@@ -121,13 +141,13 @@ fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationK
         | LiveStatusKind::WaitingForInput
         | LiveStatusKind::AuthRequired
         | LiveStatusKind::RateLimited
-        | LiveStatusKind::ContextLimit
-        | LiveStatusKind::CommandFailed
-        | LiveStatusKind::Blocked => Some(AnnotationKind::NeedsMe),
+        | LiveStatusKind::ContextLimit => Some(AnnotationKind::NeedsMe),
         LiveStatusKind::WorktreeMissing
         | LiveStatusKind::TmuxMissing
         | LiveStatusKind::WorktrunkMissing
-        | LiveStatusKind::MergeConflict => Some(AnnotationKind::Broken),
+        | LiveStatusKind::MergeConflict
+        | LiveStatusKind::CommandFailed
+        | LiveStatusKind::Blocked => Some(AnnotationKind::Broken),
         LiveStatusKind::Done => Some(AnnotationKind::Reviewable),
         LiveStatusKind::ShellIdle
         | LiveStatusKind::CommandRunning
@@ -140,7 +160,8 @@ fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationK
 
 fn annotation_kind_for_side_flag(flag: SideFlag) -> Option<AnnotationKind> {
     match flag {
-        SideFlag::NeedsInput | SideFlag::AgentDead => Some(AnnotationKind::NeedsMe),
+        SideFlag::NeedsInput => Some(AnnotationKind::NeedsMe),
+        SideFlag::AgentDead => Some(AnnotationKind::Broken),
         SideFlag::TmuxMissing
         | SideFlag::WorktreeMissing
         | SideFlag::WorktrunkMissing
@@ -153,8 +174,9 @@ fn annotation_kind_for_side_flag(flag: SideFlag) -> Option<AnnotationKind> {
 
 fn annotation_kind_for_agent_status(status: AgentRuntimeStatus) -> Option<AnnotationKind> {
     match status {
-        AgentRuntimeStatus::Waiting | AgentRuntimeStatus::Dead => Some(AnnotationKind::NeedsMe),
-        AgentRuntimeStatus::Blocked => None,
+        AgentRuntimeStatus::Waiting => Some(AnnotationKind::NeedsMe),
+        AgentRuntimeStatus::Dead => Some(AnnotationKind::Broken),
+        AgentRuntimeStatus::Blocked => Some(AnnotationKind::Broken),
         AgentRuntimeStatus::NotStarted
         | AgentRuntimeStatus::Running
         | AgentRuntimeStatus::Done
@@ -254,9 +276,10 @@ mod tests {
     #[test]
     fn acknowledged_claude_waiting_has_no_needs_me_annotation() {
         let mut task = claude_active_task();
-        crate::live::apply_observation(
+        crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
         );
         crate::live::acknowledge_attention(&mut task, ack_at());
 
@@ -270,9 +293,10 @@ mod tests {
     #[test]
     fn new_waiting_after_acknowledgment_restores_needs_me_annotation() {
         let mut task = claude_active_task();
-        crate::live::apply_observation(
+        crate::live::apply_observation_at(
             &mut task,
             LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            std::time::UNIX_EPOCH + std::time::Duration::from_secs(400),
         );
         crate::live::acknowledge_attention(&mut task, ack_at());
         crate::live::apply_observation(
@@ -312,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn annotate_collapses_blocker_evidence_into_needs_me() {
+    fn dead_agent_error_outranks_waiting_evidence() {
         let mut task = task_with_flags("blocked", &[SideFlag::NeedsInput, SideFlag::AgentDead]);
         task.agent_status = AgentRuntimeStatus::Waiting;
         task.live_status = Some(LiveObservation::new(
@@ -325,11 +349,11 @@ mod tests {
         assert_eq!(
             annotations,
             vec![Annotation::new(
-                AnnotationKind::NeedsMe,
-                Evidence::LiveStatus(LiveStatusKind::WaitingForApproval),
+                AnnotationKind::Broken,
+                Evidence::SideFlag(SideFlag::AgentDead),
             )]
         );
-        assert_eq!(annotations[0].suggests, OperatorAction::Resume);
+        assert_eq!(annotations[0].suggests, OperatorAction::Repair);
     }
 
     #[test]
@@ -363,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_agent_needs_attention_without_lifecycle_error() {
+    fn blocked_agent_is_broken_without_lifecycle_error() {
         let mut task = task_with_flags("blocked", &[]);
         mark_active(&mut task).unwrap();
         task.agent_status = AgentRuntimeStatus::Blocked;
@@ -371,7 +395,7 @@ mod tests {
         let annotations = super::annotate(&task);
 
         assert_eq!(annotations.len(), 1);
-        assert_eq!(annotations[0].kind, AnnotationKind::NeedsMe);
+        assert_eq!(annotations[0].kind, AnnotationKind::Broken);
         assert_eq!(
             task.lifecycle_status,
             crate::models::LifecycleStatus::Active

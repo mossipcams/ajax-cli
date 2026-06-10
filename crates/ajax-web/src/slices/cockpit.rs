@@ -9,9 +9,7 @@ use ajax_core::{
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::action_vocabulary::{
-    browser_action_states, primary_browser_action, supported_web_action, WebActionState,
-};
+use crate::action_vocabulary::{browser_actions, supported_web_action, WebAction};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
@@ -33,13 +31,9 @@ pub struct BrowserTaskCard {
     pub id: String,
     pub qualified_handle: String,
     pub title: String,
-    pub ui_state: String,
-    pub status_label: String,
-    pub lifecycle: String,
-    pub primary_action: String,
-    pub available_actions: Vec<String>,
-    pub action_states: Vec<WebActionState>,
-    pub live_summary: Option<String>,
+    pub status: ajax_core::ui_state::TaskStatus,
+    pub status_explanation: Option<String>,
+    pub actions: Vec<WebAction>,
 }
 
 pub fn browser_cockpit_json<R: Registry>(
@@ -67,25 +61,13 @@ fn host_native_backend() -> BrowserBackend {
 }
 
 fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
-    let action_states = browser_action_states(card);
-    let available: Vec<String> = action_states
-        .iter()
-        .filter(|state| state.status == "supported")
-        .map(|state| state.action.clone())
-        .collect();
-    let primary = primary_browser_action(card);
-
     BrowserTaskCard {
         id: card.id.as_str().to_string(),
         qualified_handle: card.qualified_handle.clone(),
         title: card.title.clone(),
-        ui_state: card.ui_state.as_str().to_string(),
-        status_label: card.status_label.clone(),
-        lifecycle: format!("{:?}", card.lifecycle),
-        primary_action: primary,
-        available_actions: available,
-        action_states,
-        live_summary: card.live_summary.clone(),
+        status: card.status,
+        status_explanation: card.status_explanation.clone(),
+        actions: browser_actions(card),
     }
 }
 
@@ -108,12 +90,10 @@ pub struct BrowserTaskDetail {
     pub lifecycle: String,
     pub agent: String,
     pub agent_status: String,
-    pub ui_state: String,
-    pub status_label: String,
+    pub status: ajax_core::ui_state::TaskStatus,
+    pub status_explanation: Option<String>,
     pub runtime_observation_error: Option<String>,
-    pub primary_action: String,
-    pub available_actions: Vec<String>,
-    pub action_states: Vec<WebActionState>,
+    pub actions: Vec<WebAction>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
     pub agent_activity: Option<String>,
@@ -149,17 +129,8 @@ pub fn browser_task_detail_view<R: Registry>(
         .iter()
         .find(|card| card.qualified_handle == qualified_handle)?;
     let task = context.registry.get_task(&card.id)?.clone();
-    let action_states = browser_action_states(card);
-    let available_actions = action_states
-        .iter()
-        .filter(|state| state.status == "supported")
-        .map(|state| state.action.clone())
-        .collect();
-    let primary_action = primary_browser_action(card);
-    let agent_activity = card
-        .live_summary
-        .clone()
-        .or_else(|| task.live_status.as_ref().map(|live| live.summary.clone()));
+    let actions = browser_actions(card);
+    let agent_activity = task.live_status.as_ref().map(|live| live.summary.clone());
 
     Some(BrowserTaskDetail {
         qualified_handle: task.qualified_handle(),
@@ -171,12 +142,10 @@ pub fn browser_task_detail_view<R: Registry>(
         lifecycle: lifecycle_label(task.lifecycle_status),
         agent: format!("{:?}", task.selected_agent),
         agent_status: format!("{:?}", task.agent_status),
-        ui_state: card.ui_state.as_str().to_string(),
-        status_label: card.status_label.clone(),
+        status: card.status,
+        status_explanation: card.status_explanation.clone(),
         runtime_observation_error: task.runtime_projection.observation_error.clone(),
-        primary_action,
-        available_actions,
-        action_states,
+        actions,
         live_status_kind: task
             .live_status
             .as_ref()
@@ -230,7 +199,6 @@ mod tests {
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry as _},
-        ui_state::UiState,
     };
 
     #[test]
@@ -275,11 +243,22 @@ mod tests {
 
         assert_eq!(value["cards"].as_array().unwrap().len(), 1);
         assert_eq!(value["cards"][0]["qualified_handle"], "web/fix-login");
-        assert_eq!(value["cards"][0]["primary_action"], "drop");
+        assert_eq!(value["cards"][0]["status"], "error");
         assert_eq!(
-            value["cards"][0]["available_actions"],
-            serde_json::json!(["drop"])
+            value["cards"][0]["status_explanation"],
+            "Tmux session missing"
         );
+        assert_eq!(value["cards"][0]["actions"][0]["action"], "drop");
+        for removed in [
+            "ui_state",
+            "status_label",
+            "live_summary",
+            "primary_action",
+            "available_actions",
+            "action_states",
+        ] {
+            assert!(value["cards"][0].get(removed).is_none(), "{removed}");
+        }
         assert_eq!(value["inbox"]["items"].as_array().unwrap().len(), 1);
         assert_eq!(value["inbox"]["items"][0]["task_handle"], "web/fix-login");
     }
@@ -345,9 +324,10 @@ mod tests {
 
         let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
+        assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
         assert_eq!(
-            detail.status_label,
-            "status unavailable: tmux server unavailable"
+            detail.status_explanation.as_deref(),
+            Some("Status unavailable")
         );
         assert_eq!(
             detail.runtime_observation_error.as_deref(),
@@ -378,9 +358,12 @@ mod tests {
         let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
         assert_eq!(detail.qualified_handle, "web/fix-login");
-        assert_eq!(detail.primary_action, "drop");
-        assert_eq!(detail.available_actions, vec!["drop".to_string()]);
-        assert_eq!(detail.status_label, "worktree missing");
+        assert_eq!(detail.actions[0].action, "drop");
+        assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
+        assert_eq!(
+            detail.status_explanation.as_deref(),
+            Some("Worktree missing")
+        );
     }
 
     #[test]
@@ -451,8 +434,8 @@ mod tests {
             id: TaskId::new("web/fix-login"),
             qualified_handle: "web/fix-login".to_string(),
             title: "Fix login".to_string(),
-            ui_state: UiState::ReviewReady,
-            status_label: "review ready".to_string(),
+            status: ajax_core::ui_state::TaskStatus::Waiting,
+            status_explanation: Some("Ready for review".to_string()),
             lifecycle: LifecycleStatus::Reviewable,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
@@ -462,19 +445,25 @@ mod tests {
                 OperatorAction::Review,
                 OperatorAction::Ship,
             ],
-            live_summary: Some("waiting for review".to_string()),
             remediations: Vec::new(),
         };
 
         let browser = browser_task_card(&card);
 
         assert_eq!(browser.qualified_handle, "web/fix-login");
-        assert_eq!(browser.ui_state, "review ready");
-        assert_eq!(browser.status_label, "review ready");
-        assert_eq!(browser.lifecycle, "Reviewable");
-        assert_eq!(browser.live_summary.as_deref(), Some("waiting for review"));
-        assert_eq!(browser.primary_action, "review");
-        assert_eq!(browser.available_actions, ["review", "ship"]);
+        assert_eq!(browser.status, ajax_core::ui_state::TaskStatus::Waiting);
+        assert_eq!(
+            browser.status_explanation.as_deref(),
+            Some("Ready for review")
+        );
+        assert_eq!(
+            browser
+                .actions
+                .iter()
+                .map(|action| action.action.as_str())
+                .collect::<Vec<_>>(),
+            ["review", "ship"]
+        );
     }
 
     #[test]
@@ -500,39 +489,34 @@ mod tests {
             id: source.id.clone(),
             qualified_handle: source.qualified_handle(),
             title: source.title.clone(),
-            ui_state: UiState::Blocked,
-            status_label: "ci failed".to_string(),
+            status: ajax_core::ui_state::TaskStatus::Error,
+            status_explanation: Some("CI failed".to_string()),
             lifecycle: LifecycleStatus::Error,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
             remediations: ajax_core::remediation::remediations_for_task(&source),
-            live_summary: Some("ci failed".to_string()),
         };
 
         let browser = browser_task_card(&card);
         let fix_ci = browser
-            .action_states
+            .actions
             .iter()
             .find(|state| state.action == FIX_CI)
             .expect("fix-ci button");
 
-        assert_eq!(browser.primary_action, FIX_CI);
-        assert_eq!(fix_ci.status, "supported");
-        assert!(browser
-            .available_actions
-            .iter()
-            .any(|action| action == FIX_CI));
+        assert_eq!(fix_ci.label.as_deref(), Some("Fix CI"));
+        assert!(browser.actions.iter().any(|action| action.action == FIX_CI));
     }
 
     #[test]
-    fn cockpit_cards_expose_backend_web_action_states() {
+    fn cockpit_cards_expose_only_executable_web_actions() {
         let card = TaskCard {
             id: TaskId::new("web/fix-login"),
             qualified_handle: "web/fix-login".to_string(),
             title: "Fix login".to_string(),
-            ui_state: UiState::ReviewReady,
-            status_label: "review ready".to_string(),
+            status: ajax_core::ui_state::TaskStatus::Waiting,
+            status_explanation: Some("Ready for review".to_string()),
             lifecycle: LifecycleStatus::Reviewable,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
@@ -542,17 +526,15 @@ mod tests {
                 OperatorAction::Drop,
             ],
             remediations: Vec::new(),
-            live_summary: None,
         };
 
         let browser = browser_task_card(&card);
-        let states: Vec<(&str, &str, bool, bool)> = browser
-            .action_states
+        let states: Vec<(&str, bool, bool)> = browser
+            .actions
             .iter()
             .map(|state| {
                 (
                     state.action.as_str(),
-                    state.status.as_str(),
                     state.destructive,
                     state.confirmation_required,
                 )
@@ -561,10 +543,7 @@ mod tests {
 
         assert_eq!(
             states,
-            vec![
-                ("review", "supported", false, false),
-                ("drop", "supported", true, true),
-            ]
+            vec![("review", false, false), ("drop", true, true),]
         );
     }
 }

@@ -917,7 +917,7 @@ fn cockpit_watch_renders_dashboard_from_backend_state() {
     assert!(output.contains("Ajax Cockpit"));
     assert!(output.contains("Inbox"));
     assert!(output.contains("web/fix-login"));
-    assert!(output.contains("needs_input"));
+    assert!(output.contains("Ready for review"));
 }
 
 #[test]
@@ -1173,7 +1173,7 @@ fn cockpit_watch_renders_refreshed_live_status_in_frame() {
     )
     .unwrap();
 
-    assert!(output.contains("web/fix-login\tagent running\tFix login"));
+    assert!(output.contains("web/fix-login\tRunning - Agent working\tFix login"));
     assert_eq!(runner.commands, tmux_live_commands());
 }
 
@@ -1191,7 +1191,7 @@ fn status_command_refreshes_live_state_from_tmux() {
     let output =
         run_with_context_and_runner(["ajax", "status"], &mut context, &mut runner).unwrap();
 
-    assert!(output.contains("web/fix-login\twaiting for approval\tFix login"));
+    assert!(output.contains("web/fix-login\tWaiting - Waiting for approval\tFix login"));
     assert!(context
         .registry
         .get_task(&TaskId::new("task-1"))
@@ -1492,8 +1492,8 @@ fn cockpit_refresh_snapshot_reports_refreshed_tmux_state() {
 
     assert!(state_changed);
     assert_eq!(
-        snapshot.cards[0].live_summary.as_deref(),
-        Some("waiting for approval")
+        snapshot.cards[0].status_explanation.as_deref(),
+        Some("Waiting for approval")
     );
     assert_eq!(snapshot.inbox.items[0].task_handle, "web/fix-login");
     assert_eq!(runner.commands, tmux_live_commands());
@@ -8083,8 +8083,10 @@ fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
         Some(LiveStatusKind::AgentRunning)
     );
     assert_eq!(
-        ajax_core::commands::cockpit_view(&context).cards[0].status_label,
-        "agent running"
+        ajax_core::commands::cockpit_view(&context).cards[0]
+            .status_explanation
+            .as_deref(),
+        Some("Agent working")
     );
 
     std::fs::remove_dir_all(directory).unwrap();
@@ -8183,8 +8185,10 @@ fn tmux_probe_failure_renders_unavailable_without_marking_session_missing() {
         .as_ref()
         .is_some_and(|status| status.exists));
     assert_eq!(
-        ajax_core::commands::cockpit_view(&context).cards[0].status_label,
-        "status unavailable: tmux list-sessions probe failed: failed to start command: tmux unavailable"
+        ajax_core::commands::cockpit_view(&context).cards[0]
+            .status_explanation
+            .as_deref(),
+        Some("Status unavailable")
     );
 }
 
