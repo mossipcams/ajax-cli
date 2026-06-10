@@ -11,7 +11,7 @@ use std::{
     net::TcpListener,
     path::Path,
     process::{Child, Command, Stdio},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
         execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
         tui_cockpit_action, tui_cockpit_confirmed_action,
     },
+    context::{load_context, state_file_mtime},
     render::render_response,
     task_session::PtyTaskSessionRunner,
     CliContextPaths, CliError, RenderedCommand,
@@ -65,6 +66,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     runner: &mut R,
     mobile_web_port: u16,
     paths: Option<&CliContextPaths>,
+    mut save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<RenderedCommand, CliError> {
     let _mobile_web_companion = if subcommand.get_flag("no-web") {
         None
@@ -74,13 +76,20 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
     let mut state_changed = false;
     let mut cockpit_flash = None;
     let mut open_new_task_repo = None;
+    let mut last_loaded_mtime = paths.and_then(state_file_mtime);
     state_changed |= refresh_live_context(context, runner)?;
     let refresh_interval = Duration::from_millis(parse_u64_arg(subcommand, "interval-ms", 1000)?);
     loop {
         let mut task_session = PtyTaskSessionRunner;
         let mut cached_snapshot = None;
-        let snapshot =
-            refresh_cockpit_snapshot(context, runner, &mut state_changed, &mut cached_snapshot)?;
+        let snapshot = refresh_cockpit_snapshot_with_paths(
+            context,
+            runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+            paths,
+            &mut last_loaded_mtime,
+        )?;
         let pending = ajax_tui::run_interactive_with_flash_and_refresh(
             snapshot.repos,
             snapshot.cards,
@@ -92,6 +101,8 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 runner,
                 state_changed: &mut state_changed,
                 cached_snapshot: &mut cached_snapshot,
+                paths,
+                last_loaded_mtime: &mut last_loaded_mtime,
             },
             open_new_task_repo.take(),
         )
@@ -117,6 +128,13 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 if !handle_pending_cockpit_result(Ok(message), &mut cockpit_flash) {
                     continue;
                 }
+            }
+        }
+
+        if state_changed {
+            if let (Some(paths), Some(save_state)) = (paths, save_state.as_deref_mut()) {
+                save_cockpit_state_to_sqlite(paths, context, save_state, &mut last_loaded_mtime)?;
+                state_changed = false;
             }
         }
     }
@@ -391,6 +409,48 @@ pub(crate) fn refresh_cockpit_snapshot<R: CommandRunner>(
     }
 }
 
+pub(crate) fn refresh_cockpit_snapshot_with_paths<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+    cached_snapshot: &mut Option<CockpitSnapshot>,
+    paths: Option<&CliContextPaths>,
+    last_loaded_mtime: &mut Option<SystemTime>,
+) -> Result<CockpitSnapshot, CliError> {
+    if let Some(paths) = paths {
+        reload_cockpit_context_if_stale(context, paths, last_loaded_mtime)?;
+    }
+    refresh_cockpit_snapshot(context, runner, state_changed, cached_snapshot)
+}
+
+fn reload_cockpit_context_if_stale(
+    context: &mut CommandContext<InMemoryRegistry>,
+    paths: &CliContextPaths,
+    last_loaded_mtime: &mut Option<SystemTime>,
+) -> Result<bool, CliError> {
+    let Some(mtime) = state_file_mtime(paths) else {
+        return Ok(false);
+    };
+    if *last_loaded_mtime == Some(mtime) {
+        return Ok(false);
+    }
+    let fresh = load_context(paths)?;
+    context.registry = fresh.registry;
+    *last_loaded_mtime = Some(mtime);
+    Ok(true)
+}
+
+pub(crate) fn save_cockpit_state_to_sqlite(
+    paths: &CliContextPaths,
+    context: &CommandContext<InMemoryRegistry>,
+    save_state: &mut crate::context::ContextSaveState,
+    last_loaded_mtime: &mut Option<SystemTime>,
+) -> Result<(), CliError> {
+    crate::context::save_context_with_state(paths, context, save_state)?;
+    *last_loaded_mtime = state_file_mtime(paths);
+    Ok(())
+}
+
 pub(crate) fn build_cockpit_snapshot(
     context: &CommandContext<InMemoryRegistry>,
 ) -> CockpitSnapshot {
@@ -407,6 +467,8 @@ struct InteractiveCockpitHandler<'a, R: CommandRunner> {
     runner: &'a mut R,
     state_changed: &'a mut bool,
     cached_snapshot: &'a mut Option<CockpitSnapshot>,
+    paths: Option<&'a CliContextPaths>,
+    last_loaded_mtime: &'a mut Option<SystemTime>,
 }
 
 impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
@@ -425,11 +487,13 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
     }
 
     fn on_refresh(&mut self) -> std::io::Result<Option<CockpitSnapshot>> {
-        refresh_cockpit_snapshot(
+        refresh_cockpit_snapshot_with_paths(
             self.context,
             self.runner,
             self.state_changed,
             self.cached_snapshot,
+            self.paths,
+            self.last_loaded_mtime,
         )
         .map(Some)
         .map_err(|error| std::io::Error::other(error.to_string()))
@@ -1395,5 +1459,237 @@ mod tests {
         assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
         ));
+    }
+}
+
+#[cfg(test)]
+mod cockpit_persistence_tests {
+    use super::{
+        refresh_cockpit_snapshot_with_paths, save_cockpit_state_to_sqlite,
+        InteractiveCockpitHandler,
+    };
+    use crate::context::{load_context, load_tracked_context, state_file_mtime};
+    use crate::CliContextPaths;
+    use ajax_core::{
+        adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        models::{AgentClient, LifecycleStatus, Task, TaskId},
+        registry::{InMemoryRegistry, Registry as _, RegistryStore as _, SqliteRegistryStore},
+    };
+    use ajax_tui::CockpitEventHandler;
+    use std::{thread, time::Duration};
+
+    struct EmptyTmuxRunner;
+
+    impl CommandRunner for EmptyTmuxRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    fn sample_active_task(handle: &str) -> Task {
+        let mut task = Task::new(
+            TaskId::new(format!("web/{handle}")),
+            "web",
+            handle,
+            handle,
+            format!("ajax/{handle}"),
+            "main",
+            format!("/tmp/worktrees/web-{handle}"),
+            format!("ajax-web-{handle}"),
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Active;
+        task
+    }
+
+    fn temp_state_paths(label: &str) -> CliContextPaths {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-cockpit-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        CliContextPaths::new(root.join("config.toml"), root.join("state.db"))
+    }
+
+    #[test]
+    fn refresh_cockpit_snapshot_with_paths_reloads_sqlite_when_mtime_advances() {
+        let paths = temp_state_paths("reload-on-mtime");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial)
+            .unwrap();
+
+        let mut context = load_context(&paths).unwrap();
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+        let mut cached_snapshot = None;
+        let mut state_changed = false;
+        let mut runner = EmptyTmuxRunner;
+
+        let first = refresh_cockpit_snapshot_with_paths(
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+            Some(&paths),
+            &mut last_loaded_mtime,
+        )
+        .unwrap();
+        assert_eq!(first.cards.len(), 1);
+        assert!(first
+            .cards
+            .iter()
+            .any(|card| card.qualified_handle == "web/a"));
+
+        thread::sleep(Duration::from_millis(50));
+        let mut next = InMemoryRegistry::default();
+        next.create_task(sample_active_task("a")).unwrap();
+        next.create_task(sample_active_task("b")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&next)
+            .unwrap();
+
+        let mtime_before_reload = last_loaded_mtime;
+        let mut runner = EmptyTmuxRunner;
+        let second = refresh_cockpit_snapshot_with_paths(
+            &mut context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+            Some(&paths),
+            &mut last_loaded_mtime,
+        )
+        .unwrap();
+
+        let handles: Vec<&str> = second
+            .cards
+            .iter()
+            .map(|card| card.qualified_handle.as_str())
+            .collect();
+        assert!(
+            handles.contains(&"web/a") && handles.contains(&"web/b"),
+            "expected both web/a and web/b after sqlite advance, got {handles:?}"
+        );
+        assert_eq!(second.cards.len(), 2);
+        assert_ne!(
+            mtime_before_reload, last_loaded_mtime,
+            "last_loaded_mtime should advance after SQLite revision changes"
+        );
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn interactive_cockpit_handler_on_refresh_reloads_sqlite_via_paths() {
+        let paths = temp_state_paths("handler-on-refresh");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial)
+            .unwrap();
+
+        let mut context = load_context(&paths).unwrap();
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+        let mut cached_snapshot = None;
+        let mut state_changed = false;
+        let mut runner = EmptyTmuxRunner;
+
+        let first = {
+            let mut handler = InteractiveCockpitHandler {
+                context: &mut context,
+                runner: &mut runner,
+                state_changed: &mut state_changed,
+                cached_snapshot: &mut cached_snapshot,
+                paths: Some(&paths),
+                last_loaded_mtime: &mut last_loaded_mtime,
+            };
+            handler.on_refresh().unwrap().expect("first snapshot")
+        };
+        assert_eq!(first.cards.len(), 1);
+
+        thread::sleep(Duration::from_millis(50));
+        let mut next = InMemoryRegistry::default();
+        next.create_task(sample_active_task("a")).unwrap();
+        next.create_task(sample_active_task("b")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&next)
+            .unwrap();
+
+        let mut runner = EmptyTmuxRunner;
+        let second = {
+            let mut handler = InteractiveCockpitHandler {
+                context: &mut context,
+                runner: &mut runner,
+                state_changed: &mut state_changed,
+                cached_snapshot: &mut cached_snapshot,
+                paths: Some(&paths),
+                last_loaded_mtime: &mut last_loaded_mtime,
+            };
+            handler.on_refresh().unwrap().expect("second snapshot")
+        };
+
+        let handles: Vec<&str> = second
+            .cards
+            .iter()
+            .map(|card| card.qualified_handle.as_str())
+            .collect();
+        assert!(
+            handles.contains(&"web/a") && handles.contains(&"web/b"),
+            "expected handler.on_refresh to pick up SQLite advance, got {handles:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn save_cockpit_state_to_sqlite_persists_in_memory_mutations() {
+        let paths = temp_state_paths("save-during-loop");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/a"))
+            .expect("seeded task")
+            .title = "Renamed by native cockpit".to_string();
+
+        save_cockpit_state_to_sqlite(
+            &paths,
+            &tracked.context,
+            &mut tracked.save_state,
+            &mut last_loaded_mtime,
+        )
+        .expect("save during interactive cockpit loop");
+
+        let on_disk = SqliteRegistryStore::new(&paths.state_file)
+            .load_tasks_only()
+            .expect("reload SQLite after cockpit save");
+        let task = on_disk
+            .get_task(&TaskId::new("web/a"))
+            .expect("persisted task")
+            .clone();
+        assert_eq!(
+            task.title, "Renamed by native cockpit",
+            "cockpit save should persist in-memory task mutations during the interactive loop"
+        );
+        assert!(last_loaded_mtime.is_some(), "mtime should be tracked");
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
     }
 }

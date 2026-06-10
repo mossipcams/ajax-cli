@@ -142,6 +142,7 @@ pub fn run_with_args(
         &mut tracked.context,
         &mut runner,
         Some(&paths),
+        Some(&mut tracked.save_state),
     ) {
         Ok(rendered) => rendered,
         Err(error) => {
@@ -194,6 +195,7 @@ pub fn run_with_args_to_writer(
         &mut tracked.context,
         &mut runner,
         Some(&paths),
+        Some(&mut tracked.save_state),
     ) {
         Ok(rendered) => rendered,
         Err(error) => {
@@ -282,16 +284,21 @@ pub fn run_with_context_paths_and_runner(
         ParsedArgs::Message(message) => return Ok(message),
     };
     let mut tracked = load_tracked_context_for_matches(paths, &matches)?;
-    let rendered =
-        match render_matches_mut_with_paths(&matches, &mut tracked.context, runner, Some(paths)) {
-            Ok(rendered) => rendered,
-            Err(error) => {
-                if error.state_changed() {
-                    save_tracked_context(paths, &mut tracked)?;
-                }
-                return Err(error);
+    let rendered = match render_matches_mut_with_paths(
+        &matches,
+        &mut tracked.context,
+        runner,
+        Some(paths),
+        Some(&mut tracked.save_state),
+    ) {
+        Ok(rendered) => rendered,
+        Err(error) => {
+            if error.state_changed() {
+                save_tracked_context(paths, &mut tracked)?;
             }
-        };
+            return Err(error);
+        }
+    };
     if rendered.state_changed {
         save_tracked_context(paths, &mut tracked)?;
     }
