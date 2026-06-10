@@ -1,7 +1,6 @@
 use ajax_core::{
     models::{CockpitActionItem, LifecycleStatus, OperatorAction, TaskId},
     output::{AnnotationItem, InboxResponse, RepoSummary, ReposResponse, TaskCard},
-    ui_state::UiState,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -129,8 +128,8 @@ fn card_action_reason(card: &TaskCard) -> String {
     card.annotations
         .first()
         .map(|annotation| annotation.evidence.attention_label().to_string())
-        .or_else(|| card.live_summary.clone())
-        .unwrap_or_else(|| card.ui_state.as_str().to_string())
+        .or_else(|| card.status_explanation.clone())
+        .unwrap_or_else(|| card.status.as_str().to_string())
 }
 
 fn build_selectables(
@@ -186,7 +185,7 @@ fn build_selectables(
             for card in cards
                 .iter()
                 .filter(|card| !inbox_task_ids.contains(&card.id))
-                .filter(|card| !matches!(card.ui_state, UiState::Archived))
+                .filter(|card| card.lifecycle != LifecycleStatus::Removed)
             {
                 push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card, None);
             }
@@ -200,7 +199,7 @@ fn build_selectables(
                         .split_once('/')
                         .is_some_and(|(card_repo, _)| card_repo == repo)
                 })
-                .filter(|card| !matches!(card.ui_state, UiState::Archived))
+                .filter(|card| card.lifecycle != LifecycleStatus::Removed)
             {
                 push_with_drawer(&mut out, SelectableKind::Task(card.clone()), card, None);
             }

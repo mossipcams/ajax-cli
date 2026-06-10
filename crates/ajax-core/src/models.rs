@@ -241,6 +241,8 @@ pub struct Task {
     pub runtime_projection: RuntimeProjection,
     #[serde(default)]
     pub live_status: Option<LiveObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_status_observed_at: Option<SystemTime>,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
     pub created_at: SystemTime,
@@ -286,6 +288,7 @@ impl Task {
             worktrunk_status: None,
             runtime_projection: RuntimeProjection::default(),
             live_status: None,
+            live_status_observed_at: None,
             annotations: Vec::new(),
             created_at: now,
             last_activity_at: now,
@@ -883,11 +886,11 @@ impl Evidence {
                 LiveStatusKind::WorktrunkMissing => "worktrunk missing",
                 LiveStatusKind::MergeConflict => "merge conflict",
                 LiveStatusKind::Done => "done",
-                LiveStatusKind::ShellIdle
-                | LiveStatusKind::CommandRunning
-                | LiveStatusKind::TestsRunning
-                | LiveStatusKind::AgentRunning
-                | LiveStatusKind::CiFailed => "ci failed",
+                LiveStatusKind::ShellIdle => "shell idle",
+                LiveStatusKind::CommandRunning => "command running",
+                LiveStatusKind::TestsRunning => "tests running",
+                LiveStatusKind::AgentRunning => "agent running",
+                LiveStatusKind::CiFailed => "ci failed",
                 LiveStatusKind::Unknown => "live status",
             },
             Evidence::AgentStatus(status) => match status {
@@ -1009,6 +1012,11 @@ mod tests {
     #[test]
     fn new_task_has_no_attention_acknowledgment() {
         assert_eq!(acknowledgment_task().attention_acknowledged_at, None);
+    }
+
+    #[test]
+    fn new_task_has_no_live_status_observation_timestamp() {
+        assert_eq!(acknowledgment_task().live_status_observed_at, None);
     }
 
     #[test]
@@ -1598,6 +1606,22 @@ mod tests {
             Evidence::LiveStatus(LiveStatusKind::WaitingForInput).attention_label(),
             "needs input"
         );
+    }
+
+    #[rstest::rstest]
+    #[case(LiveStatusKind::ShellIdle, "shell idle")]
+    #[case(LiveStatusKind::CommandRunning, "command running")]
+    #[case(LiveStatusKind::TestsRunning, "tests running")]
+    #[case(LiveStatusKind::AgentRunning, "agent running")]
+    #[case(LiveStatusKind::CiFailed, "ci failed")]
+    #[case(LiveStatusKind::Done, "done")]
+    #[case(LiveStatusKind::CommandFailed, "command failed")]
+    #[case(LiveStatusKind::WorktreeMissing, "worktree missing")]
+    fn live_status_evidence_labels_are_specific(
+        #[case] kind: LiveStatusKind,
+        #[case] expected: &str,
+    ) {
+        assert_eq!(Evidence::LiveStatus(kind).label(), expected);
     }
 
     #[test]

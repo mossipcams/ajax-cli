@@ -338,14 +338,20 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             now,
             candidates: &candidates,
         });
-        if let (true, Some(observation), Some(source)) =
-            (decision.applied, decision.observation, decision.source)
-        {
+        if let (true, Some(observation), Some(source), Some(observed_at)) = (
+            decision.applied,
+            decision.observation,
+            decision.source,
+            decision.observed_at,
+        ) {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 let live_status_unchanged = task
                     .live_status
                     .as_ref()
-                    .is_some_and(|status| status.kind == observation.kind);
+                    .is_some_and(|status| status.kind == observation.kind)
+                    && task
+                        .live_status_observed_at
+                        .is_some_and(|current| current >= observed_at);
                 let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                     && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
                 if live_status_unchanged && !needs_agent_running_flag {
@@ -356,10 +362,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
                 match source {
                     live::AgentEvidenceSource::Hook => {
-                        live::apply_authoritative_observation(task, observation);
+                        live::apply_authoritative_observation_at(task, observation, observed_at);
                     }
                     live::AgentEvidenceSource::RuntimeWrapper => {
-                        live::apply_trusted_observation(task, observation);
+                        live::apply_trusted_observation_at(task, observation, observed_at);
                     }
                 }
                 refresh_cached_annotations(task);
@@ -1497,7 +1503,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_wait_ignores_acknowledgment_while_fresh() {
+    fn acknowledged_old_codex_wait_stays_idle_without_pane_capture() {
         let mut context = context_with_active_task();
         context
             .registry
@@ -1515,11 +1521,44 @@ mod tests {
 
         refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
 
+        assert_eq!(captured_pane(&runner), 0);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
+        assert_eq!(task.live_status, None);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn newer_same_kind_waiting_evidence_is_applied_after_acknowledgment() {
+        let acknowledged_at = SystemTime::now() - Duration::from_secs(10);
+        let previous_observed_at = acknowledged_at - Duration::from_secs(1);
+        let next_observed_at = acknowledged_at + Duration::from_nanos(1);
+        let mut context = context_with_active_task();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            task.live_status = Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "old wait",
+            ));
+            task.live_status_observed_at = Some(previous_observed_at);
+            task.attention_acknowledged_at = Some(acknowledged_at);
+        }
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![AgentStatusCacheEntry {
+                value: "wait".to_string(),
+                observed_at: next_observed_at,
+                fresh: true,
+                source: AgentStatusCacheSource::Hook,
+            }],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(task.live_status_observed_at, Some(next_observed_at));
         assert!(task.has_side_flag(SideFlag::NeedsInput));
     }
 

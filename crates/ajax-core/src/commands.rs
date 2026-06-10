@@ -40,7 +40,7 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::interpret_git_status,
     config::Config,
-    models::{Annotation, AnnotationKind, GitStatus, LifecycleStatus, SideFlag, Task},
+    models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
         AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
         InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
@@ -189,8 +189,40 @@ fn cockpit_inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
         .filter(|task| is_visible_task(task))
         .collect::<Vec<_>>();
     InboxResponse {
-        items: annotation_items_matching(visible.as_slice(), is_cockpit_inbox_annotation),
+        items: cockpit_status_items(visible.as_slice()),
     }
+}
+
+fn cockpit_status_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
+    let mut items = tasks
+        .iter()
+        .copied()
+        .filter_map(|task| {
+            let status = crate::ui_state::derive_operator_status(task);
+            let severity = match status.status {
+                crate::ui_state::TaskStatus::Waiting => 1,
+                crate::ui_state::TaskStatus::Error => 2,
+                crate::ui_state::TaskStatus::Running | crate::ui_state::TaskStatus::Idle => {
+                    return None;
+                }
+            };
+            Some(AnnotationItem {
+                task_id: task.id.clone(),
+                task_handle: task.qualified_handle(),
+                reason: status
+                    .explanation
+                    .unwrap_or_else(|| status.status.as_str().to_string()),
+                severity,
+                action: operator_action(task).action,
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.severity
+            .cmp(&right.severity)
+            .then_with(|| left.task_handle.cmp(&right.task_handle))
+    });
+    items
 }
 
 pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
@@ -221,13 +253,6 @@ fn annotation_items_matching(
             .then_with(|| left.reason.cmp(&right.reason))
     });
     items
-}
-
-fn is_cockpit_inbox_annotation(annotation: &Annotation) -> bool {
-    matches!(
-        annotation.kind,
-        AnnotationKind::NeedsMe | AnnotationKind::Broken
-    )
 }
 
 fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
@@ -1323,7 +1348,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_inbox_does_not_list_reviewable_tasks_without_input_or_blocker() {
+    fn cockpit_inbox_lists_unacknowledged_reviewable_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1333,7 +1358,9 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
 
         assert_eq!(review_queue(&context).tasks.len(), 1);
-        assert!(cockpit_inbox(&context).items.is_empty());
+        let items = cockpit_inbox(&context).items;
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].reason, "Ready for review");
     }
 
     fn claude_waiting_context() -> CommandContext<InMemoryRegistry> {
@@ -1350,6 +1377,8 @@ mod tests {
             LiveStatusKind::WaitingForInput,
             "waiting for input",
         ));
+        task.live_status_observed_at =
+            Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(800));
         task.annotations = crate::attention::annotate(task);
         context
     }
@@ -1402,12 +1431,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(LiveStatusKind::WaitingForInput, "waiting_for_input")]
-    #[case(LiveStatusKind::WaitingForApproval, "waiting_for_approval")]
-    #[case(LiveStatusKind::CommandFailed, "command_failed")]
-    #[case(LiveStatusKind::Blocked, "blocked")]
-    #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
-    #[case(LiveStatusKind::CiFailed, "ci_failed")]
+    #[case(LiveStatusKind::WaitingForInput, "Waiting for input")]
+    #[case(LiveStatusKind::WaitingForApproval, "Waiting for approval")]
+    #[case(LiveStatusKind::CommandFailed, "Command failed")]
+    #[case(LiveStatusKind::Blocked, "Agent blocked")]
+    #[case(LiveStatusKind::MergeConflict, "Merge conflict")]
+    #[case(LiveStatusKind::CiFailed, "CI failed")]
     fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
         #[case] live_status: LiveStatusKind,
         #[case] expected_reason: &str,
@@ -1626,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_inbox_excludes_reviewable_tasks_without_input_or_blocker() {
+    fn cockpit_inbox_includes_unacknowledged_reviewable_tasks() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -1637,7 +1666,8 @@ mod tests {
 
         let view = super::cockpit_view(&context);
 
-        assert!(view.inbox.items.is_empty());
+        assert_eq!(view.inbox.items.len(), 1);
+        assert_eq!(view.inbox.items[0].reason, "Ready for review");
         assert_eq!(view.cards.len(), 1);
         assert_eq!(view.cards[0].qualified_handle, "web/fix-login");
     }
@@ -1720,7 +1750,7 @@ mod tests {
                 repos: 2,
                 tasks: 2,
                 active_tasks: 0,
-                attention_items: 2,
+                attention_items: 1,
                 reviewable_tasks: 1,
                 cleanable_tasks: 1,
             }
@@ -2967,7 +2997,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_task_opened_acknowledges_claude_attention_without_changing_lifecycle() {
+    fn mark_task_opened_preserves_claude_evidence_and_lifecycle() {
         let mut context = context_with_tasks();
         {
             let task = context
@@ -2990,12 +3020,16 @@ mod tests {
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert_eq!(task.attention_acknowledged_at, Some(at));
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
-        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
-        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
     }
 
     #[test]
-    fn mark_task_opened_does_not_clear_codex_waiting() {
+    fn mark_task_opened_preserves_codex_evidence_and_lifecycle() {
         let mut context = context_with_tasks();
         {
             let task = context

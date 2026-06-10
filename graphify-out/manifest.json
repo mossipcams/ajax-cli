@@ -1,1621 +1,826 @@
 {
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.github/hooks/probity.json": {
-    "mtime": 1780933519.5706306,
-    "ast_hash": "ae8108ff1ecf0c18129ef18ce487c96d",
-    "semantic_hash": "ae8108ff1ecf0c18129ef18ce487c96d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/applypatch-msg": {
-    "mtime": 1780933521.0196486,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/commit-msg": {
-    "mtime": 1780933521.0193124,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/h": {
-    "mtime": 1780933521.0186443,
-    "ast_hash": "15239a01c5554e56ff745570fb583a91",
-    "semantic_hash": "15239a01c5554e56ff745570fb583a91"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/husky.sh": {
-    "mtime": 1780933521.0211735,
-    "ast_hash": "13871d2ab13e8423790ecb2c01c78c18",
-    "semantic_hash": "13871d2ab13e8423790ecb2c01c78c18"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/post-applypatch": {
-    "mtime": 1780933521.0201313,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/post-checkout": {
-    "mtime": 1780933521.0205178,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/post-commit": {
-    "mtime": 1780933521.0195634,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/post-merge": {
-    "mtime": 1780933521.0207167,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/post-rewrite": {
-    "mtime": 1780933521.0203717,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-applypatch": {
-    "mtime": 1780933521.0198488,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-auto-gc": {
-    "mtime": 1780933521.0210958,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-commit": {
-    "mtime": 1780933521.0188947,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-merge-commit": {
-    "mtime": 1780933521.0189826,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-push": {
-    "mtime": 1780933521.0208633,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/pre-rebase": {
-    "mtime": 1780933521.0202873,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.husky/_/prepare-commit-msg": {
-    "mtime": 1780933521.0191953,
-    "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
-    "semantic_hash": "0b71c2e7d39daa010985d529f1320b37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.jscpd.json": {
-    "mtime": 1780933519.5734897,
-    "ast_hash": "abddfbad0faa5f391c2ca7fc58569a1f",
-    "semantic_hash": "abddfbad0faa5f391c2ca7fc58569a1f"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.planning/config.json": {
-    "mtime": 1780933519.5738666,
-    "ast_hash": "13a39e08ef724a0d79acc17f3c31dc61",
-    "semantic_hash": "13a39e08ef724a0d79acc17f3c31dc61"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.release-please-manifest.json": {
-    "mtime": 1780933519.5744717,
-    "ast_hash": "3eb398e18ae1d1d8f2282b4e85aae66b",
-    "semantic_hash": "3eb398e18ae1d1d8f2282b4e85aae66b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/agent_status_cache.rs": {
-    "mtime": 1780933519.5825777,
-    "ast_hash": "894e80589792df6c6eb0da784d44cd9a",
-    "semantic_hash": "894e80589792df6c6eb0da784d44cd9a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/bgtmux.rs": {
-    "mtime": 1780933519.582896,
-    "ast_hash": "de0504cc88107dcad0c16c48cf73f61b",
-    "semantic_hash": "de0504cc88107dcad0c16c48cf73f61b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/bin/bgtmux.rs": {
-    "mtime": 1780933519.5836294,
-    "ast_hash": "36bacd642efb4f4051af91c1d50cf759",
-    "semantic_hash": "36bacd642efb4f4051af91c1d50cf759"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/cli.rs": {
-    "mtime": 1780933519.5841842,
-    "ast_hash": "6d3530a7614df09a235593859b790948",
-    "semantic_hash": "6d3530a7614df09a235593859b790948"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/cockpit_actions.rs": {
-    "mtime": 1780933519.5845609,
-    "ast_hash": "e8373f33a08dda5fb08e574980cafe5c",
-    "semantic_hash": "e8373f33a08dda5fb08e574980cafe5c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/cockpit_backend.rs": {
-    "mtime": 1780933519.5850585,
-    "ast_hash": "0fb8691a6ffce0915573b0bed901f275",
-    "semantic_hash": "0fb8691a6ffce0915573b0bed901f275"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/context.rs": {
-    "mtime": 1780933519.5855381,
-    "ast_hash": "b8c34f731ea6103f469a8f891a46e74b",
-    "semantic_hash": "b8c34f731ea6103f469a8f891a46e74b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/dispatch.rs": {
-    "mtime": 1780933519.5860121,
-    "ast_hash": "e9ec1d63978618be2a4d95fdb1123abc",
-    "semantic_hash": "e9ec1d63978618be2a4d95fdb1123abc"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/execution_dispatch.rs": {
-    "mtime": 1780933519.5864248,
-    "ast_hash": "7d08a7dda5a1ba1af410583a9c294d37",
-    "semantic_hash": "7d08a7dda5a1ba1af410583a9c294d37"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/lib.rs": {
-    "mtime": 1780933519.5869575,
-    "ast_hash": "b40d48fd2a50851a107f878b813be501",
-    "semantic_hash": "b40d48fd2a50851a107f878b813be501"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/lib/tests.rs": {
-    "mtime": 1780933519.5883157,
-    "ast_hash": "15066797af56ad03b8fd932025da93e2",
-    "semantic_hash": "15066797af56ad03b8fd932025da93e2"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/main.rs": {
-    "mtime": 1780933519.5894809,
-    "ast_hash": "d7810f893a062e5835759bf82c3db97e",
-    "semantic_hash": "d7810f893a062e5835759bf82c3db97e"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/render.rs": {
-    "mtime": 1780933519.5916936,
-    "ast_hash": "ef5453c32ea9ca01316708a2169adb8a",
-    "semantic_hash": "ef5453c32ea9ca01316708a2169adb8a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/snapshot_dispatch.rs": {
-    "mtime": 1780933519.592297,
-    "ast_hash": "a71eb460f715e17241b5f087eb403679",
-    "semantic_hash": "a71eb460f715e17241b5f087eb403679"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/supervise.rs": {
-    "mtime": 1780933519.5925844,
-    "ast_hash": "06d7a389b9a26bc5933e41f8e7a0528d",
-    "semantic_hash": "06d7a389b9a26bc5933e41f8e7a0528d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/task_session.rs": {
-    "mtime": 1780933519.5931587,
-    "ast_hash": "7e85f4fa02c3137ee3cce7d88bf50237",
-    "semantic_hash": "7e85f4fa02c3137ee3cce7d88bf50237"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/src/web_backend.rs": {
-    "mtime": 1780933519.593773,
-    "ast_hash": "9c5a0c77ba30e03adbcbdf456ff15ff6",
-    "semantic_hash": "9c5a0c77ba30e03adbcbdf456ff15ff6"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/tests/live_cli.rs": {
-    "mtime": 1780933519.5941372,
-    "ast_hash": "4f0dab003752c67c8dc3f30060077130",
-    "semantic_hash": "4f0dab003752c67c8dc3f30060077130"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/tests/repo_hooks.rs": {
-    "mtime": 1780933519.595345,
-    "ast_hash": "b70b3e941e009892b3071f6be95f060c",
-    "semantic_hash": "b70b3e941e009892b3071f6be95f060c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/tests/smoke_user_flows.rs": {
-    "mtime": 1780933519.5956929,
-    "ast_hash": "2f383437091b7e601e43489b225c7f6d",
-    "semantic_hash": "2f383437091b7e601e43489b225c7f6d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters.rs": {
-    "mtime": 1780933519.5974653,
-    "ast_hash": "04c55d60874d9761f29f2d1a866736fe",
-    "semantic_hash": "04c55d60874d9761f29f2d1a866736fe"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/agent.rs": {
-    "mtime": 1780933519.5980027,
-    "ast_hash": "a1a7db9c1a35c8a1550d21ec94c69e9e",
-    "semantic_hash": "a1a7db9c1a35c8a1550d21ec94c69e9e"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/command.rs": {
-    "mtime": 1780933519.598415,
-    "ast_hash": "5004424f7c9c6bad2bfd03f5f15b11e7",
-    "semantic_hash": "5004424f7c9c6bad2bfd03f5f15b11e7"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/environment.rs": {
-    "mtime": 1780933519.5987957,
-    "ast_hash": "33ba4066e7f9f384f09fe0fd6f9125c3",
-    "semantic_hash": "33ba4066e7f9f384f09fe0fd6f9125c3"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/git.rs": {
-    "mtime": 1780933519.599096,
-    "ast_hash": "6e9375ce7e110931e7f939ccaa39cba5",
-    "semantic_hash": "6e9375ce7e110931e7f939ccaa39cba5"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/process.rs": {
-    "mtime": 1780933519.5997887,
-    "ast_hash": "5544b8f6b13c7d8a6b463d1e9ded60c4",
-    "semantic_hash": "5544b8f6b13c7d8a6b463d1e9ded60c4"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/adapters/tmux.rs": {
-    "mtime": 1780933519.6000965,
-    "ast_hash": "df836e519e82ccb90b85fd6964b04b8b",
-    "semantic_hash": "df836e519e82ccb90b85fd6964b04b8b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/agent_prompt.rs": {
-    "mtime": 1780933519.6005163,
-    "ast_hash": "59293193450182a13fe64c0b220d666d",
-    "semantic_hash": "59293193450182a13fe64c0b220d666d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/analysis.rs": {
-    "mtime": 1780933519.601262,
-    "ast_hash": "f6f841eceda76eaaec7feed66be6c654",
-    "semantic_hash": "f6f841eceda76eaaec7feed66be6c654"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/analysis/git_evidence.rs": {
-    "mtime": 1780933519.6018393,
-    "ast_hash": "312555824c1940aa84e847066db5d078",
-    "semantic_hash": "312555824c1940aa84e847066db5d078"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/architecture.rs": {
-    "mtime": 1780933519.6023932,
-    "ast_hash": "af9028a6e9ef348fe805d1a384cf9ec5",
-    "semantic_hash": "af9028a6e9ef348fe805d1a384cf9ec5"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/attention.rs": {
-    "mtime": 1780933519.6030014,
-    "ast_hash": "57934fc694be9a476b5fa3eb449fcf3c",
-    "semantic_hash": "57934fc694be9a476b5fa3eb449fcf3c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands.rs": {
-    "mtime": 1780933519.6036263,
-    "ast_hash": "d3ca86bd0c86dff4ab0dd2a5462c2eb1",
-    "semantic_hash": "d3ca86bd0c86dff4ab0dd2a5462c2eb1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/check.rs": {
-    "mtime": 1780933519.6041908,
-    "ast_hash": "a44e43296eb3ad2c411ede7033643213",
-    "semantic_hash": "a44e43296eb3ad2c411ede7033643213"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/diff.rs": {
-    "mtime": 1780933519.6050634,
-    "ast_hash": "fb643ea550c44b4d200d20087ea1bc28",
-    "semantic_hash": "fb643ea550c44b4d200d20087ea1bc28"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/doctor.rs": {
-    "mtime": 1780933519.6053176,
-    "ast_hash": "d0ab9a09cab765aa92a0d0c2ed6d1a5d",
-    "semantic_hash": "d0ab9a09cab765aa92a0d0c2ed6d1a5d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/lookup.rs": {
-    "mtime": 1780933519.6058447,
-    "ast_hash": "59946233efa59752750d0bb1ed33a67a",
-    "semantic_hash": "59946233efa59752750d0bb1ed33a67a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/merge.rs": {
-    "mtime": 1780933519.6062205,
-    "ast_hash": "6b31e569c8cf59a2f9a52049ec0297c3",
-    "semantic_hash": "6b31e569c8cf59a2f9a52049ec0297c3"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/new_task.rs": {
-    "mtime": 1780933519.6065018,
-    "ast_hash": "b8420f9139def5bc708df6eaa64e6fb1",
-    "semantic_hash": "b8420f9139def5bc708df6eaa64e6fb1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/open.rs": {
-    "mtime": 1780933519.6070392,
-    "ast_hash": "9e73db68059a8720f287b2f8e5071cbf",
-    "semantic_hash": "9e73db68059a8720f287b2f8e5071cbf"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/projection.rs": {
-    "mtime": 1780933519.6074717,
-    "ast_hash": "5b636c589781e65cc17a38f02dd6e7df",
-    "semantic_hash": "5b636c589781e65cc17a38f02dd6e7df"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/teardown.rs": {
-    "mtime": 1780933519.6078277,
-    "ast_hash": "4f8ea28d40ce82f2263b2d0a0bef9f04",
-    "semantic_hash": "4f8ea28d40ce82f2263b2d0a0bef9f04"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/commands/trunk.rs": {
-    "mtime": 1780933519.608387,
-    "ast_hash": "0c8f276615bc3cdb566688407ce39c99",
-    "semantic_hash": "0c8f276615bc3cdb566688407ce39c99"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/config.rs": {
-    "mtime": 1780933519.6086674,
-    "ast_hash": "dd26b45ce2529ab6b22f9314d710db06",
-    "semantic_hash": "dd26b45ce2529ab6b22f9314d710db06"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/events.rs": {
-    "mtime": 1780933519.6091952,
-    "ast_hash": "99b9eaa1c8bc056d32913796972dbcc9",
-    "semantic_hash": "99b9eaa1c8bc056d32913796972dbcc9"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/ghost_task.rs": {
-    "mtime": 1780933519.6096056,
-    "ast_hash": "3c4bba16708fc6d26f81eb06a606b94b",
-    "semantic_hash": "3c4bba16708fc6d26f81eb06a606b94b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/lib.rs": {
-    "mtime": 1780933519.6098852,
-    "ast_hash": "62ad83b334e8f1736ebdb073e1f3c403",
-    "semantic_hash": "62ad83b334e8f1736ebdb073e1f3c403"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/lifecycle.rs": {
-    "mtime": 1780933519.6105685,
-    "ast_hash": "b4e5d23fd735053908ffb8bfdd878aa1",
-    "semantic_hash": "b4e5d23fd735053908ffb8bfdd878aa1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/live.rs": {
-    "mtime": 1780933519.610862,
-    "ast_hash": "57f2f2502d9cf4b18005ea82d5fa3f15",
-    "semantic_hash": "57f2f2502d9cf4b18005ea82d5fa3f15"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/live_application.rs": {
-    "mtime": 1780933519.6113489,
-    "ast_hash": "57479e174918500ce7b0784ad5a85e0b",
-    "semantic_hash": "57479e174918500ce7b0784ad5a85e0b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/models.rs": {
-    "mtime": 1780933519.6117883,
-    "ast_hash": "24692e2bd9572e8d114fe386f8088fd3",
-    "semantic_hash": "24692e2bd9572e8d114fe386f8088fd3"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/operation.rs": {
-    "mtime": 1780933519.6130004,
-    "ast_hash": "b464b193a3634919e4f00d40d59b4944",
-    "semantic_hash": "b464b193a3634919e4f00d40d59b4944"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/output.rs": {
-    "mtime": 1780933519.6134737,
-    "ast_hash": "5f1786c26369089a0064ba9247e80c4a",
-    "semantic_hash": "5f1786c26369089a0064ba9247e80c4a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/policy.rs": {
-    "mtime": 1780933519.6140676,
-    "ast_hash": "9bd39381c3ed5d8715fb2b04f54048db",
-    "semantic_hash": "9bd39381c3ed5d8715fb2b04f54048db"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/recommended.rs": {
-    "mtime": 1780933519.6144319,
-    "ast_hash": "8b41853dec3609d23566a540c890a7ab",
-    "semantic_hash": "8b41853dec3609d23566a540c890a7ab"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/registry.rs": {
-    "mtime": 1780933519.6147816,
-    "ast_hash": "f182ddbe9802d7904c6fca93a74e7078",
-    "semantic_hash": "f182ddbe9802d7904c6fca93a74e7078"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/registry/sqlite.rs": {
-    "mtime": 1780933519.6155226,
-    "ast_hash": "96b4a92b3e6cfcf9bdd752a52e78ec76",
-    "semantic_hash": "96b4a92b3e6cfcf9bdd752a52e78ec76"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/remediation.rs": {
-    "mtime": 1780933519.616386,
-    "ast_hash": "17c145fb4a61570c47e96cf9834a7559",
-    "semantic_hash": "17c145fb4a61570c47e96cf9834a7559"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/runtime.rs": {
-    "mtime": 1780933519.616983,
-    "ast_hash": "d6a8f5ea9aa70c383bb1233dcd963fdd",
-    "semantic_hash": "d6a8f5ea9aa70c383bb1233dcd963fdd"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/runtime_refresh.rs": {
-    "mtime": 1780933519.6173623,
-    "ast_hash": "15ba7eee5e2aa686bdc007fdbcf6093a",
-    "semantic_hash": "15ba7eee5e2aa686bdc007fdbcf6093a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/slices.rs": {
-    "mtime": 1780933519.6181138,
-    "ast_hash": "7797217db3c5ea0b86e2cc2a5522edd0",
-    "semantic_hash": "7797217db3c5ea0b86e2cc2a5522edd0"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/slices/pane.rs": {
-    "mtime": 1780933519.6184647,
-    "ast_hash": "c72f55b4cb3356569caddf47515c96e4",
-    "semantic_hash": "c72f55b4cb3356569caddf47515c96e4"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/slices/review/mod.rs": {
-    "mtime": 1780933519.6188521,
-    "ast_hash": "37ace2cb81564991fbb34b66685f26bc",
-    "semantic_hash": "37ace2cb81564991fbb34b66685f26bc"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/slices/review/planning.rs": {
-    "mtime": 1780933519.6190217,
-    "ast_hash": "7dea889c886fdde084c7d0ecacca090a",
-    "semantic_hash": "7dea889c886fdde084c7d0ecacca090a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/slices/review/queue.rs": {
-    "mtime": 1780933519.6196806,
-    "ast_hash": "d33739e4ed6ee68cbafafd0dba14580f",
-    "semantic_hash": "d33739e4ed6ee68cbafafd0dba14580f"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/task_operations.rs": {
-    "mtime": 1780933519.6201656,
-    "ast_hash": "537f5ea9352acbb9d4bbac3285e2c2f0",
-    "semantic_hash": "537f5ea9352acbb9d4bbac3285e2c2f0"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/ui_state.rs": {
-    "mtime": 1780933519.620967,
-    "ast_hash": "e616b16ad963adce0dfa04d4daed4af4",
-    "semantic_hash": "e616b16ad963adce0dfa04d4daed4af4"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/use_cases.rs": {
-    "mtime": 1780933519.6216612,
-    "ast_hash": "b6da3cb98411dbddb41a5be04e9b3a53",
-    "semantic_hash": "b6da3cb98411dbddb41a5be04e9b3a53"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/src/validity.rs": {
-    "mtime": 1780933519.62229,
-    "ast_hash": "1bb1b4de8122847da774b04598db0738",
-    "semantic_hash": "1bb1b4de8122847da774b04598db0738"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/tests/codex_pane_fixtures.rs": {
-    "mtime": 1780933519.622871,
-    "ast_hash": "a2437947228cd0b03693269ddb7a45d8",
-    "semantic_hash": "a2437947228cd0b03693269ddb7a45d8"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/agent/codex.rs": {
-    "mtime": 1780933519.6254485,
-    "ast_hash": "430f4e7809b023772dcf9ecdff26f8e9",
-    "semantic_hash": "430f4e7809b023772dcf9ecdff26f8e9"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/agent/cursor.rs": {
-    "mtime": 1780933519.6259665,
-    "ast_hash": "72ce391a8e60b6f94f08c1c230d4465c",
-    "semantic_hash": "72ce391a8e60b6f94f08c1c230d4465c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/agent/mod.rs": {
-    "mtime": 1780933519.626482,
-    "ast_hash": "4620cebfe21b2a44157c34f5cdeec8cd",
-    "semantic_hash": "4620cebfe21b2a44157c34f5cdeec8cd"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/architecture.rs": {
-    "mtime": 1780933519.6272082,
-    "ast_hash": "511cc343e9096c902681a6569db59b38",
-    "semantic_hash": "511cc343e9096c902681a6569db59b38"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/event_log.rs": {
-    "mtime": 1780933519.627712,
-    "ast_hash": "456974a62b9f46f239d8ff0a10ab48fe",
-    "semantic_hash": "456974a62b9f46f239d8ff0a10ab48fe"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/lib.rs": {
-    "mtime": 1780933519.6282156,
-    "ast_hash": "cf2d5421b4b0957b85bc2346d3f0bd95",
-    "semantic_hash": "cf2d5421b4b0957b85bc2346d3f0bd95"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/process_observer.rs": {
-    "mtime": 1780933519.628747,
-    "ast_hash": "8367e5942e11eb2786b59879ac09dfd1",
-    "semantic_hash": "8367e5942e11eb2786b59879ac09dfd1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/renderer.rs": {
-    "mtime": 1780933519.629306,
-    "ast_hash": "9987a159f53b1354baa55897ac6a626c",
-    "semantic_hash": "9987a159f53b1354baa55897ac6a626c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/repo_observer.rs": {
-    "mtime": 1780933519.6298091,
-    "ast_hash": "1082005d515a26d3b6fd7edf4d21fd4d",
-    "semantic_hash": "1082005d515a26d3b6fd7edf4d21fd4d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/runtime.rs": {
-    "mtime": 1780933519.6301928,
-    "ast_hash": "ad618ffa4e309c6ae7daedee9c9cb7d4",
-    "semantic_hash": "ad618ffa4e309c6ae7daedee9c9cb7d4"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-supervisor/src/status.rs": {
-    "mtime": 1780933519.6306827,
-    "ast_hash": "0ca5487b47bb22dfd066a6bd1d0db6bf",
-    "semantic_hash": "0ca5487b47bb22dfd066a6bd1d0db6bf"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/actions.rs": {
-    "mtime": 1780933519.6315207,
-    "ast_hash": "2b5573a44c22bbf2036c92883be3a2fc",
-    "semantic_hash": "2b5573a44c22bbf2036c92883be3a2fc"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/architecture.rs": {
-    "mtime": 1780933519.6319873,
-    "ast_hash": "51de5b0235374ef1a77566e8cb262e3f",
-    "semantic_hash": "51de5b0235374ef1a77566e8cb262e3f"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/cockpit_state.rs": {
-    "mtime": 1780933519.632593,
-    "ast_hash": "25b4b9adfa3779a651a457d278715a6e",
-    "semantic_hash": "25b4b9adfa3779a651a457d278715a6e"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/input.rs": {
-    "mtime": 1780933519.633065,
-    "ast_hash": "caf24ecdbe1e91b9640a39b5e20d659d",
-    "semantic_hash": "caf24ecdbe1e91b9640a39b5e20d659d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/layout.rs": {
-    "mtime": 1780933519.6334054,
-    "ast_hash": "64ed610112832a8910b4e87dd9cb9519",
-    "semantic_hash": "64ed610112832a8910b4e87dd9cb9519"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/lib.rs": {
-    "mtime": 1780933519.6340003,
-    "ast_hash": "98f4055ece725e359e5bcac585260719",
-    "semantic_hash": "98f4055ece725e359e5bcac585260719"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/navigation.rs": {
-    "mtime": 1780933519.6345422,
-    "ast_hash": "3f6b137b634d7e61d84379ac3756a28b",
-    "semantic_hash": "3f6b137b634d7e61d84379ac3756a28b"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/palette.rs": {
-    "mtime": 1780933519.635071,
-    "ast_hash": "5f198c05a88e4fdf909c4642c56467dd",
-    "semantic_hash": "5f198c05a88e4fdf909c4642c56467dd"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/rendering.rs": {
-    "mtime": 1780933519.6353583,
-    "ast_hash": "b0cae44273f891b5bfd59a669cdd3ddc",
-    "semantic_hash": "b0cae44273f891b5bfd59a669cdd3ddc"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-tui/src/runtime.rs": {
-    "mtime": 1780933519.6356342,
-    "ast_hash": "d149f291e96d6c7a762eb3dc5ef468b5",
-    "semantic_hash": "d149f291e96d6c7a762eb3dc5ef468b5"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/action_vocabulary.rs": {
-    "mtime": 1780933519.6364684,
-    "ast_hash": "f97bdbe3c8ea9f2f4ec247ea04ba9a2f",
-    "semantic_hash": "f97bdbe3c8ea9f2f4ec247ea04ba9a2f"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/assets.rs": {
-    "mtime": 1780933519.6370604,
-    "ast_hash": "364a49e639b1aa3eeec0bac8604c37ff",
-    "semantic_hash": "364a49e639b1aa3eeec0bac8604c37ff"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/http.rs": {
-    "mtime": 1780933519.6375332,
-    "ast_hash": "d0ac5c19353fcb4ca0b5659ce2a24aca",
-    "semantic_hash": "d0ac5c19353fcb4ca0b5659ce2a24aca"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/mod.rs": {
-    "mtime": 1780933519.6381986,
-    "ast_hash": "a7521097a5aa254f8ec8f45ce7fdf452",
-    "semantic_hash": "a7521097a5aa254f8ec8f45ce7fdf452"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/server.rs": {
-    "mtime": 1780933519.638867,
-    "ast_hash": "0e91d2ce8aefb2135e5757b32ab7d8b7",
-    "semantic_hash": "0e91d2ce8aefb2135e5757b32ab7d8b7"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/skills.rs": {
-    "mtime": 1780933519.639441,
-    "ast_hash": "29e61c049086a7a5b7899d9d95e48dc5",
-    "semantic_hash": "29e61c049086a7a5b7899d9d95e48dc5"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/tls.rs": {
-    "mtime": 1780933519.639857,
-    "ast_hash": "3f2e0f7363209e6186bda94c9837b82f",
-    "semantic_hash": "3f2e0f7363209e6186bda94c9837b82f"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/adapters/tmux_input.rs": {
-    "mtime": 1780933519.6405835,
-    "ast_hash": "d78c35b436faa17e34190779fbe87f21",
-    "semantic_hash": "d78c35b436faa17e34190779fbe87f21"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/architecture.rs": {
-    "mtime": 1780933519.6409016,
-    "ast_hash": "550256a9d8d9b8d90e6f29cf20e56743",
-    "semantic_hash": "550256a9d8d9b8d90e6f29cf20e56743"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/lib.rs": {
-    "mtime": 1780933519.6411343,
-    "ast_hash": "0f0ba64b563cb7995ebd2f886cc6e5a1",
-    "semantic_hash": "0f0ba64b563cb7995ebd2f886cc6e5a1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/runtime.rs": {
-    "mtime": 1780933519.6415298,
-    "ast_hash": "670e8afc6e579a6981960415a0e715af",
-    "semantic_hash": "670e8afc6e579a6981960415a0e715af"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/slices/cockpit.rs": {
-    "mtime": 1780933519.6421587,
-    "ast_hash": "613812f4d2370bffd69fc622a193ad96",
-    "semantic_hash": "613812f4d2370bffd69fc622a193ad96"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/slices/install.rs": {
-    "mtime": 1780935732.6901803,
-    "ast_hash": "0026ca3e72cbdcc92d3f9739bfa25441",
-    "semantic_hash": "0026ca3e72cbdcc92d3f9739bfa25441"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/slices/mod.rs": {
-    "mtime": 1780933519.6432,
-    "ast_hash": "39711a7e4d99f71de294b4fbfa077a6c",
-    "semantic_hash": "39711a7e4d99f71de294b4fbfa077a6c"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/slices/operate.rs": {
-    "mtime": 1780933519.6434696,
-    "ast_hash": "d1ea87f5553c95cec19c2ecd4c16bcc9",
-    "semantic_hash": "d1ea87f5553c95cec19c2ecd4c16bcc9"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/src/slices/pane.rs": {
-    "mtime": 1780933519.643867,
-    "ast_hash": "11461357ed7513706421f7215b6f4022",
-    "semantic_hash": "11461357ed7513706421f7215b6f4022"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/app.js": {
-    "mtime": 1780935518.3596232,
-    "ast_hash": "09da13eca8d95a69f389d31cd04cec47",
-    "semantic_hash": "09da13eca8d95a69f389d31cd04cec47"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/icons/generate-icons.py": {
-    "mtime": 1780933519.6466286,
-    "ast_hash": "210beda391fb407305e8707ca40c4ac5",
-    "semantic_hash": "210beda391fb407305e8707ca40c4ac5"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/sw.js": {
-    "mtime": 1780933519.6491706,
-    "ast_hash": "2b9315bb92ba2c2a72a8238aef1f03d1",
-    "semantic_hash": "2b9315bb92ba2c2a72a8238aef1f03d1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/package.json": {
-    "mtime": 1780933519.7131016,
-    "ast_hash": "85482b0f84f16ba84f19006d4cdcd5f9",
-    "semantic_hash": "85482b0f84f16ba84f19006d4cdcd5f9"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/probity.config.ts": {
-    "mtime": 1780933519.715493,
-    "ast_hash": "67b118622929f35d1f3786e1c86a09b8",
-    "semantic_hash": "67b118622929f35d1f3786e1c86a09b8"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/release-please-config.json": {
-    "mtime": 1780933519.7161195,
-    "ast_hash": "b9a93ef5514e59535e8bc947c1b403e0",
-    "semantic_hash": "b9a93ef5514e59535e8bc947c1b403e0"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/scripts/dev-web-restart.sh": {
-    "mtime": 1780933519.7176204,
-    "ast_hash": "d40bd7057dc8182dff5422a145f69870",
-    "semantic_hash": "d40bd7057dc8182dff5422a145f69870"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/scripts/smoke.sh": {
-    "mtime": 1780933519.7183473,
-    "ast_hash": "13f5403a48ede4acd420b9d6e3815160",
-    "semantic_hash": "13f5403a48ede4acd420b9d6e3815160"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/scripts/verify-probity.mjs": {
-    "mtime": 1780933519.7187877,
-    "ast_hash": "a0bef0084ee7629ed12dd03c08a30d41",
-    "semantic_hash": "a0bef0084ee7629ed12dd03c08a30d41"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.github/workflows/ci.yml": {
-    "mtime": 1780933519.5713587,
-    "ast_hash": "d8bc0e3ce19a3e040f50732f53687e63",
-    "semantic_hash": "d8bc0e3ce19a3e040f50732f53687e63"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.github/workflows/release-please.yml": {
-    "mtime": 1780933519.5718412,
-    "ast_hash": "ae78f23274267c3405322776b6e54490",
-    "semantic_hash": "ae78f23274267c3405322776b6e54490"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/AGENTS.md": {
-    "mtime": 1780933519.5753198,
-    "ast_hash": "23f0d07ffbb2369f88b2fda41cedd472",
-    "semantic_hash": "23f0d07ffbb2369f88b2fda41cedd472"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/AUDIT.md": {
-    "mtime": 1780933519.5762458,
-    "ast_hash": "86c05cec3b9ce46504dcec10b84ab32a",
-    "semantic_hash": "86c05cec3b9ce46504dcec10b84ab32a"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/CHANGELOG.md": {
-    "mtime": 1780933519.576826,
-    "ast_hash": "8fd02de44cb513cc925522e2e9cf250d",
-    "semantic_hash": "8fd02de44cb513cc925522e2e9cf250d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/CLAUDE.md": {
-    "mtime": 1780933519.5771224,
-    "ast_hash": "8a4f0c1573b8e70d018c3dc6aa857423",
-    "semantic_hash": "8a4f0c1573b8e70d018c3dc6aa857423"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/README.md": {
-    "mtime": 1780933519.5790262,
-    "ast_hash": "1ab88f153bdff9c8c80592ab0b35b638",
-    "semantic_hash": "1ab88f153bdff9c8c80592ab0b35b638"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/RELEASE.md": {
-    "mtime": 1780933519.579665,
-    "ast_hash": "67754b099938803d03b110146c09e072",
-    "semantic_hash": "67754b099938803d03b110146c09e072"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/STYLE.md": {
-    "mtime": 1780933519.5800846,
-    "ast_hash": "c2438642835d5333425b7404b64a1415",
-    "semantic_hash": "c2438642835d5333425b7404b64a1415"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/architecture.md": {
-    "mtime": 1780933519.5804772,
-    "ast_hash": "be61d1ab117b3c125d1184a651c50ad0",
-    "semantic_hash": "be61d1ab117b3c125d1184a651c50ad0"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-cli/CHANGELOG.md": {
-    "mtime": 1780933519.581869,
-    "ast_hash": "a57a8bb75f31b0fefb9598547ae49c53",
-    "semantic_hash": "a57a8bb75f31b0fefb9598547ae49c53"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/proptest-regressions/commands.txt": {
-    "mtime": 1780933519.5970602,
-    "ast_hash": "77f6943a5b21536f497de5d2f1794e38",
-    "semantic_hash": "77f6943a5b21536f497de5d2f1794e38"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/tests/fixtures/_other/claude_composer.txt": {
-    "mtime": 1780933519.6234965,
-    "ast_hash": "edbdbbe8a4f221c15441901e91ff16bf",
-    "semantic_hash": "edbdbbe8a4f221c15441901e91ff16bf"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/tests/fixtures/_other/cursor_composer.txt": {
-    "mtime": 1780933519.6238008,
-    "ast_hash": "4478399026d716bf4927dcbfdd12b734",
-    "semantic_hash": "4478399026d716bf4927dcbfdd12b734"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-core/tests/fixtures/codex/composer_idle.txt": {
-    "mtime": 1780933519.6243622,
-    "ast_hash": "daaca7e3844e18f7612d5a1312e1aa6d",
-    "semantic_hash": "daaca7e3844e18f7612d5a1312e1aa6d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/index.html": {
-    "mtime": 1780933519.6481338,
-    "ast_hash": "3cb2d6c82590b4381ce3111179ec602d",
-    "semantic_hash": "3cb2d6c82590b4381ce3111179ec602d"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/post-startup-code-review.md": {
-    "mtime": 1780933519.7137878,
-    "ast_hash": "bb0fa44e3a823e1f71cfdf5ddedddc26",
-    "semantic_hash": "bb0fa44e3a823e1f71cfdf5ddedddc26"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/post-startup-refactor-plan.md": {
-    "mtime": 1780933519.714918,
-    "ast_hash": "986d5489aca0d99d6a6f7937d5c8e373",
-    "semantic_hash": "986d5489aca0d99d6a6f7937d5c8e373"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/version.txt": {
-    "mtime": 1780933519.7191932,
-    "ast_hash": "5848bc0b417649934bbd0f3963ca6d50",
-    "semantic_hash": "5848bc0b417649934bbd0f3963ca6d50"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/icons/apple-touch-icon.png": {
-    "mtime": 1780933519.646095,
-    "ast_hash": "c89287b8f8465f3b73f193caa62faf4e",
-    "semantic_hash": "c89287b8f8465f3b73f193caa62faf4e"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/icons/icon-192.png": {
-    "mtime": 1780933519.646926,
-    "ast_hash": "039109eb121e381355b13fb538bcbbe6",
-    "semantic_hash": "039109eb121e381355b13fb538bcbbe6"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/icons/icon-512.png": {
-    "mtime": 1780933519.6473286,
-    "ast_hash": "6c3edfc046d62d9bc4f19558b976dda1",
-    "semantic_hash": "6c3edfc046d62d9bc4f19558b976dda1"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/crates/ajax-web/web/icons/icon-maskable-512.png": {
-    "mtime": 1780933519.6477,
-    "ast_hash": "6db2a3a9744dd4c6ce0e919aaeb88ddb",
-    "semantic_hash": "6db2a3a9744dd4c6ce0e919aaeb88ddb"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/scripts/dev-web-restart-test.sh": {
-    "mtime": 1780933519.7173285,
-    "ast_hash": "53e3e84c175bd4417f5dd87e307cd1dc",
-    "semantic_hash": "53e3e84c175bd4417f5dd87e307cd1dc"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-task-page/.planning/drop-resilience-plan.md": {
-    "mtime": 1780933519.574145,
-    "ast_hash": "ac63ff925ed08c62fe049dc6356f4bf8",
-    "semantic_hash": "ac63ff925ed08c62fe049dc6356f4bf8"
-  },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.github/hooks/probity.json": {
-    "mtime": 1780941187.2051346,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.github/hooks/probity.json": {
+    "mtime": 1781017420.599687,
     "ast_hash": "ae8108ff1ecf0c18129ef18ce487c96d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/applypatch-msg": {
-    "mtime": 1780941188.5172656,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/applypatch-msg": {
+    "mtime": 1781017421.7975771,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/commit-msg": {
-    "mtime": 1780941188.517059,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/commit-msg": {
+    "mtime": 1781017421.7973282,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/h": {
-    "mtime": 1780941188.5166829,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/h": {
+    "mtime": 1781017421.7969074,
     "ast_hash": "15239a01c5554e56ff745570fb583a91",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/husky.sh": {
-    "mtime": 1780941188.5181236,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/husky.sh": {
+    "mtime": 1781017421.7984543,
     "ast_hash": "13871d2ab13e8423790ecb2c01c78c18",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/post-applypatch": {
-    "mtime": 1780941188.517469,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/post-applypatch": {
+    "mtime": 1781017421.7978156,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/post-checkout": {
-    "mtime": 1780941188.5177526,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/post-checkout": {
+    "mtime": 1781017421.7980983,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/post-commit": {
-    "mtime": 1780941188.5171838,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/post-commit": {
+    "mtime": 1781017421.7974982,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/post-merge": {
-    "mtime": 1780941188.5178285,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/post-merge": {
+    "mtime": 1781017421.7981687,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/post-rewrite": {
-    "mtime": 1780941188.5176823,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/post-rewrite": {
+    "mtime": 1781017421.79803,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-applypatch": {
-    "mtime": 1780941188.5173361,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-applypatch": {
+    "mtime": 1781017421.7976708,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-auto-gc": {
-    "mtime": 1780941188.5180516,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-auto-gc": {
+    "mtime": 1781017421.7983904,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-commit": {
-    "mtime": 1780941188.5168042,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-commit": {
+    "mtime": 1781017421.7970486,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-merge-commit": {
-    "mtime": 1780941188.5168903,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-merge-commit": {
+    "mtime": 1781017421.7971535,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-push": {
-    "mtime": 1780941188.5179005,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-push": {
+    "mtime": 1781017421.7982385,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/pre-rebase": {
-    "mtime": 1780941188.5176032,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/pre-rebase": {
+    "mtime": 1781017421.7979543,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.husky/_/prepare-commit-msg": {
-    "mtime": 1780941188.516975,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.husky/_/prepare-commit-msg": {
+    "mtime": 1781017421.7972312,
     "ast_hash": "0b71c2e7d39daa010985d529f1320b37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.jscpd.json": {
-    "mtime": 1780941187.2071664,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.jscpd.json": {
+    "mtime": 1781017420.6028683,
     "ast_hash": "abddfbad0faa5f391c2ca7fc58569a1f",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.planning/config.json": {
-    "mtime": 1780941187.207677,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.planning/config.json": {
+    "mtime": 1781017420.6034853,
     "ast_hash": "13a39e08ef724a0d79acc17f3c31dc61",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.release-please-manifest.json": {
-    "mtime": 1780941187.2084036,
-    "ast_hash": "a4a1866e53490fc25852b1ad66be6ab7",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.release-please-manifest.json": {
+    "mtime": 1781027204.4481604,
+    "ast_hash": "ee612ebc1c1303bd7bd5e9d217f76736",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/agent_runtime.rs": {
-    "mtime": 1780944502.8595157,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/agent_runtime.rs": {
+    "mtime": 1781017420.6131241,
     "ast_hash": "2754bfc0f88318fc5248e8e6f17ecd78",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/agent_status_cache.rs": {
-    "mtime": 1780944502.8611093,
-    "ast_hash": "7d24ee92f4b705bbc862e832156e0d55",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/agent_status_cache.rs": {
+    "mtime": 1781018976.0273447,
+    "ast_hash": "0b51b35eb48991be0d95411a27dca4a4",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/bgtmux.rs": {
-    "mtime": 1780941187.2148886,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/bgtmux.rs": {
+    "mtime": 1781017420.614144,
     "ast_hash": "de0504cc88107dcad0c16c48cf73f61b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/bin/bgtmux.rs": {
-    "mtime": 1780941187.2153378,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/bin/bgtmux.rs": {
+    "mtime": 1781017420.614965,
     "ast_hash": "36bacd642efb4f4051af91c1d50cf759",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/cli.rs": {
-    "mtime": 1780943083.6166492,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/cli.rs": {
+    "mtime": 1781017420.615363,
     "ast_hash": "d8431924677d09963f40eba618d1ddc6",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/cockpit_actions.rs": {
-    "mtime": 1780941187.2162404,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/cockpit_actions.rs": {
+    "mtime": 1781017420.6158264,
     "ast_hash": "e8373f33a08dda5fb08e574980cafe5c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/cockpit_backend.rs": {
-    "mtime": 1780944395.841969,
-    "ast_hash": "213016117f2617e69eb8dbdb4c237bdf",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/cockpit_backend.rs": {
+    "mtime": 1781043932.6919475,
+    "ast_hash": "202cec151a9d35fedc8a69731b90e6fd",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/context.rs": {
-    "mtime": 1780941187.217128,
-    "ast_hash": "b8c34f731ea6103f469a8f891a46e74b",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/context.rs": {
+    "mtime": 1781021241.503092,
+    "ast_hash": "08b902f797be86299816c2320cc842b2",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/dispatch.rs": {
-    "mtime": 1780941187.2175872,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/dispatch.rs": {
+    "mtime": 1781017420.617439,
     "ast_hash": "e9ec1d63978618be2a4d95fdb1123abc",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/execution_dispatch.rs": {
-    "mtime": 1780941187.217962,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/execution_dispatch.rs": {
+    "mtime": 1781017420.6178725,
     "ast_hash": "7d08a7dda5a1ba1af410583a9c294d37",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/lib.rs": {
-    "mtime": 1780944502.9180915,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/lib.rs": {
+    "mtime": 1781017420.618078,
     "ast_hash": "22f662001e7026d7a588217ad463df51",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/lib/tests.rs": {
-    "mtime": 1780944743.1230555,
-    "ast_hash": "48d839c791425421786487092fc82fea",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/lib/tests.rs": {
+    "mtime": 1781043972.016034,
+    "ast_hash": "69f1cd2f9318ba34923a778d96f1a10a",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/main.rs": {
-    "mtime": 1780941187.2199197,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/main.rs": {
+    "mtime": 1781017420.619712,
     "ast_hash": "d7810f893a062e5835759bf82c3db97e",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/render.rs": {
-    "mtime": 1780944042.9136221,
-    "ast_hash": "bb024d10e52a09711315d64c3d5c197c",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/render.rs": {
+    "mtime": 1781043873.9163764,
+    "ast_hash": "e2baaeb8d5a461c1005614ab2870668d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/snapshot_dispatch.rs": {
-    "mtime": 1780941187.2208672,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/snapshot_dispatch.rs": {
+    "mtime": 1781017420.6203701,
     "ast_hash": "a71eb460f715e17241b5f087eb403679",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/supervise.rs": {
-    "mtime": 1780941187.2213762,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/supervise.rs": {
+    "mtime": 1781017420.6209087,
     "ast_hash": "06d7a389b9a26bc5933e41f8e7a0528d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/task_session.rs": {
-    "mtime": 1780941187.2221723,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/task_session.rs": {
+    "mtime": 1781017420.62147,
     "ast_hash": "7e85f4fa02c3137ee3cce7d88bf50237",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/src/web_backend.rs": {
-    "mtime": 1780944571.590856,
-    "ast_hash": "e16e30e1fcaa792055d229916aba068e",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/src/web_backend.rs": {
+    "mtime": 1781044246.061523,
+    "ast_hash": "ac0dc139510110e8698c444f50f1b674",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/tests/live_cli.rs": {
-    "mtime": 1780970109.187845,
-    "ast_hash": "515b81323e3eb10124c51180f50fcbac",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/tests/live_cli.rs": {
+    "mtime": 1781017420.6223416,
+    "ast_hash": "c1d3107d1f2f8f2ce743e30cfb5690df",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/tests/repo_hooks.rs": {
-    "mtime": 1780941187.223857,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/tests/repo_hooks.rs": {
+    "mtime": 1781017420.6228805,
     "ast_hash": "b70b3e941e009892b3071f6be95f060c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/tests/smoke_user_flows.rs": {
-    "mtime": 1780970085.0726976,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/tests/smoke_user_flows.rs": {
+    "mtime": 1781017420.6233654,
     "ast_hash": "bcc5258837c0ddbfdf816d1026010ed1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters.rs": {
-    "mtime": 1780941187.2254598,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters.rs": {
+    "mtime": 1781017420.6246748,
     "ast_hash": "04c55d60874d9761f29f2d1a866736fe",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/agent.rs": {
-    "mtime": 1780941187.225939,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/agent.rs": {
+    "mtime": 1781017420.6252606,
     "ast_hash": "a1a7db9c1a35c8a1550d21ec94c69e9e",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/command.rs": {
-    "mtime": 1780941187.2262123,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/command.rs": {
+    "mtime": 1781017420.6258662,
     "ast_hash": "5004424f7c9c6bad2bfd03f5f15b11e7",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/environment.rs": {
-    "mtime": 1780941187.2268193,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/environment.rs": {
+    "mtime": 1781017420.6264224,
     "ast_hash": "33ba4066e7f9f384f09fe0fd6f9125c3",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/git.rs": {
-    "mtime": 1780941187.2270844,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/git.rs": {
+    "mtime": 1781017420.626983,
     "ast_hash": "6e9375ce7e110931e7f939ccaa39cba5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/process.rs": {
-    "mtime": 1780941187.2274723,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/process.rs": {
+    "mtime": 1781017420.6276925,
     "ast_hash": "5544b8f6b13c7d8a6b463d1e9ded60c4",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/adapters/tmux.rs": {
-    "mtime": 1780941187.2277296,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/adapters/tmux.rs": {
+    "mtime": 1781017420.6279478,
     "ast_hash": "df836e519e82ccb90b85fd6964b04b8b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/agent_prompt.rs": {
-    "mtime": 1780941187.2280881,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/agent_prompt.rs": {
+    "mtime": 1781017420.6288283,
     "ast_hash": "59293193450182a13fe64c0b220d666d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/analysis.rs": {
-    "mtime": 1780941187.2284007,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/analysis.rs": {
+    "mtime": 1781017420.6300519,
     "ast_hash": "f6f841eceda76eaaec7feed66be6c654",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/analysis/git_evidence.rs": {
-    "mtime": 1780941187.228887,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/analysis/git_evidence.rs": {
+    "mtime": 1781017420.6305957,
     "ast_hash": "312555824c1940aa84e847066db5d078",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/architecture.rs": {
-    "mtime": 1780941187.2292542,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/architecture.rs": {
+    "mtime": 1781017420.6312463,
     "ast_hash": "af9028a6e9ef348fe805d1a384cf9ec5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/attention.rs": {
-    "mtime": 1780944502.9826005,
-    "ast_hash": "1e374b348fc6f29f08923e1916344b4e",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/attention.rs": {
+    "mtime": 1781043579.2122142,
+    "ast_hash": "d1117e4d9ef48f3d7ff126540de0d62c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands.rs": {
-    "mtime": 1780945055.4012034,
-    "ast_hash": "b987a21fb845d95a7e4c9f9cd62335e8",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands.rs": {
+    "mtime": 1781042606.1345508,
+    "ast_hash": "34f93358f32858936ebba0399536415d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/check.rs": {
-    "mtime": 1780941187.2304006,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/check.rs": {
+    "mtime": 1781017420.632944,
     "ast_hash": "a44e43296eb3ad2c411ede7033643213",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/diff.rs": {
-    "mtime": 1780941187.230885,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/diff.rs": {
+    "mtime": 1781017420.633764,
     "ast_hash": "fb643ea550c44b4d200d20087ea1bc28",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/doctor.rs": {
-    "mtime": 1780941187.2311327,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/doctor.rs": {
+    "mtime": 1781017420.6348813,
     "ast_hash": "d0ab9a09cab765aa92a0d0c2ed6d1a5d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/lookup.rs": {
-    "mtime": 1780941187.2314441,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/lookup.rs": {
+    "mtime": 1781017420.6354969,
     "ast_hash": "59946233efa59752750d0bb1ed33a67a",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/merge.rs": {
-    "mtime": 1780941187.2318056,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/merge.rs": {
+    "mtime": 1781017420.635961,
     "ast_hash": "6b31e569c8cf59a2f9a52049ec0297c3",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/new_task.rs": {
-    "mtime": 1780942998.6996746,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/new_task.rs": {
+    "mtime": 1781017420.6364748,
     "ast_hash": "c69bb73b31e77edbbd1fe99e4d73e969",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/open.rs": {
-    "mtime": 1780941187.2326465,
-    "ast_hash": "9e73db68059a8720f287b2f8e5071cbf",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/open.rs": {
+    "mtime": 1781019680.3916368,
+    "ast_hash": "7492529fa693a51a6ffbdc0a03a9cb78",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/projection.rs": {
-    "mtime": 1780944042.9122481,
-    "ast_hash": "a448968fc06c9429902aabf46fe8715f",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/projection.rs": {
+    "mtime": 1781044055.6737518,
+    "ast_hash": "7d97590c5c76ad1b52bc87c47753bba0",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/teardown.rs": {
-    "mtime": 1780944349.9908519,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/teardown.rs": {
+    "mtime": 1781017420.6381164,
     "ast_hash": "f26dbe8c745f22b33503532d95dae336",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/commands/trunk.rs": {
-    "mtime": 1780941187.2334573,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/commands/trunk.rs": {
+    "mtime": 1781017420.6384058,
     "ast_hash": "0c8f276615bc3cdb566688407ce39c99",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/config.rs": {
-    "mtime": 1780941187.2338889,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/config.rs": {
+    "mtime": 1781017420.6393669,
     "ast_hash": "dd26b45ce2529ab6b22f9314d710db06",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/events.rs": {
-    "mtime": 1780942323.380266,
-    "ast_hash": "fc6de9fc86926447497d7c22488b4cbf",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/events.rs": {
+    "mtime": 1781043874.0148501,
+    "ast_hash": "0544137de6fb2cbe95dc5e68be7433ff",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/ghost_task.rs": {
-    "mtime": 1780941187.2346644,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/ghost_task.rs": {
+    "mtime": 1781017420.6415942,
     "ast_hash": "3c4bba16708fc6d26f81eb06a606b94b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/lib.rs": {
-    "mtime": 1780941187.2349062,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/lib.rs": {
+    "mtime": 1781017420.6425872,
     "ast_hash": "62ad83b334e8f1736ebdb073e1f3c403",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/lifecycle.rs": {
-    "mtime": 1780941187.2353783,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/lifecycle.rs": {
+    "mtime": 1781017420.643456,
     "ast_hash": "b4e5d23fd735053908ffb8bfdd878aa1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/live.rs": {
-    "mtime": 1780944395.8407235,
-    "ast_hash": "798e6dbdef228d83041637ff4157e486",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/live.rs": {
+    "mtime": 1781043874.0244784,
+    "ast_hash": "ba80981a385aa342c198de579ad33f00",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/live_application.rs": {
-    "mtime": 1780944906.4279413,
-    "ast_hash": "b35dc3f7ee62eb25d8cfb4a467dab67c",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/live_application.rs": {
+    "mtime": 1781041901.353537,
+    "ast_hash": "bcfe96ecdbf43330a173b5d98568d8d2",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/models.rs": {
-    "mtime": 1780944395.839367,
-    "ast_hash": "7ad243f10121127d849fa154479e8df1",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/models.rs": {
+    "mtime": 1781041725.221063,
+    "ast_hash": "6f3cf31bbf499d26910dbe61d3c672c8",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/operation.rs": {
-    "mtime": 1780941187.2368574,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/operation.rs": {
+    "mtime": 1781017420.6452863,
     "ast_hash": "b464b193a3634919e4f00d40d59b4944",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/output.rs": {
-    "mtime": 1780944042.9110732,
-    "ast_hash": "6753518cf560259ee354942a37acaf2d",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/output.rs": {
+    "mtime": 1781043458.355035,
+    "ast_hash": "5f095100cad08c5815dee090e93de6a0",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/policy.rs": {
-    "mtime": 1780941187.2376306,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/policy.rs": {
+    "mtime": 1781017420.646295,
     "ast_hash": "9bd39381c3ed5d8715fb2b04f54048db",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/recommended.rs": {
-    "mtime": 1780943890.6806085,
-    "ast_hash": "d96a811cbb0cf834c06d5befeda9dc00",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/recommended.rs": {
+    "mtime": 1781043874.0350807,
+    "ast_hash": "dc82682d83d38c877afe66992196bd7a",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/registry.rs": {
-    "mtime": 1780942348.4731617,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/registry.rs": {
+    "mtime": 1781017420.646894,
     "ast_hash": "bea75a522e89db060bfac94f07032213",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/registry/sqlite.rs": {
-    "mtime": 1780944503.041207,
-    "ast_hash": "bfb97c3b2ced304d6ac559b2e3fb5ce3",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/registry/sqlite.rs": {
+    "mtime": 1781042511.4795802,
+    "ast_hash": "3c9ef1662558b8b07071c354f9ee31d5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/remediation.rs": {
-    "mtime": 1780941187.2393248,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/remediation.rs": {
+    "mtime": 1781017420.6481178,
     "ast_hash": "17c145fb4a61570c47e96cf9834a7559",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/runtime.rs": {
-    "mtime": 1780944503.0463834,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/runtime.rs": {
+    "mtime": 1781017420.648356,
     "ast_hash": "086f1f84627c442d4ea226eb5a09d2f7",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/runtime_refresh.rs": {
-    "mtime": 1780944503.055228,
-    "ast_hash": "b32906e6dc754c49454d400c2434c27d",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/runtime_refresh.rs": {
+    "mtime": 1781043874.0617187,
+    "ast_hash": "055cc1da5cba9e26c51f8c611c051b3c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/slices.rs": {
-    "mtime": 1780941187.2404675,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/slices.rs": {
+    "mtime": 1781017420.6491177,
     "ast_hash": "7797217db3c5ea0b86e2cc2a5522edd0",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/slices/pane.rs": {
-    "mtime": 1780941187.2408543,
-    "ast_hash": "c72f55b4cb3356569caddf47515c96e4",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/slices/pane.rs": {
+    "mtime": 1781019427.6938703,
+    "ast_hash": "629e91e6b7bfb9b3b74043127a192e67",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/slices/review/mod.rs": {
-    "mtime": 1780941187.241227,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/slices/review/mod.rs": {
+    "mtime": 1781017420.6500556,
     "ast_hash": "37ace2cb81564991fbb34b66685f26bc",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/slices/review/planning.rs": {
-    "mtime": 1780941187.2414837,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/slices/review/planning.rs": {
+    "mtime": 1781017420.6503315,
     "ast_hash": "7dea889c886fdde084c7d0ecacca090a",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/slices/review/queue.rs": {
-    "mtime": 1780944042.9130206,
-    "ast_hash": "23681d2e1de32c1af910ecdf9055431d",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/slices/review/queue.rs": {
+    "mtime": 1781044055.6755028,
+    "ast_hash": "1064838ed6eaf6d10c89cb1d34ef70c8",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/task_operations.rs": {
-    "mtime": 1780941187.2424965,
-    "ast_hash": "537f5ea9352acbb9d4bbac3285e2c2f0",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/task_operations.rs": {
+    "mtime": 1781042527.6266232,
+    "ast_hash": "83a3ca57fae3e73a255b0b285cfbfcdf",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/ui_state.rs": {
-    "mtime": 1780944503.071563,
-    "ast_hash": "259fda22f2fc27a67c7e1b21faadba9c",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/ui_state.rs": {
+    "mtime": 1781043874.078729,
+    "ast_hash": "2b421006cec5829adaf32a65f3cf27aa",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/use_cases.rs": {
-    "mtime": 1780941187.245215,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/use_cases.rs": {
+    "mtime": 1781017420.6522968,
     "ast_hash": "b6da3cb98411dbddb41a5be04e9b3a53",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/src/validity.rs": {
-    "mtime": 1780941187.245571,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/src/validity.rs": {
+    "mtime": 1781017420.65598,
     "ast_hash": "1bb1b4de8122847da774b04598db0738",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/tests/codex_pane_fixtures.rs": {
-    "mtime": 1780941187.2459207,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/tests/codex_pane_fixtures.rs": {
+    "mtime": 1781017420.6566753,
     "ast_hash": "a2437947228cd0b03693269ddb7a45d8",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/agent/codex.rs": {
-    "mtime": 1780941187.247779,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/agent/codex.rs": {
+    "mtime": 1781017420.6590953,
     "ast_hash": "430f4e7809b023772dcf9ecdff26f8e9",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/agent/cursor.rs": {
-    "mtime": 1780941187.2485735,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/agent/cursor.rs": {
+    "mtime": 1781017420.6595416,
     "ast_hash": "72ce391a8e60b6f94f08c1c230d4465c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/agent/mod.rs": {
-    "mtime": 1780941187.2488048,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/agent/mod.rs": {
+    "mtime": 1781017420.660155,
     "ast_hash": "4620cebfe21b2a44157c34f5cdeec8cd",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/architecture.rs": {
-    "mtime": 1780941187.2491283,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/architecture.rs": {
+    "mtime": 1781017420.6607804,
     "ast_hash": "511cc343e9096c902681a6569db59b38",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/event_log.rs": {
-    "mtime": 1780941187.2494745,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/event_log.rs": {
+    "mtime": 1781017420.6613789,
     "ast_hash": "456974a62b9f46f239d8ff0a10ab48fe",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/lib.rs": {
-    "mtime": 1780944992.1868188,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/lib.rs": {
+    "mtime": 1781017420.6616642,
     "ast_hash": "b25eb8b8172887f18a3d555810784a31",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/process_observer.rs": {
-    "mtime": 1780941187.2502577,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/process_observer.rs": {
+    "mtime": 1781017420.6619773,
     "ast_hash": "8367e5942e11eb2786b59879ac09dfd1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/renderer.rs": {
-    "mtime": 1780941187.2506618,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/renderer.rs": {
+    "mtime": 1781017420.6625228,
     "ast_hash": "9987a159f53b1354baa55897ac6a626c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/repo_observer.rs": {
-    "mtime": 1780941187.2509449,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/repo_observer.rs": {
+    "mtime": 1781017420.663198,
     "ast_hash": "1082005d515a26d3b6fd7edf4d21fd4d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/runtime.rs": {
-    "mtime": 1780941187.2516823,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/runtime.rs": {
+    "mtime": 1781017420.6636624,
     "ast_hash": "ad618ffa4e309c6ae7daedee9c9cb7d4",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-supervisor/src/status.rs": {
-    "mtime": 1780941187.252054,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-supervisor/src/status.rs": {
+    "mtime": 1781017420.6641834,
     "ast_hash": "0ca5487b47bb22dfd066a6bd1d0db6bf",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/actions.rs": {
-    "mtime": 1780941187.2529685,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/actions.rs": {
+    "mtime": 1781017420.6651866,
     "ast_hash": "2b5573a44c22bbf2036c92883be3a2fc",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/architecture.rs": {
-    "mtime": 1780941187.253399,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/architecture.rs": {
+    "mtime": 1781017420.6658046,
     "ast_hash": "51de5b0235374ef1a77566e8cb262e3f",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/cockpit_state.rs": {
-    "mtime": 1780941187.253993,
-    "ast_hash": "25b4b9adfa3779a651a457d278715a6e",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/cockpit_state.rs": {
+    "mtime": 1781042908.9621298,
+    "ast_hash": "cf6b975a8513e5e4ea9a63c7bdfffae3",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/input.rs": {
-    "mtime": 1780941187.2542956,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/input.rs": {
+    "mtime": 1781017420.6666176,
     "ast_hash": "caf24ecdbe1e91b9640a39b5e20d659d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/layout.rs": {
-    "mtime": 1780941187.2545397,
-    "ast_hash": "64ed610112832a8910b4e87dd9cb9519",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/layout.rs": {
+    "mtime": 1781043874.1098723,
+    "ast_hash": "be113d8649cfbdb056fa1508b8d0bcd4",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/lib.rs": {
-    "mtime": 1780943992.5361278,
-    "ast_hash": "fca8c20981548487c810c290568fe851",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/lib.rs": {
+    "mtime": 1781044202.928765,
+    "ast_hash": "a4fc1eeaa8e9941ba04b6d7ca729fafe",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/navigation.rs": {
-    "mtime": 1780941187.2557025,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/navigation.rs": {
+    "mtime": 1781017420.668033,
     "ast_hash": "3f6b137b634d7e61d84379ac3756a28b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/palette.rs": {
-    "mtime": 1780941187.2560613,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/palette.rs": {
+    "mtime": 1781017420.6687183,
     "ast_hash": "5f198c05a88e4fdf909c4642c56467dd",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/rendering.rs": {
-    "mtime": 1780941187.2564538,
-    "ast_hash": "b0cae44273f891b5bfd59a669cdd3ddc",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/rendering.rs": {
+    "mtime": 1781044148.7037587,
+    "ast_hash": "5641cbc07d90ed0b570beeedaee1f994",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-tui/src/runtime.rs": {
-    "mtime": 1780941187.256703,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-tui/src/runtime.rs": {
+    "mtime": 1781017420.6694655,
     "ast_hash": "d149f291e96d6c7a762eb3dc5ef468b5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/action_vocabulary.rs": {
-    "mtime": 1780941187.2575169,
-    "ast_hash": "f97bdbe3c8ea9f2f4ec247ea04ba9a2f",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/action_vocabulary.rs": {
+    "mtime": 1781043874.134237,
+    "ast_hash": "f923614987228369e59c94b505c1acdb",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/assets.rs": {
-    "mtime": 1780941187.2579417,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/assets.rs": {
+    "mtime": 1781017420.6714365,
     "ast_hash": "364a49e639b1aa3eeec0bac8604c37ff",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/http.rs": {
-    "mtime": 1780941187.2582774,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/http.rs": {
+    "mtime": 1781017420.6718829,
     "ast_hash": "d0ac5c19353fcb4ca0b5659ce2a24aca",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/mod.rs": {
-    "mtime": 1780941187.2588072,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/mod.rs": {
+    "mtime": 1781017420.672255,
     "ast_hash": "a7521097a5aa254f8ec8f45ce7fdf452",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/server.rs": {
-    "mtime": 1780941187.259194,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/server.rs": {
+    "mtime": 1781017420.672857,
     "ast_hash": "0e91d2ce8aefb2135e5757b32ab7d8b7",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/skills.rs": {
-    "mtime": 1780941187.2595246,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/skills.rs": {
+    "mtime": 1781017420.6733615,
     "ast_hash": "29e61c049086a7a5b7899d9d95e48dc5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/tls.rs": {
-    "mtime": 1780941187.2598686,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/tls.rs": {
+    "mtime": 1781017420.6743789,
     "ast_hash": "3f2e0f7363209e6186bda94c9837b82f",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/adapters/tmux_input.rs": {
-    "mtime": 1780941187.260255,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/adapters/tmux_input.rs": {
+    "mtime": 1781017420.6750927,
     "ast_hash": "d78c35b436faa17e34190779fbe87f21",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/architecture.rs": {
-    "mtime": 1780941187.2604911,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/architecture.rs": {
+    "mtime": 1781017420.6755445,
     "ast_hash": "550256a9d8d9b8d90e6f29cf20e56743",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/lib.rs": {
-    "mtime": 1780941187.2607281,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/lib.rs": {
+    "mtime": 1781017420.6758294,
     "ast_hash": "0f0ba64b563cb7995ebd2f886cc6e5a1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/runtime.rs": {
-    "mtime": 1780941187.2612576,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/runtime.rs": {
+    "mtime": 1781017420.676515,
     "ast_hash": "670e8afc6e579a6981960415a0e715af",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/slices/cockpit.rs": {
-    "mtime": 1780944107.7505934,
-    "ast_hash": "276196995a188c55874621bfce6b7e7d",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/slices/cockpit.rs": {
+    "mtime": 1781043874.1490383,
+    "ast_hash": "285d167bf9fcb111a26e0138dfe5c6b3",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/slices/install.rs": {
-    "mtime": 1780941187.2619824,
-    "ast_hash": "0026ca3e72cbdcc92d3f9739bfa25441",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/slices/install.rs": {
+    "mtime": 1781043183.2937605,
+    "ast_hash": "c1ff1309e7295bcf1e46dfaaab55f24b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/slices/mod.rs": {
-    "mtime": 1780941187.2622445,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/slices/mod.rs": {
+    "mtime": 1781017420.677945,
     "ast_hash": "39711a7e4d99f71de294b4fbfa077a6c",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/slices/operate.rs": {
-    "mtime": 1780944992.188022,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/slices/operate.rs": {
+    "mtime": 1781017420.6782382,
     "ast_hash": "f1bbe1c34cd9c39126375b8e722c7d7e",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/src/slices/pane.rs": {
-    "mtime": 1780941187.2630432,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/src/slices/pane.rs": {
+    "mtime": 1781017420.678738,
     "ast_hash": "11461357ed7513706421f7215b6f4022",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/app.js": {
-    "mtime": 1780941187.2639687,
-    "ast_hash": "09da13eca8d95a69f389d31cd04cec47",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/app.js": {
+    "mtime": 1781043328.5504375,
+    "ast_hash": "306a8464ca65ea6e4a68cdd5aedacb8f",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/icons/generate-icons.py": {
-    "mtime": 1780941187.264763,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/icons/generate-icons.py": {
+    "mtime": 1781017420.681132,
     "ast_hash": "210beda391fb407305e8707ca40c4ac5",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/sw.js": {
-    "mtime": 1780941187.2664142,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/sw.js": {
+    "mtime": 1781017420.6835217,
     "ast_hash": "2b9315bb92ba2c2a72a8238aef1f03d1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/package.json": {
-    "mtime": 1780941187.3427923,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/package.json": {
+    "mtime": 1781017420.7917051,
     "ast_hash": "85482b0f84f16ba84f19006d4cdcd5f9",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/probity.config.ts": {
-    "mtime": 1780941187.3450668,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/probity.config.ts": {
+    "mtime": 1781017420.7944336,
     "ast_hash": "67b118622929f35d1f3786e1c86a09b8",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/release-please-config.json": {
-    "mtime": 1780941187.3461423,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/release-please-config.json": {
+    "mtime": 1781017420.7966106,
     "ast_hash": "b9a93ef5514e59535e8bc947c1b403e0",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/scripts/dev-web-restart-test.sh": {
-    "mtime": 1780941187.348408,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/scripts/dev-web-restart-test.sh": {
+    "mtime": 1781017420.7983472,
     "ast_hash": "53e3e84c175bd4417f5dd87e307cd1dc",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/scripts/dev-web-restart.sh": {
-    "mtime": 1780941187.3486586,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/scripts/dev-web-restart.sh": {
+    "mtime": 1781017420.7986069,
     "ast_hash": "d40bd7057dc8182dff5422a145f69870",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/scripts/smoke.sh": {
-    "mtime": 1780941187.3493695,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/scripts/smoke.sh": {
+    "mtime": 1781017420.7992096,
     "ast_hash": "13f5403a48ede4acd420b9d6e3815160",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/scripts/verify-probity.mjs": {
-    "mtime": 1780941187.3496752,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/scripts/verify-probity.mjs": {
+    "mtime": 1781017420.799517,
     "ast_hash": "a0bef0084ee7629ed12dd03c08a30d41",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.github/workflows/ci.yml": {
-    "mtime": 1780941187.2054837,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.github/workflows/ci.yml": {
+    "mtime": 1781017420.600505,
     "ast_hash": "d8bc0e3ce19a3e040f50732f53687e63",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.github/workflows/release-please.yml": {
-    "mtime": 1780941187.2058258,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.github/workflows/release-please.yml": {
+    "mtime": 1781017420.6012104,
     "ast_hash": "ae78f23274267c3405322776b6e54490",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.planning/drop-resilience-plan.md": {
-    "mtime": 1780941187.208168,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.planning/agent-deck-status-refactor-plan.md": {
+    "mtime": 1781018411.5316212,
+    "ast_hash": "10cf563d4eaf6daec8930e92a3dd6cf3",
+    "semantic_hash": ""
+  },
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.planning/drop-resilience-plan.md": {
+    "mtime": 1781017420.6041338,
     "ast_hash": "ac63ff925ed08c62fe049dc6356f4bf8",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/.planning/status-runtime-redesign-plan.md": {
-    "mtime": 1780941946.840227,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.planning/status-lifecycle-alignment-plan.md": {
+    "mtime": 1781041245.2183602,
+    "ast_hash": "942d1c15e2e7e104d95cb466228dd9a8",
+    "semantic_hash": ""
+  },
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/.planning/status-runtime-redesign-plan.md": {
+    "mtime": 1781017420.6044385,
     "ast_hash": "9ea6069c64ac6c7eab69e732df596d29",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/AGENTS.md": {
-    "mtime": 1780941187.209345,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/AGENTS.md": {
+    "mtime": 1781017420.60555,
     "ast_hash": "23f0d07ffbb2369f88b2fda41cedd472",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/AUDIT.md": {
-    "mtime": 1780941187.2096066,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/AUDIT.md": {
+    "mtime": 1781017420.606407,
     "ast_hash": "86c05cec3b9ce46504dcec10b84ab32a",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/CHANGELOG.md": {
-    "mtime": 1780941187.2098887,
-    "ast_hash": "59427508d087e0c3406cae60d372eacf",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/CHANGELOG.md": {
+    "mtime": 1781027204.448695,
+    "ast_hash": "eb363241f3658b9260903d7136becfba",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/CLAUDE.md": {
-    "mtime": 1780941187.2101843,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/CLAUDE.md": {
+    "mtime": 1781017420.607347,
     "ast_hash": "8a4f0c1573b8e70d018c3dc6aa857423",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/README.md": {
-    "mtime": 1780941187.211765,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/README.md": {
+    "mtime": 1781017420.6091533,
     "ast_hash": "1ab88f153bdff9c8c80592ab0b35b638",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/RELEASE.md": {
-    "mtime": 1780941187.2120886,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/RELEASE.md": {
+    "mtime": 1781017420.609959,
     "ast_hash": "67754b099938803d03b110146c09e072",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/STYLE.md": {
-    "mtime": 1780941187.2123988,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/STYLE.md": {
+    "mtime": 1781017420.610476,
     "ast_hash": "c2438642835d5333425b7404b64a1415",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/architecture.md": {
-    "mtime": 1780944906.428911,
-    "ast_hash": "17aa977bc526335f40c1d5709ec6fba1",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/architecture.md": {
+    "mtime": 1781044055.6762464,
+    "ast_hash": "3eaea97f095bbe60814cc0f4e8666311",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-cli/CHANGELOG.md": {
-    "mtime": 1780941187.2138085,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-cli/CHANGELOG.md": {
+    "mtime": 1781017420.6123655,
     "ast_hash": "a57a8bb75f31b0fefb9598547ae49c53",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/proptest-regressions/commands.txt": {
-    "mtime": 1780970085.0733817,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/proptest-regressions/commands.txt": {
+    "mtime": 1781017420.624337,
     "ast_hash": "77f6943a5b21536f497de5d2f1794e38",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/tests/fixtures/_other/claude_composer.txt": {
-    "mtime": 1780941187.246385,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/tests/fixtures/_other/claude_composer.txt": {
+    "mtime": 1781017420.6571968,
     "ast_hash": "edbdbbe8a4f221c15441901e91ff16bf",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/tests/fixtures/_other/cursor_composer.txt": {
-    "mtime": 1780941187.246622,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/tests/fixtures/_other/cursor_composer.txt": {
+    "mtime": 1781017420.657512,
     "ast_hash": "4478399026d716bf4927dcbfdd12b734",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-core/tests/fixtures/codex/composer_idle.txt": {
-    "mtime": 1780941187.2468271,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-core/tests/fixtures/codex/composer_idle.txt": {
+    "mtime": 1781017420.6579437,
     "ast_hash": "daaca7e3844e18f7612d5a1312e1aa6d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/index.html": {
-    "mtime": 1780941187.2658594,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/index.html": {
+    "mtime": 1781017420.6825893,
     "ast_hash": "3cb2d6c82590b4381ce3111179ec602d",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/post-startup-code-review.md": {
-    "mtime": 1780941187.3439324,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/post-startup-code-review.md": {
+    "mtime": 1781017420.7928376,
     "ast_hash": "bb0fa44e3a823e1f71cfdf5ddedddc26",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/post-startup-refactor-plan.md": {
-    "mtime": 1780941187.344533,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/post-startup-refactor-plan.md": {
+    "mtime": 1781017420.793886,
     "ast_hash": "986d5489aca0d99d6a6f7937d5c8e373",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/version.txt": {
-    "mtime": 1780941187.3498824,
-    "ast_hash": "49f0852fbcf125ea995ddff6ec8c6b69",
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/version.txt": {
+    "mtime": 1781027204.4510553,
+    "ast_hash": "e6e84b799f8125f3370d03a312b3ee1b",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/icons/apple-touch-icon.png": {
-    "mtime": 1780941187.2644677,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/icons/apple-touch-icon.png": {
+    "mtime": 1781017420.6804974,
     "ast_hash": "c89287b8f8465f3b73f193caa62faf4e",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/icons/icon-192.png": {
-    "mtime": 1780941187.2650278,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/icons/icon-192.png": {
+    "mtime": 1781017420.6814692,
     "ast_hash": "039109eb121e381355b13fb538bcbbe6",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/icons/icon-512.png": {
-    "mtime": 1780941187.2652857,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/icons/icon-512.png": {
+    "mtime": 1781017420.6817863,
     "ast_hash": "6c3edfc046d62d9bc4f19558b976dda1",
     "semantic_hash": ""
   },
-  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-status/crates/ajax-web/web/icons/icon-maskable-512.png": {
-    "mtime": 1780941187.2655196,
+  "/Users/matt/Desktop/Projects/ajax-cli__worktrees/ajax-statuses/crates/ajax-web/web/icons/icon-maskable-512.png": {
+    "mtime": 1781017420.6821427,
     "ast_hash": "6db2a3a9744dd4c6ce0e919aaeb88ddb",
     "semantic_hash": ""
   }

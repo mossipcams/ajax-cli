@@ -782,11 +782,11 @@ mod tests {
 
         assert!(state_changed);
         assert_eq!(
-            snapshot.cards[0].live_summary.as_deref(),
-            Some("waiting for approval")
+            snapshot.cards[0].status_explanation.as_deref(),
+            Some("Waiting for approval")
         );
         assert!(snapshot.inbox.items.iter().any(|item| {
-            item.reason == "waiting_for_approval" && item.task_handle == "web/fix-login"
+            item.reason == "Waiting for approval" && item.task_handle == "web/fix-login"
         }));
         assert!(context
             .registry
@@ -823,9 +823,8 @@ mod tests {
             .iter()
             .find(|card| card.qualified_handle == "web/fix-login")
             .expect("task should stay visible in cockpit");
-        assert_eq!(card.status_label, "agent running");
-        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
-        assert_eq!(card.live_summary.as_deref(), Some("agent running"));
+        assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Running);
+        assert_eq!(card.status_explanation.as_deref(), Some("Agent working"));
     }
 
     #[test]
@@ -856,8 +855,8 @@ mod tests {
             .iter()
             .find(|card| card.qualified_handle == "web/fix-login")
             .expect("task should stay visible in cockpit");
-        assert_eq!(card.status_label, "agent running");
-        assert_eq!(card.ui_state, ajax_core::ui_state::UiState::Running);
+        assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Running);
+        assert_eq!(card.status_explanation.as_deref(), Some("Agent working"));
         assert!(card.annotations.is_empty(), "{:?}", card.annotations);
         assert!(!snapshot
             .inbox
@@ -1334,7 +1333,7 @@ mod tests {
         let mut cached_snapshot = Some(CockpitSnapshot {
             repos: fresh_snapshot.repos,
             cards: vec![TaskCard {
-                live_summary: Some("cached-only summary".to_string()),
+                status_explanation: Some("cached-only summary".to_string()),
                 ..fresh_snapshot.cards[0].clone()
             }],
             inbox: fresh_snapshot.inbox,
@@ -1352,12 +1351,12 @@ mod tests {
 
         assert!(!state_changed);
         assert_eq!(
-            snapshot.cards[0].live_summary.as_deref(),
+            snapshot.cards[0].status_explanation.as_deref(),
             Some("cached-only summary")
         );
         assert_eq!(
             cached_snapshot.as_ref().unwrap().cards[0]
-                .live_summary
+                .status_explanation
                 .as_deref(),
             Some("cached-only summary")
         );

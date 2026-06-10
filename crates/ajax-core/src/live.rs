@@ -1,8 +1,9 @@
 use std::time::{Duration, SystemTime};
 
 pub use crate::live_application::{
-    acknowledge_attention, apply_authoritative_observation, apply_observation,
-    apply_trusted_observation,
+    acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
+    apply_observation, apply_observation_at, apply_trusted_observation,
+    apply_trusted_observation_at,
 };
 pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 
@@ -62,8 +63,8 @@ pub fn decide_hook_observation(input: HookDecisionInput<'_>) -> HookDecision {
 /// Parse and freshness-check a hook value for the selected agent.
 ///
 /// Returns the eligible observation, or `None` when the value is malformed,
-/// the agent ignores hooks, the value is stale, or a Claude waiting hook is at
-/// or before an acknowledgment.
+/// the agent ignores hooks, the value is stale, or waiting/completion evidence
+/// is at or before an acknowledgment.
 fn hook_observation_if_eligible(
     agent: AgentClient,
     value: &str,
@@ -81,8 +82,7 @@ fn hook_observation_if_eligible(
         return None;
     }
 
-    if agent == AgentClient::Claude
-        && is_waiting_kind(observation.kind)
+    if is_acknowledgeable_kind(observation.kind)
         && acknowledged_at.is_some_and(|acknowledged_at| observed_at <= acknowledged_at)
     {
         return None;
@@ -121,6 +121,10 @@ fn is_waiting_kind(kind: LiveStatusKind) -> bool {
         kind,
         LiveStatusKind::WaitingForInput | LiveStatusKind::WaitingForApproval
     )
+}
+
+fn is_acknowledgeable_kind(kind: LiveStatusKind) -> bool {
+    is_waiting_kind(kind) || kind == LiveStatusKind::Done
 }
 
 /// Origin of an agent-status candidate considered by the status decision.
@@ -173,8 +177,9 @@ pub struct StatusDecision {
     pub applied: bool,
     pub observation: Option<LiveObservation>,
     pub source: Option<AgentEvidenceSource>,
-    /// True when no candidate applied because a fresh Claude waiting hook was
-    /// suppressed by an acknowledgment. The caller should hold the current
+    pub observed_at: Option<SystemTime>,
+    /// True when no candidate applied because fresh waiting/completion evidence
+    /// was suppressed by an acknowledgment. The caller should hold the current
     /// non-actionable state and skip pane capture rather than re-raise it.
     pub acknowledged_hold: bool,
 }
@@ -209,6 +214,7 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
         applied: false,
         observation: input.prior.cloned(),
         source: None,
+        observed_at: None,
         acknowledged_hold: false,
     };
 
@@ -253,11 +259,12 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
             applied: true,
             observation: Some(observation),
             source: Some(candidate.source),
+            observed_at: Some(candidate.observed_at),
             acknowledged_hold: false,
         },
         None => {
             let acknowledged_hold = input.candidates.iter().any(|candidate| {
-                is_acknowledged_waiting_hook(
+                is_acknowledged_candidate(
                     input.selected_agent,
                     candidate,
                     input.acknowledged_at,
@@ -272,30 +279,21 @@ pub fn select_status_observation(input: StatusDecisionInput<'_>) -> StatusDecisi
     }
 }
 
-/// True when a candidate is a fresh Claude waiting hook suppressed only because
-/// it is at or before the acknowledgment time.
-fn is_acknowledged_waiting_hook(
+/// True when otherwise eligible waiting/completion evidence is suppressed only
+/// because it is at or before the acknowledgment time.
+fn is_acknowledged_candidate(
     agent: AgentClient,
     candidate: &StatusCandidate,
     acknowledged_at: Option<SystemTime>,
     now: SystemTime,
 ) -> bool {
-    if agent != AgentClient::Claude || candidate.source != AgentEvidenceSource::Hook {
-        return false;
-    }
     let Some(acknowledged_at) = acknowledged_at else {
         return false;
     };
-    let Some(observation) = classify_agent_status_value(&candidate.value) else {
+    let Some((_tier, observation)) = eligible_candidate(agent, candidate, None, now) else {
         return false;
     };
-    if !is_waiting_kind(observation.kind) {
-        return false;
-    }
-    let Some(window) = hook_freshness_window(agent, observation.kind) else {
-        return false;
-    };
-    within_window(now, candidate.observed_at, window) && candidate.observed_at <= acknowledged_at
+    is_acknowledgeable_kind(observation.kind) && candidate.observed_at <= acknowledged_at
 }
 
 fn eligible_candidate(
@@ -304,7 +302,7 @@ fn eligible_candidate(
     acknowledged_at: Option<SystemTime>,
     now: SystemTime,
 ) -> Option<(EvidenceTier, LiveObservation)> {
-    match candidate.source {
+    let selected = match candidate.source {
         AgentEvidenceSource::RuntimeWrapper => {
             let observation = classify_agent_status_value(&candidate.value)?;
             match observation.kind {
@@ -323,15 +321,17 @@ fn eligible_candidate(
                 _ => None,
             }
         }
-        AgentEvidenceSource::Hook => hook_observation_if_eligible(
-            agent,
-            &candidate.value,
-            candidate.observed_at,
-            acknowledged_at,
-            now,
-        )
-        .map(|observation| (EvidenceTier::Hook, observation)),
+        AgentEvidenceSource::Hook => {
+            hook_observation_if_eligible(agent, &candidate.value, candidate.observed_at, None, now)
+                .map(|observation| (EvidenceTier::Hook, observation))
+        }
+    }?;
+    if acknowledged_at.is_some_and(|acknowledged_at| {
+        is_acknowledgeable_kind(selected.1.kind) && candidate.observed_at <= acknowledged_at
+    }) {
+        return None;
     }
+    Some(selected)
 }
 
 fn state_tie_rank(kind: LiveStatusKind) -> u8 {
@@ -2064,6 +2064,58 @@ Nothing actionable to report here.";
             now: hook_now(),
             candidates,
         })
+    }
+
+    #[rstest::rstest]
+    #[case(AgentClient::Claude, crate::live::AgentEvidenceSource::Hook, "wait")]
+    #[case(AgentClient::Codex, crate::live::AgentEvidenceSource::Hook, "wait")]
+    #[case(
+        AgentClient::Codex,
+        crate::live::AgentEvidenceSource::RuntimeWrapper,
+        "done"
+    )]
+    fn acknowledged_waiting_and_completion_candidates_are_held_for_every_agent(
+        #[case] agent: AgentClient,
+        #[case] source: crate::live::AgentEvidenceSource,
+        #[case] value: &str,
+    ) {
+        let now = hook_now();
+        let observed_at = now - std::time::Duration::from_secs(2);
+        let candidates = [super::StatusCandidate::new(source, value, observed_at)];
+
+        let decision = super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: agent,
+            prior: None,
+            acknowledged_at: Some(now - std::time::Duration::from_secs(1)),
+            now,
+            candidates: &candidates,
+        });
+
+        assert!(!decision.applied);
+        assert!(decision.acknowledged_hold);
+        assert_eq!(decision.observed_at, None);
+    }
+
+    #[test]
+    fn selected_status_decision_returns_source_timestamp() {
+        let now = hook_now();
+        let observed_at = now - std::time::Duration::from_secs(1);
+        let candidates = [super::StatusCandidate::new(
+            super::AgentEvidenceSource::Hook,
+            "wait",
+            observed_at,
+        )];
+
+        let decision = super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: AgentClient::Codex,
+            prior: None,
+            acknowledged_at: None,
+            now,
+            candidates: &candidates,
+        });
+
+        assert!(decision.applied);
+        assert_eq!(decision.observed_at, Some(observed_at));
     }
 
     #[test]

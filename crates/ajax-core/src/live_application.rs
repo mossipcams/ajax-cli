@@ -3,21 +3,45 @@ use std::time::SystemTime;
 use crate::{
     lifecycle::{transition_lifecycle, LifecycleTransitionReason},
     live::{reduce_live_observation, LiveObservation, LiveStatusKind},
-    models::{AgentClient, AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
+    models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
 };
 
 pub fn apply_observation(task: &mut Task, observation: LiveObservation) {
+    apply_observation_at(task, observation, SystemTime::now());
+}
+
+pub fn apply_observation_at(
+    task: &mut Task,
+    observation: LiveObservation,
+    observed_at: SystemTime,
+) {
     let observation = reduce_task_live_observation(task, observation);
-    apply_reduced_observation(task, observation);
+    apply_reduced_observation(task, observation, observed_at);
 }
 
 pub fn apply_authoritative_observation(task: &mut Task, observation: LiveObservation) {
-    apply_reduced_observation(task, observation);
+    apply_authoritative_observation_at(task, observation, SystemTime::now());
+}
+
+pub fn apply_authoritative_observation_at(
+    task: &mut Task,
+    observation: LiveObservation,
+    observed_at: SystemTime,
+) {
+    apply_reduced_observation(task, observation, observed_at);
 }
 
 pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) {
+    apply_trusted_observation_at(task, observation, SystemTime::now());
+}
+
+pub fn apply_trusted_observation_at(
+    task: &mut Task,
+    observation: LiveObservation,
+    observed_at: SystemTime,
+) {
     let kind = observation.kind;
-    apply_reduced_observation(task, observation);
+    apply_reduced_observation(task, observation, observed_at);
 
     let lifecycle = match kind {
         LiveStatusKind::AgentRunning
@@ -33,25 +57,17 @@ pub fn apply_trusted_observation(task: &mut Task, observation: LiveObservation) 
 
 /// Acknowledge operator attention on a task without changing lifecycle.
 ///
-/// Records the acknowledgment time. When a Claude task is actively waiting for
-/// input or approval, clears the actionable waiting state — the waiting live
-/// status, `AgentRuntimeStatus::Waiting`, and `SideFlag::NeedsInput` — without
-/// fabricating shell or process state. Codex waiting remains actionable; running,
-/// failed, completed, and missing-substrate evidence is never erased.
+/// Records the acknowledgment time without erasing runtime evidence or changing
+/// lifecycle. Projection and refresh compare evidence time with this timestamp.
 pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
     task.record_attention_acknowledgment(at);
-
-    if task.selected_agent == AgentClient::Claude
-        && task.agent_status == AgentRuntimeStatus::Waiting
-    {
-        task.agent_status = AgentRuntimeStatus::NotStarted;
-        task.remove_side_flag(SideFlag::NeedsInput);
-        task.remove_side_flag(SideFlag::AgentDead);
-        task.live_status = None;
-    }
 }
 
-fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
+fn apply_reduced_observation(
+    task: &mut Task,
+    observation: LiveObservation,
+    observed_at: SystemTime,
+) {
     let refresh_activity = refreshes_activity(observation.kind);
     let has_missing_substrate_flag = has_missing_substrate_flag(task);
     clear_recovered_live_flags(task, observation.kind);
@@ -126,11 +142,13 @@ fn apply_reduced_observation(task: &mut Task, observation: LiveObservation) {
         LiveStatusKind::Unknown => {
             task.remove_side_flag(SideFlag::AgentRunning);
             task.live_status = None;
+            task.live_status_observed_at = None;
             return;
         }
     }
 
     task.live_status = Some(observation);
+    task.live_status_observed_at = Some(observed_at);
     if refresh_activity {
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
@@ -190,7 +208,7 @@ fn refreshes_activity(kind: LiveStatusKind) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{acknowledge_attention, apply_observation};
+    use super::{acknowledge_attention, apply_observation, apply_observation_at};
     use crate::models::{
         AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation, LiveStatusKind,
         SideFlag, Task, TaskId,
@@ -214,22 +232,29 @@ mod tests {
         task
     }
 
-    #[test]
-    fn acknowledging_claude_waiting_clears_actionable_state_without_marking_dead() {
+    #[rstest::rstest]
+    #[case(AgentClient::Claude)]
+    #[case(AgentClient::Codex)]
+    fn acknowledging_waiting_is_agent_neutral_and_non_destructive(#[case] agent: AgentClient) {
         let mut task = claude_active_task();
-        task.agent_status = AgentRuntimeStatus::Waiting;
-        task.add_side_flag(SideFlag::NeedsInput);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
+        task.selected_agent = agent;
+        let observed_at = UNIX_EPOCH + Duration::from_secs(400);
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input"),
+            observed_at,
+        );
         let at = UNIX_EPOCH + Duration::from_secs(500);
 
         acknowledge_attention(&mut task, at);
 
-        assert_eq!(task.live_status, None);
-        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
-        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(task.live_status_observed_at, Some(observed_at));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
         assert!(!task.has_side_flag(SideFlag::AgentDead));
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.attention_acknowledged_at, Some(at));
@@ -263,29 +288,6 @@ mod tests {
             );
             assert_eq!(task.live_status, live_before, "{status:?}");
         }
-    }
-
-    #[test]
-    fn acknowledging_codex_waiting_records_time_but_keeps_attention() {
-        let mut task = claude_active_task();
-        task.selected_agent = AgentClient::Codex;
-        task.agent_status = AgentRuntimeStatus::Waiting;
-        task.add_side_flag(SideFlag::NeedsInput);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::WaitingForInput,
-            "waiting for input",
-        ));
-        let at = UNIX_EPOCH + Duration::from_secs(500);
-
-        acknowledge_attention(&mut task, at);
-
-        assert_eq!(task.attention_acknowledged_at, Some(at));
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
-        assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(
-            task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::WaitingForInput)
-        );
     }
 
     fn active_task() -> Task {
@@ -352,5 +354,46 @@ mod tests {
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn timestamped_observation_records_and_refreshes_live_evidence_time() {
+        let mut task = active_task();
+        let first = UNIX_EPOCH + Duration::from_secs(100);
+        let second = UNIX_EPOCH + Duration::from_secs(200);
+
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+            first,
+        );
+        assert_eq!(task.live_status_observed_at, Some(first));
+
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "still waiting"),
+            second,
+        );
+        assert_eq!(task.live_status_observed_at, Some(second));
+    }
+
+    #[test]
+    fn unknown_observation_clears_live_evidence_time() {
+        let mut task = active_task();
+        let observed_at = UNIX_EPOCH + Duration::from_secs(100);
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "working"),
+            observed_at,
+        );
+
+        apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::Unknown, "unknown"),
+            observed_at + Duration::from_secs(1),
+        );
+
+        assert_eq!(task.live_status, None);
+        assert_eq!(task.live_status_observed_at, None);
     }
 }

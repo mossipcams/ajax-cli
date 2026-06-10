@@ -1744,8 +1744,8 @@ mod tests {
             .unwrap();
         assert!(task.attention_acknowledged_at.is_some());
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
-        assert!(!task.has_side_flag(SideFlag::NeedsInput));
-        assert_eq!(task.agent_status, AgentRuntimeStatus::NotStarted);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
     }
 
     #[test]

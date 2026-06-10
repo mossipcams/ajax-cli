@@ -3,7 +3,7 @@ use crate::{
     models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
     registry::{Registry, RegistryEvent},
     remediation::RemediationOption,
-    ui_state::UiState,
+    ui_state::TaskStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -12,21 +12,21 @@ pub struct TaskCard {
     pub id: TaskId,
     pub qualified_handle: String,
     pub title: String,
-    pub ui_state: UiState,
-    pub status_label: String,
+    pub status: TaskStatus,
+    pub status_explanation: Option<String>,
     pub lifecycle: LifecycleStatus,
     pub annotations: Vec<Annotation>,
     pub primary_action: OperatorAction,
     pub available_actions: Vec<OperatorAction>,
     pub remediations: Vec<RemediationOption>,
-    pub live_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CockpitNextStep {
     pub task_id: TaskId,
     pub task_handle: String,
-    pub ui_state: UiState,
+    pub status: TaskStatus,
+    pub status_explanation: Option<String>,
     pub action: OperatorAction,
     pub reason: String,
 }
@@ -71,6 +71,10 @@ pub struct TaskSummary {
     pub qualified_handle: String,
     pub title: String,
     pub lifecycle_status: String,
+    #[serde(skip_serializing)]
+    pub status: TaskStatus,
+    #[serde(skip_serializing)]
+    pub status_explanation: Option<String>,
     #[serde(default)]
     pub status_label: String,
     #[serde(default)]
@@ -272,6 +276,8 @@ mod tests {
                 qualified_handle: "web/fix-login".to_string(),
                 title: "Fix login".to_string(),
                 lifecycle_status: "active".to_string(),
+                status: crate::ui_state::TaskStatus::Waiting,
+                status_explanation: Some("Waiting for approval".to_string()),
                 status_label: "waiting for approval".to_string(),
                 runtime_observation_error: None,
                 needs_attention: false,
