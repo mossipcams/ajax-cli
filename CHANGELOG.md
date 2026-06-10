@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.19.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.18.0...ajax-cli-v0.19.0) (2026-06-10)
+
+
+### Features
+
+* align task status lifecycle across cockpit surfaces ([#158](https://github.com/mossipcams/ajax-cli/issues/158)) ([7f04508](https://github.com/mossipcams/ajax-cli/commit/7f04508116909d55e73529cbc3c48d35171aa006))
+
 ## [0.18.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.17.6...ajax-cli-v0.18.0) (2026-06-09)
 
 
