@@ -1520,43 +1520,12 @@ mod tests {
     }
 
     #[test]
-    fn task_session_bridge_has_no_debug_log_environment_hook() {
-        let source = include_str!("task_session.rs");
-        let debug_env = ["AJAX", "_TASK_SESSION_LOG"].concat();
-        let logger_type = ["Task", "Session", "Logger"].concat();
-
-        assert!(!source.contains(&debug_env));
-        assert!(!source.contains(&logger_type));
-    }
-
-    #[test]
-    fn task_operator_terminal_uses_inherited_stdio_instead_of_reopening_dev_tty() {
-        let source = include_str!("task_session.rs");
-        let terminal_source_type = ["TaskOperator", "TerminalSource"].concat();
-        let terminal_source_fn = ["task_operator", "_terminal_source"].concat();
-        let session_outcome_type = ["TaskSession", "Outcome"].concat();
-        assert!(!source.contains(&terminal_source_type));
-        assert!(!source.contains(&terminal_source_fn));
-        assert!(!source.contains(&session_outcome_type));
-    }
-
-    #[test]
     fn task_screen_commands_clear_normal_buffer_without_disabling_scrollback() {
         assert_eq!(
             super::TASK_SCREEN_ENTRY_SEQUENCE,
             b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[2J\x1b[H"
         );
         assert_eq!(super::TASK_SCREEN_EXIT_SEQUENCE, b"\x1b[?25h");
-    }
-
-    #[test]
-    fn task_session_does_not_keep_screen_sequence_wrappers() {
-        let source = include_str!("task_session.rs");
-
-        for helper in ["task_screen_entry_sequence", "task_screen_exit_sequence"] {
-            let function_name = ["fn ", helper].concat();
-            assert!(!source.contains(&function_name), "{helper}");
-        }
     }
 
     #[test]

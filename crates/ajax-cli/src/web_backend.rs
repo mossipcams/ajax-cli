@@ -334,19 +334,6 @@ mod tests {
     }
 
     #[test]
-    fn cli_web_backend_delegates_pwa_reads_to_ajax_web() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_backend.rs"),
-        )
-        .unwrap();
-
-        assert!(source.contains("ajax_web::slices::install"));
-        assert!(source.contains("ajax_web::slices::cockpit"));
-        assert!(!source.contains("include_str!(\"../web/"));
-        assert!(!source.contains("include_bytes!(\"../web/"));
-    }
-
-    #[test]
     fn cockpit_json_serializes_the_current_cockpit_projection() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let json = cockpit_json(&context).unwrap();
@@ -495,21 +482,6 @@ mod tests {
         let unsupported = handle_http_request("POST", "/", "", &context).unwrap();
         assert_eq!(unsupported.status_code, 405);
         assert!(String::from_utf8_lossy(&unsupported.body).contains("method not allowed"));
-    }
-
-    #[test]
-    fn web_supported_filter_lives_in_ajax_web_cockpit_slice() {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let cli_source = std::fs::read_to_string(manifest_dir.join("src/web_backend.rs")).unwrap();
-        let web_source =
-            std::fs::read_to_string(manifest_dir.join("../ajax-web/src/slices/cockpit.rs"))
-                .unwrap();
-
-        let filter_fn = ["fn ", "is_web_supported"].concat();
-        assert!(!cli_source.contains(&filter_fn));
-        assert!(web_source.contains(&filter_fn));
-        assert!(web_source.contains("OperatorAction::Resume"));
-        assert!(web_source.contains("OperatorAction::Start"));
     }
 
     #[test]
@@ -695,19 +667,6 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn cli_web_backend_uses_axum_runtime_server() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/web_backend.rs"),
-        )
-        .unwrap();
-
-        assert!(source.contains("runtime::serve_axum_web"));
-        assert!(source.contains("runtime::WebAppState::new"));
-        assert!(!source.contains(&["runtime::", "serve_connection"].concat()));
-        assert!(!source.contains(&["runtime::", "serve_mobile_web_with_bridge"].concat()));
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {

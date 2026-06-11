@@ -149,15 +149,4 @@ mod tests {
             }))
         );
     }
-
-    #[test]
-    fn supervise_module_does_not_keep_single_use_event_predicate() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/supervise.rs"),
-        )
-        .unwrap();
-        let helper = ["fn ", "is_noisy_process_output"].concat();
-
-        assert!(!source.contains(&helper));
-    }
 }

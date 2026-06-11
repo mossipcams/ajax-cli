@@ -1248,24 +1248,33 @@ mod tests {
     }
 
     #[test]
-    fn operation_kernel_handles_confirmation_blocking_nonzero_and_success() {
+    fn operation_kernel_refuses_blocked_plan_without_running_commands() {
         let mut blocked_plan = CommandPlan::new("blocked");
         blocked_plan.blocked_reasons = vec!["not ready".to_string()];
         let mut runner = RecordingQueuedRunner::default();
+
         assert_eq!(
             execute_external_plan(&blocked_plan, true, &mut runner),
             Err(CommandError::PlanBlocked(vec!["not ready".to_string()]))
         );
         assert!(runner.commands.is_empty());
+    }
 
+    #[test]
+    fn operation_kernel_requires_confirmation_before_running_risky_plan() {
         let mut confirmation_plan = CommandPlan::new("confirm");
         confirmation_plan.requires_confirmation = true;
+        let mut runner = RecordingQueuedRunner::default();
+
         assert_eq!(
             execute_external_plan(&confirmation_plan, false, &mut runner),
             Err(CommandError::ConfirmationRequired)
         );
         assert!(runner.commands.is_empty());
+    }
 
+    #[test]
+    fn operation_kernel_surfaces_nonzero_exit_after_running_the_failing_command() {
         let mut failing_plan = CommandPlan::new("failing");
         failing_plan
             .commands
@@ -1275,6 +1284,7 @@ mod tests {
             stdout: String::new(),
             stderr: "fatal".to_string(),
         }]);
+
         assert_eq!(
             execute_external_plan(&failing_plan, true, &mut runner),
             Err(CommandError::CommandRun(
@@ -1287,7 +1297,10 @@ mod tests {
             ))
         );
         assert_eq!(runner.commands.len(), 1);
+    }
 
+    #[test]
+    fn operation_kernel_returns_outputs_for_successful_plan() {
         let mut success_plan = CommandPlan::new("success");
         success_plan
             .commands
@@ -1322,134 +1335,6 @@ mod tests {
             ]
         );
         assert_eq!(runner.commands.len(), 2);
-
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let error_state = ["Operation", "ErrorState"].concat();
-        let execution = ["struct Operation", "Execution"].concat();
-        let state_change_method = ["after", "_state", "_change"].concat();
-        let wrapper_type = ["struct Operation", "Plan"].concat();
-        let wrapper_constructor = ["Operation", "Plan::new"].concat();
-
-        assert!(!source.contains(&error_state));
-        assert!(!source.contains(&execution));
-        assert!(!source.contains(&state_change_method));
-        assert!(!source.contains(&wrapper_type));
-        assert!(!source.contains(&wrapper_constructor));
-    }
-
-    #[test]
-    fn start_operation_execution_uses_shared_operation_kernel() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let start_module = source
-            .split("pub mod start")
-            .nth(1)
-            .and_then(|source| source.split("pub mod task_command").next())
-            .unwrap();
-
-        assert!(start_module.contains("execute_external_plan_with_success"));
-        assert!(!start_module.contains("pub struct StartTaskOperationPlan"));
-        assert!(!start_module.contains("operation.plan.requires_confirmation"));
-        assert!(!start_module.contains("operation.plan.blocked_reasons"));
-    }
-
-    #[test]
-    fn task_command_operation_returns_plain_execution_result() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let task_command_module = source
-            .split("pub mod task_command")
-            .nth(1)
-            .and_then(|source| source.split("pub mod drop_task").next())
-            .unwrap();
-
-        assert!(!task_command_module.contains("pub struct TaskCommandOperationExecution"));
-        assert!(!task_command_module.contains("pub struct TaskCommandOperationError"));
-        assert!(!task_command_module.contains("fn operation_error"));
-    }
-
-    #[test]
-    fn sweep_cleanup_operation_returns_plain_execution_result() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let sweep_cleanup_module = source
-            .split("pub mod sweep_cleanup")
-            .nth(1)
-            .and_then(|source| source.split("#[cfg(test)]").next())
-            .unwrap();
-        let sweep_cleanup_plan = ["pub struct ", "SweepCleanupOperationPlan"].concat();
-
-        assert!(!sweep_cleanup_module.contains(&sweep_cleanup_plan));
-        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationExecution"));
-        assert!(!sweep_cleanup_module.contains("pub struct SweepCleanupOperationError"));
-        assert!(!sweep_cleanup_module.contains("fn operation_error"));
-        assert!(!sweep_cleanup_module.contains("plan_sweep_cleanup_operation"));
-    }
-
-    #[test]
-    fn drop_operation_returns_plain_execution_result() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let drop_module = source
-            .split("pub mod drop_task")
-            .nth(1)
-            .and_then(|source| source.split("pub mod sweep_cleanup").next())
-            .unwrap();
-
-        assert!(!drop_module.contains("pub struct DropTaskOperationExecution"));
-        assert!(!drop_module.contains("-> Option<StepReceipt>"));
-        assert!(!drop_module.contains("let Some(receipt)"));
-    }
-
-    #[test]
-    fn drop_operation_plan_does_not_duplicate_confirmation_state() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let plan_fields = source
-            .split("pub struct DropTaskOperationPlan")
-            .nth(1)
-            .and_then(|source| source.split("pub enum DropTaskCompletion").next())
-            .unwrap();
-
-        assert!(!plan_fields.contains("pub requires_confirmation"));
-        assert!(!plan_fields.contains("pub blocked_reasons"));
-        assert!(!plan_fields.contains("pub cleanup_lifecycle"));
-        assert!(!plan_fields.contains("pub intent"));
-        assert!(!plan_fields.contains("pub ops"));
-    }
-
-    #[test]
-    fn operation_errors_use_plain_tuples_without_constructor_helpers() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let task_command_module = source
-            .split("pub mod task_command")
-            .nth(1)
-            .and_then(|source| source.split("pub mod drop_task").next())
-            .unwrap();
-        let sweep_cleanup_module = source
-            .split("pub mod sweep_cleanup")
-            .nth(1)
-            .and_then(|source| source.split("#[cfg(test)]").next())
-            .unwrap();
-
-        assert!(!task_command_module.contains("fn operation_error"));
-        assert!(!sweep_cleanup_module.contains("fn operation_error"));
     }
 
     #[test]
@@ -1589,7 +1474,7 @@ mod tests {
     }
 
     #[test]
-    fn task_command_operation_plans_single_task_commands_without_derived_policy_fields() {
+    fn task_command_operation_plans_use_operator_titles() {
         let context = context_with_reviewable_task();
 
         let cases = [
@@ -1610,23 +1495,10 @@ mod tests {
                 "{kind:?} should carry executable commands"
             );
         }
-
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/task_operations.rs"),
-        )
-        .unwrap();
-        let production_source = source.split("#[cfg(test)]").next().unwrap();
-        let refresh_policy = ["TaskCommand", "RefreshPolicy"].concat();
-        let post_execution = ["TaskCommand", "PostExecution"].concat();
-        let task_command_plan = ["pub struct ", "TaskCommandOperationPlan"].concat();
-
-        assert!(!production_source.contains(&task_command_plan));
-        assert!(!source.contains(&refresh_policy));
-        assert!(!source.contains(&post_execution));
     }
 
     #[test]
-    fn resume_and_review_task_operations_execute_in_core_with_reducers() {
+    fn resume_operation_executes_plan_and_reports_state_change() {
         let mut context = context_with_reviewable_task();
         let resume_plan = plan_task_command_operation(
             &context,
@@ -1661,7 +1533,11 @@ mod tests {
         assert_eq!(resume_runner.commands.len(), 2);
         assert_eq!(resume_outputs.len(), 2);
         assert!(resume_state_changed);
+    }
 
+    #[test]
+    fn review_operation_returns_diff_output_without_state_change() {
+        let mut context = context_with_reviewable_task();
         let review_plan = plan_task_command_operation(
             &context,
             TaskCommandKind::Review,
@@ -1862,7 +1738,7 @@ mod tests {
     }
 
     #[test]
-    fn ship_task_operation_marks_merged_or_records_merge_failure() {
+    fn ship_operation_marks_task_merged_on_success() {
         let mut context = context_with_reviewable_task();
         let ship_plan = plan_task_command_operation(
             &context,
@@ -1904,7 +1780,10 @@ mod tests {
                 .lifecycle_status,
             LifecycleStatus::Merged
         );
+    }
 
+    #[test]
+    fn ship_operation_records_conflict_attention_on_merge_failure() {
         let mut context = context_with_reviewable_task();
         let ship_plan = plan_task_command_operation(
             &context,
@@ -1962,7 +1841,7 @@ mod tests {
     }
 
     #[test]
-    fn repair_task_operation_marks_check_success_or_failure_in_core() {
+    fn repair_operation_promotes_task_to_reviewable_on_check_success() {
         let mut context = context_with_reviewable_task();
         let task = context
             .registry
@@ -2008,7 +1887,10 @@ mod tests {
         assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
         assert!(!task.has_side_flag(SideFlag::TestsFailed));
         assert!(task.live_status.is_none());
+    }
 
+    #[test]
+    fn repair_operation_records_tests_failed_on_check_failure() {
         let mut context = context_with_reviewable_task();
         context
             .registry

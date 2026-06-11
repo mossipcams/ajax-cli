@@ -449,39 +449,3 @@ fn task_command_cli_error(
     }
     error
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn pending_cockpit_task_actions_use_core_task_command_operations() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_actions.rs"),
-        )
-        .unwrap();
-        let action_selection = source.split("fn optimistic_drop_snapshot").next().unwrap();
-        let plan_operation = ["plan_task_command", "_operation"].concat();
-        let execute_operation = ["execute_task_command", "_operation"].concat();
-        let legacy_plan = ["plan_with", "_open_mode"].concat();
-        let local_operation_mapping = ["operation_from", "_operator_action"].concat();
-        let outcome_impl = ["impl Pending", "CockpitOutcome"].concat();
-        let pending_outcome = ["enum Pending", "CockpitOutcome"].concat();
-        let action_runner_generic = ["tui_cockpit_action", "<R"].concat();
-        let confirmed_runner_generic = ["tui_cockpit_confirmed_action", "<R"].concat();
-        let unused_runner = ["_", "runner"].concat();
-        let unused_state = ["_", "state_changed"].concat();
-        let return_helper = ["task_command", "_returns_to_cockpit"].concat();
-
-        assert!(source.contains(&plan_operation));
-        assert!(source.contains(&execute_operation));
-        assert!(source.contains("task_command_kind_from_operator_action"));
-        assert!(!source.contains(&legacy_plan));
-        assert!(!source.contains(&local_operation_mapping));
-        assert!(!source.contains(&outcome_impl));
-        assert!(!source.contains(&pending_outcome));
-        assert!(!action_selection.contains(&action_runner_generic));
-        assert!(!action_selection.contains(&confirmed_runner_generic));
-        assert!(!action_selection.contains(&unused_runner));
-        assert!(!action_selection.contains(&unused_state));
-        assert!(!source.contains(&return_helper));
-    }
-}

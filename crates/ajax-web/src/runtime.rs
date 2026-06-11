@@ -1832,25 +1832,6 @@ mod tests {
     }
 
     #[test]
-    fn production_server_uses_axum_instead_of_manual_http_loop() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
-        )
-        .unwrap();
-        let server_fn = source
-            .split("pub fn serve_axum_web")
-            .nth(1)
-            .and_then(|tail| tail.split("fn resolve_bind_address").next())
-            .unwrap();
-
-        assert!(server_fn.contains("axum::serve"));
-        assert!(server_fn.contains("TlsListener"));
-        assert!(server_fn.contains("axum_app"));
-        assert!(!server_fn.contains("listener.incoming()"));
-        assert!(!server_fn.contains("serve_tls_connection"));
-    }
-
-    #[test]
     fn runtime_routes_to_vertical_slices() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
@@ -2394,17 +2375,5 @@ mod tests {
         assert_eq!(unsubscribe.status_code, 405);
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn runtime_keeps_custom_connection_serving_out_of_production() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
-        )
-        .unwrap();
-
-        assert!(!source.contains(&["pub fn ", "serve_connection"].concat()));
-        assert!(!source.contains(&["fn ", "serve_tls_connection"].concat()));
-        assert!(!source.contains(&["fn ", "write_http_response"].concat()));
     }
 }

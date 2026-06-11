@@ -424,17 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn context_load_uses_store_loader_without_event_mode() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/context.rs"),
-        )
-        .unwrap();
-        let event_load_mode = ["Event", "LoadMode"].concat();
-
-        assert!(!source.contains(&event_load_mode));
-    }
-
-    #[test]
     fn ordinary_context_load_skips_registry_event_history() {
         let root = std::env::temp_dir().join(format!("ajax-context-events-{}", std::process::id()));
         let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));

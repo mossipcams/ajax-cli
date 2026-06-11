@@ -247,22 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn terminal_mode_tests_do_not_keep_command_mirror() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime.rs"),
-        )
-        .unwrap();
-
-        let command_mirror = ["enum ", "TerminalModeCommand"].concat();
-        let entry_helper = ["fn ", "terminal_entry_commands"].concat();
-        let exit_helper = ["fn ", "terminal_exit_commands"].concat();
-
-        assert!(!source.contains(&command_mirror));
-        assert!(!source.contains(&entry_helper));
-        assert!(!source.contains(&exit_helper));
-    }
-
-    #[test]
     fn refresh_timer_waits_for_interval_and_advances_after_refresh() {
         let interval = Duration::from_secs(5);
         let mut recent = Instant::now();

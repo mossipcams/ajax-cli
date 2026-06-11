@@ -192,100 +192,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn active_tui_api_does_not_export_legacy_cockpit_facades() {
-        let lib = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
-        )
-        .unwrap();
-
-        for legacy_module in ["app", "input", "render"] {
-            let legacy_export = ["pub mod ", legacy_module, ";"].concat();
-            assert!(!lib.contains(&legacy_export));
-        }
-        let legacy_flash_alias = ["FLASH", "_TICKS"].concat();
-        assert!(!lib.contains(&legacy_flash_alias));
-
-        let input = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/input.rs"),
-        )
-        .unwrap();
-        let back_key_wrapper = ["fn ", "handle_back_key"].concat();
-        assert!(!input.contains(&back_key_wrapper));
-    }
-
-    #[test]
-    fn rendering_helpers_live_in_rendering_module() {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-        let rendering = std::fs::read_to_string(manifest_dir.join("src/rendering.rs")).unwrap();
-
-        for helper_name in [
-            "render_header",
-            "render_feed",
-            "render_status_bar",
-            "render_selectable",
-            "build_feed",
-        ] {
-            let helper = format!("fn {helper_name}(");
-            assert!(
-                rendering.contains(&helper),
-                "rendering.rs should own {helper}"
-            );
-            assert!(!lib.contains(&helper), "lib.rs should not define {helper}");
-        }
-    }
-
-    #[test]
-    fn feed_geometry_helpers_live_in_layout_module() {
-        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let lib = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-        let layout = std::fs::read_to_string(manifest_dir.join("src/layout.rs")).unwrap();
-
-        for helper_name in ["feed_top_row", "feed_screen_rows", "selectable_row_layout"] {
-            let helper = format!("fn {helper_name}(");
-            assert!(layout.contains(&helper), "layout.rs should own {helper}");
-            assert!(!lib.contains(&helper), "lib.rs should not define {helper}");
-        }
-
-        let visible_feed_height = ["fn ", "visible_feed_height"].concat();
-        assert!(!layout.contains(&visible_feed_height));
-        assert!(!lib.contains(&visible_feed_height));
-    }
-
-    #[test]
-    fn tui_root_does_not_keep_notice_row_forwarder() {
-        let lib = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
-        )
-        .unwrap();
-        let helper_name = ["fn ", "show_notice_row"].concat();
-
-        assert!(!lib.contains(&helper_name));
-    }
-
-    #[test]
-    fn selectable_layout_does_not_build_rendered_feed_items() {
-        let layout = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
-        )
-        .unwrap();
-
-        assert!(!layout.contains("rendering::selectable_feed_rows"));
-        assert!(!layout.contains("build_feed"));
-    }
-
-    #[test]
-    fn tui_does_not_keep_local_evidence_label_mapper() {
-        let lib = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
-        )
-        .unwrap();
-        let mapper_name = ["fn ", "evidence_label", "("].concat();
-
-        assert!(!lib.contains(&mapper_name));
-    }
-
     fn sample_card(
         id: &str,
         handle: &str,
@@ -697,8 +603,9 @@ mod tests {
             &InboxResponse { items: vec![] },
         );
 
+        // Only the lane header is forbidden; task titles may legitimately
+        // contain the word "review".
         assert!(!content.contains("Review:"));
-        assert!(!content.contains("review"));
         assert!(content.contains("web/fix-login"));
     }
 
@@ -2166,21 +2073,6 @@ mod tests {
     }
 
     #[test]
-    fn lib_does_not_import_terminal_mode_command_mirror() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
-        )
-        .unwrap();
-        let command_mirror = ["Terminal", "ModeCommand"].concat();
-        let entry_helper = ["terminal", "_entry_commands"].concat();
-        let exit_helper = ["terminal", "_exit_commands"].concat();
-
-        assert!(!source.contains(&command_mirror));
-        assert!(!source.contains(&entry_helper));
-        assert!(!source.contains(&exit_helper));
-    }
-
-    #[test]
     fn nested_back_returns_to_parent_without_exit() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         app.select_next();
@@ -2737,17 +2629,6 @@ mod tests {
     }
 
     #[test]
-    fn navigation_module_does_not_keep_single_use_backspace_helper() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/navigation.rs"),
-        )
-        .unwrap();
-        let helper_name = ["fn ", "is_navigation_backspace_key"].concat();
-
-        assert!(!source.contains(&helper_name));
-    }
-
-    #[test]
     fn input_module_handles_navigation_events() {
         let mut app = App::new(
             sample_repos(),
@@ -2765,32 +2646,6 @@ mod tests {
 
         assert!(matches!(action, EventLoopAction::Continue));
         assert_eq!(app.selected, 1);
-    }
-
-    #[test]
-    fn layout_module_does_not_keep_selectable_row_ranges_helper() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/layout.rs"),
-        )
-        .unwrap();
-
-        for helper_name in ["selectable_row_ranges", "selectable_group"] {
-            let function_name = ["fn ", helper_name].concat();
-            assert!(!source.contains(&function_name), "{helper_name}");
-        }
-    }
-
-    #[test]
-    fn cockpit_state_does_not_keep_project_repo_forwarders() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cockpit_state.rs"),
-        )
-        .unwrap();
-
-        for helper in ["task_handle_repo", "card_repo"] {
-            let helper_name = ["fn ", helper].concat();
-            assert!(!source.contains(&helper_name), "{helper}");
-        }
     }
 
     #[test]

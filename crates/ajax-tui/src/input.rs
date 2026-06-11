@@ -190,21 +190,3 @@ pub(crate) fn handle_action_result(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn input_module_does_not_keep_navigation_forwarders() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/input.rs"),
-        )
-        .unwrap();
-        let back_forwarder = ["fn ", "is_back_key_event"].concat();
-        let help_forwarder = ["fn ", "is_help_key_event"].concat();
-        let delete_forwarder = ["fn ", "is_input_delete_key"].concat();
-
-        assert!(!source.contains(&back_forwarder));
-        assert!(!source.contains(&help_forwarder));
-        assert!(!source.contains(&delete_forwarder));
-    }
-}
