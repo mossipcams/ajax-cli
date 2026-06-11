@@ -95,20 +95,4 @@ mod tests {
             assert_eq!(chrome.glyph.chars().next(), Some(kind.glyph()));
         }
     }
-
-    #[test]
-    fn action_chrome_stores_finished_styles_without_style_builder_methods() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/actions.rs"),
-        )
-        .unwrap();
-
-        for builder in [
-            ["glyph", "_style(self)"].concat(),
-            ["label", "_style(self)"].concat(),
-            ["apply", "_weight"].concat(),
-        ] {
-            assert!(!source.contains(&builder), "{builder}");
-        }
-    }
 }

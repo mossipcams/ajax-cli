@@ -233,7 +233,8 @@ pub fn run_with_context_and_runner(
         ParsedArgs::Message(message) => return Ok(message),
     };
 
-    render_matches_mut(&matches, context, runner).map(|rendered| rendered.output)
+    render_matches_mut(&matches, context, runner, current_open_mode())
+        .map(|rendered| rendered.output)
 }
 
 pub fn run_with_context_and_runner_to_writer(
@@ -256,7 +257,7 @@ pub fn run_with_context_and_runner_to_writer(
         return result;
     }
 
-    let rendered = render_matches_mut(&matches, context, runner)?;
+    let rendered = render_matches_mut(&matches, context, runner, current_open_mode())?;
     write_command_output(writer, &rendered.output)?;
     Ok(rendered.state_changed)
 }

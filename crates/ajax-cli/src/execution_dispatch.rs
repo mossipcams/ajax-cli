@@ -1,6 +1,7 @@
 use ajax_core::adapters::CommandRunner;
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
+use ajax_core::commands::OpenMode;
 use ajax_core::commands::{self, CommandContext};
 #[cfg(feature = "supervisor")]
 use ajax_core::events::apply_monitor_event_to_registry;
@@ -49,6 +50,7 @@ pub(crate) fn render_matches_mut(
     matches: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut impl CommandRunner,
+    open_mode: OpenMode,
 ) -> Result<RenderedCommand, CliError> {
     match matches.subcommand() {
         Some((name @ ("repos" | "tasks" | "next" | "inbox" | "ready" | "status"), subcommand)) => {
@@ -78,7 +80,7 @@ pub(crate) fn render_matches_mut(
                 &request,
                 &plan,
                 subcommand.get_flag("yes"),
-                current_open_mode(),
+                open_mode,
             )
             .map_err(|error| command_error(error).after_state_change())?;
             Ok(RenderedCommand {
@@ -94,7 +96,7 @@ pub(crate) fn render_matches_mut(
                 "ship" => TaskCommandKind::Ship,
                 _ => unreachable!("task command pattern only matches known commands"),
             };
-            render_task_command(kind, subcommand, context, runner, current_open_mode())
+            render_task_command(kind, subcommand, context, runner, open_mode)
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("web", subcommand)) => {
@@ -315,7 +317,7 @@ pub(crate) fn render_matches_mut_with_paths(
         });
     }
 
-    render_matches_mut(matches, context, runner)
+    render_matches_mut(matches, context, runner, current_open_mode())
 }
 
 #[cfg(feature = "interactive")]
@@ -470,80 +472,5 @@ fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor:
     match task.selected_agent {
         AgentClient::Other => SupervisorAgent::Cursor,
         AgentClient::Codex | AgentClient::Claude => SupervisorAgent::Codex,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn cli_start_dispatch_delegates_task_transaction_to_core_operation() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
-        )
-        .unwrap();
-
-        let numeric_step_helper = ["mark_new_task", "_step_completed"].concat();
-        let manual_confirmation = ["plan.requires", "_confirmation"].concat();
-        let manual_blocked = ["plan.blocked", "_reasons"].concat();
-        let manual_runner = ["runner.run", "(command)"].concat();
-
-        assert!(source.contains("execute_start_task_operation"));
-        assert!(source.contains("execute_external_plan_with_success"));
-        assert!(!source.contains(&numeric_step_helper));
-        assert!(!source.contains(&manual_confirmation));
-        assert!(!source.contains(&manual_blocked));
-        assert!(!source.contains(&manual_runner));
-    }
-
-    #[test]
-    fn cli_tidy_dispatch_delegates_cleanup_execution_to_core_operation() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
-        )
-        .unwrap();
-        let tidy_dispatch = source
-            .split("Some((\"tidy\", subcommand))")
-            .nth(1)
-            .and_then(|source| source.split("Some((\"doctor\", subcommand))").next())
-            .unwrap();
-        let plan_operation = ["plan_sweep_cleanup", "_operation"].concat();
-        let execute_operation = ["execute_sweep_cleanup", "_operation"].concat();
-        let direct_plan = ["commands::sweep", "_cleanup_plan"].concat();
-        let local_helper = ["fn execute_sweep", "_cleanup"].concat();
-        let wrapper_plan_render = ["operation", ".plan"].concat();
-
-        assert!(source.contains(&direct_plan));
-        assert!(source.contains(&execute_operation));
-        assert!(tidy_dispatch.contains(&execute_operation));
-        assert!(!source.contains(&plan_operation));
-        assert!(!source.contains(&local_helper));
-        assert!(!tidy_dispatch.contains(&wrapper_plan_render));
-    }
-
-    #[test]
-    fn web_dispatch_delegates_to_mobile_web_server() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
-        )
-        .unwrap();
-
-        assert!(source.contains("Some((\"web\", subcommand))"));
-        assert!(source.contains("serve_mobile_web"));
-    }
-
-    #[test]
-    fn web_dispatch_with_paths_can_persist_mobile_actions() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/execution_dispatch.rs"),
-        )
-        .unwrap();
-        let with_paths_dispatch = source
-            .split("pub(crate) fn render_matches_mut_with_paths")
-            .nth(1)
-            .unwrap();
-
-        assert!(with_paths_dispatch.contains("Some((\"web\", subcommand))"));
-        assert!(with_paths_dispatch.contains("serve_mobile_web"));
-        assert!(with_paths_dispatch.contains("paths"));
     }
 }

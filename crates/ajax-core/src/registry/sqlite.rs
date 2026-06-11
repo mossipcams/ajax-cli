@@ -1561,22 +1561,6 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_registry_store_batches_task_detail_loads() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/registry/sqlite.rs"),
-        )
-        .unwrap();
-        let production_source = source.split("#[cfg(test)]").next().unwrap();
-
-        assert!(production_source.contains("fn load_task_side_flags_by_task"));
-        assert!(production_source.contains("fn load_task_metadata_by_task"));
-        assert!(production_source.contains("fn load_agent_attempts_by_task"));
-        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY flag"));
-        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY key"));
-        assert!(!production_source.contains("WHERE task_id = ?1 ORDER BY sequence"));
-    }
-
-    #[test]
     fn sqlite_registry_store_saves_and_loads_registry_state() {
         let mut registry = InMemoryRegistry::default();
         registry

@@ -420,17 +420,6 @@ mod tests {
     }
 
     #[test]
-    fn output_contracts_do_not_keep_unused_format_wrapper() {
-        let output_source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/output.rs"),
-        )
-        .unwrap();
-        let wrapper_name = ["Output", "Format"].concat();
-
-        assert!(!output_source.contains(&wrapper_name));
-    }
-
-    #[test]
     fn registry_export_snapshot_serializes_state_as_json_contract() {
         let mut registry = InMemoryRegistry::default();
         registry

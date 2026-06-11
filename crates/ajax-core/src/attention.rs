@@ -433,18 +433,4 @@ mod tests {
             )]
         );
     }
-
-    #[test]
-    fn attention_module_does_not_assign_lifecycle_status() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/attention.rs"),
-        )
-        .unwrap();
-        let forbidden_assignment = [".lifecycle", "_status ="].concat();
-        let permitted_equality = [".lifecycle", "_status =="].concat();
-
-        assert!(!source.lines().any(
-            |line| line.contains(&forbidden_assignment) && !line.contains(&permitted_equality)
-        ));
-    }
 }

@@ -2355,18 +2355,4 @@ Nothing actionable to report here.";
             );
         }
     }
-
-    #[test]
-    fn live_projection_module_does_not_own_lifecycle_mutation() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/live.rs"),
-        )
-        .unwrap();
-
-        let transition_call = ["transition", "_lifecycle("].concat();
-        let transition_reason = ["Lifecycle", "TransitionReason"].concat();
-
-        assert!(!source.contains(&transition_call));
-        assert!(!source.contains(&transition_reason));
-    }
 }

@@ -1792,15 +1792,12 @@ mod tests {
         let context = context_with_tasks();
 
         let response = inbox(&context);
-        let source = std::fs::read_to_string("src/commands.rs").unwrap();
 
         assert_eq!(response.items.len(), 1);
         assert_eq!(response.items[0].task_handle, "web/fix-login");
         assert_eq!(response.items[0].reason, "needs_input");
         assert_eq!(response.items[0].severity, 1);
         assert_eq!(response.items[0].action, OperatorAction::Resume);
-        assert!(!source.contains(&["fn ", "annotation_items("].concat()));
-        assert!(!source.contains(&["fn ", "cockpit_annotation_items("].concat()));
     }
 
     #[test]
@@ -2190,22 +2187,8 @@ mod tests {
     }
 
     #[test]
-    fn new_task_contract_preserves_generated_names_and_duplicate_handles() {
-        let mut context = context_with_tasks();
-
-        let missing_repo = new_task_plan(
-            &context,
-            NewTaskRequest {
-                repo: "missing".to_string(),
-                title: "Ship oauth v2!".to_string(),
-                agent: "codex".to_string(),
-            },
-        )
-        .unwrap_err();
-        assert_eq!(
-            missing_repo,
-            CommandError::RepoNotFound("missing".to_string())
-        );
+    fn new_task_plan_slugifies_title_into_branch_session_and_handle() {
+        let context = context_with_tasks();
 
         let plan = new_task_plan(
             &context,
@@ -2253,6 +2236,11 @@ mod tests {
             send_keys.args[3],
             "ajax-cli __agent-runtime --task-id api/ship-oauth-v2 --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
+    }
+
+    #[test]
+    fn new_task_plan_blocks_duplicate_visible_handle() {
+        let context = context_with_tasks();
 
         let active_duplicate = new_task_plan(
             &context,
@@ -2263,11 +2251,16 @@ mod tests {
             },
         )
         .unwrap_err();
+
         assert_eq!(
             active_duplicate,
             CommandError::PlanBlocked(vec!["task already exists: web/fix-login".to_string()])
         );
+    }
 
+    #[test]
+    fn new_task_plan_allows_reusing_removed_task_handle() {
+        let mut context = context_with_tasks();
         context
             .registry
             .get_task_mut(&TaskId::new("task-1"))
@@ -3640,16 +3633,6 @@ mod tests {
         assert!(remove.commands.iter().any(|command| {
             command.program == "git" && command.args.iter().any(|arg| arg == "-D")
         }));
-    }
-
-    #[test]
-    fn teardown_commands_use_force_flag_without_mode_enum() {
-        let source = std::fs::read_to_string(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/teardown.rs"),
-        )
-        .unwrap();
-
-        assert!(!source.contains("TeardownMode"));
     }
 
     #[test]

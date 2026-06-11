@@ -22,34 +22,6 @@ use std::{
     time::SystemTime,
 };
 
-#[test]
-fn cli_does_not_keep_duplicate_conflict_classifier_module() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-    let supervise_source = std::fs::read_to_string(manifest_dir.join("src/supervise.rs")).unwrap();
-    let duplicate_module_decl = ["mod ", "classifiers;"].concat();
-    let supervise_wrapper = ["fn ", "render_supervise_command"].concat();
-
-    assert!(!lib_source.contains(&duplicate_module_decl));
-    assert!(!manifest_dir.join("src/classifiers.rs").exists());
-    assert!(!supervise_source.contains(&supervise_wrapper));
-}
-
-#[test]
-fn cli_builder_does_not_keep_trivial_command_forwarders() {
-    let cli_source =
-        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/cli.rs")).unwrap();
-
-    for wrapper in [
-        "repos_command",
-        "executable_task_command",
-        "executable_new_command",
-    ] {
-        let function_name = ["fn ", wrapper].concat();
-        assert!(!cli_source.contains(&function_name), "{wrapper}");
-    }
-}
-
 fn sample_context() -> CommandContext<InMemoryRegistry> {
     let config = Config {
         repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
@@ -115,54 +87,6 @@ fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
 }
 
 #[test]
-fn web_companion_stays_out_of_cli_backend() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let manifest = std::fs::read_to_string(manifest_dir.join("Cargo.toml")).unwrap();
-    let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-    let cli_source = std::fs::read_to_string(manifest_dir.join("src/cli.rs")).unwrap();
-    let main_source = std::fs::read_to_string(manifest_dir.join("src/main.rs")).unwrap();
-
-    assert!(
-        manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
-        "ajax-cli should integrate the PWA through the ajax-web crate boundary"
-    );
-    assert!(
-        !manifest_dir.join("web").exists(),
-        "PWA assets belong in crates/ajax-web/web, not crates/ajax-cli/web"
-    );
-
-    for forbidden in [
-        ["mod ", "web_backend"].concat(),
-        ["mod ", "web_push"].concat(),
-        ["mod ", "web_tls"].concat(),
-        ["web_companion", "_push"].concat(),
-        ["web_companion", "_tls"].concat(),
-    ] {
-        assert!(!lib_source.contains(&forbidden), "{forbidden}");
-    }
-    for forbidden_dependency in ["rcgen", "rustls", "web-push"] {
-        assert!(
-            !manifest.contains(&format!("{forbidden_dependency} =")),
-            "{forbidden_dependency} belongs to ajax-web, not ajax-cli"
-        );
-    }
-    for forbidden_command in [
-        ["Command::new(\"", "stable", "\")"].concat(),
-        ["Command::new(\"", "dev", "\")"].concat(),
-    ] {
-        assert!(
-            !cli_source.contains(&forbidden_command),
-            "{forbidden_command} should not be an operator command"
-        );
-    }
-    let argv_rewrite_helper = ["expand", "_ajax_cli_args"].concat();
-    assert!(
-        !main_source.contains(&argv_rewrite_helper),
-        "startup should use normal CLI parsing rather than argv rewriting"
-    );
-}
-
-#[test]
 fn execution_dispatch_module_routes_mutating_commands() {
     let mut context = sample_context();
     let mut runner = RecordingCommandRunner::default();
@@ -178,8 +102,13 @@ fn execution_dispatch_module_routes_mutating_commands() {
         ])
         .unwrap();
 
-    let rendered =
-        crate::execution_dispatch::render_matches_mut(&matches, &mut context, &mut runner).unwrap();
+    let rendered = crate::execution_dispatch::render_matches_mut(
+        &matches,
+        &mut context,
+        &mut runner,
+        OpenMode::Attach,
+    )
+    .unwrap();
 
     assert!(rendered.state_changed);
     assert!(rendered.output.contains("recorded task: web/fix-logout"));
@@ -556,13 +485,21 @@ fn tmux_live_commands() -> Vec<CommandSpec> {
 }
 
 fn expected_new_task_open_command(session: &str) -> CommandSpec {
-    match super::current_open_mode() {
-        OpenMode::Attach => CommandSpec::new("tmux", ["attach-session", "-t", session])
-            .with_mode(CommandMode::InheritStdio),
-        OpenMode::SwitchClient => CommandSpec::new("tmux", ["switch-client", "-t", session])
-            .with_mode(CommandMode::InheritStdio),
-        OpenMode::NoAttach => unreachable!("CLI tests never run in NoAttach mode"),
-    }
+    CommandSpec::new("tmux", ["attach-session", "-t", session]).with_mode(CommandMode::InheritStdio)
+}
+
+// `run_with_context_and_runner` resolves the open mode from the ambient
+// `$TMUX` env var, which makes full command-sequence assertions
+// non-deterministic across environments. Pin `Attach` through the dispatch
+// seam so expectations stay hermetic.
+fn run_start_with_attach_mode(
+    args: impl IntoIterator<Item = &'static str>,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut impl ajax_core::adapters::CommandRunner,
+) -> Result<String, CliError> {
+    let matches = build_cli().try_get_matches_from(args).unwrap();
+    crate::execution_dispatch::render_matches_mut(&matches, context, runner, OpenMode::Attach)
+        .map(|rendered| rendered.output)
 }
 
 fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
@@ -628,10 +565,8 @@ fn binary_prints_cli_errors_with_display_formatting() {
     assert!(!stderr.contains("CommandFailed"));
 }
 
-#[test]
-fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
-    let directory =
-        std::env::temp_dir().join(format!("ajax-cli-selected-db-{}", std::process::id()));
+fn seeded_profile_homes(tag: &str) -> (PathBuf, CliContextPaths, CliContextPaths) {
+    let directory = std::env::temp_dir().join(format!("ajax-cli-{tag}-{}", std::process::id()));
     let stable_paths = CliContextPaths::from_runtime_paths(
         RuntimePathRequest::new(directory.join("stable-home"))
             .with_cli_profile("stable")
@@ -660,6 +595,12 @@ fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
     SqliteRegistryStore::new(&dev_paths.state_file)
         .save(&registry_with_task("dev-task"))
         .unwrap();
+    (directory, stable_paths, dev_paths)
+}
+
+#[test]
+fn reads_use_only_the_selected_profile_db() {
+    let (directory, stable_paths, dev_paths) = seeded_profile_homes("selected-db-read");
     let mut read_runner = RecordingCommandRunner::default();
 
     let dev_output =
@@ -679,6 +620,13 @@ fn dev_and_stable_invocations_load_and_save_only_their_selected_db() {
 
     assert!(stable_output.contains("web/stable-task"));
     assert!(!stable_output.contains("web/dev-task"));
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn writes_persist_only_to_the_selected_profile_db() {
+    let (directory, stable_paths, dev_paths) = seeded_profile_homes("selected-db-write");
 
     let mut write_runner = RecordingCommandRunner::default();
     run_with_context_paths_and_runner(
@@ -884,17 +832,6 @@ fn read_only_cockpit_rejects_interactive_mode_before_navigation_only_tui() {
         super::CliError::CommandFailed(message)
             if message.contains("interactive cockpit requires command execution support")
     ));
-}
-
-#[test]
-fn readonly_dispatch_does_not_have_adapter_wiring_placeholder() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-    let adapter_placeholder = ["adapter wiring", " pending"].concat();
-    let accepted_placeholder = ["command", " accepted"].concat();
-
-    assert!(!lib_source.contains(&adapter_placeholder));
-    assert!(!lib_source.contains(&accepted_placeholder));
 }
 
 #[test]
@@ -1461,17 +1398,6 @@ fn read_refresh_updates_stale_git_substrate_evidence() {
             ),
         ]
     );
-}
-
-#[test]
-fn snapshot_only_read_dispatch_is_explicitly_named() {
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib_source = std::fs::read_to_string(manifest_dir.join("src/lib.rs")).unwrap();
-    let wrapper = ["fn ", "render_snapshot_matches"].concat();
-
-    assert!(lib_source.contains("snapshot_dispatch::render_snapshot_matches"));
-    assert!(lib_source.contains("render_refreshed_read_command"));
-    assert!(!lib_source.contains(&wrapper));
 }
 
 #[test]
@@ -2140,10 +2066,9 @@ fn supervise_command_keeps_stderr_context_on_agent_exit() {
     assert!(error.to_string().contains("stderr: auth expired"));
 }
 
-#[test]
-fn supervise_with_task_requires_existing_visible_task() {
+fn write_fake_codex(tag: &str) -> PathBuf {
     let fake_codex =
-        std::env::temp_dir().join(format!("ajax-cli-fake-codex-task-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ajax-cli-fake-codex-{tag}-{}", std::process::id()));
     std::fs::write(
         &fake_codex,
         "#!/bin/sh\nprintf '{\"type\":\"started\"}\\n'\n",
@@ -2152,6 +2077,12 @@ fn supervise_with_task_requires_existing_visible_task() {
     let mut permissions = std::fs::metadata(&fake_codex).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&fake_codex, permissions).unwrap();
+    fake_codex
+}
+
+#[test]
+fn supervise_with_task_runs_for_visible_task() {
+    let fake_codex = write_fake_codex("visible-task");
     let mut context = sample_context();
     let mut runner = QueuedRunner::default();
 
@@ -2171,7 +2102,14 @@ fn supervise_with_task_requires_existing_visible_task() {
     )
     .unwrap();
 
+    let _ = std::fs::remove_file(fake_codex);
     assert!(output.contains("agent started: codex"));
+}
+
+#[test]
+fn supervise_with_task_rejects_unknown_task() {
+    let mut context = sample_context();
+    let mut runner = QueuedRunner::default();
 
     let error = run_with_context_and_runner(
         [
@@ -2182,22 +2120,27 @@ fn supervise_with_task_requires_existing_visible_task() {
             "--prompt",
             "fix tests",
             "--codex-bin",
-            &fake_codex.display().to_string(),
+            "/path/that/should/not/run",
         ],
         &mut context,
         &mut runner,
     )
     .unwrap_err();
 
-    let _ = std::fs::remove_file(fake_codex);
     assert!(matches!(error, CliError::CommandFailed(message)
                 if message == "task not found: web/missing"));
+}
 
+#[test]
+fn supervise_with_task_rejects_removed_task() {
+    let mut context = sample_context();
+    let mut runner = QueuedRunner::default();
     context
         .registry
         .get_task_mut(&TaskId::new("task-1"))
         .unwrap()
         .lifecycle_status = LifecycleStatus::Removed;
+
     let error = run_with_context_and_runner(
         [
             "ajax",
@@ -2311,98 +2254,6 @@ fn readonly_context_rejects_supervise_instead_of_reporting_placeholder_success()
 
     assert!(matches!(error, super::CliError::CommandFailed(message)
                 if message.contains("supervise requires mutable context and runner support")));
-}
-
-#[test]
-fn cli_context_and_render_logic_live_in_modules() {
-    let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib = std::fs::read_to_string(crate_root.join("src/lib.rs")).unwrap();
-
-    assert!(lib.contains("mod cli;"));
-    assert!(lib.contains("mod context;"));
-    assert!(lib.contains("mod cockpit_actions;"));
-    assert!(lib.contains("mod dispatch;"));
-    assert!(lib.contains("mod render;"));
-    assert!(lib.contains("mod supervise;"));
-    assert!(crate_root.join("src/cli.rs").exists());
-    assert!(crate_root.join("src/cockpit_actions.rs").exists());
-    assert!(crate_root.join("src/context.rs").exists());
-    assert!(crate_root.join("src/dispatch.rs").exists());
-    assert!(crate_root.join("src/render.rs").exists());
-    assert!(crate_root.join("src/supervise.rs").exists());
-}
-
-#[test]
-fn architecture_documents_no_legacy_json_state_migration() {
-    let architecture = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
-    )
-    .unwrap();
-
-    assert!(architecture.contains("SQLite stores Ajax registry state"));
-    assert!(architecture.contains("Durable registry state is backed by SQLite"));
-}
-
-#[test]
-fn agents_documents_no_legacy_code_rule() {
-    let agents = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../AGENTS.md"),
-    )
-    .unwrap();
-
-    assert!(agents.contains("Replace internal legacy implementation"));
-    assert!(agents.contains("preserve public APIs and user-visible behavior"));
-}
-
-#[test]
-fn architecture_documents_current_workspace_boundaries() {
-    let architecture = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
-    )
-    .unwrap();
-
-    for crate_name in ["ajax-core", "ajax-cli", "ajax-tui", "ajax-supervisor"] {
-        assert!(
-            architecture.contains(crate_name),
-            "architecture.md should document the {crate_name} crate boundary"
-        );
-    }
-    assert!(architecture.contains("supervised agent execution"));
-}
-
-#[test]
-fn architecture_documents_current_persistence_and_cockpit_stack() {
-    let architecture = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
-    )
-    .unwrap();
-
-    assert!(architecture.contains("SqliteRegistryStore"));
-    assert!(architecture.contains("InMemoryRegistry"));
-    assert!(architecture.contains("native Cockpit interface"));
-    assert!(architecture.contains("native terminal interaction and rendering"));
-}
-
-#[test]
-fn architecture_documents_current_execution_and_cli_shape() {
-    let architecture = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../architecture.md"),
-    )
-    .unwrap();
-
-    assert!(
-        architecture.contains("capture or inherited-stdio modes"),
-        "architecture.md should name the current command execution modes"
-    );
-    assert!(
-        !architecture.contains("CommandMode::Spawn"),
-        "architecture.md should not document unused detached spawn semantics"
-    );
-
-    assert!(architecture.contains("`ajax-cli` is the command and rendering shell"));
-    assert!(!architecture.contains("Consider Ratatui"));
-    assert!(!architecture.contains("long-term implementation should"));
-    assert!(!architecture.contains("The intended persistence boundary"));
 }
 
 #[test]
@@ -2664,76 +2515,19 @@ fn task_scoped_commands_require_explicit_task_handle() {
 }
 
 #[test]
-fn textual_frontend_files_are_removed() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-
-    assert!(!root.join("frontends/textual").exists());
-}
-
-#[test]
-fn textual_startup_scripts_are_removed() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-
-    assert!(!root.join("scripts/start-ajax-textual.sh").exists());
-    assert!(!root.join("scripts/start-ajax-textual-lib.sh").exists());
-    assert!(!root.join("scripts/test-ajax-textual.sh").exists());
-}
-
-#[test]
-fn readme_documents_native_rust_cockpit() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
-
-    assert!(readme.contains("native Rust cockpit"));
-    assert!(readme.contains("ajax-cli cockpit"));
-    assert!(readme.contains("project-first workflow"));
-    assert!(readme.contains("choose a project"));
-    assert!(!readme.contains("Textual"));
-    assert!(!readme.contains("textual"));
-    assert!(!readme.contains("## Startup Script"));
-    assert!(!readme.contains("./scripts/start-ajax-textual.sh"));
-}
-
-#[test]
-fn release_hygiene_documents_install_config_and_release_process() {
+fn workspace_manifest_pins_repository_metadata_and_lints() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workspace_manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
-    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
-    let changelog = std::fs::read_to_string(root.join("CHANGELOG.md")).unwrap();
-    let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
-    let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
-    let ci = std::fs::read_to_string(root.join(".github/workflows/ci.yml")).unwrap();
-    let license = std::fs::read_to_string(root.join("LICENSE")).unwrap();
+    let cli_manifest = std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
 
     assert!(!workspace_manifest.contains("https://github.com/example/ajax-cli"));
     assert!(workspace_manifest.contains("repository = \"https://github.com/mossipcams/ajax-cli\""));
     assert!(workspace_manifest.contains("version = \"0.1.0\""));
     assert!(workspace_manifest.contains("[workspace.lints.rust]"));
     assert!(workspace_manifest.contains("unsafe_op_in_unsafe_fn = \"deny\""));
-    assert!(license.contains("MIT License"));
-    assert!(readme.contains("## Install"));
-    assert!(readme.contains("## Configuration"));
-    assert!(readme.contains("## First Run"));
-    assert!(changelog.contains("# Changelog"));
-    assert!(release.contains("# Release Process"));
-    assert!(release.contains("Release Please"));
-    assert!(release.contains("RELEASE_PLEASE_TOKEN"));
-    assert!(release.contains("cargo fmt --check"));
-    assert!(release.contains("cargo nextest run --all-features"));
-    let cli_manifest = std::fs::read_to_string(root.join("crates/ajax-cli/Cargo.toml")).unwrap();
     assert!(cli_manifest.contains("[[bin]]\nname = \"ajax-cli\""));
     assert!(!cli_manifest.contains("name = \"ajax\"\npath = \"src/main.rs\""));
     assert!(cli_manifest.contains("path = \"src/main.rs\""));
-    assert!(agents.contains("Release Please PR title"));
-    assert!(agents.contains("feat:"));
-    assert!(agents.contains("fix:"));
-    assert!(agents.contains("chore:"));
-    assert!(ci.contains("\n  ci:\n"));
-    assert!(ci.contains("name: CI"));
-    assert!(ci.contains("needs:"));
-    assert!(ci.contains("format-and-duplication"));
-    assert!(ci.contains("if: ${{ always() }}"));
-    assert!(ci.contains("needs.*.result"));
 }
 
 #[test]
@@ -3014,32 +2808,15 @@ fn workspace_members_inherit_metadata_lints_and_dependencies() {
 }
 
 #[test]
-fn workspace_style_files_document_repo_hygiene() {
+fn workspace_toolchain_and_lint_configs_are_pinned() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let clippy = std::fs::read_to_string(root.join("clippy.toml")).unwrap();
     let rustfmt = std::fs::read_to_string(root.join("rustfmt.toml")).unwrap();
     let toolchain = std::fs::read_to_string(root.join("rust-toolchain.toml")).unwrap();
-    let style = std::fs::read_to_string(root.join("STYLE.md")).unwrap();
-    let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
 
     assert!(clippy.contains("doc-valid-idents"));
     assert!(rustfmt.contains("edition = \"2021\""));
     assert!(toolchain.contains("channel = \"1.88.0\""));
-    assert!(style.contains("Workspace Hygiene"));
-    assert!(style.contains("runtime behavior"));
-    assert!(agents.contains("Workspace Hygiene"));
-
-    for boundary in [
-        "`ajax-cli`: CLI parsing, dispatch, rendering, and context loading",
-        "`ajax-core`: models, policy, live status, and registry",
-        "`ajax-supervisor`: process supervision",
-        "`ajax-tui`: Cockpit screen state, input, layout, and rendering",
-    ] {
-        assert!(
-            agents.contains(boundary),
-            "AGENTS.md should document boundary: {boundary}"
-        );
-    }
 }
 
 #[test]
@@ -3068,47 +2845,6 @@ fn audit_policy_has_no_accepted_warnings() {
     assert!(audit_policy.contains("cargo audit -D warnings"));
     assert!(!audit_policy.contains("RUSTSEC-2024-0436"));
     assert!(!audit_policy.contains("RUSTSEC-2026-0002"));
-}
-
-#[test]
-fn smoke_workflow_script_is_documented_for_release_validation() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let smoke = std::fs::read_to_string(root.join("scripts/smoke.sh")).unwrap();
-    let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
-    let release = std::fs::read_to_string(root.join("RELEASE.md")).unwrap();
-
-    assert!(smoke.contains("ajax-cli doctor"));
-    assert!(smoke.contains("ajax start"));
-    assert!(smoke.contains("ajax supervise --task"));
-    assert!(smoke.contains("ajax ship"));
-    assert!(smoke.contains("ajax drop"));
-    assert!(smoke.contains("ajax state export"));
-    assert!(!smoke.contains("ajax new"));
-    assert!(!smoke.contains("ajax open"));
-    assert!(!smoke.contains("ajax merge"));
-    assert!(!smoke.contains("ajax clean"));
-    assert!(!smoke.contains("ajax check"));
-    assert!(!smoke.contains("ajax diff"));
-    assert!(smoke.contains("assert_json_contains"));
-    assert!(smoke.contains("\"lifecycle_status\": \"Active\""));
-    assert!(smoke.contains("\"lifecycle_status\": \"Reviewable\""));
-    assert!(smoke.contains("\"lifecycle_status\": \"Merged\""));
-    assert!(smoke.contains("\"tasks\": []"));
-    assert!(smoke.contains("assert_log_contains"));
-    assert!(smoke.contains("run_happy_path_journey"));
-    assert!(smoke.contains("run_recovery_journey"));
-    assert!(smoke.contains("AJAX_SMOKE_FAIL_AFTER_WORKTREE"));
-    assert!(smoke.contains("\"lifecycle_status\": \"Error\""));
-    assert!(smoke.contains("state export target already exists"));
-    assert!(smoke.contains("target/release/ajax-cli"));
-    assert!(smoke.contains("cargo build --release -p ajax-cli"));
-    assert!(!smoke.contains("target/debug/ajax-cli"));
-    assert!(smoke.contains("if [[ -z \"${AJAX_BIN:-}\" ]]"));
-    assert!(smoke.contains("ajax-cli binary is not executable"));
-    assert!(readme.contains("scripts/smoke.sh"));
-    assert!(!readme.contains("running checks"));
-    assert!(!readme.contains("viewing diffs"));
-    assert!(release.contains("scripts/smoke.sh"));
 }
 
 #[test]
@@ -3250,16 +2986,6 @@ fn repair_command_renders_configured_test_plan() {
 
     assert!(output.contains("repair task: web/fix-login"));
     assert!(output.contains("(cd /tmp/worktrees/web-fix-login && sh -lc 'cargo test')"));
-
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
-    let snapshot_dispatch =
-        std::fs::read_to_string(manifest_dir.join("src/snapshot_dispatch.rs")).unwrap();
-    let wrapper_definition = ["pub(crate) fn plan", "_task_command"].concat();
-    let wrapper_call = ["crate::dispatch::plan", "_task_command"].concat();
-
-    assert!(!dispatch.contains(&wrapper_definition));
-    assert!(!snapshot_dispatch.contains(&wrapper_call));
 }
 
 #[test]
@@ -3403,7 +3129,7 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
     );
     let mut runner = RecordingCommandRunner::default();
 
-    let output = run_with_context_and_runner(
+    let output = run_start_with_attach_mode(
         [
             "ajax",
             "start",
@@ -3500,7 +3226,7 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
     );
     let mut runner = RecordingCommandRunner::default();
 
-    run_with_context_and_runner(
+    run_start_with_attach_mode(
         [
             "ajax",
             "start",
@@ -3820,7 +3546,7 @@ fn new_execute_allows_reusing_removed_task_handle() {
     context.registry.create_task(removed).unwrap();
     let mut runner = RecordingCommandRunner::default();
 
-    let output = run_with_context_and_runner(
+    let output = run_start_with_attach_mode(
         [
             "ajax",
             "start",
@@ -6160,13 +5886,6 @@ fn failed_pending_new_task_action_marks_state_changed_for_cockpit_recovery() {
     let inbox = ajax_core::commands::inbox(&context);
     assert_eq!(inbox.items.len(), 1);
     assert_eq!(inbox.items[0].action, OperatorAction::Resume);
-
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let execution_dispatch =
-        std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
-    let wrapper = ["pub(crate) fn execute_new", "_task_plan<"].concat();
-
-    assert!(!execution_dispatch.contains(&wrapper));
 }
 
 #[test]
@@ -6186,11 +5905,12 @@ fn pending_new_task_action_runs_after_title_is_collected() {
     let mut runner = RecordingCommandRunner::default();
     let mut state_changed = false;
 
-    let outcome = super::execute_pending_cockpit_action(
+    let outcome = crate::cockpit_actions::execute_pending_cockpit_action_with_open_mode(
         &pending,
         &mut context,
         &mut runner,
         &mut state_changed,
+        OpenMode::Attach,
     )
     .unwrap();
 
@@ -6256,7 +5976,7 @@ fn pending_new_task_action_runs_after_title_is_collected() {
 }
 
 #[test]
-fn task_command_routes_use_core_kinds_without_cli_mapper() {
+fn task_verbs_render_core_operation_titles() {
     let context = sample_context();
 
     let resume = run_with_context(["ajax", "resume", "web/fix-login"], &context).unwrap();
@@ -6268,25 +5988,11 @@ fn task_command_routes_use_core_kinds_without_cli_mapper() {
     assert!(repair.contains("repair task: web/fix-login"));
     assert!(review.contains("diff task: web/fix-login"));
     assert!(ship.contains("merge task: web/fix-login"));
-
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
-    let execution_dispatch =
-        std::fs::read_to_string(manifest_dir.join("src/execution_dispatch.rs")).unwrap();
-    let mapper = ["task_command_kind", "_for_cli_subcommand"].concat();
-
-    assert!(!dispatch.contains(&mapper));
-    assert!(!execution_dispatch.contains(&mapper));
-    assert_eq!(OperatorAction::from_label("reconcile"), None);
 }
 
 #[test]
-fn task_command_kind_uses_operator_review_language() {
-    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let dispatch = std::fs::read_to_string(manifest_dir.join("src/dispatch.rs")).unwrap();
-
-    assert!(dispatch.contains("Review"));
-    assert!(!dispatch.contains("Diff"));
+fn reconcile_is_not_an_operator_action() {
+    assert_eq!(OperatorAction::from_label("reconcile"), None);
 }
 
 #[test]

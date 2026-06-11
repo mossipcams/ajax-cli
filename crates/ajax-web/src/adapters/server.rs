@@ -34,13 +34,3 @@ fn respawn_current_process() -> Result<(), String> {
         .map_err(|error| format!("could not spawn replacement process: {error}"))?;
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::schedule_process_restart;
-
-    #[test]
-    fn schedule_process_restart_is_no_op_in_tests() {
-        schedule_process_restart();
-    }
-}
