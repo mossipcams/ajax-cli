@@ -4041,7 +4041,7 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
     assert_eq!(runner.commands[3].args[0], "-c");
     assert_eq!(
         runner.commands[3].args[1],
-        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+        "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
     );
     assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
     assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
@@ -4384,7 +4384,7 @@ fn remove_execute_force_removes_task_resources() {
     assert_eq!(runner.commands[3].args[0], "-c");
     assert_eq!(
         runner.commands[3].args[1],
-        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+        "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
     );
     assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
     assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
@@ -4544,7 +4544,7 @@ fn clean_execute_removes_risky_task_with_yes() {
     assert_eq!(runner.commands[3].args[0], "-c");
     assert_eq!(
         runner.commands[3].args[1],
-        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+        "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
     );
     assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
     assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
