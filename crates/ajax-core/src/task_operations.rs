@@ -667,7 +667,7 @@ pub mod drop_task {
             program: "sh".to_string(),
             args: vec![
                 "-c".to_string(),
-                "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+                "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
                     .to_string(),
                 "ajax-fast-worktree-remove".to_string(),
                 repo_path.to_string(),
@@ -2121,7 +2121,7 @@ mod tests {
             .expect("fast remove command");
         assert_eq!(
             fast_remove.args[1],
-            "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+            "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
         );
         assert_eq!(fast_remove.args[3], "/repo/web");
         assert_eq!(fast_remove.args[4], "/repo/web__worktrees/ajax-fix-login");
