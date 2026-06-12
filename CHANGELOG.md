@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.19.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.1...ajax-cli-v0.19.2) (2026-06-12)
+
+
+### Bug Fixes
+
+* preserve cockpit drop confirmation across refresh ([#163](https://github.com/mossipcams/ajax-cli/issues/163)) ([470d9b8](https://github.com/mossipcams/ajax-cli/commit/470d9b8b15b2baa5c8b8dd89c432648a44b00872))
+* recover web cockpit when registry state diverges from disk ([#164](https://github.com/mossipcams/ajax-cli/issues/164)) ([55e386b](https://github.com/mossipcams/ajax-cli/commit/55e386b2acf45fb4b54b7003c572c18138171913))
+
 ## [0.19.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.0...ajax-cli-v0.19.1) (2026-06-10)
 
 
