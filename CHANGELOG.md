@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.19.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.2...ajax-cli-v0.19.3) (2026-06-12)
+
+
+### Bug Fixes
+
+* keep confirmed cockpit action selected ([#166](https://github.com/mossipcams/ajax-cli/issues/166)) ([8aff147](https://github.com/mossipcams/ajax-cli/commit/8aff147421301eb8d5429ca8f4fe859e41a5f5d7))
+
 ## [0.19.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.1...ajax-cli-v0.19.2) (2026-06-12)
 
 
