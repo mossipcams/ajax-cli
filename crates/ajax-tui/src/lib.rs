@@ -3164,6 +3164,78 @@ mod tests {
     }
 
     #[test]
+    fn task_action_confirmation_survives_refresh_when_action_remains_available() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        let mut handler = ConfirmHandler::default();
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: sample_tasks(),
+            inbox: sample_inbox(),
+        });
+
+        let second = handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert!(matches!(second, EventLoopAction::Continue));
+        assert_eq!(handler.asked, 1);
+        assert_eq!(handler.confirmed, 1);
+    }
+
+    #[test]
+    fn task_action_confirmation_is_invalidated_when_refresh_removes_action() {
+        let mut app = app_in_project_view();
+        app.select_next();
+        app.select_next();
+        app.activate_selected();
+        let mut handler = ConfirmHandler::default();
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        let mut tasks = sample_tasks();
+        tasks[0].primary_action = OperatorAction::Review;
+        tasks[0].available_actions = vec![OperatorAction::Review];
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: tasks,
+            inbox: sample_inbox(),
+        });
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert_eq!(handler.asked, 2);
+        assert_eq!(handler.confirmed, 0);
+    }
+
+    #[test]
     fn notify_task_higher_severity_replaces_lower() {
         let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
         let task_id = TaskId::new("task-1");

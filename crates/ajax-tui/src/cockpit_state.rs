@@ -584,6 +584,7 @@ impl App {
         cards: Vec<TaskCard>,
         inbox: InboxResponse,
     ) {
+        let pending_confirmation = self.pending_confirmation.take();
         let missing_task_after_refresh = match (&self.view, &self.expanded_task) {
             (AppView::Project { .. }, Some(task_id)) => {
                 !cards.iter().any(|candidate| candidate.id == *task_id)
@@ -598,7 +599,6 @@ impl App {
         self.repos = repos;
         self.cards = cards;
         self.inbox = inbox;
-        self.pending_confirmation = None;
         self.prune_notices_for_vanished_tasks();
         self.prune_background_error_notices();
         self.prune_stale_lifecycle_notices(&prior_lifecycles);
@@ -622,6 +622,7 @@ impl App {
         }
         let max = self.selectables.len().saturating_sub(1);
         self.selected = self.selected.min(max);
+        self.reconcile_pending_confirmation(pending_confirmation);
     }
 
     fn prune_notices_for_vanished_tasks(&mut self) {
@@ -685,6 +686,22 @@ impl App {
             Severity::Hint,
             Origin::UserAction,
         );
+    }
+
+    fn reconcile_pending_confirmation(&mut self, pending: Option<CockpitActionItem>) {
+        let Some(pending) = pending else {
+            return;
+        };
+        if let Some(refreshed) = self
+            .selected_action()
+            .filter(|refreshed| same_action_identity(refreshed, &pending))
+        {
+            self.pending_confirmation = Some(refreshed);
+            return;
+        }
+
+        self.pending_confirmation = Some(pending);
+        self.invalidate_pending_confirmation();
     }
 
     pub(crate) fn notify_task(
@@ -820,6 +837,12 @@ impl App {
         }
         changed
     }
+}
+
+fn same_action_identity(left: &CockpitActionItem, right: &CockpitActionItem) -> bool {
+    left.task_id == right.task_id
+        && left.task_handle == right.task_handle
+        && left.action == right.action
 }
 
 /// Snapshot of cockpit state passed into the TUI's refresh path.
