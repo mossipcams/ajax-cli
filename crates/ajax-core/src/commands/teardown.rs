@@ -10,7 +10,11 @@ use crate::{
     policy::cleanup_safety,
     registry::{Registry, RegistryError, RegistryEventKind},
 };
-use std::{collections::BTreeSet, time::SystemTime};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+    time::SystemTime,
+};
 
 use super::lookup::{find_task, task_repo_path, update_task_lifecycle};
 
@@ -50,6 +54,29 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
                 }),
             )
             .map_err(CommandError::Registry)?;
+        return Ok(true);
+    }
+
+    if is_fast_worktree_remove_command(command)
+        && command
+            .args
+            .get(4)
+            .is_some_and(|arg| arg == &task.worktree_path.display().to_string())
+    {
+        if let Some(mut git_status) = task.git_status.clone() {
+            git_status.worktree_exists = false;
+            git_status.dirty = false;
+            git_status.untracked_files = 0;
+            git_status.conflicted = false;
+            context
+                .registry
+                .update_git_status(&task.id, git_status)
+                .map_err(CommandError::Registry)?;
+        } else if let Some(task) = context.registry.get_task_mut(&task.id) {
+            task.add_side_flag(SideFlag::WorktreeMissing);
+            task.remove_side_flag(SideFlag::Dirty);
+            task.remove_side_flag(SideFlag::Conflicted);
+        }
         return Ok(true);
     }
 
@@ -102,6 +129,15 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
     }
 
     Ok(false)
+}
+
+pub fn is_fast_worktree_remove_command(command: &CommandSpec) -> bool {
+    command.program == "sh"
+        && command.args.first().is_some_and(|arg| arg == "-c")
+        && command
+            .args
+            .get(2)
+            .is_some_and(|arg| arg == "ajax-fast-worktree-remove")
 }
 
 pub fn clean_task_plan<R: Registry>(
@@ -343,6 +379,7 @@ pub fn sweep_cleanup_plan<R: Registry>(context: &CommandContext<R>) -> CommandPl
         .filter_map(|task| native_cleanup_commands(context, task).ok())
         .flatten()
         .collect();
+    plan.commands.extend(sweep_trash_commands(context));
 
     plan
 }
@@ -358,6 +395,13 @@ pub fn sweep_cleanup_candidates<R: Registry>(context: &CommandContext<R>) -> Vec
         .collect()
 }
 
+pub fn sweep_trash_commands<R: Registry>(context: &CommandContext<R>) -> Vec<CommandSpec> {
+    worktree_roots(context)
+        .into_iter()
+        .map(|worktree_root| sweep_trash_command(&worktree_root))
+        .collect()
+}
+
 fn native_cleanup_commands<R: Registry>(
     context: &CommandContext<R>,
     task: &Task,
@@ -370,6 +414,34 @@ fn native_remove_commands<R: Registry>(
     task: &Task,
 ) -> Result<Vec<CommandSpec>, CommandError> {
     native_teardown_commands(context, task, true)
+}
+
+fn worktree_roots<R: Registry>(context: &CommandContext<R>) -> Vec<PathBuf> {
+    context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .filter_map(|task| task.worktree_path.parent().map(Path::to_path_buf))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+fn sweep_trash_command(worktree_root: &Path) -> CommandSpec {
+    let trash_dir = worktree_root.join(".ajax-trash");
+    CommandSpec {
+        program: "sh".to_string(),
+        args: vec![
+            "-c".to_string(),
+            "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi"
+                .to_string(),
+            "ajax-trash-sweep".to_string(),
+            trash_dir.display().to_string(),
+        ],
+        cwd: None,
+        mode: crate::adapters::CommandMode::Capture,
+        timeout: None,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -741,4 +813,91 @@ fn apply_drop_observation_evidence<R: Registry>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mark_task_cleanup_step_completed;
+    use crate::{
+        adapters::{CommandMode, CommandSpec},
+        commands::CommandContext,
+        config::{Config, ManagedRepo},
+        models::{AgentClient, GitStatus, LifecycleStatus, Task, TaskId},
+        registry::{InMemoryRegistry, Registry},
+    };
+
+    fn context_with_task() -> CommandContext<InMemoryRegistry> {
+        let mut context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Cleanable;
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: true,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        context.registry.create_task(task).unwrap();
+        context
+    }
+
+    fn fast_worktree_remove_command() -> CommandSpec {
+        CommandSpec {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "mv \"$2\" \"$3\" && git -C \"$1\" worktree prune && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+                    .to_string(),
+                "ajax-fast-worktree-remove".to_string(),
+                "/repo/web".to_string(),
+                "/repo/web__worktrees/ajax-fix-login".to_string(),
+                "/repo/web__worktrees/.ajax-trash/fix-login-123".to_string(),
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+            timeout: None,
+        }
+    }
+
+    #[test]
+    fn fast_worktree_remove_command_marks_worktree_cleanup_completed() {
+        let mut context = context_with_task();
+        let command = fast_worktree_remove_command();
+
+        let updated =
+            mark_task_cleanup_step_completed(&mut context, "web/fix-login", &command).unwrap();
+
+        assert!(updated);
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists));
+    }
 }

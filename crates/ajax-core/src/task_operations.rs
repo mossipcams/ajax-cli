@@ -54,7 +54,7 @@ pub mod start {
         adapters::{CommandOutput, CommandRunner},
         commands::{
             self, CommandContext, CommandError, CommandPlan, NewTaskRequest, OpenMode,
-            StartProvisioningStep,
+            StartPlanObservation, StartProvisioningStep,
         },
         models::{StepReceipt, Task, TaskIntent, TaskOperationKind},
         registry::Registry,
@@ -65,8 +65,22 @@ pub mod start {
         context: &CommandContext<R>,
         request: NewTaskRequest,
     ) -> Result<(TaskIntent, CommandPlan), CommandError> {
+        plan_start_task_operation_with_observation(
+            context,
+            request,
+            StartPlanObservation {
+                origin_fetch_age: None,
+            },
+        )
+    }
+
+    pub fn plan_start_task_operation_with_observation<R: Registry>(
+        context: &CommandContext<R>,
+        request: NewTaskRequest,
+        observation: StartPlanObservation,
+    ) -> Result<(TaskIntent, CommandPlan), CommandError> {
         let task = commands::task_from_new_request(context, &request)?;
-        let plan = commands::new_task_plan(context, request)?;
+        let plan = commands::new_task_plan_with_observation(context, request, &observation)?;
 
         Ok((task.intent(), plan))
     }
@@ -122,14 +136,7 @@ pub mod start {
                 }
                 Err(error) => return Err(error),
             };
-        let mut outputs = plan
-            .commands
-            .iter()
-            .zip(external_outputs)
-            .filter_map(|(command, output)| {
-                (!commands::is_new_task_husky_hook_command(command)).then_some(output)
-            })
-            .collect::<Vec<_>>();
+        let mut outputs = external_outputs;
 
         commands::mark_task_opened(context, &task.qualified_handle())?;
         let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
@@ -383,7 +390,8 @@ pub mod task_command {
 pub mod drop_task {
     use crate::{
         adapters::{
-            CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter,
+            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter,
+            TmuxAdapter,
         },
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
@@ -635,9 +643,7 @@ pub mod drop_task {
         let tmux = TmuxAdapter::new("tmux");
         let command = match op {
             DropOp::EnsureTmuxSessionAbsent => tmux.kill_session(&task.tmux_session),
-            DropOp::EnsureWorktreeAbsent if force => {
-                git.force_remove_worktree(&repo_path, &task.worktree_path.display().to_string())
-            }
+            DropOp::EnsureWorktreeAbsent if force => fast_remove_worktree(&repo_path, task)?,
             DropOp::EnsureWorktreeAbsent => {
                 git.remove_worktree(&repo_path, &task.worktree_path.display().to_string())
             }
@@ -652,6 +658,44 @@ pub mod drop_task {
             }
         };
         Ok(command)
+    }
+
+    fn fast_remove_worktree(repo_path: &str, task: &Task) -> Result<CommandSpec, CommandError> {
+        let worktree_path = task.worktree_path.display().to_string();
+        let trash_path = fast_remove_trash_path(task)?;
+        Ok(CommandSpec {
+            program: "sh".to_string(),
+            args: vec![
+                "-c".to_string(),
+                "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+                    .to_string(),
+                "ajax-fast-worktree-remove".to_string(),
+                repo_path.to_string(),
+                worktree_path,
+                trash_path,
+            ],
+            cwd: None,
+            mode: CommandMode::Capture,
+            timeout: None,
+        })
+    }
+
+    fn fast_remove_trash_path(task: &Task) -> Result<String, CommandError> {
+        let parent = task
+            .worktree_path
+            .parent()
+            .ok_or_else(|| CommandError::TaskNotFound(task.qualified_handle()))?;
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| {
+                CommandError::CommandRun(CommandRunError::SpawnFailed(error.to_string()))
+            })?
+            .as_nanos();
+        Ok(parent
+            .join(".ajax-trash")
+            .join(format!("{}-{nanos}", task.handle))
+            .display()
+            .to_string())
     }
 
     fn drop_needs_force<R: Registry>(
@@ -919,6 +963,23 @@ pub mod sweep_cleanup {
     ) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
         let mut outputs = Vec::new();
         let mut state_changed = false;
+        for command in commands::sweep_trash_commands(context) {
+            let output = runner
+                .run(&command)
+                .map_err(|error| (CommandError::CommandRun(error), state_changed))?;
+            if output.status_code != 0 {
+                return Err((
+                    CommandError::CommandRun(CommandRunError::NonZeroExit {
+                        program: command.program.clone(),
+                        status_code: output.status_code,
+                        stderr: output.stderr,
+                        cwd: command.cwd.clone(),
+                    }),
+                    state_changed,
+                ));
+            }
+            outputs.push(output);
+        }
         let candidates = commands::sweep_cleanup_candidates(context);
         let tmux = TmuxAdapter::new("tmux");
         let shared_sessions = runner
@@ -1368,8 +1429,12 @@ mod tests {
         assert!(crate::commands::is_git_worktree_add_command(
             &plan.commands[1]
         ));
-        assert!(crate::commands::is_new_task_husky_hook_command(
+        assert!(crate::commands::is_worktrunk_new_session_command(
             &plan.commands[2]
+        ));
+        assert_eq!(plan.commands[3].program, "sh");
+        assert!(crate::commands::is_agent_send_keys_command(
+            &plan.commands[4]
         ));
     }
 
@@ -2015,6 +2080,143 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_drop_renames_worktree_to_trash_instead_of_deleting_inline() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("web/fix-login");
+        {
+            let task = context.registry.get_task_mut(&task_id).unwrap();
+            task.add_side_flag(SideFlag::Dirty);
+            if let Some(git_status) = task.git_status.as_mut() {
+                git_status.dirty = true;
+            }
+        }
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+        outputs.extend([
+            output(0, "", ""),
+            output(0, "worktree /repo/web__worktrees/ajax-fix-login\n", ""),
+            output(0, "", ""),
+        ]);
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (command_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        let fast_remove = runner
+            .commands
+            .iter()
+            .find(|command| {
+                command.program == "sh"
+                    && command.args.first().map(String::as_str) == Some("-c")
+                    && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+            })
+            .expect("fast remove command");
+        assert_eq!(
+            fast_remove.args[1],
+            "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+        );
+        assert_eq!(fast_remove.args[3], "/repo/web");
+        assert_eq!(fast_remove.args[4], "/repo/web__worktrees/ajax-fix-login");
+        assert!(fast_remove.args[5].starts_with("/repo/web__worktrees/.ajax-trash/fix-login-"));
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "worktree")
+                && command.args.iter().any(|arg| arg == "remove")
+        }));
+        assert_eq!(command_outputs.len(), 3);
+        assert_eq!(completion, DropTaskCompletion::Removed);
+
+        assert!(context.registry.get_task(&task_id).is_none());
+    }
+
+    #[test]
+    fn unforced_dirty_drop_keeps_plain_git_worktree_remove() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        let git = crate::adapters::GitAdapter::new("git");
+        let worktree_remove = runner
+            .commands
+            .iter()
+            .find(|command| {
+                command.program == "git"
+                    && command.args.iter().any(|arg| arg == "worktree")
+                    && command.args.iter().any(|arg| arg == "remove")
+            })
+            .expect("plain worktree remove");
+        assert_eq!(
+            worktree_remove,
+            &git.remove_worktree("/repo/web", "/repo/web__worktrees/ajax-fix-login")
+        );
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "sh"
+                && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+        }));
+        assert_eq!(completion, DropTaskCompletion::Removed);
+    }
+
+    #[test]
+    fn fast_drop_mv_failure_marks_teardown_incomplete() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("web/fix-login");
+        {
+            let task = context.registry.get_task_mut(&task_id).unwrap();
+            task.add_side_flag(SideFlag::Dirty);
+            if let Some(git_status) = task.git_status.as_mut() {
+                git_status.dirty = true;
+            }
+        }
+        let mut outputs = present_drop_observation_outputs();
+        outputs.push(output(1, "", "mv: cannot move: No such file or directory"));
+        outputs.extend([output(0, "", ""), output(0, "", "")]);
+        outputs.extend([
+            output(0, "", ""),
+            output(0, "worktree /repo/web__worktrees/ajax-fix-login\n", ""),
+            output(0, "", ""),
+        ]);
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        execute_drop_task_operation(&mut context, "web/fix-login", operation, true, &mut runner)
+            .unwrap_err();
+
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+        assert_eq!(
+            task.metadata
+                .get("drop_failed_step_key")
+                .map(String::as_str),
+            Some("worktree_absent")
+        );
+        assert!(task
+            .metadata
+            .get("drop_failed_detail")
+            .is_some_and(|detail| detail.contains("No such file or directory")));
+    }
+    #[test]
     fn drop_failure_keeps_task_and_tmux_when_worktree_remove_fails_before_session_kill() {
         let mut context = context_with_cleanable_task();
         let mut outputs = present_drop_observation_outputs();
@@ -2399,7 +2601,11 @@ mod tests {
     fn sweep_cleanup_marks_teardown_incomplete_when_final_observation_still_finds_tmux() {
         let mut context = context_with_cleanable_task();
         let plan = crate::commands::clean_task_plan(&context, "web/fix-login").unwrap();
-        let mut runner_outputs = vec![output(0, "ajax-web-fix-login\n", "")];
+        let mut runner_outputs = crate::commands::sweep_trash_commands(&context)
+            .iter()
+            .map(|_| output(0, "", ""))
+            .collect::<Vec<_>>();
+        runner_outputs.push(output(0, "ajax-web-fix-login\n", ""));
         runner_outputs.extend(plan.commands.iter().map(|_| output(0, "", "")));
         let mut runner = RecordingQueuedRunner::new(runner_outputs);
 
@@ -2414,6 +2620,29 @@ mod tests {
             .metadata
             .get("drop_failed_detail")
             .is_some_and(|detail| detail.contains("tmux")));
+    }
+
+    #[test]
+    fn sweep_cleanup_removes_stale_trash_entries() {
+        let mut context = context_with_cleanable_task();
+        let mut runner = RecordingQueuedRunner::new(sweep_success_runner_outputs(&context));
+
+        execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+
+        let trash_sweep = runner
+            .commands
+            .iter()
+            .find(|command| {
+                command.program == "sh"
+                    && command.args.first().map(String::as_str) == Some("-c")
+                    && command.args.get(2).map(String::as_str) == Some("ajax-trash-sweep")
+            })
+            .expect("trash sweep command");
+        assert_eq!(
+            trash_sweep.args[1],
+            "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi"
+        );
+        assert_eq!(trash_sweep.args[3], "/repo/web__worktrees/.ajax-trash");
     }
 
     #[test]
@@ -2463,6 +2692,7 @@ mod tests {
         context: &CommandContext<InMemoryRegistry>,
     ) -> Vec<CommandOutput> {
         let candidates = crate::commands::sweep_cleanup_candidates(context);
+        let trash_sweeps = crate::commands::sweep_trash_commands(context);
         let total_plan_commands = candidates
             .iter()
             .map(|candidate| {
@@ -2472,7 +2702,9 @@ mod tests {
                     .len()
             })
             .sum();
-        let mut runner_outputs = vec![output(0, "", "")];
+        let mut runner_outputs: Vec<CommandOutput> =
+            trash_sweeps.iter().map(|_| output(0, "", "")).collect();
+        runner_outputs.push(output(0, "", ""));
         runner_outputs.extend((0..total_plan_commands).map(|_| output(0, "", "")));
         runner_outputs.extend(absent_drop_observation_outputs().into_iter().skip(1));
         runner_outputs
@@ -2482,6 +2714,7 @@ mod tests {
     fn sweep_cleanup_operation_executes_candidates_and_reports_partial_failure_state() {
         let mut context = context_with_two_cleanable_tasks();
         let candidates = crate::commands::sweep_cleanup_candidates(&context);
+        let trash_sweeps = crate::commands::sweep_trash_commands(&context);
         let total_plan_commands: usize = candidates
             .iter()
             .map(|candidate| {
@@ -2496,7 +2729,7 @@ mod tests {
         let (outputs, state_changed) =
             execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
 
-        assert_eq!(outputs.len(), total_plan_commands);
+        assert_eq!(outputs.len(), total_plan_commands + trash_sweeps.len());
         assert!(state_changed);
         assert!(context
             .registry
@@ -2509,12 +2742,15 @@ mod tests {
 
         let mut context = context_with_two_cleanable_tasks();
         let candidates = crate::commands::sweep_cleanup_candidates(&context);
+        let trash_sweeps = crate::commands::sweep_trash_commands(&context);
         let first_candidate_command_count =
             crate::commands::clean_task_plan(&context, &candidates[0])
                 .unwrap()
                 .commands
                 .len();
-        let mut outputs: Vec<CommandOutput> = vec![output(0, "", "")];
+        let mut outputs: Vec<CommandOutput> =
+            trash_sweeps.iter().map(|_| output(0, "", "")).collect();
+        outputs.push(output(0, "ajax-web-fix-login\n", ""));
         outputs.extend(
             (0..first_candidate_command_count.saturating_sub(1)).map(|_| output(0, "", "")),
         );

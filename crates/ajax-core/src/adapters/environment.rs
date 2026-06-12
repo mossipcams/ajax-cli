@@ -2,6 +2,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     process::Command,
+    time::{Duration, SystemTime},
 };
 
 pub const REQUIRED_DOCTOR_TOOLS: [&str; 3] = ["git", "tmux", "codex"];
@@ -89,5 +90,59 @@ impl DoctorEnvironment {
             ])
             .output()
             .is_ok_and(|output| output.status.success())
+    }
+}
+
+pub fn origin_fetch_age(repo_path: impl AsRef<Path>) -> Option<Duration> {
+    let fetch_head = repo_path.as_ref().join(".git/FETCH_HEAD");
+    let metadata = std::fs::metadata(fetch_head).ok()?;
+    let modified = metadata.modified().ok()?;
+    SystemTime::now().duration_since(modified).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::origin_fetch_age;
+    use std::{
+        fs,
+        io::Write,
+        time::{Duration, SystemTime},
+    };
+
+    #[test]
+    fn origin_fetch_age_reads_fetch_head_mtime() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-origin-fetch-age-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let mut file = fs::File::create(root.join(".git/FETCH_HEAD")).unwrap();
+        writeln!(file, "ref: origin/main").unwrap();
+
+        let age = origin_fetch_age(&root).expect("expected fetch head age");
+
+        assert!(age < Duration::from_secs(5), "unexpected age: {age:?}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn origin_fetch_age_is_none_without_fetch_head() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-origin-fetch-age-missing-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join(".git")).unwrap();
+
+        assert_eq!(origin_fetch_age(&root), None);
+
+        let _ = fs::remove_dir_all(root);
     }
 }

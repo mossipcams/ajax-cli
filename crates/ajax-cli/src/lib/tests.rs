@@ -502,23 +502,56 @@ fn run_start_with_attach_mode(
         .map(|rendered| rendered.output)
 }
 
-fn expected_husky_hooks_command(worktree_path: &str) -> CommandSpec {
+fn expected_task_launch_command(session: &str, task_id: &str, worktree_path: &str) -> CommandSpec {
+    CommandSpec {
+        program: "tmux".to_string(),
+        args: vec![
+            "send-keys".to_string(),
+            "-t".to_string(),
+            format!("{session}:worktrunk"),
+            format!(
+                "ajax-cli __agent-runtime --task-id {task_id} --state-root .cache/ajax/agent-runtime -- codex --cd {worktree_path}"
+            ),
+            "Enter".to_string(),
+        ],
+        cwd: None,
+        mode: CommandMode::Capture,
+        timeout: None,
+    }
+}
+
+fn expected_task_setup_command(
+    repo_path: &str,
+    worktree_path: &str,
+    bootstrap: Option<&str>,
+) -> CommandSpec {
+    let mut command_line = String::from("if [ -d \"$1\" ]; then cd \"$1\" && ");
+    command_line.push_str(
+        "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
+    );
+    if let Some(bootstrap) = bootstrap {
+        command_line.push_str("; ");
+        command_line.push_str(bootstrap);
+    }
+    command_line.push_str("; fi");
+
     CommandSpec::new(
-            "/bin/sh",
-            [
-                "-lc",
-                "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
-                "sh",
-                worktree_path,
-            ],
-        )
+        "sh",
+        [
+            "-lc",
+            command_line.as_str(),
+            "ajax-setup-task",
+            worktree_path,
+        ],
+    )
+    .with_cwd(repo_path)
 }
 
 fn expected_sync_default_branch_commands(repo_path: &str, branch: &str) -> Vec<CommandSpec> {
-    vec![CommandSpec::new(
-        "git",
-        ["-C", repo_path, "fetch", "origin", branch],
-    )]
+    vec![
+        CommandSpec::new("git", ["-C", repo_path, "fetch", "origin", branch])
+            .with_timeout(std::time::Duration::from_secs(60)),
+    ]
 }
 
 fn ajax_binary_path() -> PathBuf {
@@ -3163,7 +3196,6 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
         CommandSpec::new(
             "tmux",
             [
@@ -3177,15 +3209,15 @@ fn new_execute_records_task_in_registry_after_runner_succeeds() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        CommandSpec::new(
-            "tmux",
-            [
-                "send-keys",
-                "-t",
-                "ajax-web-fix-login:worktrunk",
-                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                "Enter",
-            ],
+        expected_task_setup_command(
+            "/Users/matt/projects/web",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            None,
+        ),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
         ),
         CommandSpec::new(
             "tmux",
@@ -3259,9 +3291,6 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-        CommandSpec::new("sh", ["-lc", "npm ci"])
-            .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
         CommandSpec::new(
             "tmux",
             [
@@ -3275,15 +3304,15 @@ fn new_execute_runs_repo_bootstrap_in_worktree_before_agent_launch() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        CommandSpec::new(
-            "tmux",
-            [
-                "send-keys",
-                "-t",
-                "ajax-web-fix-login:worktrunk",
-                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                "Enter",
-            ],
+        expected_task_setup_command(
+            "/Users/matt/projects/web",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            Some("npm ci"),
+        ),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
         ),
         CommandSpec::new(
             "tmux",
@@ -3329,7 +3358,6 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
         InMemoryRegistry::default(),
     );
     let mut runner = QueuedRunner::new(vec![
-        output(0, ""),
         output(0, ""),
         output(0, ""),
         CommandOutput {
@@ -3386,7 +3414,6 @@ fn new_execute_provisioning_failure_records_visible_partial_state() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
         CommandSpec::new(
             "tmux",
             [
@@ -3443,7 +3470,7 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
 
     assert!(
         matches!(error, super::CliError::CommandFailedAfterStateChange(message)
-                if message == "command failed: sh exited with status 42 in /Users/matt/projects/web__worktrees/ajax-fix-login: npm failed")
+                if message == "command failed: sh exited with status 42 in /Users/matt/projects/web: npm failed")
     );
     let task = context
         .registry
@@ -3470,9 +3497,24 @@ fn new_execute_bootstrap_failure_records_error_without_launching_agent() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
-        CommandSpec::new("sh", ["-lc", "npm ci"])
-            .with_cwd("/Users/matt/projects/web__worktrees/ajax-fix-login"),
+        CommandSpec::new(
+            "tmux",
+            [
+                "new-session",
+                "-d",
+                "-s",
+                "ajax-web-fix-login",
+                "-n",
+                "worktrunk",
+                "-c",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            ],
+        ),
+        expected_task_setup_command(
+            "/Users/matt/projects/web",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            Some("npm ci"),
+        ),
     ]);
     assert_eq!(runner.commands, expected_commands);
 }
@@ -3578,7 +3620,6 @@ fn new_execute_allows_reusing_removed_task_handle() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/web__worktrees/ajax-fix-login"),
         CommandSpec::new(
             "tmux",
             [
@@ -3592,15 +3633,15 @@ fn new_execute_allows_reusing_removed_task_handle() {
                 "/Users/matt/projects/web__worktrees/ajax-fix-login",
             ],
         ),
-        CommandSpec::new(
-            "tmux",
-            [
-                "send-keys",
-                "-t",
-                "ajax-web-fix-login:worktrunk",
-                "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-login",
-                "Enter",
-            ],
+        expected_task_setup_command(
+            "/Users/matt/projects/web",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
+            None,
+        ),
+        expected_task_launch_command(
+            "ajax-web-fix-login",
+            "web/fix-login",
+            "/Users/matt/projects/web__worktrees/ajax-fix-login",
         ),
         CommandSpec::new(
             "tmux",
@@ -3709,7 +3750,6 @@ fn new_execute_persists_state_when_open_after_create_fails() {
     )
     .unwrap();
     let mut runner = QueuedRunner::new(vec![
-        output(0, ""),
         output(0, ""),
         output(0, ""),
         output(0, ""),
@@ -3968,72 +4008,87 @@ fn clean_execute_collects_git_status_when_bookkeeping_is_missing() {
     .unwrap();
 
     assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "--force",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
+        runner.commands[0],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[1],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[2],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
+    );
+    assert_eq!(runner.commands[3].program, "sh");
+    assert_eq!(runner.commands[3].args[0], "-c");
+    assert_eq!(
+        runner.commands[3].args[1],
+        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+    );
+    assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
+    assert_eq!(runner.commands[3].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(runner.commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(
+        runner.commands[4],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "-D",
+                "ajax/fix-login"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[5],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[6],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[7],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
     );
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
@@ -4294,74 +4349,93 @@ fn remove_execute_force_removes_task_resources() {
     )
     .unwrap();
 
+    assert_eq!(runner.commands.len(), 9);
     assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "--force",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
+        runner.commands[0],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[1],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[2],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
+    );
+    assert_eq!(runner.commands[3].program, "sh");
+    assert_eq!(runner.commands[3].args[0], "-c");
+    assert_eq!(
+        runner.commands[3].args[1],
+        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+    );
+    assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
+    assert_eq!(runner.commands[3].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(runner.commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(
+        runner.commands[4],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "-D",
+                "ajax/fix-login"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[5],
+        CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+    );
+    assert_eq!(
+        runner.commands[6],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[7],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[8],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
     );
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
@@ -4437,72 +4511,87 @@ fn clean_execute_removes_risky_task_with_yes() {
     .unwrap();
 
     assert_eq!(
-        runner.commands,
-        vec![
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "--force",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "-D",
-                    "ajax/fix-login"
-                ]
-            ),
-            CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
-                .with_timeout(std::time::Duration::from_secs(8)),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "list",
-                    "--porcelain"
-                ]
-            ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "branch",
-                    "--format=%(refname:short)"
-                ]
-            )
-        ]
+        runner.commands[0],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[1],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[2],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
+    );
+    assert_eq!(runner.commands[3].program, "sh");
+    assert_eq!(runner.commands[3].args[0], "-c");
+    assert_eq!(
+        runner.commands[3].args[1],
+        "mkdir -p \"$(dirname \"$3\")\" && mv \"$2\" \"$3\" && { rm -rf \"$3\" >/dev/null 2>&1 & }"
+    );
+    assert_eq!(runner.commands[3].args[2], "ajax-fast-worktree-remove");
+    assert_eq!(runner.commands[3].args[3], "/Users/matt/projects/web");
+    assert_eq!(runner.commands[3].args[4], "/tmp/worktrees/web-fix-login");
+    assert!(runner.commands[3].args[5].starts_with("/tmp/worktrees/.ajax-trash/fix-login-"));
+    assert_eq!(
+        runner.commands[4],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "-D",
+                "ajax/fix-login"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[5],
+        CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
+            .with_timeout(std::time::Duration::from_secs(8))
+    );
+    assert_eq!(
+        runner.commands[6],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "list",
+                "--porcelain"
+            ]
+        )
+    );
+    assert_eq!(
+        runner.commands[7],
+        CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/Users/matt/projects/web",
+                "branch",
+                "--format=%(refname:short)"
+            ]
+        )
     );
     assert!(context.registry.get_task(&TaskId::new("task-1")).is_none());
 }
@@ -5415,7 +5504,7 @@ fn sweep_execute_uses_injected_runner_and_marks_safe_tasks_removed() {
     let mut context = cleanable_context();
     let mut runner_outputs = vec![output(0, "")];
     runner_outputs.extend(vec![output(0, ""), output(0, "")]);
-    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
+    runner_outputs.extend(vec![output(0, ""), output(0, ""), output(0, "")]);
     let mut runner = QueuedRunner::new(runner_outputs);
 
     run_with_context_and_runner(["ajax", "tidy", "--execute"], &mut context, &mut runner).unwrap();
@@ -5446,14 +5535,31 @@ fn sweep_execute_persists_completed_removals_when_later_command_fails() {
     SqliteRegistryStore::new(&state_file)
         .save(&two_cleanable_tasks_context().registry)
         .unwrap();
-    let mut runner_outputs = vec![output(0, "")];
-    runner_outputs.extend(vec![output(0, ""), output(0, "")]);
-    runner_outputs.extend(vec![output(0, ""), output(0, "main\n")]);
-    runner_outputs.push(CommandOutput {
+    let plan_context = two_cleanable_tasks_context();
+    let candidates = ajax_core::commands::sweep_cleanup_candidates(&plan_context);
+    let total_plan_commands: usize = candidates
+        .iter()
+        .map(|candidate| {
+            ajax_core::commands::clean_task_plan(&plan_context, candidate)
+                .unwrap()
+                .commands
+                .len()
+        })
+        .sum();
+    let trash_sweeps = ajax_core::commands::sweep_trash_commands(&plan_context);
+    let mut runner_outputs = trash_sweeps
+        .iter()
+        .map(|_| output(0, ""))
+        .collect::<Vec<_>>();
+    runner_outputs.push(output(0, "ajax-web-fix-login\n"));
+    runner_outputs.extend((0..=total_plan_commands + 1).map(|_| output(0, "")));
+    *runner_outputs
+        .last_mut()
+        .expect("sweep should queue commands") = CommandOutput {
         status_code: 2,
         stdout: String::new(),
-        stderr: "branch delete failed".to_string(),
-    });
+        stderr: "worktree remove failed".to_string(),
+    };
     let mut runner = QueuedRunner::new(runner_outputs);
 
     let error = run_with_context_paths_and_runner(
@@ -5465,8 +5571,15 @@ fn sweep_execute_persists_completed_removals_when_later_command_fails() {
     let restored = SqliteRegistryStore::new(&state_file).load().unwrap();
 
     std::fs::remove_dir_all(Path::new(&directory)).unwrap();
-    assert!(error.to_string().contains("git exited with status 2"));
-    assert!(restored.get_task(&TaskId::new("task-1")).is_none());
+    assert!(error.to_string().contains("exited with status 2"));
+    assert!(error.to_string().contains("worktree remove failed"));
+    assert_eq!(
+        restored
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status,
+        LifecycleStatus::TeardownIncomplete
+    );
     assert_eq!(
         restored
             .get_task(&TaskId::new("task-2"))
@@ -5933,7 +6046,6 @@ fn pending_new_task_action_runs_after_title_is_collected() {
                 "origin/main",
             ],
         ),
-        expected_husky_hooks_command("/Users/matt/projects/api__worktrees/ajax-fix-login"),
         CommandSpec::new(
             "tmux",
             [
@@ -5947,15 +6059,15 @@ fn pending_new_task_action_runs_after_title_is_collected() {
                 "/Users/matt/projects/api__worktrees/ajax-fix-login",
             ],
         ),
-        CommandSpec::new(
-            "tmux",
-            [
-                "send-keys",
-                "-t",
-                "ajax-api-fix-login:worktrunk",
-                "ajax-cli __agent-runtime --task-id api/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/api__worktrees/ajax-fix-login",
-                "Enter",
-            ],
+        expected_task_setup_command(
+            "/Users/matt/projects/api",
+            "/Users/matt/projects/api__worktrees/ajax-fix-login",
+            None,
+        ),
+        expected_task_launch_command(
+            "ajax-api-fix-login",
+            "api/fix-login",
+            "/Users/matt/projects/api__worktrees/ajax-fix-login",
         ),
         CommandSpec::new(
             "tmux",

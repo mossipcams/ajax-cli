@@ -41,9 +41,12 @@ use crate::adapters::http::{
     web_error_response,
 };
 
+const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
+
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
     operations: Arc<Mutex<OperationCoordinator>>,
+    cockpit_refresh_lock: Arc<tokio::sync::Mutex<()>>,
     state_dir: Arc<PathBuf>,
 }
 
@@ -54,6 +57,14 @@ struct WebSharedState<C, B> {
     runner: C,
     bridge: B,
     revision: u64,
+    cockpit_cache: Option<CockpitCacheEntry>,
+}
+
+#[derive(Clone)]
+struct CockpitCacheEntry {
+    response: Response,
+    cached_at: Instant,
+    revision: u64,
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -61,6 +72,7 @@ impl<C, B> Clone for WebAppState<C, B> {
         Self {
             shared: Arc::clone(&self.shared),
             operations: Arc::clone(&self.operations),
+            cockpit_refresh_lock: Arc::clone(&self.cockpit_refresh_lock),
             state_dir: Arc::clone(&self.state_dir),
         }
     }
@@ -103,6 +115,7 @@ where
             guard.runner = runner;
             guard.bridge = bridge;
             guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
             response
         } else {
             operation_response_with_request_id(
@@ -132,10 +145,27 @@ impl<C, B> WebAppState<C, B> {
                 runner,
                 bridge,
                 revision: 0,
+                cockpit_cache: None,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
+            cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
         }
+    }
+
+    fn cached_cockpit_response(&self) -> Option<Response> {
+        let guard = self
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let cache = guard.cockpit_cache.as_ref()?;
+        if cache.revision != guard.revision {
+            return None;
+        }
+        if cache.cached_at.elapsed() > COCKPIT_REFRESH_CACHE_TTL {
+            return None;
+        }
+        Some(cache.response.clone())
     }
 }
 
@@ -301,6 +331,15 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
+    if let Some(response) = state.cached_cockpit_response() {
+        return response.into_axum_response();
+    }
+
+    let _refresh_guard = state.cockpit_refresh_lock.lock().await;
+    if let Some(response) = state.cached_cockpit_response() {
+        return response.into_axum_response();
+    }
+
     let mut refresh_session = {
         let guard = state
             .shared
@@ -318,6 +357,10 @@ where
         &mut refresh_session.runner,
         &mut refresh_session.bridge,
     );
+    let cached_response = match &result {
+        Ok(response) => Some(response.clone()),
+        Err(_) => None,
+    };
     {
         let mut guard = state
             .shared
@@ -326,6 +369,13 @@ where
         if guard.revision == refresh_session.revision {
             guard.context = refresh_session.context;
             guard.bridge = refresh_session.bridge;
+            if let Some(response) = cached_response {
+                guard.cockpit_cache = Some(CockpitCacheEntry {
+                    response,
+                    cached_at: Instant::now(),
+                    revision: guard.revision,
+                });
+            }
         }
     }
     match result {
@@ -531,6 +581,8 @@ where
         Instant::now(),
     ) {
         Ok(response) => {
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
             json_value_response(200, serde_json::to_value(response).unwrap_or_default())
         }
         Err(crate::slices::pane::TaskAnswerError::TaskNotFound) => json_value_response(
@@ -1119,6 +1171,7 @@ mod tests {
     struct TestBridge {
         refreshed: bool,
         refresh_tier: Option<RefreshTier>,
+        refresh_count: usize,
         operate: Option<OperateRequest>,
         operate_count: usize,
         operate_delay: Duration,
@@ -1134,6 +1187,7 @@ mod tests {
             Self {
                 refreshed: false,
                 refresh_tier: None,
+                refresh_count: 0,
                 operate: None,
                 operate_count: 0,
                 operate_delay: Duration::ZERO,
@@ -1163,6 +1217,7 @@ mod tests {
         }
         bridge.refreshed = true;
         bridge.refresh_tier = Some(tier);
+        bridge.refresh_count += 1;
         let _ = context;
         Ok(false)
     }
@@ -1423,6 +1478,181 @@ mod tests {
         assert!(!std::str::from_utf8(&missing_api_body)
             .unwrap()
             .contains("Ajax Cockpit"));
+    }
+
+    #[tokio::test]
+    async fn axum_cockpit_serves_cached_projection_within_refresh_ttl() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-cockpit-cache"),
+        );
+        let app = super::axum_app(state.clone());
+
+        for _ in 0..2 {
+            let response = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/cockpit")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.refresh_count, 1);
+    }
+
+    #[tokio::test]
+    async fn axum_cockpit_refreshes_again_after_ttl_expires() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-cockpit-ttl"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let first = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.status(), StatusCode::OK);
+
+        tokio::time::sleep(super::COCKPIT_REFRESH_CACHE_TTL + Duration::from_millis(50)).await;
+
+        let second = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(second.status(), StatusCode::OK);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.refresh_count, 2);
+    }
+
+    #[tokio::test]
+    async fn axum_operation_invalidates_cockpit_refresh_cache() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-cockpit-invalidate"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let cockpit = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cockpit.status(), StatusCode::OK);
+
+        let operation = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"invalidate-1","task_handle":"web/fix-login","action":"review"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(operation.status(), StatusCode::OK);
+
+        let refreshed = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refreshed.status(), StatusCode::OK);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.refresh_count, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_cockpit_polls_share_one_refresh() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge {
+                refresh_delay: Duration::from_millis(200),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-cockpit-single-flight"),
+        );
+        let app = super::axum_app(state.clone());
+
+        let first_app = app.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri("/api/cockpit")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        let second = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(first.await.unwrap().status(), StatusCode::OK);
+        assert_eq!(second.status(), StatusCode::OK);
+
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.refresh_count, 1);
     }
 
     #[tokio::test]

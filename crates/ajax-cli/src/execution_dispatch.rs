@@ -7,18 +7,21 @@ use ajax_core::commands::{self, CommandContext};
 use ajax_core::events::apply_monitor_event_to_registry;
 #[cfg(feature = "interactive")]
 use ajax_core::task_operations::kernel::execute_external_plan_with_success;
+use ajax_core::{
+    adapters::environment::origin_fetch_age,
+    registry::InMemoryRegistry,
+    task_operations::start::{
+        execute_start_task_operation, plan_start_task_operation_with_observation,
+    },
+    task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
+    task_operations::task_command::TaskCommandKind,
+};
 #[cfg(any(feature = "interactive", feature = "supervisor"))]
 use ajax_core::{models::LifecycleStatus, registry::Registry};
 #[cfg(feature = "interactive")]
 use ajax_core::{
     models::{RuntimeObservationSource, SideFlag, Task},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
-};
-use ajax_core::{
-    registry::InMemoryRegistry,
-    task_operations::start::{execute_start_task_operation, plan_start_task_operation},
-    task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
-    task_operations::task_command::TaskCommandKind,
 };
 use clap::ArgMatches;
 #[cfg(feature = "interactive")]
@@ -64,8 +67,10 @@ pub(crate) fn render_matches_mut(
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
+            let observation = start_plan_observation(context, &request);
             let (_intent, plan) =
-                plan_start_task_operation(context, request.clone()).map_err(command_error)?;
+                plan_start_task_operation_with_observation(context, request.clone(), observation)
+                    .map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
@@ -187,6 +192,20 @@ pub(crate) fn render_matches_mut(
             state_changed: false,
         }),
     }
+}
+
+fn start_plan_observation(
+    context: &CommandContext<InMemoryRegistry>,
+    request: &commands::NewTaskRequest,
+) -> commands::StartPlanObservation {
+    let origin_fetch_age = context
+        .config
+        .repos
+        .iter()
+        .find(|repo| repo.name == request.repo)
+        .and_then(|repo| origin_fetch_age(&repo.path));
+
+    commands::StartPlanObservation { origin_fetch_age }
 }
 
 fn render_refreshed_read_command<R: CommandRunner>(
@@ -396,14 +415,7 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
             }
             Err(error) => return Err(command_error(error).after_state_change()),
         };
-    let mut outputs = plan
-        .commands
-        .iter()
-        .zip(external_outputs)
-        .filter_map(|(command, output)| {
-            (!commands::is_new_task_husky_hook_command(command)).then_some(output)
-        })
-        .collect::<Vec<_>>();
+    let mut outputs = external_outputs;
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)
@@ -472,5 +484,55 @@ fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor:
     match task.selected_agent {
         AgentClient::Other => SupervisorAgent::Cursor,
         AgentClient::Codex | AgentClient::Claude => SupervisorAgent::Codex,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::start_plan_observation;
+    use ajax_core::{
+        commands::{CommandContext, NewTaskRequest},
+        config::{Config, ManagedRepo},
+        registry::InMemoryRegistry,
+    };
+    use std::{
+        fs::{self, File},
+        io::Write,
+        time::{Duration, SystemTime},
+    };
+
+    #[test]
+    fn start_plan_observation_reads_fetch_head_age() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-cli-start-plan-observation-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        let mut file = File::create(root.join(".git/FETCH_HEAD")).unwrap();
+        writeln!(file, "ref: origin/main").unwrap();
+        let context = CommandContext::new(
+            Config {
+                repos: vec![ManagedRepo::new("web", root.display().to_string(), "main")],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let observation = start_plan_observation(&context, &request);
+
+        assert!(matches!(
+            observation.origin_fetch_age,
+            Some(age) if age < Duration::from_secs(5)
+        ));
+        let _ = fs::remove_dir_all(root);
     }
 }

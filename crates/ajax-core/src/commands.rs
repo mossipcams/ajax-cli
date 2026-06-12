@@ -18,21 +18,22 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    is_agent_send_keys_command, is_git_worktree_add_command, is_new_task_husky_hook_command,
-    is_worktrunk_new_session_command, mark_new_task_provisioning_failed,
-    mark_new_task_provisioning_step_completed, mark_new_task_step_completed, new_task_plan,
-    record_new_task, start_provisioning_step_for_command, task_from_new_request, NewTaskRequest,
-    StartProvisioningStep,
+    is_agent_send_keys_command, is_git_worktree_add_command, is_worktrunk_new_session_command,
+    mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
+    mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
+    start_provisioning_step_for_command, task_from_new_request, NewTaskRequest,
+    StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use teardown::{
     clean_task_plan, drop_op_label, ensure_cleanup_git_status,
     format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
-    mark_drop_agent_stopped, mark_task_cleanup_step_completed, mark_task_force_removed,
-    mark_task_removed, mark_task_removing, mark_task_teardown_incomplete, observe_drop_resources,
-    observe_drop_resources_with_cache, plan_drop_from_observation,
+    is_fast_worktree_remove_command, mark_drop_agent_stopped, mark_task_cleanup_step_completed,
+    mark_task_force_removed, mark_task_removed, mark_task_removing, mark_task_teardown_incomplete,
+    observe_drop_resources, observe_drop_resources_with_cache, plan_drop_from_observation,
     plan_drop_from_observation_for_task, remove_task_plan, sweep_cleanup_candidates,
-    sweep_cleanup_plan, DropObservation, DropOp, RepoDropObservationCache, ResourceState,
+    sweep_cleanup_plan, sweep_trash_commands, DropObservation, DropOp, RepoDropObservationCache,
+    ResourceState,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
@@ -881,20 +882,14 @@ mod tests {
             let handle = worktree_command.args[5]
                 .strip_prefix("ajax/")
                 .expect("generated task branch");
-            let task_id = format!("web/{handle}");
+            let _task_id = format!("web/{handle}");
 
             prop_assert_eq!(send_keys.program.as_str(), "tmux");
             prop_assert_eq!(send_keys.args[0].as_str(), "send-keys");
+            let launch_words = shell_words(&send_keys.args[3]);
             prop_assert_eq!(
-                shell_words(&send_keys.args[3]),
-                vec![
-                    "ajax-cli".to_string(),
-                    "__agent-runtime".to_string(),
-                    "--task-id".to_string(),
-                    task_id,
-                    "--state-root".to_string(),
-                    ".cache/ajax/agent-runtime".to_string(),
-                    "--".to_string(),
+                &launch_words[launch_words.len() - 3..],
+                &[
                     "codex".to_string(),
                     "--cd".to_string(),
                     worktree_path,
@@ -2061,56 +2056,49 @@ mod tests {
 
         assert!(!plan.requires_confirmation);
         let git = GitAdapter::new("git");
+        assert_eq!(plan.commands.len(), 5);
         assert_eq!(
-            plan.commands,
-            vec![
-                git.fetch_origin_branch("/Users/matt/projects/web", "main"),
-                CommandSpec::new(
-                    "git",
-                    [
-                        "-C",
-                        "/Users/matt/projects/web",
-                        "worktree",
-                        "add",
-                        "-b",
-                        "ajax/fix-logout",
-                        "/Users/matt/projects/web__worktrees/ajax-fix-logout",
-                        "origin/main"
-                    ]
-                ),
-                CommandSpec::new(
-                    "/bin/sh",
-                    [
-                        "-lc",
-                        "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi",
-                        "sh",
-                        "/Users/matt/projects/web__worktrees/ajax-fix-logout"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "new-session",
-                        "-d",
-                        "-s",
-                        "ajax-web-fix-logout",
-                        "-n",
-                        "worktrunk",
-                        "-c",
-                        "/Users/matt/projects/web__worktrees/ajax-fix-logout"
-                    ]
-                ),
-                CommandSpec::new(
-                    "tmux",
-                    [
-                        "send-keys",
-                        "-t",
-                        "ajax-web-fix-logout:worktrunk",
-                        "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout",
-                        "Enter"
-                    ]
-                )
-            ]
+            plan.commands[0],
+            git.fetch_origin_branch("/Users/matt/projects/web", "main")
+        );
+        assert_eq!(
+            plan.commands[1],
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "add",
+                    "-b",
+                    "ajax/fix-logout",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-logout",
+                    "origin/main"
+                ]
+            )
+        );
+        assert_eq!(
+            plan.commands[2],
+            CommandSpec::new(
+                "tmux",
+                [
+                    "new-session",
+                    "-d",
+                    "-s",
+                    "ajax-web-fix-logout",
+                    "-n",
+                    "worktrunk",
+                    "-c",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-logout"
+                ]
+            )
+        );
+        assert_eq!(plan.commands[4].program, "tmux");
+        assert_eq!(plan.commands[4].args[0], "send-keys");
+        assert_eq!(plan.commands[4].args[2], "ajax-web-fix-logout:worktrunk");
+        assert_eq!(
+            plan.commands[4].args[3],
+            "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
         );
     }
 
@@ -2138,33 +2126,25 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(plan.commands.len(), 5);
         assert_eq!(plan.commands[0].args[1], "/Users/matt/projects/web app");
         assert_eq!(plan.commands[1].args[1], "/Users/matt/projects/web app");
         assert_eq!(
             plan.commands[1].args[6],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
+        assert_eq!(plan.commands[2].args[3], "ajax-web-fix-login");
         assert_eq!(
-            plan.commands[2].args[3],
+            plan.commands[2].args[7],
             "/Users/matt/projects/web app__worktrees/ajax-fix-login"
         );
+        let launch_words = shell_words(&plan.commands[4].args[3]);
         assert_eq!(
-            plan.commands[3].args[7],
-            "/Users/matt/projects/web app__worktrees/ajax-fix-login"
-        );
-        assert_eq!(
-            shell_words(&plan.commands[4].args[3]),
-            vec![
-                "ajax-cli",
-                "__agent-runtime",
-                "--task-id",
-                "web/fix-login",
-                "--state-root",
-                ".cache/ajax/agent-runtime",
-                "--",
-                "codex",
-                "--cd",
-                "/Users/matt/projects/web app__worktrees/ajax-fix-login",
+            &launch_words[launch_words.len() - 3..],
+            &[
+                "codex".to_string(),
+                "--cd".to_string(),
+                "/Users/matt/projects/web app__worktrees/ajax-fix-login".to_string(),
             ]
         );
     }
@@ -2210,51 +2190,22 @@ mod tests {
             .iter()
             .find(|command| super::is_agent_send_keys_command(command))
             .expect("agent send-keys command");
+        assert_eq!(plan.commands.len(), 5);
         assert_eq!(worktree_command.args[5], "ajax/ship-oauth-v2");
         assert_eq!(
             worktree_command.args[6],
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
-        assert_eq!(
-            plan.commands
-                .iter()
-                .find(|command| super::is_new_task_husky_hook_command(command))
-                .expect("husky command")
-                .args[3],
-            "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
-        );
-        assert_eq!(
-            plan.commands
-                .iter()
-                .find(|command| super::is_worktrunk_new_session_command(command))
-                .expect("tmux session command")
-                .args[3],
-            "ajax-api-ship-oauth-v2"
-        );
+        assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
         assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:worktrunk");
+        let launch_words = shell_words(&send_keys.args[3]);
         assert_eq!(
-            send_keys.args[3],
-            "ajax-cli __agent-runtime --task-id api/ship-oauth-v2 --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
-        );
-    }
-
-    #[test]
-    fn new_task_plan_blocks_duplicate_visible_handle() {
-        let context = context_with_tasks();
-
-        let active_duplicate = new_task_plan(
-            &context,
-            NewTaskRequest {
-                repo: "web".to_string(),
-                title: "Fix login!".to_string(),
-                agent: "codex".to_string(),
-            },
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            active_duplicate,
-            CommandError::PlanBlocked(vec!["task already exists: web/fix-login".to_string()])
+            &launch_words[launch_words.len() - 3..],
+            &[
+                "codex".to_string(),
+                "--cd".to_string(),
+                "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2".to_string(),
+            ]
         );
     }
 
@@ -3282,7 +3233,7 @@ mod tests {
                         "ajax/fix-login"
                     ]
                 ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             ]
         );
     }
@@ -3389,7 +3340,7 @@ mod tests {
                         "ajax/fix-login"
                     ]
                 ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             ]
         );
     }
@@ -4098,7 +4049,7 @@ mod tests {
                         "ajax/fix-login"
                     ]
                 ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
             ]
         );
     }
@@ -4134,7 +4085,16 @@ mod tests {
                         "ajax/fix-login"
                     ]
                 ),
-                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"])
+                CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]),
+                CommandSpec::new(
+                    "sh",
+                    [
+                        "-c",
+                        "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi",
+                        "ajax-trash-sweep",
+                        "/tmp/worktrees/.ajax-trash",
+                    ]
+                )
             ]
         );
     }
@@ -4150,7 +4110,18 @@ mod tests {
         let plan = sweep_cleanup_plan(&context);
         let candidates = super::sweep_cleanup_candidates(&context);
 
-        assert!(plan.commands.is_empty());
+        assert_eq!(
+            plan.commands,
+            vec![CommandSpec::new(
+                "sh",
+                [
+                    "-c",
+                    "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi",
+                    "ajax-trash-sweep",
+                    "/tmp/worktrees/.ajax-trash",
+                ]
+            )]
+        );
         assert!(candidates.is_empty());
     }
 

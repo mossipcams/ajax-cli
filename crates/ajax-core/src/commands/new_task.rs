@@ -13,16 +13,23 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    time::Duration,
 };
 
-const INSTALL_HUSKY_HOOKS: &str =
-    "cd \"$1\" 2>/dev/null || exit 0; if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+const HUSKY_GUARD: &str =
+    "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+pub const ORIGIN_FETCH_FRESH_FOR: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NewTaskRequest {
     pub repo: String,
     pub title: String,
     pub agent: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StartPlanObservation {
+    pub origin_fetch_age: Option<Duration>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +42,20 @@ pub enum StartProvisioningStep {
 pub fn new_task_plan<R: Registry>(
     context: &CommandContext<R>,
     request: NewTaskRequest,
+) -> Result<CommandPlan, CommandError> {
+    new_task_plan_with_observation(
+        context,
+        request,
+        &StartPlanObservation {
+            origin_fetch_age: None,
+        },
+    )
+}
+
+pub fn new_task_plan_with_observation<R: Registry>(
+    context: &CommandContext<R>,
+    request: NewTaskRequest,
+    observation: &StartPlanObservation,
 ) -> Result<CommandPlan, CommandError> {
     let Some(repo) = context
         .config
@@ -84,11 +105,17 @@ pub fn new_task_plan<R: Registry>(
     );
     let repo_path = repo.path.display().to_string();
     let mut plan = CommandPlan::new(format!("create task: {}", request.title));
-    plan.commands
-        .push(git.fetch_origin_branch(&repo_path, &repo.default_branch));
-    if let Some(graphify_update) = &repo.graphify_update {
+    if observation
+        .origin_fetch_age
+        .is_none_or(|age| age >= ORIGIN_FETCH_FRESH_FOR)
+    {
         plan.commands
-            .push(CommandSpec::new("sh", ["-lc", graphify_update.as_str()]).with_cwd(&repo.path));
+            .push(git.fetch_origin_branch(&repo_path, &repo.default_branch));
+    }
+    if let Some(graphify_update) = &repo.graphify_update {
+        let graphify_command = format!("({graphify_update}) >/dev/null 2>&1 &");
+        plan.commands
+            .push(CommandSpec::new("sh", ["-lc", graphify_command.as_str()]).with_cwd(&repo.path));
     }
     plan.commands.push(git.add_worktree(
         &repo_path,
@@ -96,16 +123,15 @@ pub fn new_task_plan<R: Registry>(
         &branch,
         &format!("origin/{}", repo.default_branch),
     ));
-    plan.commands
-        .push(install_husky_hooks_command(&worktree_path));
-    if let Some(bootstrap) = &repo.bootstrap {
-        plan.commands
-            .push(CommandSpec::new("sh", ["-lc", bootstrap.as_str()]).with_cwd(&worktree_path));
-    }
     plan.commands.push(tmux.new_detached_worktrunk_session(
         &tmux_session,
         "worktrunk",
         &worktree_path_string,
+    ));
+    plan.commands.push(setup_task_environment_command(
+        &repo_path,
+        &worktree_path_string,
+        repo.bootstrap.as_deref(),
     ));
     plan.commands
         .push(tmux.send_agent_command(&tmux_session, "worktrunk", &command_line(&launch)));
@@ -315,14 +341,6 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
     Ok(())
 }
 
-pub fn is_new_task_husky_hook_command(command: &CommandSpec) -> bool {
-    command.program == "/bin/sh"
-        && command.args.len() == 4
-        && command.args[0] == "-lc"
-        && command.args[1] == INSTALL_HUSKY_HOOKS
-        && command.args[2] == "sh"
-}
-
 pub fn is_git_worktree_add_command(command: &CommandSpec) -> bool {
     command.program == "git"
         && command
@@ -392,21 +410,6 @@ fn short_path_hash(path: &Path) -> u32 {
     (hasher.finish() & 0xffff_ffff) as u32
 }
 
-fn install_husky_hooks_command(worktree_path: &Path) -> CommandSpec {
-    CommandSpec {
-        program: "/bin/sh".to_string(),
-        args: vec![
-            "-lc".to_string(),
-            INSTALL_HUSKY_HOOKS.to_string(),
-            "sh".to_string(),
-            worktree_path.display().to_string(),
-        ],
-        cwd: None,
-        mode: crate::adapters::CommandMode::Capture,
-        timeout: None,
-    }
-}
-
 fn command_line(command: &CommandSpec) -> String {
     std::iter::once(command.program.as_str())
         .chain(command.args.iter().map(String::as_str))
@@ -437,6 +440,25 @@ fn agent_runtime_command(
         mode: agent_command.mode,
         timeout: agent_command.timeout,
     }
+}
+
+fn setup_task_environment_command(
+    repo_path: &str,
+    worktree_path: &str,
+    bootstrap: Option<&str>,
+) -> CommandSpec {
+    let mut command = String::from("if [ -d \"$1\" ]; then cd \"$1\" && ");
+    command.push_str(HUSKY_GUARD);
+    if let Some(bootstrap) = bootstrap {
+        command.push_str("; ");
+        command.push_str(bootstrap);
+    }
+    command.push_str("; fi");
+    CommandSpec::new(
+        "sh",
+        ["-lc", command.as_str(), "ajax-setup-task", worktree_path],
+    )
+    .with_cwd(repo_path)
 }
 
 fn shell_quote(value: &str) -> String {
@@ -491,7 +513,8 @@ fn agent_from_name(name: &str) -> AgentClient {
 mod tests {
     use super::{
         is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
-        record_new_task, task_from_new_request, NewTaskRequest, StartProvisioningStep,
+        new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
+        StartPlanObservation, StartProvisioningStep,
     };
     use crate::{
         adapters::{CommandSpec, GitAdapter},
@@ -500,7 +523,7 @@ mod tests {
         models::{AgentRuntimeStatus, LifecycleStatus, SideFlag},
         registry::{InMemoryRegistry, Registry},
     };
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
 
     fn context() -> CommandContext<InMemoryRegistry> {
         CommandContext::new(
@@ -587,6 +610,82 @@ mod tests {
     }
 
     #[test]
+    fn new_task_plan_has_no_standalone_husky_command() {
+        let context = context();
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            plan.commands.iter().any(|command| command.program == "sh"),
+            "expected standalone setup command: {:?}",
+            plan.commands
+        );
+    }
+
+    #[test]
+    fn new_task_plan_chains_setup_before_agent_in_task_session() {
+        let context = context();
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(launch.ends_with(
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- codex --cd /repo/web__worktrees/ajax-fix-login"
+        ));
+    }
+
+    #[test]
+    fn new_task_plan_chains_bootstrap_between_husky_and_agent() {
+        let mut repo = ManagedRepo::new("web", "/repo/web", "main");
+        repo.bootstrap = Some("npm install".to_string());
+        let context = CommandContext::new(
+            Config {
+                repos: vec![repo],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+            },
+        )
+        .unwrap();
+
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.starts_with("ajax-cli __agent-runtime --task-id web/fix-login"));
+        assert!(
+            plan.commands.iter().any(|command| {
+                command.program == "sh"
+                    && command
+                        .args
+                        .get(1)
+                        .is_some_and(|arg| arg.contains("npm install"))
+            }),
+            "expected standalone bootstrap command: {:?}",
+            plan.commands
+        );
+    }
+
+    #[test]
     fn new_task_plan_fetches_origin_and_branches_from_remote_tracking_ref() {
         let context = context();
         let request = NewTaskRequest {
@@ -598,6 +697,7 @@ mod tests {
         let plan = new_task_plan(&context, request).unwrap();
         let git = GitAdapter::new("git");
 
+        assert_eq!(plan.commands.len(), 5);
         assert_eq!(
             plan.commands[0],
             git.fetch_origin_branch("/repo/web", "main")
@@ -610,6 +710,111 @@ mod tests {
                 "ajax/fix-login",
                 "origin/main"
             )
+        );
+    }
+
+    #[test]
+    fn new_task_plan_skips_fetch_when_origin_fetch_is_fresh() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let observation = StartPlanObservation {
+            origin_fetch_age: Some(Duration::from_secs(30)),
+        };
+
+        let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
+        let git = GitAdapter::new("git");
+
+        assert_eq!(plan.commands.len(), 4);
+        assert_eq!(
+            plan.commands[0],
+            git.add_worktree(
+                "/repo/web",
+                "/repo/web__worktrees/ajax-fix-login",
+                "ajax/fix-login",
+                "origin/main"
+            )
+        );
+        assert!(plan
+            .commands
+            .iter()
+            .all(|command| !command.args.iter().any(|arg| arg == "fetch")));
+    }
+
+    #[test]
+    fn new_task_plan_fetches_when_origin_fetch_is_stale() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let observation = StartPlanObservation {
+            origin_fetch_age: Some(Duration::from_secs(120)),
+        };
+
+        let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
+        let git = GitAdapter::new("git");
+
+        assert_eq!(plan.commands.len(), 5);
+        assert_eq!(
+            plan.commands[0],
+            git.fetch_origin_branch("/repo/web", "main")
+        );
+    }
+
+    #[test]
+    fn new_task_plan_fetches_when_origin_fetch_age_is_unknown() {
+        let context = context();
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+        let observation = StartPlanObservation {
+            origin_fetch_age: None,
+        };
+
+        let plan = new_task_plan_with_observation(&context, request, &observation).unwrap();
+        let git = GitAdapter::new("git");
+
+        assert_eq!(plan.commands.len(), 5);
+        assert_eq!(
+            plan.commands[0],
+            git.fetch_origin_branch("/repo/web", "main")
+        );
+    }
+
+    #[test]
+    fn new_task_plan_runs_graphify_update_detached() {
+        let mut repo = ManagedRepo::new("web", "/repo/web", "main");
+        repo.graphify_update = Some("graphify extract --update".to_string());
+        let context = CommandContext::new(
+            Config {
+                repos: vec![repo],
+                ..Config::default()
+            },
+            InMemoryRegistry::default(),
+        );
+        let request = NewTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+        };
+
+        let plan = new_task_plan(&context, request).unwrap();
+
+        assert_eq!(plan.commands.len(), 6);
+        assert_eq!(
+            plan.commands[1],
+            CommandSpec::new(
+                "sh",
+                ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
+            )
+            .with_cwd("/repo/web")
         );
     }
 
@@ -632,9 +837,14 @@ mod tests {
 
         let plan = new_task_plan(&context, request).unwrap();
 
+        assert_eq!(plan.commands.len(), 6);
         assert_eq!(
             plan.commands[1],
-            CommandSpec::new("sh", ["-lc", "graphify extract --update"]).with_cwd("/repo/web")
+            CommandSpec::new(
+                "sh",
+                ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
+            )
+            .with_cwd("/repo/web")
         );
         assert!(is_git_worktree_add_command(&plan.commands[2]));
     }
