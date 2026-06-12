@@ -250,7 +250,18 @@ pub(crate) struct TrackedContext {
 
 pub(crate) fn load_tracked_context(paths: &CliContextPaths) -> Result<TrackedContext, CliError> {
     let context = load_context(paths)?;
-    let mut save_state = context_save_state_from_registry(&context.registry);
+    let save_state = tracked_save_state(paths, &context.registry)?;
+    Ok(TrackedContext {
+        save_state,
+        context,
+    })
+}
+
+pub(crate) fn tracked_save_state(
+    paths: &CliContextPaths,
+    registry: &InMemoryRegistry,
+) -> Result<ContextSaveState, CliError> {
+    let mut save_state = context_save_state_from_registry(registry);
     save_state.loaded_revision = if paths.state_file.exists() {
         SqliteRegistryStore::new(&paths.state_file)
             .current_revision()
@@ -258,10 +269,7 @@ pub(crate) fn load_tracked_context(paths: &CliContextPaths) -> Result<TrackedCon
     } else {
         0
     };
-    Ok(TrackedContext {
-        save_state,
-        context,
-    })
+    Ok(save_state)
 }
 
 pub(crate) fn save_tracked_context(
@@ -355,6 +363,10 @@ fn merge_registries(
             }
             (Some(_), Some(baseline_task)) if memory_task == baseline_task => {}
             (Some(disk_task), _) if disk_task == memory_task => {}
+            // The task was on disk when this writer loaded but another writer
+            // has deleted it since: the deletion wins over any in-memory edits,
+            // otherwise every later save fails with a permanent conflict.
+            (None, Some(_)) => {}
             (None, None) => {
                 merged.create_task(memory_task.clone()).map_err(|error| {
                     CliError::ContextSave(format!("state merge failed: {error}"))
@@ -370,6 +382,9 @@ fn merge_registries(
     }
 
     for event in in_memory.list_events() {
+        if merged.get_task(&event.task_id).is_none() {
+            continue;
+        }
         if merged
             .events_for_task(&event.task_id)
             .iter()
@@ -382,6 +397,9 @@ fn merge_registries(
             .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
     }
     for task in in_memory.list_tasks() {
+        if merged.get_task(&task.id).is_none() {
+            continue;
+        }
         for receipt in in_memory.step_receipts_for_task(&task.id) {
             merged
                 .record_step_receipt(receipt.clone())
@@ -604,6 +622,65 @@ mod tests {
             .registry
             .get_task(&TaskId::new("web/fix-sidebar"))
             .is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_accepts_concurrent_task_deletion_without_conflict() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-deletion-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        baseline
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        baseline
+            .create_task(sample_task("web/fix-sidebar", "fix-sidebar", "Fix sidebar"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("refreshed task")
+            .title = "Refreshed by web".to_string();
+
+        // Another writer drops fix-sidebar from disk before this writer saves.
+        let mut concurrent = baseline.clone();
+        concurrent
+            .delete_task(&TaskId::new("web/fix-sidebar"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&concurrent)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        save_tracked_context(&paths, &mut tracked).expect("deletion merges cleanly");
+        let reloaded = load_context(&paths).expect("reload");
+
+        assert!(reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-sidebar"))
+            .is_none());
+        assert_eq!(
+            reloaded
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .expect("surviving task")
+                .title,
+            "Refreshed by web"
+        );
 
         let _ = std::fs::remove_dir_all(root);
     }
