@@ -23,7 +23,10 @@ use std::time::SystemTime;
 
 use crate::{
     command_error,
-    context::{load_context, save_context_with_state, state_file_mtime},
+    context::{
+        context_save_state_from_registry, load_tracked_context, save_context_with_state,
+        state_file_mtime, tracked_save_state, ContextSaveState,
+    },
     CliContextPaths, CliError,
 };
 
@@ -64,10 +67,7 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge {
-        paths: paths.cloned(),
-        last_loaded_mtime: paths.and_then(state_file_mtime),
-    };
+    let mut bridge = CliRuntimeBridge::for_context(paths, context)?;
     runtime::route_with_bridge(
         Request { method, path, body },
         context,
@@ -95,10 +95,7 @@ pub(crate) fn serve_mobile_web_with_paths(
     paths: Option<&CliContextPaths>,
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
-    let bridge = CliRuntimeBridge {
-        paths: paths.cloned(),
-        last_loaded_mtime: paths.as_ref().and_then(|paths| state_file_mtime(paths)),
-    };
+    let bridge = CliRuntimeBridge::for_context(paths, context)?;
     let state = runtime::WebAppState::new(context.clone(), ProcessCommandRunner, bridge, state_dir);
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
@@ -139,6 +136,7 @@ fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliEr
 pub(crate) struct CliRuntimeBridge {
     paths: Option<CliContextPaths>,
     last_loaded_mtime: Option<SystemTime>,
+    save_state: ContextSaveState,
 }
 
 impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
@@ -153,15 +151,8 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
         if state_changed {
-            if let Some(paths) = self.paths.as_ref() {
-                save_context_with_state(
-                    paths,
-                    context,
-                    &mut crate::context::context_save_state_from_registry(&context.registry),
-                )
+            self.persist_changed_state(context)
                 .map_err(web_error_from_cli)?;
-                self.last_loaded_mtime = state_file_mtime(paths);
-            }
         }
         Ok(state_changed)
     }
@@ -182,7 +173,7 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         runner: &mut C,
     ) -> Result<OperateOutcome, ActionFailure> {
         let paths = self.paths.clone();
-        let mut save_state = crate::context::context_save_state_from_registry(&context.registry);
+        let mut save_state = self.save_state.clone();
         let result = start_task_with_checkpoint(context, runner, request, |checkpoint_context| {
             let Some(paths) = paths.as_ref() else {
                 return Ok(());
@@ -195,14 +186,31 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
                 )
             })
         });
-        if paths.is_some() {
-            self.last_loaded_mtime = paths.as_ref().and_then(state_file_mtime);
+        let checkpoint_saved = save_state.loaded_revision != self.save_state.loaded_revision;
+        self.save_state = save_state;
+        if checkpoint_saved {
+            self.last_loaded_mtime = self.paths.as_ref().and_then(state_file_mtime);
         }
         self.persist_operate(result, context)
     }
 }
 
 impl CliRuntimeBridge {
+    fn for_context(
+        paths: Option<&CliContextPaths>,
+        context: &CommandContext<InMemoryRegistry>,
+    ) -> Result<Self, CliError> {
+        let save_state = match paths {
+            Some(paths) => tracked_save_state(paths, &context.registry)?,
+            None => context_save_state_from_registry(&context.registry),
+        };
+        Ok(Self {
+            paths: paths.cloned(),
+            last_loaded_mtime: paths.and_then(state_file_mtime),
+            save_state,
+        })
+    }
+
     fn reload_context_if_stale(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
@@ -214,9 +222,24 @@ impl CliRuntimeBridge {
             return Ok(());
         };
         if self.last_loaded_mtime != Some(mtime) {
-            *context = load_context(paths).map_err(web_error_from_cli)?;
+            let tracked = load_tracked_context(paths).map_err(web_error_from_cli)?;
+            *context = tracked.context;
+            self.save_state = tracked.save_state;
             self.last_loaded_mtime = Some(mtime);
         }
+        Ok(())
+    }
+
+    fn persist_changed_state(
+        &mut self,
+        context: &mut CommandContext<InMemoryRegistry>,
+    ) -> Result<(), CliError> {
+        let Some(paths) = self.paths.as_ref() else {
+            return Ok(());
+        };
+        save_context_with_state(paths, context, &mut self.save_state)?;
+        context.registry = self.save_state.loaded_registry.clone();
+        self.last_loaded_mtime = state_file_mtime(paths);
         Ok(())
     }
 
@@ -228,34 +251,16 @@ impl CliRuntimeBridge {
         match result {
             Ok(outcome) => {
                 if outcome.state_changed {
-                    if let Some(paths) = self.paths.as_ref() {
-                        save_context_with_state(
-                            paths,
-                            context,
-                            &mut crate::context::context_save_state_from_registry(
-                                &context.registry,
-                            ),
-                        )
+                    self.persist_changed_state(context)
                         .map_err(action_failure_from_cli)?;
-                        self.last_loaded_mtime = state_file_mtime(paths);
-                    }
                 }
                 Ok(outcome)
             }
             Err(error) => {
                 let state_changed = matches!(error, OperateError::Command(_, true));
                 if state_changed {
-                    if let Some(paths) = self.paths.as_ref() {
-                        save_context_with_state(
-                            paths,
-                            context,
-                            &mut crate::context::context_save_state_from_registry(
-                                &context.registry,
-                            ),
-                        )
+                    self.persist_changed_state(context)
                         .map_err(action_failure_from_cli)?;
-                        self.last_loaded_mtime = state_file_mtime(paths);
-                    }
                 }
                 Err(ActionFailure {
                     message: format_operate_error(&error),
@@ -612,6 +617,8 @@ mod tests {
         let mut bridge = super::CliRuntimeBridge {
             paths: Some(paths.clone()),
             last_loaded_mtime: None,
+            save_state: crate::context::tracked_save_state(&paths, &server_context.registry)
+                .unwrap(),
         };
 
         let response = runtime::route_with_bridge(
@@ -644,12 +651,9 @@ mod tests {
         SqliteRegistryStore::new(&paths.state_file)
             .save(&saved_context.registry)
             .unwrap();
-        let mut context = super::load_context(&paths).unwrap();
+        let mut context = crate::context::load_context(&paths).unwrap();
         let mut runner = LiveRefreshRunner;
-        let mut bridge = super::CliRuntimeBridge {
-            paths: Some(paths.clone()),
-            last_loaded_mtime: crate::context::state_file_mtime(&paths),
-        };
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
 
         bridge
             .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
@@ -667,6 +671,34 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cockpit_refresh_recovers_when_task_is_deleted_from_disk() {
+        let dir = scratch_dir("disk-deletion");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let mut context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+        // Another writer deletes the task from disk, and the bridge misses the
+        // reload window because its recorded mtime already matches the file.
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&InMemoryRegistry::default())
+            .unwrap();
+        bridge.last_loaded_mtime = crate::context::state_file_mtime(&paths);
+
+        let mut runner = LiveRefreshRunner;
+        let state_changed = bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .expect("refresh accepts the disk-side deletion instead of failing every poll");
+
+        assert!(state_changed);
+        assert!(context.registry.list_tasks().is_empty());
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
