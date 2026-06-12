@@ -692,16 +692,31 @@ impl App {
         let Some(pending) = pending else {
             return;
         };
-        if let Some(refreshed) = self
-            .selected_action()
-            .filter(|refreshed| same_action_identity(refreshed, &pending))
+        if let Some((selected, refreshed)) = self
+            .selectables
+            .iter()
+            .enumerate()
+            .filter(|(_, selectable)| self.is_directly_dispatchable(selectable))
+            .map(|(selected, selectable)| (selected, selectable.as_action()))
+            .find(|(_, refreshed)| same_action_identity(refreshed, &pending))
         {
+            self.selected = selected;
             self.pending_confirmation = Some(refreshed);
             return;
         }
 
         self.pending_confirmation = Some(pending);
         self.invalidate_pending_confirmation();
+    }
+
+    fn is_directly_dispatchable(&self, selectable: &SelectableKind) -> bool {
+        match selectable {
+            SelectableKind::TaskAction { .. } | SelectableKind::Remediation { .. } => true,
+            SelectableKind::Inbox(item) => self.find_card_for_task(&item.task_id).is_none(),
+            SelectableKind::Project(_)
+            | SelectableKind::NewTask { .. }
+            | SelectableKind::Task(_) => false,
+        }
     }
 
     pub(crate) fn notify_task(

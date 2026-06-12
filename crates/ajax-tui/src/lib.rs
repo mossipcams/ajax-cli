@@ -3199,6 +3199,89 @@ mod tests {
     }
 
     #[test]
+    fn task_action_confirmation_survives_refresh_when_task_leaves_inbox() {
+        let mut tasks = sample_tasks();
+        tasks[0].primary_action = OperatorAction::Drop;
+        tasks[0].available_actions = vec![OperatorAction::Drop];
+        let inbox = InboxResponse {
+            items: vec![AnnotationItem {
+                task_id: tasks[0].id.clone(),
+                task_handle: tasks[0].qualified_handle.clone(),
+                reason: "cleanable".to_string(),
+                severity: 40,
+                action: OperatorAction::Drop,
+            }],
+        };
+        let mut app = App::new(sample_repos(), tasks.clone(), inbox);
+        app.activate_selected();
+        let mut handler = ConfirmHandler::default();
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: tasks,
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert_eq!(handler.asked, 1);
+        assert_eq!(handler.confirmed, 1);
+    }
+
+    #[test]
+    fn task_action_confirmation_survives_refresh_when_drawer_actions_reorder() {
+        let mut tasks = sample_tasks();
+        tasks[0].primary_action = OperatorAction::Drop;
+        tasks[0].available_actions = vec![OperatorAction::Resume, OperatorAction::Drop];
+        let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
+        app.select_next();
+        app.activate_selected();
+        let mut handler = ConfirmHandler::default();
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        let mut reordered = sample_tasks();
+        reordered[0].primary_action = OperatorAction::Drop;
+        reordered[0].available_actions = vec![OperatorAction::Drop, OperatorAction::Resume];
+        app.apply_refresh(CockpitSnapshot {
+            repos: sample_repos(),
+            cards: reordered,
+            inbox: InboxResponse { items: vec![] },
+        });
+
+        handle_cockpit_event(
+            &mut app,
+            Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            10,
+            &mut handler,
+        )
+        .unwrap();
+
+        assert_eq!(handler.asked, 1);
+        assert_eq!(handler.confirmed, 1);
+    }
+
+    #[test]
     fn task_action_confirmation_is_invalidated_when_refresh_removes_action() {
         let mut app = app_in_project_view();
         app.select_next();
