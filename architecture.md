@@ -107,7 +107,10 @@ before deciding what to skip or repair.
 The task operation boundary now owns the main mutable task actions:
 
 - Start operation planning returns `TaskIntent` plus the external command plan
-  without mutating the registry.
+  without mutating the registry. Start planning uses fresh origin-fetch
+  evidence to skip redundant remote fetches when it is recent enough, and the
+  task-session launch shell folds husky/bootstrap setup into the agent launch
+  line rather than serializing them as standalone critical-path commands.
 - Start operation execution records the task, applies named provisioning steps,
   records step receipts for successful provisioning side effects, marks
   provisioning failure in core with failed-step metadata, and opens the task
@@ -118,13 +121,17 @@ The task operation boundary now owns the main mutable task actions:
   succeeded, and merge/check failure state.
 - Drop operation planning starts from fresh substrate observation and produces
   `DropOp`s from observed resources rather than cached registry fields alone.
+- Confirmed worktree teardown renames the worktree into a sibling
+  `.ajax-trash` entry, prunes, and deletes in the background; `tidy` sweeps
+  stale trash entries left behind by interrupted cleanup.
 - Drop execution runs teardown ops, records step evidence, re-observes external
   resources, records receipts for successful or already-satisfied cleanup steps,
   and decides `Removed` versus `TeardownIncomplete` from the final observation
   inside core.
 - Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
-  candidates, executes each candidate, marks completed cleanup state, and
-  reports whether an error happened after partial state changes.
+  candidates, executes each candidate, sweeps stale `.ajax-trash` entries per
+  worktree root, marks completed cleanup state, and reports whether an error
+  happened after partial state changes.
 
 Command modules still expose substrate-oriented planning helpers. Task
 operations compose those helpers into vertical operator transactions.
@@ -478,11 +485,13 @@ not make Home Screen installation the primary iPhone path or require native-app
 PWA lifecycle assumptions.
 
 Web Cockpit syncs server-authoritative Cockpit projections, not browser-owned
-task records. `GET /api/cockpit` returns the latest backend projection. Mutable
-operations return typed operation outcomes and either include or cause a refresh
-of the latest Cockpit projection. The browser may keep transient UI state such
-as "sending" or "failed," but it must not persist pending task operations or
-replay mutations after reload.
+task records. `GET /api/cockpit` returns the latest backend projection, but it
+may reuse a short-lived in-memory projection cache and single-flight concurrent
+refreshes before re-rendering. Mutable operations return typed operation
+outcomes, invalidate the cached projection, and either include or cause a
+refresh of the latest Cockpit projection. The browser may keep transient UI
+state such as "sending" or "failed," but it must not persist pending task
+operations or replay mutations after reload.
 
 The app must function correctly without a service worker. If a service worker
 is kept, it is non-critical and limited to cleanup or safe static assets. It
@@ -641,11 +650,13 @@ asset embedding inside `ajax-web`. Those mechanisms must not move into
 `ajax-core` or `ajax-tui`.
 
 Web operations are coordinated by request ID and task key. External operation
-and pane work runs outside the global shared-state lock, then commits against
+and pane work run outside the global shared-state lock, then commits against
 the prepared revision or pane generation; stale commits return conflicts
-instead of replacing newer state. Pane control commands are bounded by
-timeouts. Supervisor cancellation terminates and awaits the child process
-before reporting completion, with a bounded wait.
+instead of replacing newer state. `/api/cockpit` adds a short refresh TTL and
+single-flight gate so near-simultaneous polls reuse the same refreshed
+projection, and task mutations invalidate that window. Pane control commands
+are bounded by timeouts. Supervisor cancellation terminates and awaits the
+child process before reporting completion, with a bounded wait.
 
 ## Cockpit Architecture
 
@@ -673,12 +684,14 @@ browser sessions stay on their own runtime profile.
 
 - `actions` owns action and annotation chrome metadata.
 - `cockpit_state` owns view state, selectable construction, transitions,
-  refresh application, flash state, and confirmations.
+  refresh application, short-lived cockpit response caching, flash state, and
+  confirmations.
 - `input` owns terminal-event classification.
 - `layout` owns pure layout calculations.
 - `navigation` owns key classification helpers.
 - `rendering` owns status palette, glyph mapping, and screen rendering.
-- `runtime` owns terminal mode, polling, refresh timing, and the event loop.
+- `runtime` owns terminal mode, polling, refresh timing, the cockpit refresh
+  cache window, and the event loop.
 
 ### Cockpit Views
 

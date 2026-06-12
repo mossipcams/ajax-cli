@@ -1,5 +1,6 @@
 use std::{
     process::{Command, Stdio},
+    sync::OnceLock,
     thread,
     time::{Duration, Instant},
 };
@@ -11,6 +12,7 @@ pub struct ProcessCommandRunner;
 
 impl CommandRunner for ProcessCommandRunner {
     fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+        let started = Instant::now();
         let mut process = Command::new(&command.program);
         process.args(&command.args);
         if let Some(cwd) = &command.cwd {
@@ -19,10 +21,16 @@ impl CommandRunner for ProcessCommandRunner {
         if command.program == "git" {
             clear_repo_local_git_env(&mut process);
         }
-        match command.mode {
+        let outcome = match command.mode {
             CommandMode::Capture => run_capture(process, command),
             CommandMode::InheritStdio => run_inherit_stdio(process),
+        };
+
+        if timing_logging_enabled() {
+            eprintln!("{}", timing_log_line(command, started.elapsed()));
         }
+
+        outcome
     }
 }
 
@@ -114,6 +122,32 @@ fn clear_repo_local_git_env(process: &mut Command) {
     }
 }
 
+fn timing_logging_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("AJAX_TIMING").is_some())
+}
+
+fn timing_log_line(command: &CommandSpec, elapsed: Duration) -> String {
+    let args = command.args.join(" ");
+    let args = if args.len() > 80 {
+        let truncated: String = args.chars().take(80).collect();
+        format!("{truncated}…")
+    } else {
+        args
+    };
+
+    if args.is_empty() {
+        format!("ajax-timing: {} {}ms", command.program, elapsed.as_millis())
+    } else {
+        format!(
+            "ajax-timing: {} {} {}ms",
+            command.program,
+            args,
+            elapsed.as_millis()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -185,5 +219,51 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn timing_log_line_renders_program_args_and_elapsed_ms() {
+        let command = CommandSpec::new("git", ["-C", "/repo/web", "fetch", "origin", "main"]);
+        let elapsed = Duration::from_millis(1234);
+
+        let line = super::timing_log_line(&command, elapsed);
+
+        assert_eq!(
+            line,
+            "ajax-timing: git -C /repo/web fetch origin main 1234ms"
+        );
+    }
+
+    #[test]
+    fn timing_log_line_truncates_long_argument_lists() {
+        let command = CommandSpec::new(
+            "git",
+            [
+                "-C",
+                "/repo/web",
+                "fetch",
+                "origin",
+                "main",
+                "with",
+                "an",
+                "argument",
+                "list",
+                "that",
+                "goes",
+                "past",
+                "eighty",
+                "characters",
+            ],
+        );
+        let elapsed = Duration::from_millis(1234);
+
+        let line = super::timing_log_line(&command, elapsed);
+
+        assert_eq!(
+            line,
+            "ajax-timing: git -C /repo/web fetch origin main with an argument list that goes past eighty chara… 1234ms"
+        );
+        assert!(line.contains(" 1234ms"));
+        assert!(line.contains('…'));
     }
 }

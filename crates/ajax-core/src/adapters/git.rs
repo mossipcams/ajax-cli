@@ -1,5 +1,8 @@
 use super::command::{CommandMode, CommandSpec};
 use crate::models::GitStatus;
+use std::time::Duration;
+
+const GIT_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitAdapter {
@@ -42,6 +45,7 @@ impl GitAdapter {
 
     pub fn fetch_origin_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
         CommandSpec::new(&self.program, ["-C", repo_path, "fetch", "origin", branch])
+            .with_timeout(GIT_FETCH_TIMEOUT)
     }
 
     pub fn add_worktree(
@@ -282,7 +286,7 @@ fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandMode, CommandSpec, GitAdapter};
+    use super::{CommandMode, CommandSpec, GitAdapter, GIT_FETCH_TIMEOUT};
 
     #[test]
     fn sync_default_branch_fetches_origin_ref_before_fast_forwarding_local_branch() {
@@ -291,6 +295,7 @@ mod tests {
         assert_eq!(
             adapter.fetch_origin_branch("/repos/web", "main"),
             CommandSpec::new("git", ["-C", "/repos/web", "fetch", "origin", "main"])
+                .with_timeout(GIT_FETCH_TIMEOUT)
         );
     }
 

@@ -563,7 +563,7 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
     assert_eq!(stderr(&output), "");
     assert_eq!(
         stdout(&output),
-        "exit:0\nstdout:fake git fetch\nstderr:\nexit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
+        "exit:0\nstdout:fake git fetch\nstderr:\nexit:0\nstdout:fake git worktree add\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nexit:0\nstdout:\nstderr:\nrecorded task: web/fix-login\n"
     );
     let lifecycle_log = std::fs::read_to_string(&lifecycle_log)
         .expect("fake lifecycle tools should record invocation");

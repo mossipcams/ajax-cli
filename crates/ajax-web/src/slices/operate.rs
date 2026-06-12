@@ -1,7 +1,7 @@
 //! Browser-submitted operator actions.
 
 use ajax_core::{
-    adapters::{CommandOutput, CommandRunError, CommandRunner},
+    adapters::{environment::origin_fetch_age, CommandOutput, CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
     models::{LifecycleStatus, OperatorAction, SideFlag},
     registry::Registry,
@@ -11,7 +11,7 @@ use ajax_core::{
             execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
             DropTaskCompletion,
         },
-        start::plan_start_task_operation,
+        start::plan_start_task_operation_with_observation,
         task_command::{
             execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
         },
@@ -101,8 +101,10 @@ pub fn start_task_with_checkpoint<R: Registry>(
         title: request.title,
         agent: request.agent,
     };
-    let (_intent, plan) = plan_start_task_operation(context, core_request.clone())
-        .map_err(|error| OperateError::Command(error, false))?;
+    let observation = start_plan_observation(context, &core_request);
+    let (_intent, plan) =
+        plan_start_task_operation_with_observation(context, core_request.clone(), observation)
+            .map_err(|error| OperateError::Command(error, false))?;
     let confirmed = !plan.requires_confirmation;
     ajax_core::task_operations::start::execute_start_task_operation_with_checkpoint(
         context,
@@ -119,6 +121,20 @@ pub fn start_task_with_checkpoint<R: Registry>(
         state_changed: true,
         output: format!("started task: {}", core_request.title),
     })
+}
+
+fn start_plan_observation<R: Registry>(
+    context: &CommandContext<R>,
+    request: &NewTaskRequest,
+) -> commands::StartPlanObservation {
+    let origin_fetch_age = context
+        .config
+        .repos
+        .iter()
+        .find(|repo| repo.name == request.repo)
+        .and_then(|repo| origin_fetch_age(&repo.path));
+
+    commands::StartPlanObservation { origin_fetch_age }
 }
 
 fn execute_task_command<R: Registry>(
@@ -611,9 +627,61 @@ mod tests {
         assert!(runner.commands().is_empty());
     }
 
+    #[test]
+    fn start_task_skips_fetch_when_origin_fetch_is_fresh() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-web-start-task-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let mut file = std::fs::File::create(root.join(".git/FETCH_HEAD")).unwrap();
+        use std::io::Write;
+        writeln!(file, "ref: origin/main").unwrap();
+        let mut context = context_with_repo_path(&root);
+        let mut runner = RecordingCommandRunner::default();
+
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "codex".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            runner
+                .commands()
+                .iter()
+                .all(|command| !command.args.iter().any(|arg| arg == "fetch")),
+            "unexpected fetch command: {:?}",
+            runner.commands()
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     fn context_with_managed_repo() -> CommandContext<InMemoryRegistry> {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        CommandContext::new(config, InMemoryRegistry::default())
+    }
+
+    fn context_with_repo_path(repo_path: &std::path::Path) -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new(
+                "web",
+                repo_path.display().to_string(),
+                "main",
+            )],
             ..Config::default()
         };
         CommandContext::new(config, InMemoryRegistry::default())
