@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.19.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.5...ajax-cli-v0.19.6) (2026-06-13)
+
+
+### Bug Fixes
+
+* generate graphify output per task worktree ([#172](https://github.com/mossipcams/ajax-cli/issues/172)) ([f4bae08](https://github.com/mossipcams/ajax-cli/commit/f4bae08acd9f8a0f0406390f5bde24871c88a843))
+
 ## [0.19.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.4...ajax-cli-v0.19.5) (2026-06-12)
 
 
