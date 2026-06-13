@@ -112,17 +112,18 @@ pub fn new_task_plan_with_observation<R: Registry>(
         plan.commands
             .push(git.fetch_origin_branch(&repo_path, &repo.default_branch));
     }
-    if let Some(graphify_update) = &repo.graphify_update {
-        let graphify_command = format!("({graphify_update}) >/dev/null 2>&1 &");
-        plan.commands
-            .push(CommandSpec::new("sh", ["-lc", graphify_command.as_str()]).with_cwd(&repo.path));
-    }
     plan.commands.push(git.add_worktree(
         &repo_path,
         &worktree_path_string,
         &branch,
         &format!("origin/{}", repo.default_branch),
     ));
+    if let Some(graphify_update) = &repo.graphify_update {
+        let graphify_command = format!("({graphify_update}) >/dev/null 2>&1 &");
+        plan.commands.push(
+            CommandSpec::new("sh", ["-lc", graphify_command.as_str()]).with_cwd(&worktree_path),
+        );
+    }
     plan.commands.push(tmux.new_detached_worktrunk_session(
         &tmux_session,
         "worktrunk",
@@ -512,9 +513,10 @@ fn agent_from_name(name: &str) -> AgentClient {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_git_worktree_add_command, mark_new_task_provisioning_step_completed, new_task_plan,
-        new_task_plan_with_observation, record_new_task, task_from_new_request, NewTaskRequest,
-        StartPlanObservation, StartProvisioningStep,
+        is_git_worktree_add_command, is_worktrunk_new_session_command,
+        mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
+        record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
+        StartProvisioningStep,
     };
     use crate::{
         adapters::{CommandSpec, GitAdapter},
@@ -809,17 +811,17 @@ mod tests {
 
         assert_eq!(plan.commands.len(), 6);
         assert_eq!(
-            plan.commands[1],
+            plan.commands[2],
             CommandSpec::new(
                 "sh",
                 ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
             )
-            .with_cwd("/repo/web")
+            .with_cwd("/repo/web__worktrees/ajax-fix-login")
         );
     }
 
     #[test]
-    fn new_task_plan_runs_graphify_update_in_repo_root_when_configured() {
+    fn new_task_plan_runs_graphify_update_in_new_worktree_when_configured() {
         let mut repo = ManagedRepo::new("web", "/repo/web", "main");
         repo.graphify_update = Some("graphify extract --update".to_string());
         let context = CommandContext::new(
@@ -839,14 +841,15 @@ mod tests {
 
         assert_eq!(plan.commands.len(), 6);
         assert_eq!(
-            plan.commands[1],
+            plan.commands[2],
             CommandSpec::new(
                 "sh",
                 ["-lc", "(graphify extract --update) >/dev/null 2>&1 &"]
             )
-            .with_cwd("/repo/web")
+            .with_cwd("/repo/web__worktrees/ajax-fix-login")
         );
-        assert!(is_git_worktree_add_command(&plan.commands[2]));
+        assert!(is_git_worktree_add_command(&plan.commands[1]));
+        assert!(is_worktrunk_new_session_command(&plan.commands[3]));
     }
 
     #[test]

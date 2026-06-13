@@ -1,4 +1,5 @@
 /target/
+graphify-out/
 .ajax-dev-web/
 node_modules/
 __pycache__/

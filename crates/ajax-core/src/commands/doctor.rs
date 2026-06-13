@@ -67,18 +67,18 @@ pub fn doctor_with_environment<R: Registry>(
             },
         });
 
-        if repo_path_exists {
+        if repo_path_exists && repo.graphify_update.is_some() {
             let graphify_out_gitignored = environment.graphify_out_gitignored(&repo.path);
             checks.push(DoctorCheck {
                 name: format!("repo:{}:graphify-out", repo.name),
-                ok: !graphify_out_gitignored,
+                ok: graphify_out_gitignored,
                 message: if graphify_out_gitignored {
+                    "graphify-out is gitignored".to_string()
+                } else {
                     format!(
-                        "graphify-out is gitignored in {}; add '!graphify-out/' to .gitignore so agents can use the repo graph",
+                        "graphify-out is not gitignored in {}; add 'graphify-out/' to .gitignore so generated graphs are not committed",
                         repo.path.display()
                     )
-                } else {
-                    "graphify-out is not gitignored".to_string()
                 },
             });
         }
