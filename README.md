@@ -189,10 +189,11 @@ the selected agent CLI are launched.
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
 
-Set `graphify_update` to refresh a per-repo knowledge graph at
-`<repo>/graphify-out/` during start. Keep `graphify-out` out of `.gitignore`
-(add `!graphify-out/` if needed) so agents can query it; `ajax doctor` reports
-repos where `graphify-out` is still ignored.
+Set `graphify_update` to generate a knowledge graph in each new task worktree
+during start. Ajax runs the configured command from the task worktree after
+`git worktree add` and detaches it so graph generation does not block agent
+startup. Add `graphify-out/` to the repo's `.gitignore`; `ajax doctor` reports
+Graphify-enabled repos where the generated output is not ignored.
 
 ## First Run
 
