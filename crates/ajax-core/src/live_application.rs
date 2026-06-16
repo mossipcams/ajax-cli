@@ -69,7 +69,7 @@ fn apply_reduced_observation(
     observed_at: SystemTime,
 ) {
     let refresh_activity = refreshes_activity(observation.kind);
-    let has_missing_substrate_flag = has_missing_substrate_flag(task);
+    let has_missing_substrate = has_persisting_missing_substrate(task);
     clear_recovered_live_flags(task, observation.kind);
 
     match observation.kind {
@@ -85,7 +85,7 @@ fn apply_reduced_observation(
         LiveStatusKind::AgentRunning
         | LiveStatusKind::CommandRunning
         | LiveStatusKind::TestsRunning => {
-            if has_missing_substrate_flag {
+            if has_missing_substrate {
                 task.agent_status = AgentRuntimeStatus::Dead;
                 task.remove_side_flag(SideFlag::AgentRunning);
             } else {
@@ -168,11 +168,24 @@ fn recovered_from_missing_substrate(task: &Task, next: LiveStatusKind) -> bool {
         .as_ref()
         .is_some_and(|status| status.kind.is_missing_substrate())
         && !next.is_missing_substrate()
-        && !has_missing_substrate_flag(task)
+        && !has_persisting_missing_substrate(task)
 }
 
-fn has_missing_substrate_flag(task: &Task) -> bool {
+fn has_persisting_missing_substrate(task: &Task) -> bool {
     task.side_flags().any(SideFlag::is_missing_substrate)
+        || task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
+        || task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists)
+        || task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+        || task.runtime_projection.health.is_missing_substrate()
 }
 
 fn clear_recovered_live_flags(task: &mut Task, kind: LiveStatusKind) {
@@ -354,6 +367,24 @@ mod tests {
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn running_observation_does_not_override_missing_tmux_fact_without_side_flag() {
+        let mut task = active_task();
+        task.tmux_status = Some(crate::models::TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "working"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
+        assert!(!task.has_side_flag(SideFlag::AgentRunning));
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     }
 
     #[test]

@@ -1,2 +1,11 @@
+pub mod cockpit;
+pub mod drop;
 pub mod pane;
+pub mod remediate;
+pub mod repair;
+pub mod resume;
 pub mod review;
+pub mod ship;
+pub mod start;
+mod task_action;
+pub mod tidy;

@@ -3,19 +3,12 @@
 use ajax_core::{
     adapters::{environment::origin_fetch_age, CommandOutput, CommandRunError, CommandRunner},
     commands::{self, CommandContext, CommandError, NewTaskRequest, OpenMode},
-    models::{LifecycleStatus, OperatorAction, SideFlag},
+    models::OperatorAction,
+    recommended::{task_action_decisions, RemediationId, TaskActionDecision, TaskActionId},
     registry::Registry,
-    remediation::{self, RemediationError},
-    task_operations::{
-        drop_task::{
-            execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
-            DropTaskCompletion,
-        },
-        start::plan_start_task_operation_with_observation,
-        task_command::{
-            execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-        },
-    },
+    slices::drop,
+    slices::remediate::{self, RemediationError},
+    slices::{repair, resume, review, ship},
 };
 
 use crate::adapters::skills::resolve_skill_path;
@@ -44,6 +37,10 @@ pub struct OperateOutcome {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OperateError {
     UnknownAction(String),
+    UnavailableAction {
+        action: TaskActionId,
+        reason: String,
+    },
     UnsupportedCapability(&'static str),
     Command(CommandError, bool),
 }
@@ -53,27 +50,59 @@ pub fn operate<R: Registry>(
     runner: &mut impl CommandRunner,
     request: OperateRequest,
 ) -> Result<OperateOutcome, OperateError> {
-    if remediation::is_remediation_action(&request.action) {
-        return run_remediation(context, runner, &request.task_handle, &request.action);
-    }
-
-    let Some(action) = OperatorAction::from_label(&request.action) else {
+    let Some(action_id) = TaskActionId::from_compatibility_label(&request.action) else {
         return Err(OperateError::UnknownAction(request.action));
     };
-
-    match action {
-        OperatorAction::Drop => execute_drop(context, runner, &request.task_handle, true),
-        OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
-            "resume requires native cockpit",
-        )),
-        OperatorAction::Start => Err(OperateError::UnsupportedCapability(
+    if action_id == TaskActionId::BuiltIn(OperatorAction::Start) {
+        return Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
-        )),
-        OperatorAction::Review | OperatorAction::Ship | OperatorAction::Repair => {
-            let kind = task_command_kind(action)?;
-            execute_task_command(context, runner, kind, &request.task_handle)
-        }
+        ));
     }
+    let decision = current_action_decision(context, &request.task_handle, action_id)?;
+    if !decision.is_available() {
+        return Err(OperateError::UnavailableAction {
+            action: action_id,
+            reason: decision.reason,
+        });
+    }
+
+    match action_id {
+        TaskActionId::Remediation(remediation_id) => {
+            run_remediation(context, runner, &request.task_handle, remediation_id)
+        }
+        TaskActionId::BuiltIn(action) => match action {
+            OperatorAction::Drop => execute_drop(context, runner, &request.task_handle, true),
+            OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
+                "resume requires native cockpit",
+            )),
+            OperatorAction::Start => unreachable!("start is handled before task decision lookup"),
+            OperatorAction::Review | OperatorAction::Ship | OperatorAction::Repair => {
+                execute_task_command(context, runner, action, &request.task_handle)
+            }
+        },
+    }
+}
+
+fn current_action_decision<R: Registry>(
+    context: &CommandContext<R>,
+    task_handle: &str,
+    action_id: TaskActionId,
+) -> Result<TaskActionDecision, OperateError> {
+    let task = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+        .ok_or_else(|| {
+            OperateError::Command(CommandError::TaskNotFound(task_handle.to_string()), false)
+        })?;
+    task_action_decisions(task)
+        .into_iter()
+        .find(|decision| decision.id == action_id)
+        .ok_or_else(|| OperateError::UnavailableAction {
+            action: action_id,
+            reason: "action is no longer available".to_string(),
+        })
 }
 
 pub fn start_task<R: Registry>(
@@ -103,10 +132,10 @@ pub fn start_task_with_checkpoint<R: Registry>(
     };
     let observation = start_plan_observation(context, &core_request);
     let (_intent, plan) =
-        plan_start_task_operation_with_observation(context, core_request.clone(), observation)
+        ajax_core::slices::start::plan_with_observation(context, core_request.clone(), observation)
             .map_err(|error| OperateError::Command(error, false))?;
     let confirmed = !plan.requires_confirmation;
-    ajax_core::task_operations::start::execute_start_task_operation_with_checkpoint(
+    ajax_core::slices::start::execute_with_checkpoint(
         context,
         runner,
         &core_request,
@@ -140,26 +169,26 @@ fn start_plan_observation<R: Registry>(
 fn execute_task_command<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
-    kind: TaskCommandKind,
+    action: OperatorAction,
     task_handle: &str,
 ) -> Result<OperateOutcome, OperateError> {
     if matches!(
-        kind,
-        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
+        action,
+        OperatorAction::Resume | OperatorAction::Review | OperatorAction::Repair
     ) {
         let _ = commands::refresh_git_substrate_evidence(context, runner);
     }
 
-    let open_mode = if matches!(kind, TaskCommandKind::Resume | TaskCommandKind::Repair) {
+    let open_mode = if matches!(action, OperatorAction::Resume | OperatorAction::Repair) {
         OpenMode::NoAttach
     } else {
         OpenMode::Attach
     };
-    let plan = plan_task_command_operation(context, kind, task_handle, open_mode)
+    let plan = plan_task_action(context, action, task_handle, open_mode)
         .map_err(|error| OperateError::Command(error, false))?;
     let confirmed = !plan.requires_confirmation;
     let (outputs, state_changed) =
-        execute_task_command_operation(context, kind, task_handle, &plan, confirmed, runner)
+        execute_task_action(context, action, task_handle, &plan, confirmed, runner)
             .map_err(|(error, state_changed)| OperateError::Command(error, state_changed))?;
 
     Ok(OperateOutcome {
@@ -174,14 +203,8 @@ fn execute_drop<R: Registry>(
     task_handle: &str,
     confirmed: bool,
 ) -> Result<OperateOutcome, OperateError> {
-    let confirmation_plan = plan_drop_confirmation(context, task_handle)
+    let confirmation_plan = drop::plan_confirmation(context, task_handle)
         .map_err(|error| OperateError::Command(error, false))?;
-    if !confirmation_plan.blocked_reasons.is_empty() {
-        return Err(OperateError::Command(
-            CommandError::PlanBlocked(confirmation_plan.blocked_reasons),
-            false,
-        ));
-    }
 
     let task = context
         .registry
@@ -192,44 +215,28 @@ fn execute_drop<R: Registry>(
             OperateError::Command(CommandError::TaskNotFound(task_handle.to_string()), false)
         })?;
 
-    let resuming_incomplete = task.lifecycle_status == LifecycleStatus::TeardownIncomplete;
-    let can_observe_before_confirmation = matches!(
-        task.lifecycle_status,
-        LifecycleStatus::Merged | LifecycleStatus::Cleanable
-    ) && !task.has_side_flag(SideFlag::Dirty)
-        && !task.has_side_flag(SideFlag::Conflicted)
-        && !task.has_side_flag(SideFlag::Unpushed)
-        && task.git_status.as_ref().is_none_or(|status| {
-            !status.dirty && !status.conflicted && status.unpushed_commits == 0
-        });
+    let operation_confirmed = ajax_core::slices::drop::resolve_execution_confirmation(
+        task,
+        &confirmation_plan,
+        confirmed,
+    )
+    .map_err(|error| OperateError::Command(error, false))?;
 
-    if confirmation_plan.requires_confirmation
-        && !confirmed
-        && !resuming_incomplete
-        && !can_observe_before_confirmation
-    {
-        return Err(OperateError::Command(
-            CommandError::ConfirmationRequired,
-            false,
-        ));
-    }
-
-    let operation = plan_drop_task_operation(context, task_handle, runner)
+    let operation = drop::plan_operation(context, task_handle, runner)
         .map_err(|error| OperateError::Command(error, false))?;
-    let operation_confirmed = confirmed || resuming_incomplete || can_observe_before_confirmation;
     let (outputs, completion) =
-        execute_drop_task_operation(context, task_handle, operation, operation_confirmed, runner)
+        drop::execute(context, task_handle, operation, operation_confirmed, runner)
             .map_err(|error| OperateError::Command(error, true))?;
 
     let output = match completion {
-        DropTaskCompletion::Removed => {
+        ajax_core::slices::drop::DropTaskCompletion::Removed => {
             if outputs.is_empty() {
                 format!("removed task: {task_handle}")
             } else {
                 format_execution_outputs(&outputs)
             }
         }
-        DropTaskCompletion::TeardownIncomplete {
+        ajax_core::slices::drop::DropTaskCompletion::TeardownIncomplete {
             failed_step,
             detail,
         } => {
@@ -255,14 +262,41 @@ fn execute_drop<R: Registry>(
     })
 }
 
-fn task_command_kind(action: OperatorAction) -> Result<TaskCommandKind, OperateError> {
+fn plan_task_action<R: Registry>(
+    context: &CommandContext<R>,
+    action: OperatorAction,
+    task_handle: &str,
+    open_mode: OpenMode,
+) -> Result<ajax_core::use_cases::CommandPlan, CommandError> {
     match action {
-        OperatorAction::Review => Ok(TaskCommandKind::Review),
-        OperatorAction::Ship => Ok(TaskCommandKind::Ship),
-        OperatorAction::Repair => Ok(TaskCommandKind::Repair),
-        OperatorAction::Resume => Ok(TaskCommandKind::Resume),
-        OperatorAction::Start | OperatorAction::Drop => Err(OperateError::UnsupportedCapability(
-            "action is handled by a dedicated web operation",
+        OperatorAction::Resume => resume::plan(context, task_handle, open_mode),
+        OperatorAction::Review => review::plan(context, task_handle),
+        OperatorAction::Repair => repair::plan(context, task_handle, open_mode),
+        OperatorAction::Ship => ship::plan(context, task_handle),
+        OperatorAction::Start | OperatorAction::Drop => Err(CommandError::PlanBlocked(vec![
+            "action is handled by a dedicated web operation".to_string(),
+        ])),
+    }
+}
+
+fn execute_task_action<R: Registry>(
+    context: &mut CommandContext<R>,
+    action: OperatorAction,
+    task_handle: &str,
+    plan: &ajax_core::use_cases::CommandPlan,
+    confirmed: bool,
+    runner: &mut impl CommandRunner,
+) -> Result<(Vec<CommandOutput>, bool), (CommandError, bool)> {
+    match action {
+        OperatorAction::Resume => resume::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Review => review::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Repair => repair::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Ship => ship::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Start | OperatorAction::Drop => Err((
+            CommandError::PlanBlocked(vec![
+                "action is handled by a dedicated web operation".to_string()
+            ]),
+            false,
         )),
     }
 }
@@ -288,17 +322,16 @@ fn run_remediation<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
     task_handle: &str,
-    remediation_id: &str,
+    remediation_id: RemediationId,
 ) -> Result<OperateOutcome, OperateError> {
     let skill_name = match remediation_id {
-        remediation::FIX_CI => "gh-fix-ci",
-        remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
-        _ => return Err(OperateError::UnknownAction(remediation_id.to_string())),
+        RemediationId::FixCi => "gh-fix-ci",
+        RemediationId::ResolveMergeConflicts => "resolve-merge-conflicts",
     };
     let skill_path = resolve_skill_path(skill_name).ok_or(OperateError::UnsupportedCapability(
         "required agent skill is not installed on the companion host",
     ))?;
-    let outcome = remediation::execute_remediation(
+    let outcome = remediate::execute_remediation(
         context,
         runner,
         task_handle,
@@ -331,6 +364,7 @@ fn remediation_error_to_operate(error: RemediationError) -> OperateError {
 pub fn format_operate_error(error: &OperateError) -> String {
     match error {
         OperateError::UnknownAction(action) => format!("unknown action: {action}"),
+        OperateError::UnavailableAction { reason, .. } => reason.clone(),
         OperateError::UnsupportedCapability(message) => (*message).to_string(),
         OperateError::Command(error, _) => format_command_error(error),
     }
@@ -358,8 +392,10 @@ mod tests {
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{
-            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId, TmuxStatus,
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Task,
+            TaskId, TmuxStatus,
         },
+        recommended::{RemediationId, TaskActionId},
         registry::{InMemoryRegistry, Registry},
     };
 
@@ -405,6 +441,57 @@ mod tests {
             OperateError::UnsupportedCapability("resume requires native cockpit")
         );
         assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn web_operate_rejects_core_unavailable_action_with_same_reason() {
+        let mut context = context_with_reviewable_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .lifecycle_status = LifecycleStatus::Active;
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "ship".to_string(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            OperateError::UnavailableAction {
+                action: TaskActionId::BuiltIn(OperatorAction::Ship),
+                reason: "merge requires reviewable or mergeable lifecycle".to_string(),
+            }
+        );
+        assert!(runner.commands().is_empty());
+    }
+
+    #[test]
+    fn web_operate_reports_needs_terminal_for_core_available_resume() {
+        let mut context = context_with_reviewable_task();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "resume".to_string(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            OperateError::UnsupportedCapability("resume requires native cockpit")
+        );
     }
 
     #[test]
@@ -476,6 +563,14 @@ mod tests {
         assert!(!outcome.state_changed);
         assert!(outcome.output.contains("Fix CI"));
         assert_eq!(runner.commands().len(), 1);
+    }
+
+    #[test]
+    fn web_operate_dispatches_available_remediation_through_task_action_id() {
+        assert_eq!(
+            TaskActionId::from_compatibility_label(remediation::FIX_CI),
+            Some(TaskActionId::Remediation(RemediationId::FixCi))
+        );
     }
 
     #[test]

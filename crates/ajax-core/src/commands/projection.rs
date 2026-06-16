@@ -1,16 +1,13 @@
 use crate::{
-    attention::annotate,
     models::{Annotation, LifecycleStatus, Task},
     output::{
-        CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse, ReposResponse, TaskCard,
-        TaskSummary, TasksResponse,
+        CockpitNextStep, CockpitProjection, CockpitSummary, ComposedTaskProjection, InboxResponse,
+        ReposResponse, TaskCard, TaskSummary, TasksResponse,
     },
-    recommended::{available_operator_actions, operator_action},
-    remediation::remediations_for_task,
     ui_state::derive_operator_status,
 };
 
-pub(super) fn cockpit_summary(
+pub(crate) fn cockpit_summary(
     repos: &ReposResponse,
     tasks: &TasksResponse,
     review: &TasksResponse,
@@ -26,14 +23,14 @@ pub(super) fn cockpit_summary(
     }
 }
 
-pub(super) fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
+pub(crate) fn count_lifecycle(tasks: &[&Task], status: LifecycleStatus) -> u32 {
     tasks
         .iter()
         .filter(|task| task.lifecycle_status == status)
         .count() as u32
 }
 
-pub(super) fn count_active_tasks(tasks: &[&Task]) -> u32 {
+pub(crate) fn count_active_tasks(tasks: &[&Task]) -> u32 {
     tasks
         .iter()
         .filter(|task| {
@@ -42,7 +39,7 @@ pub(super) fn count_active_tasks(tasks: &[&Task]) -> u32 {
         .count() as u32
 }
 
-pub(super) fn count_attention_items(tasks: &[&Task]) -> u32 {
+pub(crate) fn count_attention_items(tasks: &[&Task]) -> u32 {
     tasks
         .iter()
         .filter(|task| {
@@ -55,61 +52,57 @@ pub(super) fn count_attention_items(tasks: &[&Task]) -> u32 {
         .count() as u32
 }
 
-pub(super) fn is_visible_task(task: &Task) -> bool {
+pub(crate) fn is_visible_task(task: &Task) -> bool {
     task.lifecycle_status != LifecycleStatus::Removed
 }
 
-pub(super) fn is_cockpit_menu_task(task: &Task) -> bool {
+pub(crate) fn is_cockpit_menu_task(task: &Task) -> bool {
     crate::ghost_task::is_cockpit_visible_task(task)
 }
 
-pub(super) fn task_summary(task: &Task) -> TaskSummary {
-    let operator_status = derive_operator_status(task);
+pub(crate) fn task_summary(task: &Task) -> TaskSummary {
+    let projection = ComposedTaskProjection::build(task);
     TaskSummary {
         id: task.id.as_str().to_string(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
         lifecycle_status: format!("{:?}", task.lifecycle_status),
-        status: operator_status.status,
-        status_explanation: operator_status.explanation.clone(),
-        status_label: operator_status.status.as_str().to_string(),
-        runtime_observation_error: task.runtime_projection.observation_error.clone(),
-        needs_attention: !annotate(task).is_empty(),
+        status: projection.status,
+        status_explanation: projection.status_explanation,
+        status_label: projection.status.as_str().to_string(),
+        runtime_observation_error: projection.runtime_observation_error,
+        needs_attention: !projection.annotations.is_empty(),
         live_status: task.live_status.clone(),
-        actions: task_actions(task),
+        actions: projection
+            .action_plan
+            .available_actions
+            .iter()
+            .map(|action| action.as_str().to_string())
+            .collect(),
     }
 }
 
-fn task_actions(task: &Task) -> Vec<String> {
-    available_operator_actions(task)
-        .into_iter()
-        .map(|action| action.as_str().to_string())
-        .collect()
-}
-
-pub(super) fn task_card(task: &Task) -> TaskCard {
-    let operator_status = derive_operator_status(task);
-    let plan = operator_action(task);
-    let annotations = annotations_for_task(task);
+pub(crate) fn task_card(task: &Task) -> TaskCard {
+    let projection = ComposedTaskProjection::build(task);
     TaskCard {
         id: task.id.clone(),
         qualified_handle: task.qualified_handle(),
         title: task.title.clone(),
-        status: operator_status.status,
-        status_explanation: operator_status.explanation.clone(),
+        status: projection.status,
+        status_explanation: projection.status_explanation,
         lifecycle: task.lifecycle_status,
-        annotations,
-        primary_action: plan.action,
-        available_actions: plan.available_actions,
-        remediations: remediations_for_task(task),
+        annotations: projection.annotations,
+        primary_action: projection.action_plan.action,
+        available_actions: projection.action_plan.available_actions,
+        remediations: projection.remediations,
     }
 }
 
-pub(super) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
-    annotate(task)
+pub(crate) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
+    ComposedTaskProjection::build(task).annotations
 }
 
-pub(super) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> CockpitProjection {
+pub(crate) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> CockpitProjection {
     let visible: Vec<&Task> = tasks
         .iter()
         .copied()
@@ -152,8 +145,8 @@ mod tests {
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
-            AgentClient, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveObservation,
-            LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, Task, TaskId,
+            AgentClient, AnnotationKind, LifecycleStatus, LiveObservation, LiveStatusKind,
+            OperatorAction, RuntimeObservationSource, SideFlag, Task, TaskId,
         },
         output::CockpitSummary,
         remediation::{FIX_CI, RESOLVE_MERGE_CONFLICTS},
@@ -190,7 +183,6 @@ mod tests {
         let mut task = task("review");
         mark_active(&mut task).unwrap();
         mark_reviewable(&mut task).unwrap();
-        task.annotations = crate::attention::annotate(&task);
 
         let card = task_card(&task);
 
@@ -203,7 +195,6 @@ mod tests {
     fn cockpit_projection_drops_parallel_attention_list() {
         let mut task = task("review");
         task.lifecycle_status = LifecycleStatus::Reviewable;
-        task.annotations = crate::attention::annotate(&task);
         let tasks = vec![&task];
 
         let projection = cockpit_projection(tasks.as_slice(), summary());
@@ -269,7 +260,6 @@ mod tests {
         let mut review_task = task("review");
         mark_active(&mut review_task).unwrap();
         mark_reviewable(&mut review_task).unwrap();
-        review_task.annotations = crate::attention::annotate(&review_task);
 
         let card = task_card(&review_task);
 
@@ -337,10 +327,6 @@ mod tests {
     fn current_empty_annotations_do_not_fall_back_to_stale_cached_annotations() {
         let mut task = task("running");
         mark_active(&mut task).unwrap();
-        task.annotations = vec![Annotation::new(
-            AnnotationKind::NeedsMe,
-            Evidence::SideFlag(SideFlag::NeedsInput),
-        )];
 
         let annotations = super::annotations_for_task(&task);
 
@@ -380,10 +366,6 @@ mod tests {
         let mut task = task("review");
         mark_active(&mut task).unwrap();
         mark_reviewable(&mut task).unwrap();
-        task.annotations = vec![Annotation::new(
-            AnnotationKind::NeedsMe,
-            Evidence::SideFlag(SideFlag::NeedsInput),
-        )];
 
         let card = task_card(&task);
 

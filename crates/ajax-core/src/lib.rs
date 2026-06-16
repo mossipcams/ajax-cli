@@ -4,15 +4,16 @@ pub mod adapters;
 pub mod agent_prompt;
 pub mod analysis;
 pub mod attention;
+mod capability_policy;
 pub mod commands;
 pub mod config;
 pub mod events;
+mod external_plan;
 pub mod ghost_task;
 pub mod lifecycle;
 pub mod live;
 mod live_application;
 pub mod models;
-pub mod operation;
 pub mod output;
 pub mod policy;
 pub mod recommended;
@@ -21,13 +22,15 @@ pub mod remediation;
 pub mod runtime;
 pub mod runtime_refresh;
 pub mod slices;
-pub mod task_operations;
 pub mod ui_state;
 pub mod use_cases;
 pub mod validity;
 
 #[cfg(test)]
 mod architecture;
+
+#[cfg(test)]
+mod operation_regression_tests;
 
 #[cfg(test)]
 mod tests {

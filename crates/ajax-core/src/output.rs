@@ -1,6 +1,9 @@
 use crate::{
     config::{Config, ManagedRepo},
-    models::{Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskId},
+    models::{
+        Annotation, LifecycleStatus, LiveObservation, OperatorAction, Task, TaskFacts, TaskId,
+    },
+    recommended::{OperatorActionPlan, TaskActionDecision},
     registry::{Registry, RegistryEvent},
     remediation::RemediationOption,
     ui_state::TaskStatus,
@@ -19,6 +22,34 @@ pub struct TaskCard {
     pub primary_action: OperatorAction,
     pub available_actions: Vec<OperatorAction>,
     pub remediations: Vec<RemediationOption>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ComposedTaskProjection {
+    pub facts: TaskFacts,
+    pub status: TaskStatus,
+    pub status_explanation: Option<String>,
+    pub annotations: Vec<Annotation>,
+    pub action_plan: OperatorActionPlan,
+    pub action_decisions: Vec<TaskActionDecision>,
+    pub remediations: Vec<RemediationOption>,
+    pub runtime_observation_error: Option<String>,
+}
+
+impl ComposedTaskProjection {
+    pub fn build(task: &Task) -> Self {
+        let operator_status = crate::ui_state::derive_operator_status(task);
+        Self {
+            facts: task.facts(),
+            status: operator_status.status,
+            status_explanation: operator_status.explanation,
+            annotations: crate::attention::annotate(task),
+            action_plan: crate::recommended::operator_action(task),
+            action_decisions: crate::recommended::task_action_decisions(task),
+            remediations: crate::slices::remediate::remediations_for_task(task),
+            runtime_observation_error: task.runtime_projection.observation_error.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

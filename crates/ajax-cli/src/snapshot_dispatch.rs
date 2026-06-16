@@ -1,12 +1,14 @@
 use ajax_core::{
-    commands::{self, CommandContext},
+    commands::{self},
     config::{
         RuntimePathField, RuntimePathOverride, RuntimePathSource, RuntimePaths, WorktreePlacement,
     },
     output::{state_export_json_snapshot, DoctorCheck},
     registry::InMemoryRegistry,
-    task_operations::drop_task::plan_drop_confirmation,
-    task_operations::task_command::{plan_task_command_operation, TaskCommandKind},
+    slices::cockpit,
+    slices::drop,
+    slices::{repair, resume, review, ship, start, tidy},
+    use_cases::CommandContext,
 };
 use clap::ArgMatches;
 
@@ -35,12 +37,12 @@ pub(crate) fn render_matches_with_paths(
 ) -> Result<String, CliError> {
     match matches.subcommand() {
         Some(("repos", subcommand)) => render_response(
-            commands::list_repos(context),
+            cockpit::list_repos(context),
             subcommand.get_flag("json"),
             render_repos_human,
         ),
         Some(("tasks", subcommand)) => render_response(
-            commands::list_tasks(
+            cockpit::list_tasks(
                 context,
                 subcommand.get_one::<String>("repo").map(String::as_str),
             ),
@@ -52,61 +54,52 @@ pub(crate) fn render_matches_with_paths(
                 .get_one::<String>("task")
                 .map(String::as_str)
                 .unwrap_or_default();
-            let response = commands::inspect_task(context, task).map_err(command_error)?;
+            let response = cockpit::inspect_task(context, task).map_err(command_error)?;
             render_response(response, subcommand.get_flag("json"), render_inspect_human)
         }
         Some(("start", subcommand)) => {
             let request = new_task_request(subcommand)?;
-            let plan = commands::new_task_plan(context, request).map_err(command_error)?;
+            let (_intent, plan) = start::plan(context, request).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("resume", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::open_task_plan(context, task, current_open_mode())
-                .map_err(command_error)?;
+            let plan = resume::plan(context, task, current_open_mode()).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("repair", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = plan_task_command_operation(
-                context,
-                TaskCommandKind::Repair,
-                task,
-                current_open_mode(),
-            )
-            .map_err(command_error)?;
+            let plan = repair::plan(context, task, current_open_mode()).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("review", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::diff_task_plan(context, task).map_err(command_error)?;
+            let plan = review::plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("ship", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = commands::merge_task_plan(context, task).map_err(command_error)?;
+            let plan = ship::plan(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
         Some(("drop", subcommand)) => {
             let task = task_arg(subcommand)?;
-            let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
+            let plan = drop::plan_confirmation(context, task).map_err(command_error)?;
             render_readonly_plan(plan, subcommand)
         }
-        Some(("tidy", subcommand)) => {
-            render_readonly_plan(commands::sweep_cleanup_plan(context), subcommand)
-        }
+        Some(("tidy", subcommand)) => render_readonly_plan(tidy::plan(context), subcommand),
         Some(("next", subcommand)) => render_response(
-            commands::next(context),
+            cockpit::next(context),
             subcommand.get_flag("json"),
             render_next_human,
         ),
         Some(("inbox", subcommand)) => render_response(
-            commands::inbox(context),
+            cockpit::inbox(context),
             subcommand.get_flag("json"),
             render_inbox_human,
         ),
         Some(("ready", subcommand)) => render_response(
-            commands::review_queue(context),
+            cockpit::review_queue(context),
             subcommand.get_flag("json"),
             render_tasks_human,
         ),
@@ -118,7 +111,7 @@ pub(crate) fn render_matches_with_paths(
             render_response(response, subcommand.get_flag("json"), render_doctor_human)
         }
         Some(("status", subcommand)) => render_response(
-            commands::status(context),
+            cockpit::status(context),
             subcommand.get_flag("json"),
             render_tasks_human,
         ),

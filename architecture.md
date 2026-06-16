@@ -28,7 +28,7 @@ Owns the native Cockpit interface over `ajax-core` JSON-backed responses.
 
 Owns the browser Cockpit adapter: HTTP routing, browser shell assets, browser
 API DTOs, local HTTPS identity, and Web Cockpit server wiring. It is a
-presentation adapter over `ajax-core` Cockpit projections and task-operation
+presentation adapter over `ajax-core` Cockpit projections and capability slice
 contracts, not a second task domain.
 
 ### `ajax-supervisor`
@@ -43,11 +43,13 @@ Ajax coordinates external tools but does not replace them.
 - Git owns repository truth, branches, merges, and worktrees.
 - tmux owns durable interactive sessions.
 - Agent CLIs are opaque workers.
-- SQLite stores Ajax registry state as Ajax-owned task intent, task events, and
-  cached projections. It is durable storage for Ajax facts and a fast read
-  model, not the source of truth for Git, tmux, or process reality.
+- SQLite stores Ajax registry state as Ajax-owned task intent, task events,
+  source-tagged substrate observations, selected-agent runtime evidence, typed
+  operation conditions, and step receipts. It is durable storage for Ajax facts
+  and a fast read model, not the source of truth for Git, tmux, or process
+  reality.
 
-Ajax owns task intent, task lifecycle decisions, naming, policy, task operation
+Ajax owns task intent, task lifecycle decisions, naming, policy, operation
 history, live projection, command plans, and registry state.
 
 ## Task Authority Model
@@ -72,10 +74,13 @@ composition of:
   explanation; lifecycle and annotations remain separate typed inputs rather
   than additional visible statuses.
 
-SQLite may cache substrate observations and projections so commands and Cockpit
-can render quickly. Cached substrate evidence must be treated as staleable
-evidence, not authority. Git, tmux, and supervised processes remain the
-authoritative sources for their own reality.
+SQLite persists source-tagged substrate observations, selected-agent runtime
+evidence, typed durable operation conditions, events, and receipts so commands
+and Cockpit can render quickly. Persisted substrate evidence must be treated as
+staleable evidence, not authority. Git, tmux, and supervised processes remain
+the authoritative sources for their own reality. Runtime health, live status,
+annotations, operator status, and recommended actions are derived from the
+canonical evidence at projection boundaries.
 
 Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence. Hook files and pane text are observational hints. When sources
@@ -89,52 +94,42 @@ ignores hooks); and an agent-aware, busy-first pane fallback runs only when
 stronger evidence is absent or stale. Equal timestamps break to source priority,
 then to busy-over-waiting-over-approval; malformed values never participate.
 
-## Task Operations
+## Capability Slices
 
-Task operations are the backend transaction boundary for operator actions. They
-plan external effects, apply operation evidence, and return typed outcomes that
-CLI and Cockpit render.
+Capability slices are the backend transaction boundary for operator actions.
+They plan external effects, apply operation evidence, and return typed outcomes
+that CLI and Cockpit render.
 
-Mutable task operations use local-first reconciliation and step receipts. Before
-planning or retrying a destructive or provisioning command, Ajax should observe
-the relevant substrates and build the next command from fresh evidence. After a
+Mutable capability slices use local-first reconciliation and step receipts.
+Before planning or retrying a destructive or provisioning command, Ajax observes
+the relevant substrates and builds the next command from fresh evidence. After a
 successful external side effect, Ajax records a named step receipt in SQLite.
 Receipts are Ajax-owned evidence that an operation step succeeded or was skipped
 because the substrate was already in the desired state. They are not authority
 over Git, tmux, or process reality; retries still re-observe those substrates
 before deciding what to skip or repair.
 
-The task operation boundary now owns the main mutable task actions:
+`ajax-core::slices` owns the operator capabilities:
 
-- Start operation planning returns `TaskIntent` plus the external command plan
-  without mutating the registry. Start planning uses fresh origin-fetch
-  evidence to skip redundant remote fetches when it is recent enough, and the
-  task-session launch shell folds husky/bootstrap setup into the agent launch
-  line rather than serializing them as standalone critical-path commands.
-- Start operation execution records the task, applies named provisioning steps,
-  records step receipts for successful provisioning side effects, marks
-  provisioning failure in core with failed-step metadata, and opens the task
-  after successful setup.
-- Single-task command operations plan and execute `resume`, `review`, `repair`,
-  and `ship` from core. CLI and Cockpit provide runner and rendering adapters;
-  core owns post-execution reducers such as opened, merged, repair/check
-  succeeded, and merge/check failure state.
-- Drop operation planning starts from fresh substrate observation and produces
-  `DropOp`s from observed resources rather than cached registry fields alone.
-- Confirmed worktree teardown renames the worktree into a sibling
-  `.ajax-trash` entry, prunes, and deletes in the background; `tidy` sweeps
-  stale trash entries left behind by interrupted cleanup.
-- Drop execution runs teardown ops, records step evidence, re-observes external
-  resources, records receipts for successful or already-satisfied cleanup steps,
-  and decides `Removed` versus `TeardownIncomplete` from the final observation
-  inside core.
-- Sweep cleanup (`tidy`) is a batch operation that plans safe cleanup
-  candidates, executes each candidate, sweeps stale `.ajax-trash` entries per
-  worktree root, marks completed cleanup state, and reports whether an error
-  happened after partial state changes.
+- `start` plans task intent and provisioning commands, records the task, records
+  successful provisioning receipts, marks provisioning failures, and opens the
+  task after successful setup.
+- `resume`, `review`, `repair`, and `ship` own their per-task planning,
+  execution-time revalidation, and post-execution reducers.
+- `drop` starts from fresh substrate observation, plans teardown from observed
+  resources, records receipts, re-observes resources, and decides `Removed`
+  versus `TeardownIncomplete` from final evidence.
+- `tidy` plans safe cleanup candidates, executes cleanup, sweeps stale
+  `.ajax-trash` entries, marks completed cleanup state, and reports partial
+  failures.
+- `remediate` owns skill-backed remediation selection, briefing, and execution
+  revalidation.
+- `pane` owns guarded prompt capture and answering; prompt answers are not task
+  actions.
+- `cockpit` owns core Cockpit read projections.
 
-Command modules still expose substrate-oriented planning helpers. Task
-operations compose those helpers into vertical operator transactions.
+Command modules expose substrate-oriented planning helpers only. Capability
+slices compose those helpers into vertical operator transactions.
 
 ## Core Architecture
 
@@ -202,7 +197,7 @@ substrate are pruned as ghosts.
 
 Lifecycle state is modeled in `ajax-core::lifecycle`. Lifecycle answers where
 the task is in the operator workflow; it does not encode transient agent
-attention. Task operations and trusted process terminal events request
+attention. Capability slices and trusted process terminal events request
 lifecycle transitions through the lifecycle boundary. Ordinary pane text,
 hooks, prompts, blockers, probe failures, and missing-resource observations
 update runtime evidence and attention without changing lifecycle. A trusted
@@ -309,7 +304,7 @@ shell/process state. Reviewable and mergeable lifecycle also remain intact so
 their valid Review or Ship capabilities survive acknowledgment.
 
 Agent-deck inspired this status model, but Ajax retains its own lifecycle,
-substrate, task-operation, and operator-projection boundaries.
+substrate, capability slice, and operator-projection boundaries.
 
 `ui_state::derive_operator_status` is the single operator-facing reduction over
 lifecycle, runtime health, freshness/probe errors, live status, and
@@ -320,18 +315,19 @@ Cleanup/terminal lifecycles (`Merged`, `Cleanable`, `Removing`, and hidden
 `Removed`) remain idle unless current error or running evidence overrides them.
 
 Lifecycle remains workflow authority. Annotations remain typed attention and
-diagnostic evidence. Operation eligibility and action policy remain capability
+diagnostic evidence. Action decisions and action policy remain capability
 authority. Cockpit inbox membership is derived from canonical `Waiting` and
 `Error` status, while Review, Ship, Drop, and remediation availability continue
-to follow lifecycle, operation eligibility, and policy. CLI and Native Cockpit
-consume the canonical pair directly. Compatibility CLI JSON may retain
+to follow slice-owned eligibility and policy. CLI and Native Cockpit consume the
+canonical pair directly. Compatibility CLI JSON may retain
 `status_label` as the compact canonical enum label and annotation-based
 `needs_attention`; neither field is derived from a second UI-state reducer.
 
-Core remains browser-agnostic. It may expose Cockpit projections, action policy,
-task-operation outcomes, runtime reconciliation, and typed output contracts that
-the browser shell consumes, but it must not own HTTP routes, static web assets,
-service workers, TLS identity files, browser storage, or web server lifecycle.
+Core remains browser-agnostic. It may expose Cockpit projections, action
+decisions, capability outcomes, runtime reconciliation, and typed output
+contracts that the browser shell consumes, but it must not own HTTP routes,
+static web assets, service workers, TLS identity files, browser storage, or web
+server lifecycle.
 
 ## Command Architecture
 
@@ -361,7 +357,7 @@ still carry substrate-oriented names where they wrap the underlying git, tmux,
 or test-command operation.
 
 Runtime profile names such as `stable` and `dev` are runtime selections, not
-task-operation commands or separate operator domains.
+operator commands or separate operator domains.
 
 ## Adapter Architecture
 
@@ -430,15 +426,15 @@ vocabulary remains operator-facing.
 ## Web Cockpit Architecture
 
 `ajax-web` is the browser Cockpit adapter. It is a vertical presentation adapter
-over the same Cockpit projection and task-operation contracts used by Native
+over the same Cockpit projection and capability contracts used by Native
 Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
 Web Cockpit is a first-class browser operator surface, but it is intentionally a
 dashboard rather than a terminal mirror. Native Cockpit and Web Cockpit consume
-shared Cockpit projections and task-operation contracts; neither surface owns
-task truth. The browser experience should lead with task state, required
+shared Cockpit projections and capability contracts; neither surface owns task
+truth. The browser experience should lead with task state, required
 decisions, and next actions, while raw pane text stays secondary and
 collapsible.
 
@@ -635,10 +631,9 @@ each successful provisioning receipt. The CLI Web adapter persists those
 checkpoints before later external effects, so interrupted starts remain
 observable and resumable.
 
-Ship, tidy, and drop task operations refresh or re-observe substrates in
-`ajax-core::task_operations` before planning destructive work. Web and CLI
-surfaces delegate to these core operations rather than duplicating preflight
-logic.
+Ship, tidy, and drop capability slices refresh or re-observe substrates before
+planning destructive work. Web and CLI surfaces delegate to these core slice
+facades rather than duplicating preflight logic.
 
 The browser shell consumes the same Cockpit view model as the native TUI.
 Browser-specific DTOs may be narrower or differently named, but they are

@@ -1,16 +1,11 @@
-#[cfg(test)]
-use ajax_core::task_operations::start::execute_start_task_operation;
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
     models::{OperatorAction, TaskId},
+    recommended::{task_action_decisions, RemediationId, TaskActionId},
     registry::{InMemoryRegistry, Registry},
-    remediation::{self, RemediationError},
-    task_operations::drop_task::plan_drop_confirmation,
-    task_operations::start::plan_start_task_operation,
-    task_operations::task_command::{
-        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-    },
+    slices::remediate::{self, RemediationError},
+    slices::{cockpit, drop, repair, resume, review, ship, start},
 };
 
 #[cfg(test)]
@@ -69,11 +64,12 @@ fn tui_cockpit_action_with_confirmation(
     confirmed: bool,
 ) -> std::io::Result<ajax_tui::ActionOutcome> {
     let handle = &item.task_handle;
+    validate_task_action(context, handle, &item.action)?;
     let action = OperatorAction::from_label(item.action.as_str());
 
     match action {
         Some(OperatorAction::Drop) => {
-            let plan = plan_drop_confirmation(context, handle).map_err(command_error_as_io)?;
+            let plan = drop::plan_confirmation(context, handle).map_err(command_error_as_io)?;
             if plan.requires_confirmation && !confirmed {
                 return Ok(ajax_tui::ActionOutcome::Confirm(format!(
                     "press enter again to confirm {}",
@@ -103,12 +99,12 @@ fn tui_cockpit_action_with_confirmation(
             "select a project, then choose start task to enter a task name".to_string(),
         )),
         None if item.action == "status" => {
-            let task_count = commands::list_tasks(context, Some(handle)).tasks.len();
+            let task_count = cockpit::list_tasks(context, Some(handle)).tasks.len();
             Ok(ajax_tui::ActionOutcome::Message(format!(
                 "{handle}: {task_count} task(s)"
             )))
         }
-        None if remediation::is_remediation_action(&item.action) => {
+        None if remediate::is_remediation_action(&item.action) => {
             Ok(ajax_tui::ActionOutcome::Defer(ajax_tui::PendingAction {
                 task_handle: handle.clone(),
                 action: item.action.clone(),
@@ -119,6 +115,36 @@ fn tui_cockpit_action_with_confirmation(
             "cockpit action is not configured: {}",
             item.action
         ))),
+    }
+}
+
+fn validate_task_action(
+    context: &CommandContext<InMemoryRegistry>,
+    task_handle: &str,
+    action_label: &str,
+) -> std::io::Result<()> {
+    let Some(action_id) = TaskActionId::from_compatibility_label(action_label) else {
+        return Ok(());
+    };
+    if action_id == TaskActionId::BuiltIn(OperatorAction::Start) {
+        return Ok(());
+    }
+    let Some(task) = context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .find(|task| task.qualified_handle() == task_handle)
+    else {
+        return Ok(());
+    };
+    let decision = task_action_decisions(task)
+        .into_iter()
+        .find(|decision| decision.id == action_id)
+        .ok_or_else(|| std::io::Error::other("action is no longer available"))?;
+    if decision.is_available() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(decision.reason))
     }
 }
 
@@ -204,16 +230,14 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
             title,
             agent: "codex".to_string(),
         };
-        let (_intent, plan) =
-            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
-        let (outputs, task) =
-            execute_start_task_operation(context, runner, &request, &plan, true, open_mode)
-                .map_err(|error| command_error(error).after_state_change())
-                .inspect_err(|error| {
-                    if error.state_changed() {
-                        *state_changed = true;
-                    }
-                })?;
+        let (_intent, plan) = start::plan(context, request.clone()).map_err(command_error)?;
+        let (outputs, task) = start::execute(context, runner, &request, &plan, true, open_mode)
+            .map_err(|error| command_error(error).after_state_change())
+            .inspect_err(|error| {
+                if error.state_changed() {
+                    *state_changed = true;
+                }
+            })?;
         *state_changed = true;
         return Ok(Some(render_execution_outputs(
             &outputs,
@@ -221,16 +245,13 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
         )));
     }
 
-    if remediation::is_remediation_action(&pending.action) {
-        let skill_name = match pending.action.as_str() {
-            remediation::FIX_CI => "gh-fix-ci",
-            remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
-            _ => {
-                return Err(CliError::CommandFailed(format!(
-                    "unknown remediation action: {}",
-                    pending.action
-                )));
-            }
+    if remediate::is_remediation_action(&pending.action) {
+        let remediation_id = RemediationId::from_label(&pending.action).ok_or_else(|| {
+            CliError::CommandFailed(format!("unknown remediation action: {}", pending.action))
+        })?;
+        let skill_name = match remediation_id {
+            RemediationId::FixCi => "gh-fix-ci",
+            RemediationId::ResolveMergeConflicts => "resolve-merge-conflicts",
         };
         let skill_path =
             ajax_web::adapters::skills::resolve_skill_path(skill_name).ok_or_else(|| {
@@ -238,11 +259,11 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
                     "required agent skill is not installed on this host".to_string(),
                 )
             })?;
-        let outcome = remediation::execute_remediation(
+        let outcome = remediate::execute_remediation(
             context,
             runner,
             &pending.task_handle,
-            &pending.action,
+            remediation_id,
             &skill_path.display().to_string(),
         )
         .map_err(remediation_cli_error)?;
@@ -262,15 +283,12 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
         return Ok(None);
     }
 
-    let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
-        CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
-    })?;
-    let plan = plan_task_command_operation(context, kind, &pending.task_handle, open_mode)
+    let plan = plan_task_action(context, action, &pending.task_handle, open_mode)
         .map_err(command_error)?;
     let confirmed = !plan.requires_confirmation;
-    let (outputs, operation_state_changed) = execute_task_command_operation(
+    let (outputs, operation_state_changed) = execute_task_action(
         context,
-        kind,
+        action,
         &pending.task_handle,
         &plan,
         confirmed,
@@ -278,7 +296,7 @@ pub(crate) fn execute_pending_cockpit_action_with_open_mode<R: CommandRunner>(
     )
     .map_err(|error| task_command_cli_error(error, state_changed))?;
     *state_changed |= operation_state_changed;
-    if kind != TaskCommandKind::Resume {
+    if action != OperatorAction::Resume {
         return Ok(None);
     }
     Ok(Some(render_execution_outputs(&outputs, None)))
@@ -307,8 +325,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
             title,
             agent: "codex".to_string(),
         };
-        let (_intent, plan) =
-            plan_start_task_operation(context, request.clone()).map_err(command_error)?;
+        let (_intent, plan) = start::plan(context, request.clone()).map_err(command_error)?;
         match execute_new_task_plan_with_task_session(
             context,
             runner,
@@ -337,16 +354,13 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         }
     }
 
-    if remediation::is_remediation_action(&pending.action) {
-        let skill_name = match pending.action.as_str() {
-            remediation::FIX_CI => "gh-fix-ci",
-            remediation::RESOLVE_MERGE_CONFLICTS => "resolve-merge-conflicts",
-            _ => {
-                return Err(CliError::CommandFailed(format!(
-                    "unknown remediation action: {}",
-                    pending.action
-                )));
-            }
+    if remediate::is_remediation_action(&pending.action) {
+        let remediation_id = RemediationId::from_label(&pending.action).ok_or_else(|| {
+            CliError::CommandFailed(format!("unknown remediation action: {}", pending.action))
+        })?;
+        let skill_name = match remediation_id {
+            RemediationId::FixCi => "gh-fix-ci",
+            RemediationId::ResolveMergeConflicts => "resolve-merge-conflicts",
         };
         let skill_path =
             ajax_web::adapters::skills::resolve_skill_path(skill_name).ok_or_else(|| {
@@ -354,11 +368,11 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
                     "required agent skill is not installed on this host".to_string(),
                 )
             })?;
-        let outcome = remediation::execute_remediation(
+        let outcome = remediate::execute_remediation(
             context,
             runner,
             &pending.task_handle,
-            &pending.action,
+            remediation_id,
             &skill_path.display().to_string(),
         )
         .map_err(remediation_cli_error)?;
@@ -378,18 +392,14 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         return Ok(PendingCockpitExecution::Continue(None));
     }
 
-    let kind = task_command_kind_from_operator_action(action).ok_or_else(|| {
-        CliError::CommandFailed(format!("unknown cockpit action: {}", pending.action))
-    })?;
-    let plan =
-        plan_task_command_operation(context, kind, &pending.task_handle, task_entry_open_mode)
-            .map_err(command_error)?;
+    let plan = plan_task_action(context, action, &pending.task_handle, task_entry_open_mode)
+        .map_err(command_error)?;
 
-    if kind != TaskCommandKind::Resume {
+    if action != OperatorAction::Resume {
         let confirmed = !plan.requires_confirmation;
-        let (_outputs, operation_state_changed) = execute_task_command_operation(
+        let (_outputs, operation_state_changed) = execute_task_action(
             context,
-            kind,
+            action,
             &pending.task_handle,
             &plan,
             confirmed,
@@ -423,16 +433,6 @@ fn open_new_task_after_task_session(
     Ok(PendingCockpitExecution::OpenNewTask { repo })
 }
 
-fn task_command_kind_from_operator_action(action: OperatorAction) -> Option<TaskCommandKind> {
-    match action {
-        OperatorAction::Start | OperatorAction::Drop => None,
-        OperatorAction::Resume => Some(TaskCommandKind::Resume),
-        OperatorAction::Review => Some(TaskCommandKind::Review),
-        OperatorAction::Ship => Some(TaskCommandKind::Ship),
-        OperatorAction::Repair => Some(TaskCommandKind::Repair),
-    }
-}
-
 fn task_command_cli_error(
     (error, error_state_changed): (CommandError, bool),
     state_changed: &mut bool,
@@ -448,4 +448,109 @@ fn task_command_cli_error(
         *state_changed = true;
     }
     error
+}
+
+fn plan_task_action(
+    context: &CommandContext<InMemoryRegistry>,
+    action: OperatorAction,
+    task_handle: &str,
+    open_mode: commands::OpenMode,
+) -> Result<ajax_core::use_cases::CommandPlan, CommandError> {
+    match action {
+        OperatorAction::Resume => resume::plan(context, task_handle, open_mode),
+        OperatorAction::Review => review::plan(context, task_handle),
+        OperatorAction::Repair => repair::plan(context, task_handle, open_mode),
+        OperatorAction::Ship => ship::plan(context, task_handle),
+        OperatorAction::Start | OperatorAction::Drop => Err(CommandError::PlanBlocked(vec![
+            "unknown cockpit action".to_string(),
+        ])),
+    }
+}
+
+fn execute_task_action(
+    context: &mut CommandContext<InMemoryRegistry>,
+    action: OperatorAction,
+    task_handle: &str,
+    plan: &ajax_core::use_cases::CommandPlan,
+    confirmed: bool,
+    runner: &mut impl CommandRunner,
+) -> Result<(Vec<ajax_core::adapters::CommandOutput>, bool), (CommandError, bool)> {
+    match action {
+        OperatorAction::Resume => resume::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Review => review::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Repair => repair::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Ship => ship::execute(context, task_handle, plan, confirmed, runner),
+        OperatorAction::Start | OperatorAction::Drop => Err((
+            CommandError::PlanBlocked(vec!["unknown cockpit action".to_string()]),
+            false,
+        )),
+    }
+}
+
+#[cfg(test)]
+mod decision_tests {
+    use super::tui_cockpit_action;
+    use ajax_core::{
+        commands::CommandContext,
+        config::{Config, ManagedRepo},
+        models::{AgentClient, CockpitActionItem, LifecycleStatus, Task, TaskId},
+        registry::{InMemoryRegistry, Registry},
+    };
+
+    fn context_with_task(status: LifecycleStatus) -> CommandContext<InMemoryRegistry> {
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("task-1"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = status;
+        registry.create_task(task).unwrap();
+        CommandContext::new(config, registry)
+    }
+
+    fn item(action: &str) -> CockpitActionItem {
+        CockpitActionItem {
+            task_id: TaskId::new("task-1"),
+            task_handle: "web/fix-login".to_string(),
+            reason: action.to_string(),
+            priority: 1,
+            action: action.to_string(),
+        }
+    }
+
+    #[test]
+    fn native_cockpit_rejects_unavailable_action_with_core_reason() {
+        let mut context = context_with_task(LifecycleStatus::Active);
+
+        let error = match tui_cockpit_action(&item("ship"), &mut context) {
+            Ok(_) => panic!("ship should be rejected for an active task"),
+            Err(error) => error,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "merge requires reviewable or mergeable lifecycle"
+        );
+    }
+
+    #[test]
+    fn native_cockpit_dispatches_available_builtin_action_without_kind_mapping() {
+        let mut context = context_with_task(LifecycleStatus::Reviewable);
+
+        let outcome = tui_cockpit_action(&item("review"), &mut context).unwrap();
+
+        assert!(matches!(outcome, ajax_tui::ActionOutcome::Defer(_)));
+    }
 }

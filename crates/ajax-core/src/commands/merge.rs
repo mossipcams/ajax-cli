@@ -1,9 +1,9 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::GitAdapter,
+    capability_policy,
     live::LiveStatusKind,
-    models::{LifecycleStatus, LiveObservation, SideFlag, Task},
-    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
+    models::{LifecycleStatus, LiveObservation, SideFlag, Task, TaskCondition, TaskConditionKind},
     registry::Registry,
 };
 
@@ -25,9 +25,8 @@ pub fn merge_task_plan<R: Registry>(
             return Ok(plan);
         }
     }
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Merge)
-    {
+    let reasons = capability_policy::ship_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
         return Ok(plan);
     }
@@ -55,6 +54,7 @@ pub fn mark_task_merged<R: Registry>(
         .map_err(CommandError::Registry)?;
     if let Some(task) = context.registry.get_task_mut(&task.id) {
         task.remove_side_flag(SideFlag::Conflicted);
+        task.clear_condition(TaskConditionKind::MergeFailed);
         if task.live_status.as_ref().is_some_and(|status| {
             status.kind == LiveStatusKind::CommandFailed && status.summary == "merge failed"
         }) {
@@ -73,6 +73,9 @@ pub fn mark_task_merge_failed<R: Registry>(
     if let Some(task) = context.registry.get_task_mut(&task.id) {
         if conflicted {
             task.add_side_flag(SideFlag::Conflicted);
+            task.record_condition(TaskCondition::merge_failed(std::time::SystemTime::now()));
+        } else {
+            task.clear_condition(TaskConditionKind::MergeFailed);
         }
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::CommandFailed,
@@ -83,22 +86,12 @@ pub fn mark_task_merge_failed<R: Registry>(
 }
 
 fn merge_preflight_blocked_reasons(task: &Task) -> Vec<String> {
+    let facts = task.facts();
     let mut reasons = Vec::new();
-    if task.has_side_flag(SideFlag::Dirty)
-        || task.has_side_flag(SideFlag::Conflicted)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| status.dirty || status.untracked_files > 0 || status.conflicted)
-    {
+    if facts.dirty || facts.conflicted {
         reasons.push("merge requires clean worktree evidence".to_string());
     }
-    if task.has_side_flag(SideFlag::BranchMissing)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.branch_exists)
-    {
+    if facts.branch_missing {
         reasons.push("task branch is missing".to_string());
     }
     reasons

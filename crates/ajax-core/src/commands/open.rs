@@ -2,8 +2,8 @@ use super::lookup::find_task;
 use super::{CommandContext, CommandError, CommandPlan, OpenMode};
 use crate::{
     adapters::TmuxAdapter,
+    capability_policy,
     models::{LiveStatusKind, RuntimeHealth, RuntimeObservationSource, Task},
-    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
 };
 
@@ -14,28 +14,9 @@ pub fn open_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Open)
-    {
+    let reasons = capability_policy::resume_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
-        return Ok(plan);
-    }
-
-    if task
-        .git_status
-        .as_ref()
-        .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
-        || task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists)
-        || task
-            .worktrunk_status
-            .as_ref()
-            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
-    {
-        plan.blocked_reasons
-            .push("task has missing substrate".to_string());
         return Ok(plan);
     }
 
@@ -103,7 +84,6 @@ pub fn mark_task_opened_at<R: Registry>(
     let task_id = find_task(context, qualified_handle)?.id.clone();
     if let Some(task) = context.registry.get_task_mut(&task_id) {
         crate::live::acknowledge_attention(task, now);
-        task.annotations = crate::attention::annotate(task);
     }
     Ok(())
 }

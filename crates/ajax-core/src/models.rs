@@ -183,6 +183,34 @@ pub enum SideFlag {
     Unpushed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
+pub enum TaskConditionKind {
+    LatestCheckFailed,
+    MergeFailed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TaskCondition {
+    pub kind: TaskConditionKind,
+    pub occurred_at: SystemTime,
+}
+
+impl TaskCondition {
+    pub fn latest_check_failed(occurred_at: SystemTime) -> Self {
+        Self {
+            kind: TaskConditionKind::LatestCheckFailed,
+            occurred_at,
+        }
+    }
+
+    pub fn merge_failed(occurred_at: SystemTime) -> Self {
+        Self {
+            kind: TaskConditionKind::MergeFailed,
+            occurred_at,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum LiveStatusKind {
     WorktreeMissing,
@@ -238,20 +266,50 @@ pub struct Task {
     pub tmux_status: Option<TmuxStatus>,
     pub worktrunk_status: Option<WorktrunkStatus>,
     #[serde(default)]
+    pub git_observation: crate::runtime::SubstrateObservation<GitStatus>,
+    #[serde(default)]
+    pub tmux_observation: crate::runtime::SubstrateObservation<TmuxStatus>,
+    #[serde(default)]
+    pub task_window_observation: crate::runtime::SubstrateObservation<WorktrunkStatus>,
+    #[serde(default)]
+    pub agent_runtime_evidence: crate::runtime::AgentRuntimeEvidence,
+    #[serde(default)]
     pub runtime_projection: RuntimeProjection,
     #[serde(default)]
     pub live_status: Option<LiveObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_status_observed_at: Option<SystemTime>,
-    #[serde(default)]
-    pub annotations: Vec<Annotation>,
     pub created_at: SystemTime,
     pub last_activity_at: SystemTime,
     pub metadata: HashMap<String, String>,
     pub agent_attempts: Vec<AgentAttempt>,
+    #[serde(default)]
+    pub conditions: Vec<TaskCondition>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attention_acknowledged_at: Option<SystemTime>,
     side_flags: BTreeSet<SideFlag>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TaskFacts {
+    pub dirty: bool,
+    pub needs_input: bool,
+    pub tests_failed: bool,
+    pub conflicted: bool,
+    pub unpushed: bool,
+    pub agent_running: bool,
+    pub agent_dead: bool,
+    pub worktree_missing: bool,
+    pub tmux_missing: bool,
+    pub worktrunk_missing: bool,
+    pub branch_missing: bool,
+    pub stale: bool,
+}
+
+impl TaskFacts {
+    pub fn has_missing_substrate(self) -> bool {
+        self.worktree_missing || self.tmux_missing || self.worktrunk_missing || self.branch_missing
+    }
 }
 
 impl Task {
@@ -286,14 +344,18 @@ impl Task {
             git_status: None,
             tmux_status: None,
             worktrunk_status: None,
+            git_observation: crate::runtime::SubstrateObservation::default(),
+            tmux_observation: crate::runtime::SubstrateObservation::default(),
+            task_window_observation: crate::runtime::SubstrateObservation::default(),
+            agent_runtime_evidence: crate::runtime::AgentRuntimeEvidence::default(),
             runtime_projection: RuntimeProjection::default(),
             live_status: None,
             live_status_observed_at: None,
-            annotations: Vec::new(),
             created_at: now,
             last_activity_at: now,
             metadata: HashMap::new(),
             agent_attempts: Vec::new(),
+            conditions: Vec::new(),
             attention_acknowledged_at: None,
             side_flags: BTreeSet::new(),
         }
@@ -329,6 +391,23 @@ impl Task {
         }
     }
 
+    pub fn durable_state_eq(&self, other: &Self) -> bool {
+        self.intent() == other.intent()
+            && self.lifecycle_status == other.lifecycle_status
+            && self.created_at == other.created_at
+            && self.last_activity_at == other.last_activity_at
+            && self.git_observation == other.git_observation
+            && self.tmux_observation == other.tmux_observation
+            && self.task_window_observation == other.task_window_observation
+            && self.agent_runtime_evidence == other.agent_runtime_evidence
+            && self.live_status == other.live_status
+            && self.live_status_observed_at == other.live_status_observed_at
+            && self.conditions == other.conditions
+            && self.attention_acknowledged_at == other.attention_acknowledged_at
+            && self.metadata == other.metadata
+            && self.agent_attempts == other.agent_attempts
+    }
+
     pub fn add_side_flag(&mut self, flag: SideFlag) {
         self.side_flags.insert(flag);
     }
@@ -345,6 +424,23 @@ impl Task {
         self.side_flags.iter().copied()
     }
 
+    pub fn record_condition(&mut self, condition: TaskCondition) {
+        self.conditions
+            .retain(|existing| existing.kind != condition.kind);
+        self.conditions.push(condition);
+    }
+
+    pub fn clear_condition(&mut self, kind: TaskConditionKind) {
+        self.conditions.retain(|condition| condition.kind != kind);
+    }
+
+    pub fn latest_condition(&self, kind: TaskConditionKind) -> Option<&TaskCondition> {
+        self.conditions
+            .iter()
+            .filter(|condition| condition.kind == kind)
+            .max_by_key(|condition| condition.occurred_at)
+    }
+
     pub fn mark_resource_missing(&mut self, flag: SideFlag) {
         self.add_side_flag(flag);
         if flag.is_missing_substrate() {
@@ -354,15 +450,141 @@ impl Task {
     }
 
     pub fn has_missing_substrate(&self) -> bool {
-        self.side_flags().any(SideFlag::is_missing_substrate)
-            || self.runtime_projection.health.is_missing_substrate()
+        self.facts().has_missing_substrate()
+    }
+
+    pub fn facts(&self) -> TaskFacts {
+        self.facts_with_now(SystemTime::now())
+    }
+
+    pub fn facts_with_now(&self, now: SystemTime) -> TaskFacts {
+        let latest_check_failure = self.latest_condition(TaskConditionKind::LatestCheckFailed);
+        let latest_merge_failure = self.latest_condition(TaskConditionKind::MergeFailed);
+        let dirty = self.has_side_flag(SideFlag::Dirty)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| status.dirty || status.untracked_files > 0);
+        let conflicted = self.has_side_flag(SideFlag::Conflicted)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| status.conflicted)
+            || latest_merge_failure.is_some_and(|condition| {
+                self.git_status.as_ref().is_none_or(|status| {
+                    status.conflicted
+                        || !self.git_observation.observed
+                        || self.git_observation.observed_at <= condition.occurred_at
+                })
+            })
             || self
                 .live_status
                 .as_ref()
-                .is_some_and(|live_status| live_status.kind.is_missing_substrate())
+                .is_some_and(|status| status.kind == LiveStatusKind::MergeConflict);
+        let unpushed = self.has_side_flag(SideFlag::Unpushed)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(GitStatus::has_unpushed_work);
+        let worktree_missing = self.has_side_flag(SideFlag::WorktreeMissing)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.worktree_exists)
+            || self.runtime_projection.health == RuntimeHealth::MissingWorktree
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == LiveStatusKind::WorktreeMissing);
+        let branch_missing = self.has_side_flag(SideFlag::BranchMissing)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.branch_exists);
+        let tmux_missing = self.has_side_flag(SideFlag::TmuxMissing)
+            || self
+                .tmux_status
+                .as_ref()
+                .is_some_and(|status| !status.exists)
+            || self.runtime_projection.health == RuntimeHealth::MissingSession
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == LiveStatusKind::TmuxMissing);
+        let worktrunk_missing = self.has_side_flag(SideFlag::WorktrunkMissing)
+            || self.task_window_observation.state()
+                == crate::runtime::SubstrateObservationState::Absent
+            || self
+                .worktrunk_status
+                .as_ref()
+                .is_some_and(|status| !status.exists || !status.points_at_expected_path)
+            || matches!(
+                self.runtime_projection.health,
+                RuntimeHealth::MissingTaskWindow | RuntimeHealth::WrongTaskWindowPath
+            )
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == LiveStatusKind::WorktrunkMissing);
+        let needs_input = self.has_side_flag(SideFlag::NeedsInput)
+            || self.agent_status == AgentRuntimeStatus::Waiting
+            || self.live_status.as_ref().is_some_and(|status| {
+                matches!(
+                    status.kind,
+                    LiveStatusKind::WaitingForApproval
+                        | LiveStatusKind::WaitingForInput
+                        | LiveStatusKind::AuthRequired
+                        | LiveStatusKind::RateLimited
+                        | LiveStatusKind::ContextLimit
+                        | LiveStatusKind::CommandFailed
+                        | LiveStatusKind::Blocked
+                )
+            });
+        let tests_failed = self.has_side_flag(SideFlag::TestsFailed)
+            || latest_check_failure.is_some()
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|status| status.kind == LiveStatusKind::CiFailed);
+        let agent_running = self.has_side_flag(SideFlag::AgentRunning)
+            || self.agent_status == AgentRuntimeStatus::Running;
+        let agent_dead = self.has_side_flag(SideFlag::AgentDead)
+            || self.agent_status == AgentRuntimeStatus::Dead;
+        let stale = self.has_side_flag(SideFlag::Stale)
+            || now
+                .duration_since(self.last_activity_at)
+                .is_ok_and(|elapsed| elapsed >= Duration::from_secs(7 * 24 * 60 * 60));
+
+        TaskFacts {
+            dirty,
+            needs_input,
+            tests_failed,
+            conflicted,
+            unpushed,
+            agent_running,
+            agent_dead,
+            worktree_missing,
+            tmux_missing,
+            worktrunk_missing,
+            branch_missing,
+            stale,
+        }
     }
 
     pub fn apply_git_status(&mut self, status: GitStatus) {
+        self.apply_git_observation(
+            status,
+            SystemTime::now(),
+            crate::runtime::RuntimeEvidenceSource::OperationResult,
+        );
+    }
+
+    pub fn apply_git_observation(
+        &mut self,
+        status: GitStatus,
+        observed_at: SystemTime,
+        source: crate::runtime::RuntimeEvidenceSource,
+    ) {
         if status.worktree_exists {
             self.remove_side_flag(SideFlag::WorktreeMissing);
         } else {
@@ -393,21 +615,60 @@ impl Task {
             self.remove_side_flag(SideFlag::Unpushed);
         }
 
+        self.git_observation =
+            crate::runtime::SubstrateObservation::observed(status.clone(), observed_at, source);
         self.git_status = Some(status);
         self.refresh_runtime_projection();
     }
 
     pub fn apply_tmux_status(&mut self, status: Option<TmuxStatus>) {
+        self.apply_tmux_observation(
+            status,
+            SystemTime::now(),
+            crate::runtime::RuntimeEvidenceSource::OperationResult,
+        );
+    }
+
+    pub fn apply_tmux_observation(
+        &mut self,
+        status: Option<TmuxStatus>,
+        observed_at: SystemTime,
+        source: crate::runtime::RuntimeEvidenceSource,
+    ) {
         match status.as_ref() {
             Some(status) if status.exists => self.remove_side_flag(SideFlag::TmuxMissing),
             Some(_) | None => self.mark_resource_missing(SideFlag::TmuxMissing),
         }
 
+        self.tmux_observation = match status.clone() {
+            Some(status) => {
+                crate::runtime::SubstrateObservation::observed(status, observed_at, source)
+            }
+            None => crate::runtime::SubstrateObservation {
+                observed_at,
+                source,
+                observed: true,
+                ..crate::runtime::SubstrateObservation::default()
+            },
+        };
         self.tmux_status = status;
         self.refresh_runtime_projection();
     }
 
     pub fn apply_worktrunk_status(&mut self, status: Option<WorktrunkStatus>) {
+        self.apply_task_window_observation(
+            status,
+            SystemTime::now(),
+            crate::runtime::RuntimeEvidenceSource::OperationResult,
+        );
+    }
+
+    pub fn apply_task_window_observation(
+        &mut self,
+        status: Option<WorktrunkStatus>,
+        observed_at: SystemTime,
+        source: crate::runtime::RuntimeEvidenceSource,
+    ) {
         match status.as_ref() {
             Some(status) if status.exists && status.points_at_expected_path => {
                 self.remove_side_flag(SideFlag::WorktrunkMissing);
@@ -415,6 +676,17 @@ impl Task {
             Some(_) | None => self.mark_resource_missing(SideFlag::WorktrunkMissing),
         }
 
+        self.task_window_observation = match status.clone() {
+            Some(status) => {
+                crate::runtime::SubstrateObservation::observed(status, observed_at, source)
+            }
+            None => crate::runtime::SubstrateObservation {
+                observed_at,
+                source,
+                observed: true,
+                ..crate::runtime::SubstrateObservation::default()
+            },
+        };
         self.worktrunk_status = status;
         self.refresh_runtime_projection();
     }
@@ -440,13 +712,35 @@ impl Task {
         source: RuntimeObservationSource,
         error: impl Into<String>,
     ) {
+        let error = error.into();
+        let observed_at = SystemTime::now();
+        match source {
+            RuntimeObservationSource::TmuxProbe => {
+                self.tmux_observation.record_probe_failure(
+                    error.clone(),
+                    observed_at,
+                    crate::runtime::RuntimeEvidenceSource::TmuxProbe,
+                );
+                self.task_window_observation.record_probe_failure(
+                    error.clone(),
+                    observed_at,
+                    crate::runtime::RuntimeEvidenceSource::TmuxProbe,
+                );
+            }
+            RuntimeObservationSource::FilesystemEvent => {
+                self.git_observation.record_probe_failure(
+                    error.clone(),
+                    observed_at,
+                    crate::runtime::RuntimeEvidenceSource::GitProbe,
+                );
+            }
+            RuntimeObservationSource::StartupScan
+            | RuntimeObservationSource::CommandResult
+            | RuntimeObservationSource::Unknown => {}
+        }
         let previous_health = self.runtime_projection.health;
-        self.runtime_projection = RuntimeProjection::with_observation_error(
-            previous_health,
-            SystemTime::now(),
-            source,
-            error,
-        );
+        self.runtime_projection =
+            RuntimeProjection::with_observation_error(previous_health, observed_at, source, error);
     }
 }
 
@@ -988,11 +1282,12 @@ mod tests {
         AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence,
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo,
         RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt,
-        StepReceiptIdentity, Task, TaskId, TaskIntent, TaskOperationKind, TmuxStatus,
-        WorktrunkStatus,
+        StepReceiptIdentity, Task, TaskCondition, TaskConditionKind, TaskId, TaskIntent,
+        TaskOperationKind, TmuxStatus, WorktrunkStatus,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
+    use std::time::{Duration, SystemTime};
 
     fn acknowledgment_task() -> Task {
         Task::new(
@@ -1325,6 +1620,147 @@ mod tests {
         assert!(!task.has_side_flag(SideFlag::Conflicted));
     }
 
+    #[test]
+    fn task_facts_derive_git_conditions_without_side_flags() {
+        let mut task = sample_task();
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: false,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: true,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 2,
+            unpushed_commits: 3,
+            conflicted: true,
+            last_commit: None,
+        });
+
+        let facts = task.facts();
+
+        assert!(facts.dirty);
+        assert!(facts.conflicted);
+        assert!(facts.unpushed);
+        assert!(facts.branch_missing);
+        assert!(!task.has_side_flag(SideFlag::Dirty));
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+        assert!(!task.has_side_flag(SideFlag::Unpushed));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn task_facts_derive_runtime_attention_without_side_flags() {
+        let mut task = sample_task();
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForInput,
+            "waiting for operator input",
+        ));
+
+        let facts = task.facts();
+
+        assert!(facts.needs_input);
+        assert!(!facts.agent_dead);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn task_facts_derive_missing_resources_without_side_flags() {
+        let mut task = sample_task();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+        task.worktrunk_status = Some(WorktrunkStatus {
+            exists: false,
+            window_name: "worktrunk".to_string(),
+            current_path: "/tmp/worktrees/web-fix-login".into(),
+            points_at_expected_path: false,
+        });
+
+        let facts = task.facts();
+
+        assert!(facts.worktree_missing);
+        assert!(facts.tmux_missing);
+        assert!(facts.worktrunk_missing);
+        assert!(facts.has_missing_substrate());
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
+        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+    }
+
+    #[test]
+    fn stale_fact_is_derived_from_injected_now() {
+        let mut task = sample_task();
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(8 * 24 * 60 * 60);
+        task.last_activity_at = SystemTime::UNIX_EPOCH;
+
+        let facts = task.facts_with_now(now);
+
+        assert!(facts.stale);
+        assert!(!task.has_side_flag(SideFlag::Stale));
+    }
+
+    #[test]
+    fn latest_check_failure_is_a_typed_durable_condition() {
+        let mut task = sample_task();
+        let failed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(300);
+        task.record_condition(TaskCondition::latest_check_failed(failed_at));
+
+        let facts = task.facts_with_now(failed_at);
+
+        assert!(facts.tests_failed);
+        assert!(!task.has_side_flag(SideFlag::TestsFailed));
+        assert_eq!(
+            task.latest_condition(TaskConditionKind::LatestCheckFailed)
+                .map(|condition| condition.occurred_at),
+            Some(failed_at)
+        );
+    }
+
+    #[test]
+    fn merge_failure_condition_does_not_override_newer_clean_git_evidence() {
+        let mut task = sample_task();
+        let conflicted_at = SystemTime::UNIX_EPOCH + Duration::from_secs(300);
+        task.record_condition(TaskCondition::merge_failed(conflicted_at));
+        task.apply_git_observation(
+            GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some("ajax/fix-login".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            },
+            conflicted_at + Duration::from_secs(60),
+            crate::runtime::RuntimeEvidenceSource::GitProbe,
+        );
+
+        let facts = task.facts_with_now(conflicted_at + Duration::from_secs(60));
+
+        assert!(!facts.conflicted);
+        assert!(!task.has_side_flag(SideFlag::Conflicted));
+    }
+
     proptest! {
         #[test]
         fn side_flags_are_unique_sorted_and_removable(
@@ -1576,7 +2012,9 @@ mod tests {
     fn task_carries_empty_annotations_by_default() {
         let task = sample_task();
 
-        assert_eq!(task.annotations, Vec::<Annotation>::new());
+        assert!(!serde_json::to_string(&task)
+            .unwrap()
+            .contains("annotations"));
     }
 
     #[test]

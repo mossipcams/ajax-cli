@@ -1,8 +1,7 @@
 use ajax_core::{
-    adapters::CommandRunner,
-    commands::{self, CommandContext},
-    registry::InMemoryRegistry,
-    runtime_refresh::refresh_runtime_context_with_agent_status_cache,
+    adapters::CommandRunner, registry::InMemoryRegistry,
+    runtime_refresh::refresh_runtime_context_with_agent_status_cache, slices::cockpit,
+    use_cases::CommandContext,
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
@@ -31,7 +30,7 @@ pub(crate) fn render_cockpit_command(
     matches: &ArgMatches,
 ) -> Result<String, CliError> {
     if matches.get_flag("json") {
-        return render_response(commands::cockpit(context), true, |_| String::new());
+        return render_response(cockpit::cockpit(context), true, |_| String::new());
     }
 
     let iterations = parse_u32_arg(matches, "iterations", 1)?;
@@ -56,7 +55,7 @@ pub(crate) fn render_cockpit_command(
 }
 
 pub(crate) fn render_cockpit_frame(context: &CommandContext<InMemoryRegistry>) -> String {
-    let view = commands::cockpit_view(context);
+    let view = cockpit::cockpit_view(context);
     ajax_tui::render_cockpit(&view.repos, &view.cards, &view.inbox)
 }
 
@@ -298,7 +297,7 @@ pub(crate) fn render_live_cockpit_command<R: CommandRunner>(
         let changed = refresh_live_context(context, runner)?;
         state_changed |= changed;
         if json {
-            frames.push(render_response(commands::cockpit(context), true, |_| {
+            frames.push(render_response(cockpit::cockpit(context), true, |_| {
                 String::new()
             })?);
         } else {
@@ -342,7 +341,7 @@ where
         }
 
         let frame = if json {
-            render_response(commands::cockpit(context), true, |_| String::new())?
+            render_response(cockpit::cockpit(context), true, |_| String::new())?
         } else {
             render_cockpit_frame(context)
         };
@@ -372,7 +371,7 @@ fn cached_snapshot_needs_rebuild(
 ) -> bool {
     use std::collections::BTreeSet;
 
-    let view = commands::cockpit_view(context);
+    let view = cockpit::cockpit_view(context);
     let visible_handles: BTreeSet<_> = view
         .cards
         .iter()
@@ -454,7 +453,7 @@ pub(crate) fn save_cockpit_state_to_sqlite(
 pub(crate) fn build_cockpit_snapshot(
     context: &CommandContext<InMemoryRegistry>,
 ) -> CockpitSnapshot {
-    let view = commands::cockpit_view(context);
+    let view = cockpit::cockpit_view(context);
     CockpitSnapshot {
         repos: view.repos,
         cards: view.cards,
@@ -740,10 +739,7 @@ mod tests {
         assert!(snapshot.inbox.items.iter().any(|item| {
             item.reason == "Waiting for approval" && item.task_handle == "web/fix-login"
         }));
-        assert!(context
-            .registry
-            .get_task(&TaskId::new("task-1"))
-            .unwrap()
+        assert!(snapshot.cards[0]
             .annotations
             .iter()
             .any(|annotation| annotation.evidence.label() == "waiting for approval"));
@@ -793,7 +789,6 @@ mod tests {
             LiveStatusKind::WaitingForInput,
             "waiting for input",
         ));
-        task.annotations = ajax_core::attention::annotate(task);
         let mut runner = WorkingPromptRunner;
         let mut state_changed = false;
 
@@ -901,7 +896,7 @@ mod tests {
                 .any(|item| item.task_handle == "web/fix-login"
                     && item.action == OperatorAction::Drop)
         );
-        assert!(ajax_core::commands::inbox(&context)
+        assert!(ajax_core::slices::cockpit::inbox(&context)
             .items
             .iter()
             .any(|item| {

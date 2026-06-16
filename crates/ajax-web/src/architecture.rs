@@ -68,6 +68,21 @@ mod tests {
     }
 
     #[test]
+    fn runtime_composition_does_not_own_http_route_handlers() {
+        let source = include_str!("runtime.rs");
+        for forbidden in ["async fn api_", "fn route(", "fn route_with_bridge("] {
+            assert!(!source.contains(forbidden), "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn runtime_composition_does_not_own_runtime_bridge_contract() {
+        let source = include_str!("runtime.rs");
+        assert!(!source.contains("trait RuntimeBridge"));
+        assert!(!source.contains("struct WebSharedState"));
+    }
+
+    #[test]
     fn each_web_slice_is_isolated_from_sibling_slices_and_runtime() {
         for slice in SLICES {
             let project = Project::from_current_crate();
@@ -129,6 +144,47 @@ mod tests {
             rule.apply(&file).is_err(),
             "web adapter mechanisms must not import any specific slice"
         );
+    }
+
+    #[test]
+    fn web_architecture_rejects_core_action_eligibility_derivation() {
+        let operate = production_source(include_str!("slices/operate.rs"));
+
+        assert!(!operate.contains(".lifecycle_status"));
+        assert!(!operate.contains("SideFlag::"));
+        assert!(!operate.contains("task_operation_eligibility"));
+    }
+
+    #[test]
+    fn web_architecture_allows_surface_capability_filtering() {
+        let vocabulary = production_source(include_str!("action_vocabulary.rs"));
+
+        assert!(vocabulary.contains("pub fn supported_web_action"));
+        assert!(!vocabulary.contains("LifecycleStatus::"));
+        assert!(!vocabulary.contains("SideFlag::"));
+    }
+
+    #[test]
+    fn web_operate_routes_task_actions_through_slice_facades() {
+        let operate = production_source(include_str!("slices/operate.rs"));
+
+        assert!(!operate.contains("TaskCommandKind"));
+        assert!(!operate.contains("plan_task_command_operation("));
+        assert!(!operate.contains("execute_task_command_operation("));
+    }
+
+    #[test]
+    fn web_operate_routes_drop_through_slice_facades() {
+        let operate = production_source(include_str!("slices/operate.rs"));
+
+        assert!(!operate.contains("plan_drop_confirmation("));
+        assert!(!operate.contains("plan_drop_task_operation("));
+        assert!(!operate.contains("execute_drop_task_operation("));
+        assert!(!operate.contains("task_operations::drop_task::"));
+    }
+
+    fn production_source(source: &str) -> &str {
+        source.split("#[cfg(test)]").next().unwrap_or(source)
     }
 
     fn forbidden_paths_for_slices(slices: &[&str]) -> Vec<String> {

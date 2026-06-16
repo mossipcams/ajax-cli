@@ -1,12 +1,12 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    capability_policy,
     lifecycle::force_mark_removed,
     models::{
         AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
         StepReceiptStatus, Task, TaskOperationKind, TmuxStatus, WorktrunkStatus,
     },
-    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     policy::cleanup_safety,
     registry::{Registry, RegistryError, RegistryEventKind},
 };
@@ -146,9 +146,8 @@ pub fn clean_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("clean task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Clean)
-    {
+    let reasons = capability_policy::clean_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
         return Ok(plan);
     }
@@ -177,9 +176,8 @@ pub fn remove_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("remove task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Remove)
-    {
+    let reasons = capability_policy::remove_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
         return Ok(plan);
     }

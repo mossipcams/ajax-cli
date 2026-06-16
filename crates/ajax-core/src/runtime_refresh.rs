@@ -134,6 +134,30 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     } else {
         false
     };
+    for task_id in &probe_task_ids {
+        if let Some(task) = context.registry.get_task_mut(task_id) {
+            if task.live_status_observed_at.is_none() {
+                if let Some(observation) = task.live_status.clone().filter(|observation| {
+                    matches!(
+                        observation.kind,
+                        LiveStatusKind::AgentRunning
+                            | LiveStatusKind::CommandRunning
+                            | LiveStatusKind::TestsRunning
+                    )
+                }) {
+                    if observation.kind == LiveStatusKind::AgentRunning
+                        && task.agent_status == crate::models::AgentRuntimeStatus::Running
+                        && task.has_side_flag(crate::models::SideFlag::AgentRunning)
+                    {
+                        continue;
+                    }
+                    let previous = task.clone();
+                    live::apply_observation(task, observation);
+                    changed |= *task != previous;
+                }
+            }
+        }
+    }
 
     let tmux = TmuxAdapter::new("tmux");
     let sessions_command = tmux.list_sessions();
@@ -194,18 +218,25 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             TmuxAdapter::parse_session_status(&task_snapshot.tmux_session, &sessions_output);
 
         if !session_status.exists {
-            let has_fresh_complete_command_result_runtime = task_snapshot.runtime_projection.source
-                == RuntimeObservationSource::CommandResult
-                && !task_snapshot
-                    .runtime_projection
-                    .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
+            let has_fresh_complete_command_result_runtime = task_snapshot.tmux_observation.observed
+                && task_snapshot.task_window_observation.observed
+                && task_snapshot.tmux_observation.source
+                    == crate::runtime::RuntimeEvidenceSource::OperationResult
+                && task_snapshot.task_window_observation.source
+                    == crate::runtime::RuntimeEvidenceSource::OperationResult
+                && SystemTime::now()
+                    .duration_since(task_snapshot.task_window_observation.observed_at)
+                    .is_ok_and(|age| age < RUNTIME_PROJECTION_FRESH_FOR)
                 && task_snapshot
                     .worktrunk_status
                     .as_ref()
                     .is_some_and(|status| status.exists && status.points_at_expected_path);
             if has_fresh_complete_command_result_runtime
                 && task_snapshot.tmux_status.is_some()
-                && task_snapshot.live_status.is_none()
+                && task_snapshot
+                    .live_status
+                    .as_ref()
+                    .is_none_or(|status| status.kind == LiveStatusKind::AgentRunning)
                 && !task_snapshot.has_side_flag(crate::models::SideFlag::TmuxMissing)
             {
                 continue;
@@ -238,7 +269,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                         LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
                     );
                 }
-                refresh_cached_annotations(task);
                 changed = true;
             }
             continue;
@@ -307,7 +337,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     task,
                     LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
                 );
-                refresh_cached_annotations(task);
                 changed = true;
             }
             continue;
@@ -354,10 +383,39 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                         .is_some_and(|current| current >= observed_at);
                 let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                     && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-                if live_status_unchanged && !needs_agent_running_flag {
+                let already_running = observation.kind == LiveStatusKind::AgentRunning
+                    && task.agent_status == crate::models::AgentRuntimeStatus::Running
+                    && task.has_side_flag(crate::models::SideFlag::AgentRunning);
+                if (live_status_unchanged || already_running) && !needs_agent_running_flag {
                     continue;
                 }
                 let previous = task.clone();
+                if let Some(entry) = agent_status_entries.iter().find(|entry| {
+                    entry.observed_at == observed_at
+                        && matches!(
+                            (entry.source, source),
+                            (
+                                AgentStatusCacheSource::Hook,
+                                live::AgentEvidenceSource::Hook
+                            ) | (
+                                AgentStatusCacheSource::RuntimeWrapper,
+                                live::AgentEvidenceSource::RuntimeWrapper
+                            )
+                        )
+                }) {
+                    task.agent_runtime_evidence.replace_source(
+                        match entry.source {
+                            AgentStatusCacheSource::Hook => {
+                                crate::runtime::AgentRuntimeEvidenceSource::Hook
+                            }
+                            AgentStatusCacheSource::RuntimeWrapper => {
+                                crate::runtime::AgentRuntimeEvidenceSource::RuntimeWrapper
+                            }
+                        },
+                        entry.value.clone(),
+                        entry.observed_at,
+                    );
+                }
                 task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
                 task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
                 match source {
@@ -368,7 +426,6 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                         live::apply_trusted_observation_at(task, observation, observed_at);
                     }
                 }
-                refresh_cached_annotations(task);
                 changed |= *task != previous;
             }
             continue;
@@ -414,14 +471,25 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 || task.has_side_flag(crate::models::SideFlag::WorktrunkMissing);
             let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                 && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-            if live_status_unchanged && !had_recoverable_missing_flag && !needs_agent_running_flag {
+            let already_running = observation.kind == LiveStatusKind::AgentRunning
+                && task.agent_status == crate::models::AgentRuntimeStatus::Running
+                && task.has_side_flag(crate::models::SideFlag::AgentRunning);
+            if live_status_unchanged
+                && (task.live_status_observed_at.is_some() || already_running)
+                && !had_recoverable_missing_flag
+                && !needs_agent_running_flag
+            {
                 continue;
             }
             let previous = task.clone();
+            task.agent_runtime_evidence.replace_source(
+                crate::runtime::AgentRuntimeEvidenceSource::Pane,
+                pane_output,
+                SystemTime::now(),
+            );
             task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
             task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
             live::apply_observation(task, observation);
-            refresh_cached_annotations(task);
             changed |= *task != previous;
         }
     }
@@ -481,11 +549,18 @@ fn needs_git_substrate_refresh(tasks: &[Task]) -> bool {
             .has_side_flag(crate::models::SideFlag::WorktreeMissing)
             || task.has_side_flag(crate::models::SideFlag::BranchMissing);
         let has_stale_cached_git_status = task.git_status.is_some()
-            && (task.runtime_projection.source == RuntimeObservationSource::Unknown
-                || task.runtime_projection.health == RuntimeHealth::Unobservable
-                || task
-                    .runtime_projection
-                    .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR));
+            && if task.git_observation.observed {
+                task.git_observation.probe_error.is_some()
+                    || now
+                        .duration_since(task.git_observation.observed_at)
+                        .is_ok_and(|age| age >= RUNTIME_PROJECTION_FRESH_FOR)
+            } else {
+                task.runtime_projection.source == RuntimeObservationSource::Unknown
+                    || task.runtime_projection.health == RuntimeHealth::Unobservable
+                    || task
+                        .runtime_projection
+                        .requires_refresh(now, RUNTIME_PROJECTION_FRESH_FOR)
+            };
 
         task.lifecycle_status != LifecycleStatus::Removed
             && (has_missing_git_substrate || has_stale_cached_git_status)
@@ -546,7 +621,6 @@ fn record_runtime_probe_failure<R: Registry>(
     if let Some(task) = context.registry.get_task_mut(task_id) {
         let previous = task.runtime_projection.clone();
         task.record_runtime_probe_failure(RuntimeObservationSource::TmuxProbe, reason);
-        refresh_cached_annotations(task);
         *changed |= task.runtime_projection != previous;
     }
 }
@@ -640,7 +714,6 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                     &mut task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
                 );
-                refresh_cached_annotations(&mut task);
             }
             let stale_task_ids = registered_runtime_tasks
                 .iter()
@@ -684,10 +757,6 @@ fn worktree_allowed_for_runtime(placement: &WorktreePlacement, worktree_path: &s
         WorktreePlacement::LegacySibling => true,
         WorktreePlacement::Root(root) => Path::new(worktree_path).starts_with(root),
     }
-}
-
-fn refresh_cached_annotations(task: &mut Task) {
-    task.annotations = crate::attention::annotate(task);
 }
 
 #[cfg(test)]
@@ -1119,6 +1188,27 @@ mod tests {
     }
 
     #[test]
+    fn runtime_refresh_records_hook_candidate_in_canonical_evidence() {
+        let mut context = context_with_active_task();
+        let mut runner = RuntimeRefreshRunner;
+        let cache = StaticAgentStatusCache {
+            values: vec!["working".to_string()],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert!(task
+            .agent_runtime_evidence
+            .candidates
+            .iter()
+            .any(|candidate| {
+                candidate.source == crate::runtime::AgentRuntimeEvidenceSource::Hook
+                    && candidate.value == "working"
+            }));
+    }
+
+    #[test]
     fn wrapper_completion_beats_stale_hook_working_status() {
         struct MixedAgentStatusCache;
 
@@ -1496,8 +1586,7 @@ mod tests {
             Some(LiveStatusKind::WaitingForInput)
         );
         assert!(task.has_side_flag(SideFlag::NeedsInput));
-        assert!(task
-            .annotations
+        assert!(crate::attention::annotate(task)
             .iter()
             .any(|annotation| annotation.kind == crate::models::AnnotationKind::NeedsMe));
     }

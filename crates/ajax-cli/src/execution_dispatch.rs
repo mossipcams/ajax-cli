@@ -5,16 +5,11 @@ use ajax_core::commands::OpenMode;
 use ajax_core::commands::{self, CommandContext};
 #[cfg(feature = "supervisor")]
 use ajax_core::events::apply_monitor_event_to_registry;
-#[cfg(feature = "interactive")]
-use ajax_core::task_operations::kernel::execute_external_plan_with_success;
 use ajax_core::{
     adapters::environment::origin_fetch_age,
+    models::OperatorAction,
     registry::InMemoryRegistry,
-    task_operations::start::{
-        execute_start_task_operation, plan_start_task_operation_with_observation,
-    },
-    task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
-    task_operations::task_command::TaskCommandKind,
+    slices::{start, tidy},
 };
 #[cfg(any(feature = "interactive", feature = "supervisor"))]
 use ajax_core::{models::LifecycleStatus, registry::Registry};
@@ -69,7 +64,7 @@ pub(crate) fn render_matches_mut(
             let request = new_task_request(subcommand)?;
             let observation = start_plan_observation(context, &request);
             let (_intent, plan) =
-                plan_start_task_operation_with_observation(context, request.clone(), observation)
+                start::plan_with_observation(context, request.clone(), observation)
                     .map_err(command_error)?;
 
             if !subcommand.get_flag("execute") {
@@ -79,7 +74,7 @@ pub(crate) fn render_matches_mut(
                 });
             }
 
-            let (outputs, task) = execute_start_task_operation(
+            let (outputs, task) = start::execute(
                 context,
                 runner,
                 &request,
@@ -94,14 +89,14 @@ pub(crate) fn render_matches_mut(
             })
         }
         Some((name @ ("resume" | "repair" | "review" | "ship"), subcommand)) => {
-            let kind = match name {
-                "resume" => TaskCommandKind::Resume,
-                "repair" => TaskCommandKind::Repair,
-                "review" => TaskCommandKind::Review,
-                "ship" => TaskCommandKind::Ship,
+            let action = match name {
+                "resume" => OperatorAction::Resume,
+                "repair" => OperatorAction::Repair,
+                "review" => OperatorAction::Review,
+                "ship" => OperatorAction::Ship,
                 _ => unreachable!("task command pattern only matches known commands"),
             };
-            render_task_command(kind, subcommand, context, runner, open_mode)
+            render_task_command(action, subcommand, context, runner, open_mode)
         }
         Some(("drop", subcommand)) => render_drop_command(subcommand, context, runner),
         Some(("web", subcommand)) => {
@@ -132,23 +127,21 @@ pub(crate) fn render_matches_mut(
         Some(("tidy", subcommand)) => {
             if !subcommand.get_flag("execute") {
                 return Ok(RenderedCommand {
-                    output: render_plan(
-                        commands::sweep_cleanup_plan(context),
-                        subcommand.get_flag("json"),
-                    )?,
+                    output: render_plan(tidy::plan(context), subcommand.get_flag("json"))?,
                     state_changed: false,
                 });
             }
             let (outputs, state_changed) =
-                execute_sweep_cleanup_operation(context, subcommand.get_flag("yes"), runner)
-                    .map_err(|(error, error_state_changed)| {
+                tidy::execute(context, subcommand.get_flag("yes"), runner).map_err(
+                    |(error, error_state_changed)| {
                         let cli_error = command_error(error);
                         if error_state_changed {
                             cli_error.after_state_change()
                         } else {
                             cli_error
                         }
-                    })?;
+                    },
+                )?;
             Ok(RenderedCommand {
                 output: render_execution_outputs(&outputs, None),
                 state_changed,
@@ -396,26 +389,12 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
     let session_context = execution.session_context;
     let confirmed = execution.confirmed;
     let open_mode = execution.open_mode;
-    let task = commands::record_new_task(context, request).map_err(command_error)?;
-    let external_outputs =
-        match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
-            if let Some(step) = plan
-                .commands
-                .get(index)
-                .and_then(commands::start_provisioning_step_for_command)
-            {
-                commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
-            }
+    let (mut outputs, task) =
+        start::provision_with_checkpoint(context, runner, request, plan, confirmed, |context| {
+            let _ = context;
             Ok(())
-        }) {
-            Ok(outputs) => outputs,
-            Err(error @ CommandError::CommandRun(_)) => {
-                let _ = commands::mark_new_task_provisioning_failed(context, &task.id);
-                return Err(command_error(error).after_state_change());
-            }
-            Err(error) => return Err(command_error(error).after_state_change()),
-        };
-    let mut outputs = external_outputs;
+        })
+        .map_err(|error| command_error(error).after_state_change())?;
     commands::mark_task_opened(context, &task.qualified_handle())
         .map_err(|error| command_error(error).after_state_change())?;
     let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)

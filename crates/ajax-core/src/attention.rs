@@ -7,6 +7,7 @@ use crate::ui_state::{derive_operator_status, TaskStatus};
 pub fn annotate(task: &Task) -> Vec<Annotation> {
     let mut annotations = Vec::new();
     let operator_status = derive_operator_status(task);
+    let facts = task.facts();
 
     if task.runtime_projection.observation_error.is_some() {
         push_collapsed_annotation(
@@ -39,7 +40,7 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
         }
     }
 
-    for flag in task.side_flags() {
+    for flag in derived_attention_flags(task, facts) {
         if let Some(kind) = annotation_kind_for_side_flag(flag) {
             let evidence = substrate_gap_for_side_flag(flag)
                 .map(Evidence::Substrate)
@@ -91,6 +92,25 @@ pub fn annotate(task: &Task) -> Vec<Annotation> {
 
     annotations.sort_by_key(|annotation| annotation.severity);
     annotations
+}
+
+fn derived_attention_flags(task: &Task, facts: crate::models::TaskFacts) -> Vec<SideFlag> {
+    let mut flags = task.side_flags().collect::<Vec<_>>();
+    for flag in [
+        (facts.needs_input, SideFlag::NeedsInput),
+        (facts.agent_dead, SideFlag::AgentDead),
+        (facts.worktree_missing, SideFlag::WorktreeMissing),
+        (facts.tmux_missing, SideFlag::TmuxMissing),
+        (facts.worktrunk_missing, SideFlag::WorktrunkMissing),
+        (facts.branch_missing, SideFlag::BranchMissing),
+        (facts.conflicted, SideFlag::Conflicted),
+        (facts.tests_failed, SideFlag::TestsFailed),
+    ] {
+        if flag.0 && !flags.contains(&flag.1) {
+            flags.push(flag.1);
+        }
+    }
+    flags
 }
 
 fn push_collapsed_annotation(annotations: &mut Vec<Annotation>, annotation: Annotation) {

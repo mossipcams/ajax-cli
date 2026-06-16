@@ -3,6 +3,14 @@ use super::{
     run_with_context_and_runner_to_writer, run_with_context_paths,
     run_with_context_paths_and_runner, CliContextPaths, CliError,
 };
+
+#[test]
+fn cli_lib_defines_no_dispatch_or_rendering_implementation() {
+    let source = include_str!("../lib.rs");
+    for forbidden in ["fn run_with_args(", "fn render_", "fn command_error("] {
+        assert!(!source.contains(forbidden), "{forbidden}");
+    }
+}
 use ajax_core::{
     adapters::{
         CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec,
@@ -13,7 +21,7 @@ use ajax_core::{
     models::{
         AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
         LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, RuntimeProjection,
-        SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+        SideFlag, Task, TaskCondition, TaskId, TmuxStatus, WorktrunkStatus,
     },
     registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
 };
@@ -2968,7 +2976,7 @@ fn open_execute_switches_client_when_inside_tmux() {
     let (_, subcommand) = matches.subcommand().unwrap();
 
     super::render_task_command(
-        super::TaskCommandKind::Resume,
+        OperatorAction::Resume,
         subcommand,
         &mut context,
         &mut runner,
@@ -3560,7 +3568,7 @@ fn new_execute_records_provisioning_task_before_first_command_failure() {
         .find(|task| task.qualified_handle() == "web/fix-login")
         .expect("provisioning task should be visible after first command failure");
     assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
-    assert_eq!(ajax_core::commands::inbox(&context).items.len(), 1);
+    assert_eq!(ajax_core::slices::cockpit::inbox(&context).items.len(), 1);
 }
 
 #[test]
@@ -4476,6 +4484,38 @@ fn clean_execute_requires_yes_for_risky_task_without_running() {
 }
 
 #[test]
+fn clean_execute_requires_yes_for_typed_merge_failure_without_running() {
+    let mut context = cleanable_context();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    task.record_condition(TaskCondition::merge_failed(SystemTime::now()));
+    let mut runner = RecordingCommandRunner::default();
+
+    let error = run_with_context_and_runner(
+        ["ajax", "drop", "web/fix-login", "--execute"],
+        &mut context,
+        &mut runner,
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        error,
+        super::CliError::CommandFailed("confirmation required; pass --yes".to_string())
+    );
+    assert!(runner.commands().is_empty());
+    assert_eq!(
+        context
+            .registry
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .lifecycle_status,
+        LifecycleStatus::Cleanable
+    );
+}
+
+#[test]
 fn clean_execute_removes_risky_task_with_yes() {
     let mut context = cleanable_context();
     let task = context
@@ -5184,7 +5224,7 @@ fn drop_execute_branch_failure_after_worktree_remove_marks_teardown_incomplete()
     assert!(!runner.commands.iter().any(|command| {
         command.program == "tmux" && command.args.iter().any(|arg| arg == "kill-session")
     }));
-    assert!(!ajax_core::commands::list_tasks(&context, None)
+    assert!(!ajax_core::slices::cockpit::list_tasks(&context, None)
         .tasks
         .is_empty());
 }
@@ -5255,7 +5295,7 @@ fn repair_execute_repairs_trunk_with_injected_runner() {
     let (_, subcommand) = matches.subcommand().unwrap();
 
     super::render_task_command(
-        super::TaskCommandKind::Repair,
+        OperatorAction::Repair,
         subcommand,
         &mut context,
         &mut runner,
@@ -5299,7 +5339,7 @@ fn repair_execute_switches_client_when_inside_tmux() {
     let (_, subcommand) = matches.subcommand().unwrap();
 
     super::render_task_command(
-        super::TaskCommandKind::Repair,
+        OperatorAction::Repair,
         subcommand,
         &mut context,
         &mut runner,
@@ -5376,7 +5416,7 @@ fn repair_execute_uses_injected_runner() {
     // inside tmux, failing in CI). Pin the env-independent `Attach`
     // default so the full command sequence is asserted deterministically.
     super::render_task_command(
-        super::TaskCommandKind::Repair,
+        OperatorAction::Repair,
         subcommand,
         &mut context,
         &mut runner,
@@ -5988,7 +6028,7 @@ fn failed_pending_new_task_action_marks_state_changed_for_cockpit_recovery() {
         .find(|task| task.qualified_handle() == "web/fix-login")
         .expect("failed cockpit create should leave a visible task");
     assert_eq!(task.lifecycle_status, LifecycleStatus::Error);
-    let tasks = ajax_core::commands::list_tasks(&context, None);
+    let tasks = ajax_core::slices::cockpit::list_tasks(&context, None);
     assert_eq!(
         tasks.tasks[0].actions,
         vec![
@@ -5996,7 +6036,7 @@ fn failed_pending_new_task_action_marks_state_changed_for_cockpit_recovery() {
             OperatorAction::Drop.as_str().to_string(),
         ]
     );
-    let inbox = ajax_core::commands::inbox(&context);
+    let inbox = ajax_core::slices::cockpit::inbox(&context);
     assert_eq!(inbox.items.len(), 1);
     assert_eq!(inbox.items[0].action, OperatorAction::Resume);
 }
@@ -6227,7 +6267,7 @@ fn resume_plan_refreshes_stale_git_evidence_before_rendering_commands() {
     ]);
 
     let rendered = super::render_task_command(
-        super::TaskCommandKind::Resume,
+        OperatorAction::Resume,
         subcommand,
         &mut context,
         &mut runner,
@@ -7901,7 +7941,7 @@ fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
         Some(LiveStatusKind::AgentRunning)
     );
     assert_eq!(
-        ajax_core::commands::cockpit_view(&context).cards[0]
+        ajax_core::slices::cockpit::cockpit_view(&context).cards[0]
             .status_explanation
             .as_deref(),
         Some("Agent working")
@@ -8003,7 +8043,7 @@ fn tmux_probe_failure_renders_unavailable_without_marking_session_missing() {
         .as_ref()
         .is_some_and(|status| status.exists));
     assert_eq!(
-        ajax_core::commands::cockpit_view(&context).cards[0]
+        ajax_core::slices::cockpit::cockpit_view(&context).cards[0]
             .status_explanation
             .as_deref(),
         Some("Status unavailable")
@@ -8033,4 +8073,98 @@ fn confirmed_agent_stop_records_dead_instead_of_unknown() {
     assert_eq!(task.agent_status, AgentRuntimeStatus::Dead);
     assert_eq!(task.agent_attempts[0].status, AgentRuntimeStatus::Dead);
     assert!(!task.has_side_flag(SideFlag::AgentRunning));
+}
+
+#[test]
+fn cli_architecture_rejects_headline_status_derivation() {
+    for (name, source) in [
+        ("cockpit_backend", include_str!("../cockpit_backend.rs")),
+        ("dispatch", include_str!("../dispatch.rs")),
+        (
+            "execution_dispatch",
+            include_str!("../execution_dispatch.rs"),
+        ),
+        ("snapshot_dispatch", include_str!("../snapshot_dispatch.rs")),
+        ("web_backend", include_str!("../web_backend.rs")),
+    ] {
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+        assert!(
+            !production.contains("derive_operator_status("),
+            "{name} must consume core status projections"
+        );
+    }
+}
+
+#[test]
+fn cli_architecture_routes_task_actions_through_slice_facades() {
+    for (name, source) in [
+        ("dispatch", include_str!("../dispatch.rs")),
+        (
+            "execution_dispatch",
+            include_str!("../execution_dispatch.rs"),
+        ),
+        ("snapshot_dispatch", include_str!("../snapshot_dispatch.rs")),
+        ("cockpit_actions", include_str!("../cockpit_actions.rs")),
+    ] {
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+        assert!(
+            !production.contains("TaskCommandKind"),
+            "{name} must not depend on TaskCommandKind in production code"
+        );
+        assert!(
+            !production.contains("plan_task_command_operation("),
+            "{name} must plan task actions through slice facades"
+        );
+        assert!(
+            !production.contains("execute_task_command_operation("),
+            "{name} must execute task actions through slice facades"
+        );
+    }
+}
+
+#[test]
+fn cli_architecture_routes_cleanup_through_slice_facades() {
+    for (name, source) in [
+        ("dispatch", include_str!("../dispatch.rs")),
+        (
+            "execution_dispatch",
+            include_str!("../execution_dispatch.rs"),
+        ),
+        ("snapshot_dispatch", include_str!("../snapshot_dispatch.rs")),
+        ("cockpit_actions", include_str!("../cockpit_actions.rs")),
+    ] {
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+        assert!(
+            !production.contains("plan_drop_confirmation("),
+            "{name} must plan drop via slice facades"
+        );
+        assert!(
+            !production.contains("plan_drop_task_operation("),
+            "{name} must plan drop execution via slice facades"
+        );
+        assert!(
+            !production.contains("execute_drop_task_operation("),
+            "{name} must execute drop via slice facades"
+        );
+        assert!(
+            !production.contains("execute_sweep_cleanup_operation("),
+            "{name} must execute tidy via slice facades"
+        );
+        assert!(
+            !production.contains("task_operations::drop_task::"),
+            "{name} must not depend on drop-task compatibility types"
+        );
+        assert!(
+            !production.contains("ajax_core::task_operations"),
+            "{name} must not import ajax_core::task_operations in production code"
+        );
+        assert!(
+            !production.contains("commands::sweep_cleanup_plan("),
+            "{name} must plan tidy via slice facades"
+        );
+        assert!(
+            !production.contains("commands::new_task_plan("),
+            "{name} must plan start via slice facades"
+        );
+    }
 }

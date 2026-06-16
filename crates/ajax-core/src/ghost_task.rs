@@ -4,7 +4,7 @@
 //! appear in Cockpit. Recoverable missing-substrate tasks remain persisted so operators
 //! keep history and can repair, drop, or rediscover substrate.
 
-use crate::models::{LifecycleStatus, SideFlag, Task};
+use crate::models::{LifecycleStatus, Task};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RegistryGhostReason {
@@ -23,7 +23,7 @@ pub fn registry_persistence_disposition(task: &Task) -> RegistryPersistenceDispo
     if task.lifecycle_status == LifecycleStatus::Removed {
         return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Removed);
     }
-    if task.has_side_flag(SideFlag::Stale) {
+    if task.facts_with_now(std::time::SystemTime::now()).stale {
         return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale);
     }
     if is_abandoned_provisioning_ghost(task) {
@@ -64,19 +64,11 @@ fn has_no_recoverable_git_substrate(task: &Task) -> bool {
 }
 
 fn git_worktree_absent(task: &Task) -> bool {
-    task.has_side_flag(SideFlag::WorktreeMissing)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists)
+    task.facts().worktree_missing
 }
 
 fn git_branch_absent(task: &Task) -> bool {
-    task.has_side_flag(SideFlag::BranchMissing)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.branch_exists)
+    task.facts().branch_missing
 }
 
 #[cfg(test)]
@@ -139,13 +131,37 @@ mod tests {
         assert!(!is_cockpit_visible_task(&removed));
 
         let mut stale = task_with_lifecycle(LifecycleStatus::Active);
-        stale.add_side_flag(SideFlag::Stale);
+        stale.last_activity_at = std::time::SystemTime::UNIX_EPOCH;
         stale.add_side_flag(SideFlag::WorktreeMissing);
         assert_eq!(
             registry_persistence_disposition(&stale),
             RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale)
         );
         assert!(!is_cockpit_visible_task(&stale));
+    }
+
+    #[test]
+    fn ghost_classification_uses_lifecycle_and_age_without_stale_flag() {
+        let stale_after = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+        let mut task = task_with_lifecycle(LifecycleStatus::Active);
+        task.last_activity_at = std::time::SystemTime::UNIX_EPOCH;
+
+        let disposition = if task
+            .facts_with_now(
+                std::time::SystemTime::UNIX_EPOCH + stale_after + std::time::Duration::from_secs(1),
+            )
+            .stale
+        {
+            RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale)
+        } else {
+            RegistryPersistenceDisposition::Persist
+        };
+
+        assert_eq!(
+            disposition,
+            RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale)
+        );
+        assert!(!task.has_side_flag(SideFlag::Stale));
     }
 
     #[test]

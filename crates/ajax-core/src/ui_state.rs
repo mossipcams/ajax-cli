@@ -1,4 +1,4 @@
-use crate::models::{AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task};
+use crate::models::{AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, Task};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +36,7 @@ pub fn derive_operator_status(task: &Task) -> OperatorStatus {
 }
 
 fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
+    let facts = task.facts();
     if task.lifecycle_status == LifecycleStatus::TeardownIncomplete {
         return canonical(TaskStatus::Error, "Teardown incomplete");
     }
@@ -50,13 +51,13 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
             return canonical(TaskStatus::Error, explanation);
         }
     }
-    if task.has_side_flag(SideFlag::TestsFailed) {
+    if facts.tests_failed {
         return canonical(TaskStatus::Error, "Tests failed");
     }
-    if task.has_side_flag(SideFlag::Conflicted) {
+    if facts.conflicted {
         return canonical(TaskStatus::Error, "Merge conflict");
     }
-    if task.has_side_flag(SideFlag::AgentDead) || task.agent_status == AgentRuntimeStatus::Dead {
+    if facts.agent_dead || task.agent_status == AgentRuntimeStatus::Dead {
         return canonical(TaskStatus::Error, "Agent unavailable");
     }
     if task.lifecycle_status == LifecycleStatus::Error {
@@ -68,9 +69,7 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
             return canonical(TaskStatus::Running, explanation);
         }
     }
-    if task.agent_status == AgentRuntimeStatus::Running
-        || task.has_side_flag(SideFlag::AgentRunning)
-    {
+    if task.agent_status == AgentRuntimeStatus::Running || facts.agent_running {
         return canonical(TaskStatus::Running, "Agent working");
     }
 
@@ -100,9 +99,7 @@ fn derive_task_status(task: &Task) -> (TaskStatus, Option<String>) {
     {
         return canonical(TaskStatus::Waiting, "Ready for review");
     }
-    if !live_acknowledged
-        && (task.has_side_flag(SideFlag::NeedsInput)
-            || task.agent_status == AgentRuntimeStatus::Waiting)
+    if !live_acknowledged && (facts.needs_input || task.agent_status == AgentRuntimeStatus::Waiting)
     {
         return canonical(TaskStatus::Waiting, "Waiting for input");
     }
@@ -188,20 +185,21 @@ fn canonical_missing_substrate_explanation(task: &Task) -> Option<&'static str> 
 }
 
 fn missing_substrate_label(task: &Task) -> Option<&'static str> {
-    if task.has_side_flag(SideFlag::WorktreeMissing)
+    let facts = task.facts();
+    if facts.worktree_missing
         || task.runtime_projection.health == crate::models::RuntimeHealth::MissingWorktree
     {
         return Some("worktree missing");
     }
-    if task.has_side_flag(SideFlag::BranchMissing) {
+    if facts.branch_missing {
         return Some("branch missing");
     }
-    if task.has_side_flag(SideFlag::TmuxMissing)
+    if facts.tmux_missing
         || task.runtime_projection.health == crate::models::RuntimeHealth::MissingSession
     {
         return Some("tmux session missing");
     }
-    if task.has_side_flag(SideFlag::WorktrunkMissing)
+    if facts.worktrunk_missing
         || matches!(
             task.runtime_projection.health,
             crate::models::RuntimeHealth::MissingTaskWindow
@@ -402,6 +400,22 @@ mod tests {
         task.mark_resource_missing(SideFlag::WorktreeMissing);
 
         assert_eq!(derive_operator_status(&task).status, TaskStatus::Error);
+    }
+
+    #[test]
+    fn missing_substrate_explanation_uses_tmux_facts_without_side_flags() {
+        let mut task = base_task();
+        mark_active(&mut task).unwrap();
+        task.tmux_status = Some(crate::models::TmuxStatus {
+            exists: false,
+            session_name: "ajax-web-fix-login".to_string(),
+        });
+
+        let status = derive_operator_status(&task);
+
+        assert_eq!(status.status, TaskStatus::Error);
+        assert_eq!(status.explanation.as_deref(), Some("Tmux session missing"));
+        assert!(!task.has_side_flag(SideFlag::TmuxMissing));
     }
 
     #[test]

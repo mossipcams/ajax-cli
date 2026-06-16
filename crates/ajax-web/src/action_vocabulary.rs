@@ -1,6 +1,10 @@
 //! Shared browser action capability vocabulary for Web Cockpit slices.
 
-use ajax_core::{models::OperatorAction, output::TaskCard};
+use ajax_core::{
+    models::OperatorAction,
+    output::TaskCard,
+    slices::remediate::{self, RemediationOption},
+};
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct WebAction {
@@ -23,7 +27,7 @@ pub fn web_action(action: OperatorAction) -> Option<WebAction> {
     })
 }
 
-pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOption) -> WebAction {
+pub fn remediation_action_state(option: &RemediationOption) -> WebAction {
     WebAction {
         action: option.id.clone(),
         label: Some(option.label.clone()),
@@ -61,7 +65,7 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
 }
 
 pub fn supported_browser_action(action: &str) -> bool {
-    if ajax_core::remediation::is_remediation_action(action) {
+    if remediate::is_remediation_action(action) {
         return true;
     }
     OperatorAction::from_label(action).is_some_and(supported_web_action)
@@ -76,6 +80,7 @@ mod tests {
         },
         output::TaskCard,
         remediation::FIX_CI,
+        slices::remediate,
     };
 
     #[test]
@@ -129,7 +134,7 @@ mod tests {
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
-            remediations: ajax_core::remediation::remediations_for_task(&blocked_ci_task()),
+            remediations: remediate::remediations_for_task(&blocked_ci_task()),
         };
 
         let states = browser_actions(&card);

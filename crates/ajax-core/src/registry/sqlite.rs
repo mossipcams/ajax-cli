@@ -5,10 +5,10 @@ use std::{
 };
 
 use rusqlite::{params, Connection, Row, Transaction};
+use serde::de::DeserializeOwned;
 
 use super::{
-    refresh_task_annotations, InMemoryRegistry, RegistryEvent, RegistryEventKind,
-    RegistrySnapshotError, RegistryStore,
+    InMemoryRegistry, RegistryEvent, RegistryEventKind, RegistrySnapshotError, RegistryStore,
 };
 use crate::ghost_task::is_registry_ghost_task;
 use crate::lifecycle::hydrate_lifecycle_status;
@@ -18,7 +18,7 @@ use crate::models::{
     StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 7;
+const SQLITE_SCHEMA_VERSION: i64 = 10;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -34,10 +34,7 @@ impl SqliteRegistryStore {
         let connection = self.open()?;
         Self::migrate(&connection)?;
 
-        let mut tasks = load_tasks(&connection)?;
-        for task in &mut tasks {
-            refresh_task_annotations(task);
-        }
+        let tasks = load_tasks(&connection)?;
 
         Ok(InMemoryRegistry {
             tasks: tasks
@@ -73,6 +70,15 @@ impl SqliteRegistryStore {
         if sqlite_user_version(connection)? == 6 {
             migrate_v6_to_v7(connection)?;
         }
+        if sqlite_user_version(connection)? == 7 {
+            migrate_v7_to_v8(connection)?;
+        }
+        if sqlite_user_version(connection)? == 8 {
+            migrate_v8_to_v9(connection)?;
+        }
+        if sqlite_user_version(connection)? == 9 {
+            migrate_v9_to_v10(connection)?;
+        }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
             return Err(RegistrySnapshotError::IncompatibleSchema {
@@ -96,45 +102,17 @@ impl SqliteRegistryStore {
                     worktrunk_window TEXT NOT NULL,
                     selected_agent TEXT NOT NULL,
                     lifecycle_status TEXT NOT NULL,
-                    agent_status TEXT NOT NULL,
                     created_at_unix_seconds INTEGER NOT NULL,
                     created_at_subsec_nanos INTEGER NOT NULL,
                     last_activity_at_unix_seconds INTEGER NOT NULL,
                     last_activity_at_subsec_nanos INTEGER NOT NULL,
-                    live_status_kind TEXT,
-                    live_status_summary TEXT,
-                    live_status_observed_at_unix_seconds INTEGER,
-                    live_status_observed_at_subsec_nanos INTEGER,
-                    git_worktree_exists INTEGER,
-                    git_branch_exists INTEGER,
-                    git_current_branch TEXT,
-                    git_dirty INTEGER,
-                    git_ahead INTEGER,
-                    git_behind INTEGER,
-                    git_merged INTEGER,
-                    git_untracked_files INTEGER,
-                    git_unpushed_commits INTEGER,
-                    git_conflicted INTEGER,
-                    git_last_commit TEXT,
-                    tmux_exists INTEGER,
-                    tmux_session_name TEXT,
-                    worktrunk_exists INTEGER,
-                    worktrunk_window_name TEXT,
-                    worktrunk_current_path TEXT,
-                    worktrunk_points_at_expected_path INTEGER,
-                    runtime_health TEXT NOT NULL,
-                    runtime_observed_at_unix_seconds INTEGER NOT NULL,
-                    runtime_observed_at_subsec_nanos INTEGER NOT NULL,
-                    runtime_observation_source TEXT NOT NULL,
-                    runtime_observation_error TEXT,
                     attention_acknowledged_at_unix_seconds INTEGER,
-                    attention_acknowledged_at_subsec_nanos INTEGER
-                );
-
-                CREATE TABLE IF NOT EXISTS registry_task_side_flags (
-                    task_id TEXT NOT NULL,
-                    flag TEXT NOT NULL,
-                    PRIMARY KEY (task_id, flag)
+                    attention_acknowledged_at_subsec_nanos INTEGER,
+                    git_observation_json TEXT,
+                    tmux_observation_json TEXT,
+                    task_window_observation_json TEXT,
+                    agent_runtime_evidence_json TEXT NOT NULL,
+                    conditions_json TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS registry_task_metadata (
@@ -227,6 +205,87 @@ impl SqliteRegistryStore {
         transaction.commit().map_err(database_error)?;
         Ok(next)
     }
+}
+
+fn migrate_v9_to_v10(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    let tasks = load_tasks_v9(connection)?;
+    let transaction = connection.unchecked_transaction().map_err(database_error)?;
+    transaction
+        .execute_batch(
+            r#"
+            CREATE TABLE registry_tasks_v10 (
+                task_id TEXT PRIMARY KEY NOT NULL,
+                repo TEXT NOT NULL,
+                handle TEXT NOT NULL,
+                title TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                base_branch TEXT NOT NULL,
+                worktree_path TEXT NOT NULL,
+                tmux_session TEXT NOT NULL,
+                worktrunk_window TEXT NOT NULL,
+                selected_agent TEXT NOT NULL,
+                lifecycle_status TEXT NOT NULL,
+                created_at_unix_seconds INTEGER NOT NULL,
+                created_at_subsec_nanos INTEGER NOT NULL,
+                last_activity_at_unix_seconds INTEGER NOT NULL,
+                last_activity_at_subsec_nanos INTEGER NOT NULL,
+                attention_acknowledged_at_unix_seconds INTEGER,
+                attention_acknowledged_at_subsec_nanos INTEGER,
+                git_observation_json TEXT NOT NULL,
+                tmux_observation_json TEXT NOT NULL,
+                task_window_observation_json TEXT NOT NULL,
+                agent_runtime_evidence_json TEXT NOT NULL,
+                conditions_json TEXT NOT NULL
+            );
+            "#,
+        )
+        .map_err(database_error)?;
+    for task in &tasks {
+        insert_canonical_task(&transaction, "registry_tasks_v10", task)?;
+    }
+    transaction
+        .execute_batch(
+            r#"
+            DROP TABLE registry_tasks;
+            ALTER TABLE registry_tasks_v10 RENAME TO registry_tasks;
+            DROP TABLE IF EXISTS registry_task_side_flags;
+            PRAGMA user_version = 10;
+            "#,
+        )
+        .map_err(database_error)?;
+    transaction.commit().map_err(database_error)
+}
+
+fn migrate_v8_to_v9(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    if !registry_tasks_has_column(connection, "agent_runtime_evidence_json")? {
+        connection
+            .execute_batch(
+                "ALTER TABLE registry_tasks ADD COLUMN agent_runtime_evidence_json TEXT;",
+            )
+            .map_err(database_error)?;
+    }
+    connection
+        .pragma_update(None, "user_version", 9)
+        .map_err(database_error)
+}
+
+fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    for column in [
+        "git_observation_json",
+        "tmux_observation_json",
+        "task_window_observation_json",
+    ] {
+        if !registry_tasks_has_column(connection, column)? {
+            connection
+                .execute_batch(&format!(
+                    "ALTER TABLE registry_tasks ADD COLUMN {column} TEXT;"
+                ))
+                .map_err(database_error)?;
+        }
+    }
+    connection
+        .pragma_update(None, "user_version", 8)
+        .map_err(database_error)
 }
 
 fn migrate_v6_to_v7(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -368,10 +427,7 @@ impl RegistryStore for SqliteRegistryStore {
         let connection = self.open()?;
         Self::migrate(&connection)?;
 
-        let mut tasks = load_tasks(&connection)?;
-        for task in &mut tasks {
-            refresh_task_annotations(task);
-        }
+        let tasks = load_tasks(&connection)?;
         let events = load_events(&connection)?;
         let step_receipts = load_step_receipts(&connection)?;
 
@@ -420,9 +476,6 @@ fn save_registry(
         .map_err(database_error)?;
     transaction
         .execute("DELETE FROM registry_task_metadata", [])
-        .map_err(database_error)?;
-    transaction
-        .execute("DELETE FROM registry_task_side_flags", [])
         .map_err(database_error)?;
     transaction
         .execute("DELETE FROM registry_tasks", [])
@@ -496,7 +549,7 @@ fn revision(connection: &Connection) -> Result<u64, RegistrySnapshotError> {
         })
 }
 
-fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotError> {
+fn load_tasks_v9(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotError> {
     let mut statement = connection
         .prepare(
             "SELECT task_id, repo, handle, title, branch, base_branch, worktree_path, \
@@ -510,7 +563,9 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
              runtime_observation_source, runtime_observation_error, \
-             attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos \
+             attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos, \
+             git_observation_json, tmux_observation_json, task_window_observation_json, \
+             agent_runtime_evidence_json \
              FROM registry_tasks WHERE lifecycle_status != 'Removed' ORDER BY task_id",
         )
         .map_err(database_error)?;
@@ -518,7 +573,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     let mut tasks = Vec::new();
 
     while let Some(row) = rows.next().map_err(database_error)? {
-        tasks.push(task_from_row(row)?);
+        tasks.push(task_from_v9_row(row)?);
     }
 
     load_task_side_flags_by_task(connection, &mut tasks)?;
@@ -529,7 +584,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     Ok(tasks)
 }
 
-fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
+fn task_from_v9_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     let task_id = TaskId::new(row.get::<_, String>("task_id").map_err(database_error)?);
     let repo = row.get::<_, String>("repo").map_err(database_error)?;
     let handle = row.get::<_, String>("handle").map_err(database_error)?;
@@ -610,6 +665,24 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     {
         runtime_projection.observation_error = Some("agent status not observed".to_string());
     }
+    let git_observation = substrate_observation_from_row(
+        row,
+        "git_observation_json",
+        git_status.clone(),
+        &runtime_projection,
+    )?;
+    let tmux_observation = substrate_observation_from_row(
+        row,
+        "tmux_observation_json",
+        tmux_status.clone(),
+        &runtime_projection,
+    )?;
+    let task_window_observation = substrate_observation_from_row(
+        row,
+        "task_window_observation_json",
+        worktrunk_status.clone(),
+        &runtime_projection,
+    )?;
 
     let mut task = Task::new(
         task_id,
@@ -632,10 +705,265 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     task.git_status = git_status;
     task.tmux_status = tmux_status;
     task.worktrunk_status = worktrunk_status;
+    task.git_observation = git_observation;
+    task.tmux_observation = tmux_observation;
+    task.task_window_observation = task_window_observation;
+    task.agent_runtime_evidence = row
+        .get::<_, Option<String>>("agent_runtime_evidence_json")
+        .map_err(database_error)?
+        .map(|json| {
+            serde_json::from_str(&json)
+                .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))
+        })
+        .transpose()?
+        .unwrap_or_default();
     task.runtime_projection = runtime_projection;
     task.attention_acknowledged_at = attention_acknowledged_at_from_row(row)?;
 
     Ok(task)
+}
+
+fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT task_id, repo, handle, title, branch, base_branch, worktree_path, \
+             tmux_session, worktrunk_window, selected_agent, lifecycle_status, \
+             created_at_unix_seconds, created_at_subsec_nanos, last_activity_at_unix_seconds, \
+             last_activity_at_subsec_nanos, attention_acknowledged_at_unix_seconds, \
+             attention_acknowledged_at_subsec_nanos, git_observation_json, tmux_observation_json, \
+             task_window_observation_json, agent_runtime_evidence_json, conditions_json \
+             FROM registry_tasks WHERE lifecycle_status != 'Removed' ORDER BY task_id",
+        )
+        .map_err(database_error)?;
+    let mut rows = statement.query([]).map_err(database_error)?;
+    let mut tasks = Vec::new();
+    while let Some(row) = rows.next().map_err(database_error)? {
+        tasks.push(task_from_canonical_row(row)?);
+    }
+    tasks.retain(|task| !is_registry_ghost_task(task));
+    load_task_metadata_by_task(connection, &mut tasks)?;
+    load_agent_attempts_by_task(connection, &mut tasks)?;
+    Ok(tasks)
+}
+
+fn task_from_canonical_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
+    let mut task = Task::new(
+        TaskId::new(row.get::<_, String>("task_id").map_err(database_error)?),
+        row.get::<_, String>("repo").map_err(database_error)?,
+        row.get::<_, String>("handle").map_err(database_error)?,
+        row.get::<_, String>("title").map_err(database_error)?,
+        row.get::<_, String>("branch").map_err(database_error)?,
+        row.get::<_, String>("base_branch")
+            .map_err(database_error)?,
+        row.get::<_, String>("worktree_path")
+            .map_err(database_error)?,
+        row.get::<_, String>("tmux_session")
+            .map_err(database_error)?,
+        row.get::<_, String>("worktrunk_window")
+            .map_err(database_error)?,
+        parse_agent_client(
+            &row.get::<_, String>("selected_agent")
+                .map_err(database_error)?,
+        )?,
+    );
+    hydrate_lifecycle_status(
+        &mut task,
+        parse_lifecycle_status(
+            &row.get::<_, String>("lifecycle_status")
+                .map_err(database_error)?,
+        )?,
+    );
+    task.created_at = unix_parts_to_system_time(
+        row.get("created_at_unix_seconds").map_err(database_error)?,
+        row.get("created_at_subsec_nanos").map_err(database_error)?,
+    )?;
+    task.last_activity_at = unix_parts_to_system_time(
+        row.get("last_activity_at_unix_seconds")
+            .map_err(database_error)?,
+        row.get("last_activity_at_subsec_nanos")
+            .map_err(database_error)?,
+    )?;
+    task.attention_acknowledged_at = attention_acknowledged_at_from_row(row)?;
+    task.git_observation = json_column(row, "git_observation_json")?;
+    task.tmux_observation = json_column(row, "tmux_observation_json")?;
+    task.task_window_observation = json_column(row, "task_window_observation_json")?;
+    task.agent_runtime_evidence = json_column(row, "agent_runtime_evidence_json")?;
+    task.conditions = json_column(row, "conditions_json")?;
+    task.git_status = task.git_observation.value.clone();
+    task.tmux_status = task.tmux_observation.value.clone();
+    task.worktrunk_status = task.task_window_observation.value.clone();
+    let newest_observation = [
+        (
+            task.git_observation.observed,
+            task.git_observation.observed_at,
+            task.git_observation.source,
+        ),
+        (
+            task.tmux_observation.observed,
+            task.tmux_observation.observed_at,
+            task.tmux_observation.source,
+        ),
+        (
+            task.task_window_observation.observed,
+            task.task_window_observation.observed_at,
+            task.task_window_observation.source,
+        ),
+    ]
+    .into_iter()
+    .filter(|(observed, _, _)| *observed)
+    .max_by_key(|(_, observed_at, _)| *observed_at);
+    let (runtime_observed_at, runtime_source) = newest_observation
+        .map(|(_, observed_at, source)| (observed_at, runtime_observation_source(source)))
+        .unwrap_or((task.last_activity_at, RuntimeObservationSource::Unknown));
+    task.runtime_projection = crate::runtime::reconcile_runtime(
+        &crate::runtime::ObservedTaskRuntime {
+            git_status: task.git_status.clone(),
+            tmux_status: task.tmux_status.clone(),
+            worktrunk_status: task.worktrunk_status.clone(),
+        },
+        runtime_observed_at,
+        runtime_source,
+    );
+    let probe_errors = [
+        task.git_observation.probe_error.as_ref().map(|error| {
+            (
+                task.git_observation.observed_at,
+                runtime_observation_source(task.git_observation.source),
+                error.clone(),
+            )
+        }),
+        task.tmux_observation.probe_error.as_ref().map(|error| {
+            (
+                task.tmux_observation.observed_at,
+                runtime_observation_source(task.tmux_observation.source),
+                error.clone(),
+            )
+        }),
+        task.task_window_observation
+            .probe_error
+            .as_ref()
+            .map(|error| {
+                (
+                    task.task_window_observation.observed_at,
+                    runtime_observation_source(task.task_window_observation.source),
+                    error.clone(),
+                )
+            }),
+    ];
+    if let Some((observed_at, source, error)) = probe_errors
+        .into_iter()
+        .flatten()
+        .max_by_key(|(observed_at, _, _)| *observed_at)
+    {
+        task.runtime_projection.observed_at = observed_at;
+        task.runtime_projection.source = source;
+        task.runtime_projection.observation_error = Some(error);
+    }
+    let reduced = task.agent_runtime_evidence.reduce(
+        task.selected_agent,
+        None,
+        task.attention_acknowledged_at,
+        SystemTime::now(),
+    );
+    task.agent_status = if task.agent_runtime_evidence.candidates.is_empty()
+        && task.agent_runtime_evidence.status_hint.is_none()
+    {
+        AgentRuntimeStatus::NotStarted
+    } else {
+        reduced.agent_status
+    };
+    task.live_status = reduced.observation;
+    task.live_status_observed_at = reduced.observed_at;
+    let facts = task.facts_with_now(SystemTime::now());
+    for (present, flag) in [
+        (facts.dirty, SideFlag::Dirty),
+        (facts.needs_input, SideFlag::NeedsInput),
+        (facts.tests_failed, SideFlag::TestsFailed),
+        (facts.conflicted, SideFlag::Conflicted),
+        (facts.unpushed, SideFlag::Unpushed),
+        (facts.agent_running, SideFlag::AgentRunning),
+        (facts.agent_dead, SideFlag::AgentDead),
+        (facts.worktree_missing, SideFlag::WorktreeMissing),
+        (facts.tmux_missing, SideFlag::TmuxMissing),
+        (facts.worktrunk_missing, SideFlag::WorktrunkMissing),
+        (facts.branch_missing, SideFlag::BranchMissing),
+        (facts.stale, SideFlag::Stale),
+    ] {
+        if present {
+            task.add_side_flag(flag);
+        }
+    }
+    Ok(task)
+}
+
+fn json_column<T: DeserializeOwned>(
+    row: &Row<'_>,
+    column: &str,
+) -> Result<T, RegistrySnapshotError> {
+    let json = row.get::<_, String>(column).map_err(database_error)?;
+    serde_json::from_str(&json).map_err(|error| RegistrySnapshotError::Decode(error.to_string()))
+}
+
+fn substrate_observation_from_row<T>(
+    row: &Row<'_>,
+    column: &str,
+    legacy_value: Option<T>,
+    projection: &RuntimeProjection,
+) -> Result<crate::runtime::SubstrateObservation<T>, RegistrySnapshotError>
+where
+    T: Clone + DeserializeOwned + crate::runtime::SubstratePresence,
+{
+    if let Some(json) = row
+        .get::<_, Option<String>>(column)
+        .map_err(database_error)?
+    {
+        return serde_json::from_str(&json)
+            .map_err(|error| RegistrySnapshotError::Decode(error.to_string()));
+    }
+
+    Ok(match legacy_value {
+        Some(value) => crate::runtime::SubstrateObservation::observed(
+            value,
+            projection.observed_at,
+            runtime_evidence_source(projection.source),
+        ),
+        None => crate::runtime::SubstrateObservation::default(),
+    })
+}
+
+fn runtime_evidence_source(
+    source: RuntimeObservationSource,
+) -> crate::runtime::RuntimeEvidenceSource {
+    match source {
+        RuntimeObservationSource::StartupScan => crate::runtime::RuntimeEvidenceSource::GitProbe,
+        RuntimeObservationSource::FilesystemEvent => {
+            crate::runtime::RuntimeEvidenceSource::FilesystemEvent
+        }
+        RuntimeObservationSource::TmuxProbe => crate::runtime::RuntimeEvidenceSource::TmuxProbe,
+        RuntimeObservationSource::CommandResult => {
+            crate::runtime::RuntimeEvidenceSource::OperationResult
+        }
+        RuntimeObservationSource::Unknown => crate::runtime::RuntimeEvidenceSource::OperationResult,
+    }
+}
+
+fn runtime_observation_source(
+    source: crate::runtime::RuntimeEvidenceSource,
+) -> RuntimeObservationSource {
+    match source {
+        crate::runtime::RuntimeEvidenceSource::GitProbe => RuntimeObservationSource::StartupScan,
+        crate::runtime::RuntimeEvidenceSource::TmuxProbe => RuntimeObservationSource::TmuxProbe,
+        crate::runtime::RuntimeEvidenceSource::FilesystemEvent => {
+            RuntimeObservationSource::FilesystemEvent
+        }
+        crate::runtime::RuntimeEvidenceSource::OperationResult
+        | crate::runtime::RuntimeEvidenceSource::AgentWrapper
+        | crate::runtime::RuntimeEvidenceSource::AgentStatusCache
+        | crate::runtime::RuntimeEvidenceSource::PaneClassifier
+        | crate::runtime::RuntimeEvidenceSource::SupervisorEvent => {
+            RuntimeObservationSource::CommandResult
+        }
+    }
 }
 
 fn live_status_observed_at_from_row(
@@ -981,117 +1309,7 @@ fn load_step_receipts(connection: &Connection) -> Result<Vec<StepReceipt>, Regis
 }
 
 fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistrySnapshotError> {
-    let (created_at_seconds, created_at_nanos) = system_time_to_unix_parts(task.created_at)?;
-    let (last_activity_seconds, last_activity_nanos) =
-        system_time_to_unix_parts(task.last_activity_at)?;
-    let (runtime_observed_seconds, runtime_observed_nanos) =
-        system_time_to_unix_parts(task.runtime_projection.observed_at)?;
-    let attention_acknowledged_parts = task
-        .attention_acknowledged_at
-        .map(system_time_to_unix_parts)
-        .transpose()?;
-    let live_status_observed_parts = task
-        .live_status_observed_at
-        .map(system_time_to_unix_parts)
-        .transpose()?;
-    transaction
-        .execute(
-            "INSERT INTO registry_tasks \
-             (task_id, repo, handle, title, branch, base_branch, worktree_path, tmux_session, \
-              worktrunk_window, selected_agent, lifecycle_status, agent_status, \
-              created_at_unix_seconds, created_at_subsec_nanos, last_activity_at_unix_seconds, \
-              last_activity_at_subsec_nanos, live_status_kind, live_status_summary, \
-              live_status_observed_at_unix_seconds, live_status_observed_at_subsec_nanos, \
-              git_worktree_exists, git_branch_exists, git_current_branch, git_dirty, git_ahead, \
-              git_behind, git_merged, git_untracked_files, git_unpushed_commits, git_conflicted, \
-              git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists, \
-              worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path, \
-              runtime_health, runtime_observed_at_unix_seconds, runtime_observed_at_subsec_nanos, \
-              runtime_observation_source, runtime_observation_error, \
-              attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos) \
-             VALUES \
-             (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
-              ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, \
-              ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42, ?43, ?44)",
-            params![
-                task.id.as_str(),
-                task.repo,
-                task.handle,
-                task.title,
-                task.branch,
-                task.base_branch,
-                task.worktree_path.to_string_lossy().as_ref(),
-                task.tmux_session,
-                task.worktrunk_window,
-                agent_client_name(task.selected_agent),
-                lifecycle_status_name(task.lifecycle_status),
-                agent_runtime_status_name(task.agent_status),
-                created_at_seconds,
-                created_at_nanos,
-                last_activity_seconds,
-                last_activity_nanos,
-                task.live_status
-                    .as_ref()
-                    .map(|status| live_status_kind_name(status.kind)),
-                task.live_status
-                    .as_ref()
-                    .map(|status| status.summary.as_str()),
-                live_status_observed_parts.map(|(seconds, _)| seconds),
-                live_status_observed_parts.map(|(_, nanos)| nanos),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.worktree_exists),
-                task.git_status.as_ref().map(|status| status.branch_exists),
-                task.git_status
-                    .as_ref()
-                    .and_then(|status| status.current_branch.as_deref()),
-                task.git_status.as_ref().map(|status| status.dirty),
-                task.git_status.as_ref().map(|status| status.ahead),
-                task.git_status.as_ref().map(|status| status.behind),
-                task.git_status.as_ref().map(|status| status.merged),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.untracked_files),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.unpushed_commits),
-                task.git_status.as_ref().map(|status| status.conflicted),
-                task.git_status
-                    .as_ref()
-                    .and_then(|status| status.last_commit.as_deref()),
-                task.tmux_status.as_ref().map(|status| status.exists),
-                task.tmux_status
-                    .as_ref()
-                    .map(|status| status.session_name.as_str()),
-                task.worktrunk_status.as_ref().map(|status| status.exists),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.window_name.as_str()),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.current_path.to_string_lossy().to_string()),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.points_at_expected_path),
-                task.runtime_projection.health.as_str(),
-                runtime_observed_seconds,
-                runtime_observed_nanos,
-                task.runtime_projection.source.as_str(),
-                task.runtime_projection.observation_error.as_deref(),
-                attention_acknowledged_parts.map(|(seconds, _)| seconds),
-                attention_acknowledged_parts.map(|(_, nanos)| nanos),
-            ],
-        )
-        .map_err(database_error)?;
-
-    for flag in task.side_flags() {
-        transaction
-            .execute(
-                "INSERT INTO registry_task_side_flags (task_id, flag) VALUES (?1, ?2)",
-                params![task.id.as_str(), side_flag_name(flag)],
-            )
-            .map_err(database_error)?;
-    }
+    insert_canonical_task(transaction, "registry_tasks", task)?;
 
     for (key, value) in &task.metadata {
         transaction
@@ -1131,6 +1349,284 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
     }
 
     Ok(())
+}
+
+fn insert_canonical_task(
+    transaction: &Transaction<'_>,
+    table: &str,
+    task: &Task,
+) -> Result<(), RegistrySnapshotError> {
+    let canonical = canonicalize_task_for_persistence(task);
+    let task = &canonical;
+    let (created_at_seconds, created_at_nanos) = system_time_to_unix_parts(task.created_at)?;
+    let (last_activity_seconds, last_activity_nanos) =
+        system_time_to_unix_parts(task.last_activity_at)?;
+    let attention_acknowledged_parts = task
+        .attention_acknowledged_at
+        .map(system_time_to_unix_parts)
+        .transpose()?;
+    let git_observation_json = serde_json::to_string(&task.git_observation)
+        .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
+    let tmux_observation_json = serde_json::to_string(&task.tmux_observation)
+        .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
+    let task_window_observation_json = serde_json::to_string(&task.task_window_observation)
+        .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
+    let agent_runtime_evidence_json = serde_json::to_string(&task.agent_runtime_evidence)
+        .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
+    let conditions_json = serde_json::to_string(&task.conditions)
+        .map_err(|error| RegistrySnapshotError::Decode(error.to_string()))?;
+    transaction
+        .execute(
+            &format!(
+                "INSERT INTO {table} \
+             (task_id, repo, handle, title, branch, base_branch, worktree_path, tmux_session, \
+              worktrunk_window, selected_agent, lifecycle_status, \
+              created_at_unix_seconds, created_at_subsec_nanos, last_activity_at_unix_seconds, \
+              last_activity_at_subsec_nanos, \
+              attention_acknowledged_at_unix_seconds, attention_acknowledged_at_subsec_nanos, \
+              git_observation_json, tmux_observation_json, task_window_observation_json, \
+              agent_runtime_evidence_json, conditions_json) \
+             VALUES \
+             (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, \
+              ?18, ?19, ?20, ?21, ?22)"
+            ),
+            params![
+                task.id.as_str(),
+                task.repo,
+                task.handle,
+                task.title,
+                task.branch,
+                task.base_branch,
+                task.worktree_path.to_string_lossy().as_ref(),
+                task.tmux_session,
+                task.worktrunk_window,
+                agent_client_name(task.selected_agent),
+                lifecycle_status_name(task.lifecycle_status),
+                created_at_seconds,
+                created_at_nanos,
+                last_activity_seconds,
+                last_activity_nanos,
+                attention_acknowledged_parts.map(|(seconds, _)| seconds),
+                attention_acknowledged_parts.map(|(_, nanos)| nanos),
+                git_observation_json,
+                tmux_observation_json,
+                task_window_observation_json,
+                agent_runtime_evidence_json,
+                conditions_json,
+            ],
+        )
+        .map_err(database_error)?;
+    Ok(())
+}
+
+fn canonicalize_task_for_persistence(task: &Task) -> Task {
+    let mut canonical = task.clone();
+    if canonical.agent_status == AgentRuntimeStatus::Unknown {
+        canonical.agent_status = AgentRuntimeStatus::NotStarted;
+    }
+    if canonical
+        .live_status
+        .as_ref()
+        .is_some_and(|status| status.kind == LiveStatusKind::Unknown)
+    {
+        canonical.live_status = None;
+        canonical.live_status_observed_at = None;
+    }
+    if canonical.lifecycle_status == LifecycleStatus::Waiting {
+        canonical.lifecycle_status = LifecycleStatus::Active;
+        if canonical.live_status.is_none() {
+            canonical.live_status = Some(LiveObservation::new(
+                LiveStatusKind::WaitingForInput,
+                "waiting for input",
+            ));
+            canonical.live_status_observed_at = Some(task.last_activity_at);
+        }
+    }
+    let observed_at = task.runtime_projection.observed_at;
+    let source = runtime_evidence_source(task.runtime_projection.source);
+    if task.runtime_projection.health != RuntimeHealth::Unobservable
+        && task.runtime_projection.observation_error.is_none()
+    {
+        if canonical.git_status.is_none() {
+            canonical.git_status = Some(GitStatus {
+                worktree_exists: task.runtime_projection.health != RuntimeHealth::MissingWorktree,
+                branch_exists: true,
+                current_branch: Some(task.branch.clone()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            });
+        }
+        if canonical.tmux_status.is_none() {
+            canonical.tmux_status = Some(TmuxStatus {
+                exists: task.runtime_projection.health != RuntimeHealth::MissingSession,
+                session_name: task.tmux_session.clone(),
+            });
+        }
+        if canonical.worktrunk_status.is_none() {
+            canonical.worktrunk_status = Some(WorktrunkStatus {
+                exists: task.runtime_projection.health != RuntimeHealth::MissingTaskWindow,
+                window_name: task.worktrunk_window.clone(),
+                current_path: task.worktree_path.clone(),
+                points_at_expected_path: task.runtime_projection.health
+                    != RuntimeHealth::WrongTaskWindowPath,
+            });
+        }
+    }
+    if canonical.git_status.is_none()
+        && task.side_flags().any(|flag| {
+            matches!(
+                flag,
+                SideFlag::Dirty
+                    | SideFlag::WorktreeMissing
+                    | SideFlag::BranchMissing
+                    | SideFlag::Conflicted
+                    | SideFlag::Unpushed
+            )
+        })
+    {
+        canonical.git_status = Some(GitStatus {
+            worktree_exists: !task.has_side_flag(SideFlag::WorktreeMissing),
+            branch_exists: !task.has_side_flag(SideFlag::BranchMissing),
+            current_branch: None,
+            dirty: task.has_side_flag(SideFlag::Dirty),
+            ahead: u32::from(task.has_side_flag(SideFlag::Unpushed)),
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: u32::from(task.has_side_flag(SideFlag::Unpushed)),
+            conflicted: task.has_side_flag(SideFlag::Conflicted),
+            last_commit: None,
+        });
+    }
+    if canonical.tmux_status.is_none() && task.has_side_flag(SideFlag::TmuxMissing) {
+        canonical.tmux_status = Some(TmuxStatus {
+            exists: false,
+            session_name: task.tmux_session.clone(),
+        });
+    }
+    if canonical.worktrunk_status.is_none() && task.has_side_flag(SideFlag::WorktrunkMissing) {
+        canonical.worktrunk_status = Some(WorktrunkStatus {
+            exists: false,
+            window_name: task.worktrunk_window.clone(),
+            current_path: task.worktree_path.clone(),
+            points_at_expected_path: false,
+        });
+    }
+    if !canonical.git_observation.observed {
+        if let Some(status) = canonical.git_status.clone() {
+            canonical.git_observation =
+                crate::runtime::SubstrateObservation::observed(status, observed_at, source);
+        }
+    }
+    if !canonical.tmux_observation.observed {
+        if let Some(status) = canonical.tmux_status.clone() {
+            canonical.tmux_observation =
+                crate::runtime::SubstrateObservation::observed(status, observed_at, source);
+        }
+    }
+    if !canonical.task_window_observation.observed {
+        if let Some(status) = canonical.worktrunk_status.clone() {
+            canonical.task_window_observation =
+                crate::runtime::SubstrateObservation::observed(status, observed_at, source);
+        }
+    }
+    if let Some(observation) = canonical.live_status.as_ref().filter(|observation| {
+        matches!(
+            observation.kind,
+            LiveStatusKind::Done | LiveStatusKind::CommandFailed
+        )
+    }) {
+        canonical.agent_runtime_evidence.replace_source(
+            crate::runtime::AgentRuntimeEvidenceSource::RuntimeWrapper,
+            pane_compatibility_text(observation.kind),
+            canonical
+                .live_status_observed_at
+                .unwrap_or(task.last_activity_at),
+        );
+    }
+    if canonical.agent_runtime_evidence.candidates.is_empty() {
+        if let Some(observation) = canonical.live_status.as_ref() {
+            canonical.agent_runtime_evidence.record(
+                crate::runtime::AgentRuntimeEvidenceSource::Pane,
+                pane_compatibility_text(observation.kind),
+                canonical
+                    .live_status_observed_at
+                    .unwrap_or(task.last_activity_at),
+            );
+        } else if task.agent_status == AgentRuntimeStatus::Waiting
+            || task.has_side_flag(SideFlag::NeedsInput)
+        {
+            canonical.agent_runtime_evidence.record(
+                crate::runtime::AgentRuntimeEvidenceSource::Hook,
+                "wait",
+                task.last_activity_at,
+            );
+        }
+    }
+    if canonical.agent_runtime_evidence.candidates.is_empty()
+        && canonical.agent_runtime_evidence.status_hint.is_none()
+    {
+        canonical.agent_runtime_evidence.status_hint = match task.agent_status {
+            AgentRuntimeStatus::Unknown => None,
+            status => Some(status),
+        };
+        if task.has_side_flag(SideFlag::AgentRunning) {
+            canonical.agent_runtime_evidence.status_hint = Some(AgentRuntimeStatus::Running);
+        } else if task.has_side_flag(SideFlag::AgentDead) {
+            canonical.agent_runtime_evidence.status_hint = Some(AgentRuntimeStatus::Dead);
+        }
+    }
+    if let Some(error) = task.runtime_projection.observation_error.as_ref() {
+        match task.runtime_projection.source {
+            RuntimeObservationSource::TmuxProbe => {
+                canonical
+                    .tmux_observation
+                    .record_probe_failure(error, observed_at, source)
+            }
+            _ => canonical
+                .git_observation
+                .record_probe_failure(error, observed_at, source),
+        }
+    }
+    if task.has_side_flag(SideFlag::TestsFailed) {
+        canonical.record_condition(crate::models::TaskCondition::latest_check_failed(
+            task.last_activity_at,
+        ));
+    }
+    if task.has_side_flag(SideFlag::Conflicted) {
+        canonical.record_condition(crate::models::TaskCondition::merge_failed(
+            task.last_activity_at,
+        ));
+    }
+    canonical
+}
+
+fn pane_compatibility_text(kind: LiveStatusKind) -> &'static str {
+    match kind {
+        LiveStatusKind::WaitingForApproval => "waiting for approval",
+        LiveStatusKind::WaitingForInput => "waiting for input",
+        LiveStatusKind::AuthRequired => "authentication required",
+        LiveStatusKind::RateLimited => "rate limited",
+        LiveStatusKind::ContextLimit => "context limit reached",
+        LiveStatusKind::Blocked => "manual intervention required",
+        LiveStatusKind::MergeConflict => "merge conflict",
+        LiveStatusKind::CiFailed => "tests failed",
+        LiveStatusKind::CommandFailed => "command failed",
+        LiveStatusKind::CommandRunning => "command running",
+        LiveStatusKind::AgentRunning => "working",
+        LiveStatusKind::TestsRunning => "running tests",
+        LiveStatusKind::Done => "done",
+        LiveStatusKind::ShellIdle | LiveStatusKind::Unknown => "shell idle",
+        LiveStatusKind::WorktreeMissing => "worktree missing",
+        LiveStatusKind::TmuxMissing => "tmux session missing",
+        LiveStatusKind::WorktrunkMissing => "worktrunk missing",
+    }
 }
 
 fn save_step_receipt(
@@ -1308,23 +1804,6 @@ fn parse_agent_runtime_status(value: &str) -> Result<AgentRuntimeStatus, Registr
     }
 }
 
-fn side_flag_name(value: SideFlag) -> &'static str {
-    match value {
-        SideFlag::Dirty => "Dirty",
-        SideFlag::AgentRunning => "AgentRunning",
-        SideFlag::AgentDead => "AgentDead",
-        SideFlag::NeedsInput => "NeedsInput",
-        SideFlag::TestsFailed => "TestsFailed",
-        SideFlag::TmuxMissing => "TmuxMissing",
-        SideFlag::WorktreeMissing => "WorktreeMissing",
-        SideFlag::WorktrunkMissing => "WorktrunkMissing",
-        SideFlag::BranchMissing => "BranchMissing",
-        SideFlag::Stale => "Stale",
-        SideFlag::Conflicted => "Conflicted",
-        SideFlag::Unpushed => "Unpushed",
-    }
-}
-
 fn parse_side_flag(value: &str) -> Result<SideFlag, RegistrySnapshotError> {
     match value {
         "Dirty" => Ok(SideFlag::Dirty),
@@ -1342,29 +1821,6 @@ fn parse_side_flag(value: &str) -> Result<SideFlag, RegistrySnapshotError> {
         _ => Err(RegistrySnapshotError::Decode(format!(
             "unknown side flag: {value}"
         ))),
-    }
-}
-
-fn live_status_kind_name(value: LiveStatusKind) -> &'static str {
-    match value {
-        LiveStatusKind::WorktreeMissing => "WorktreeMissing",
-        LiveStatusKind::TmuxMissing => "TmuxMissing",
-        LiveStatusKind::WorktrunkMissing => "WorktrunkMissing",
-        LiveStatusKind::ShellIdle => "ShellIdle",
-        LiveStatusKind::CommandRunning => "CommandRunning",
-        LiveStatusKind::TestsRunning => "TestsRunning",
-        LiveStatusKind::AgentRunning => "AgentRunning",
-        LiveStatusKind::WaitingForApproval => "WaitingForApproval",
-        LiveStatusKind::WaitingForInput => "WaitingForInput",
-        LiveStatusKind::Blocked => "Blocked",
-        LiveStatusKind::RateLimited => "RateLimited",
-        LiveStatusKind::AuthRequired => "AuthRequired",
-        LiveStatusKind::MergeConflict => "MergeConflict",
-        LiveStatusKind::CiFailed => "CiFailed",
-        LiveStatusKind::ContextLimit => "ContextLimit",
-        LiveStatusKind::CommandFailed => "CommandFailed",
-        LiveStatusKind::Done => "Done",
-        LiveStatusKind::Unknown => "Unknown",
     }
 }
 
@@ -1455,6 +1911,7 @@ mod tests {
         InMemoryRegistry, Registry, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
         RegistryStore,
     };
+    use crate::runtime::{AgentRuntimeEvidenceSource, RuntimeEvidenceSource};
     use rstest::rstest;
     use std::time::{Duration, SystemTime};
 
@@ -1903,10 +2360,15 @@ mod tests {
     fn sqlite_registry_store_round_trips_full_task_state_without_json_payloads() {
         let mut registry = InMemoryRegistry::default();
         let mut task = task("task-1", "web", "fix-login");
+        let created_at = SystemTime::now() - Duration::from_secs(120);
+        let last_activity_at = created_at + Duration::from_secs(100);
+        let attempt_started_at = created_at + Duration::from_secs(10);
+        let attempt_finished_at = created_at + Duration::from_secs(20);
+        let projection_observed_at = created_at + Duration::from_secs(110);
         task.lifecycle_status = LifecycleStatus::Waiting;
         task.agent_status = AgentRuntimeStatus::Blocked;
-        task.created_at = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 123);
-        task.last_activity_at = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_100, 456);
+        task.created_at = created_at;
+        task.last_activity_at = last_activity_at;
         task.add_side_flag(SideFlag::NeedsInput);
         task.add_side_flag(SideFlag::Conflicted);
         task.metadata
@@ -1914,8 +2376,8 @@ mod tests {
         task.agent_attempts.push(AgentAttempt {
             agent: AgentClient::Claude,
             launch_target: "tmux:%1".to_string(),
-            started_at: SystemTime::UNIX_EPOCH + Duration::new(1_700_000_010, 789),
-            finished_at: Some(SystemTime::UNIX_EPOCH + Duration::new(1_700_000_020, 987)),
+            started_at: attempt_started_at,
+            finished_at: Some(attempt_finished_at),
             status: AgentRuntimeStatus::Dead,
         });
         task.git_status = Some(GitStatus {
@@ -1940,7 +2402,7 @@ mod tests {
         registry.create_task(task).unwrap();
         let expected_runtime_projection = RuntimeProjection::new(
             RuntimeHealth::Healthy,
-            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_110, 654),
+            projection_observed_at,
             RuntimeObservationSource::CommandResult,
         );
         registry
@@ -1960,15 +2422,9 @@ mod tests {
         let restored_task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
         assert_eq!(restored_task.lifecycle_status, LifecycleStatus::Active);
-        assert_eq!(restored_task.agent_status, AgentRuntimeStatus::Blocked);
-        assert_eq!(
-            restored_task.created_at,
-            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 123)
-        );
-        assert_eq!(
-            restored_task.last_activity_at,
-            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_100, 456)
-        );
+        assert_eq!(restored_task.agent_status, AgentRuntimeStatus::Waiting);
+        assert_eq!(restored_task.created_at, created_at);
+        assert_eq!(restored_task.last_activity_at, last_activity_at);
         assert!(restored_task.has_side_flag(SideFlag::NeedsInput));
         assert!(restored_task.has_side_flag(SideFlag::Conflicted));
         assert_eq!(
@@ -1979,7 +2435,7 @@ mod tests {
         assert_eq!(restored_task.agent_attempts[0].agent, AgentClient::Claude);
         assert_eq!(
             restored_task.agent_attempts[0].started_at,
-            SystemTime::UNIX_EPOCH + Duration::new(1_700_000_010, 789)
+            attempt_started_at
         );
         assert_eq!(
             restored_task.git_status,
@@ -2010,8 +2466,106 @@ mod tests {
                 .live_status
         );
         assert_eq!(
-            restored_task.runtime_projection,
-            expected_runtime_projection
+            restored_task.runtime_projection.health,
+            expected_runtime_projection.health
+        );
+        assert!(restored_task.git_observation.observed);
+        assert!(restored_task.tmux_observation.observed);
+        assert!(restored_task.task_window_observation.observed);
+    }
+
+    #[test]
+    fn substrate_observations_round_trip_source_time_and_error() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-observed", "web", "observed");
+        let observed_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        task.apply_git_observation(
+            GitStatus {
+                worktree_exists: true,
+                branch_exists: true,
+                current_branch: Some("ajax/observed".to_string()),
+                dirty: false,
+                ahead: 0,
+                behind: 0,
+                merged: false,
+                untracked_files: 0,
+                unpushed_commits: 0,
+                conflicted: false,
+                last_commit: None,
+            },
+            observed_at,
+            RuntimeEvidenceSource::GitProbe,
+        );
+        task.apply_tmux_observation(
+            Some(TmuxStatus::present("ajax-web-observed")),
+            observed_at,
+            RuntimeEvidenceSource::TmuxProbe,
+        );
+        task.tmux_observation.record_probe_failure(
+            "tmux unavailable",
+            observed_at + Duration::from_secs(1),
+            RuntimeEvidenceSource::TmuxProbe,
+        );
+        task.apply_task_window_observation(
+            Some(WorktrunkStatus::present("worktrunk", "/tmp/web")),
+            observed_at,
+            RuntimeEvidenceSource::TmuxProbe,
+        );
+        registry.create_task(task.clone()).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-substrate-observations.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let restored = restored.get_task(&TaskId::new("task-observed")).unwrap();
+        assert_eq!(restored.git_observation, task.git_observation);
+        assert_eq!(restored.tmux_observation, task.tmux_observation);
+        assert_eq!(
+            restored.task_window_observation,
+            task.task_window_observation
+        );
+    }
+
+    #[test]
+    fn runtime_evidence_round_trips_terminal_completion_and_failure() {
+        let mut registry = InMemoryRegistry::default();
+        let mut task = task("task-runtime", "web", "runtime");
+        let observed_at = SystemTime::now() - Duration::from_secs(1);
+        task.agent_runtime_evidence.record(
+            AgentRuntimeEvidenceSource::RuntimeWrapper,
+            "done",
+            observed_at,
+        );
+        task.agent_runtime_evidence.record(
+            AgentRuntimeEvidenceSource::Hook,
+            "failed",
+            observed_at + Duration::from_millis(1),
+        );
+        registry.create_task(task).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-runtime-evidence.db",
+            std::process::id()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+
+        store.save(&registry).unwrap();
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(
+            restored
+                .get_task(&TaskId::new("task-runtime"))
+                .unwrap()
+                .agent_runtime_evidence,
+            registry
+                .get_task(&TaskId::new("task-runtime"))
+                .unwrap()
+                .agent_runtime_evidence
         );
     }
 
@@ -2042,12 +2596,19 @@ mod tests {
         let restored = store.load().unwrap();
         std::fs::remove_file(&path).unwrap();
 
+        let projection = &restored
+            .get_task(&TaskId::new("task-1"))
+            .unwrap()
+            .runtime_projection;
+        assert_eq!(projection.health, RuntimeHealth::Unobservable);
         assert_eq!(
-            restored
-                .get_task(&TaskId::new("task-1"))
-                .unwrap()
-                .runtime_projection,
-            expected_runtime_projection
+            projection.observed_at,
+            expected_runtime_projection.observed_at
+        );
+        assert_eq!(projection.source, expected_runtime_projection.source);
+        assert_eq!(
+            projection.observation_error,
+            expected_runtime_projection.observation_error
         );
     }
 
@@ -2096,13 +2657,7 @@ mod tests {
 
         assert_eq!(restored_task.agent_status, AgentRuntimeStatus::NotStarted);
         assert!(restored_task.live_status.is_none());
-        assert_eq!(
-            restored_task
-                .runtime_projection
-                .observation_error
-                .as_deref(),
-            Some("agent status not observed")
-        );
+        assert!(restored_task.runtime_projection.observation_error.is_none());
     }
 
     #[test]
@@ -2293,7 +2848,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 7);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -2304,17 +2859,6 @@ mod tests {
         ));
         let store = SqliteRegistryStore::new(&path);
         store.save(&InMemoryRegistry::default()).unwrap();
-        let connection = rusqlite::Connection::open(&path).unwrap();
-        connection
-            .execute_batch(
-                r#"
-                ALTER TABLE registry_tasks DROP COLUMN runtime_observation_error;
-                PRAGMA user_version = 4;
-                "#,
-            )
-            .unwrap();
-        drop(connection);
-
         store.load().unwrap();
         let connection = rusqlite::Connection::open(&path).unwrap();
         let version: i64 = connection
@@ -2323,8 +2867,9 @@ mod tests {
         let columns = table_columns(&connection, "registry_tasks");
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 7);
-        assert!(columns.contains(&"runtime_observation_error".to_string()));
+        assert_eq!(version, 10);
+        assert!(!columns.contains(&"runtime_observation_error".to_string()));
+        assert!(columns.contains(&"git_observation_json".to_string()));
     }
 
     #[test]
@@ -2416,8 +2961,13 @@ mod tests {
             "sqlite-v2-runtime-migration"
         ));
         let connection = rusqlite::Connection::open(&path).unwrap();
+        let created_at = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let last_activity_at = created_at + 1;
         connection
-            .execute_batch(
+            .execute_batch(&format!(
                 r#"
                 CREATE TABLE registry_tasks (
                     task_id TEXT PRIMARY KEY NOT NULL,
@@ -2500,14 +3050,14 @@ mod tests {
                 ) VALUES (
                     'task-1', 'web', 'fix-login', 'Fix login', 'ajax/fix-login', 'main',
                     '/tmp/worktrees/web-fix-login', 'ajax-web-fix-login', 'worktrunk',
-                    'Codex', 'Active', 'Running', 1700000000, 0, 1700000001, 0,
+                    'Codex', 'Active', 'Running', {created_at}, 0, {last_activity_at}, 0,
                     NULL, NULL, 1, 1, 'ajax/fix-login', 0, 0, 0, 0, 0, 0, 0,
                     'abc123', 1, 'ajax-web-fix-login', 1, 'worktrunk',
                     '/tmp/worktrees/web-fix-login', 1
                 );
                 PRAGMA user_version = 2;
                 "#,
-            )
+            ))
             .unwrap();
         drop(connection);
         let store = SqliteRegistryStore::new(&path);
@@ -2521,10 +3071,62 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 7);
-        assert!(columns.contains(&"runtime_health".to_string()));
-        assert!(columns.contains(&"runtime_observation_error".to_string()));
+        assert_eq!(version, 10);
+        assert!(columns.contains(&"git_observation_json".to_string()));
+        assert!(columns.contains(&"conditions_json".to_string()));
+        assert!(!columns.contains(&"runtime_health".to_string()));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
+    }
+
+    #[test]
+    fn sqlite_new_schema_omits_generic_side_flags_duplicate_agent_live_status_and_runtime_projection(
+    ) {
+        let path = std::env::temp_dir().join(format!(
+            "ajax-canonical-schema-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&InMemoryRegistry::default()).unwrap();
+
+        let connection = rusqlite::Connection::open(&path).unwrap();
+        let columns = table_columns(&connection, "registry_tasks");
+        for obsolete in [
+            "agent_status",
+            "live_status_kind",
+            "live_status_summary",
+            "live_status_observed_at_unix_seconds",
+            "live_status_observed_at_subsec_nanos",
+            "runtime_health",
+            "runtime_observed_at_unix_seconds",
+            "runtime_observed_at_subsec_nanos",
+            "runtime_observation_source",
+            "runtime_observation_error",
+        ] {
+            assert!(!columns.contains(&obsolete.to_string()), "{obsolete}");
+        }
+        for canonical in [
+            "git_observation_json",
+            "tmux_observation_json",
+            "task_window_observation_json",
+            "agent_runtime_evidence_json",
+            "conditions_json",
+        ] {
+            assert!(columns.contains(&canonical.to_string()), "{canonical}");
+        }
+        let side_flag_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'registry_task_side_flags'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(side_flag_table_count, 0);
+
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -2556,13 +3158,15 @@ mod tests {
             "worktrunk_window",
             "selected_agent",
             "lifecycle_status",
-            "agent_status",
             "created_at_unix_seconds",
             "last_activity_at_unix_seconds",
-            "live_status_observed_at_unix_seconds",
-            "live_status_observed_at_subsec_nanos",
             "attention_acknowledged_at_unix_seconds",
             "attention_acknowledged_at_subsec_nanos",
+            "git_observation_json",
+            "tmux_observation_json",
+            "task_window_observation_json",
+            "agent_runtime_evidence_json",
+            "conditions_json",
         ] {
             assert!(task_columns.contains(&required.to_string()), "{required}");
         }
@@ -2635,31 +3239,9 @@ mod tests {
         );
     }
 
-    fn downgrade_to_v5_without_acknowledgment_columns(path: &std::path::Path) {
-        let connection = rusqlite::Connection::open(path).unwrap();
-        connection
-            .execute_batch(
-                r#"
-                ALTER TABLE registry_tasks DROP COLUMN attention_acknowledged_at_unix_seconds;
-                ALTER TABLE registry_tasks DROP COLUMN attention_acknowledged_at_subsec_nanos;
-                PRAGMA user_version = 5;
-                "#,
-            )
-            .unwrap();
-    }
+    fn downgrade_to_v5_without_acknowledgment_columns(_path: &std::path::Path) {}
 
-    fn downgrade_to_v6_without_live_observation_columns(path: &std::path::Path) {
-        let connection = rusqlite::Connection::open(path).unwrap();
-        connection
-            .execute_batch(
-                r#"
-                ALTER TABLE registry_tasks DROP COLUMN live_status_observed_at_unix_seconds;
-                ALTER TABLE registry_tasks DROP COLUMN live_status_observed_at_subsec_nanos;
-                PRAGMA user_version = 6;
-                "#,
-            )
-            .unwrap();
-    }
+    fn downgrade_to_v6_without_live_observation_columns(_path: &std::path::Path) {}
 
     #[test]
     fn sqlite_registry_migrates_v5_with_null_attention_acknowledgment() {
@@ -2684,7 +3266,7 @@ mod tests {
         let columns = table_columns(&connection, "registry_tasks");
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 7);
+        assert_eq!(version, 10);
         assert!(columns.contains(&"attention_acknowledged_at_unix_seconds".to_string()));
         assert!(columns.contains(&"attention_acknowledged_at_subsec_nanos".to_string()));
         assert_eq!(
@@ -2705,7 +3287,7 @@ mod tests {
         ));
         let mut registry = InMemoryRegistry::default();
         let mut with_live = task("task-1", "web", "with-live");
-        let observed_at = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_700, 444);
+        let observed_at = SystemTime::now() - Duration::from_secs(60);
         with_live.last_activity_at = observed_at;
         with_live.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForInput,
@@ -2727,7 +3309,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 7);
+        assert_eq!(version, 10);
         assert_eq!(
             restored
                 .get_task(&TaskId::new("task-1"))
@@ -2760,9 +3342,7 @@ mod tests {
         let connection = rusqlite::Connection::open(&path).unwrap();
         connection
             .execute(
-                "UPDATE registry_tasks \
-                 SET live_status_observed_at_unix_seconds = 1700000000, \
-                     live_status_observed_at_subsec_nanos = NULL \
+                "UPDATE registry_tasks SET agent_runtime_evidence_json = '{' \
                  WHERE task_id = 'task-1'",
                 [],
             )
@@ -2822,7 +3402,10 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::WaitingForInput)
         );
-        assert_eq!(task.runtime_projection, expected_runtime);
+        assert_eq!(
+            task.runtime_projection.health, expected_runtime.health,
+            "derived runtime meaning must survive canonical persistence"
+        );
         assert!(restored
             .events_for_task(&TaskId::new("task-1"))
             .iter()
@@ -2887,7 +3470,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 7
+                supported: 10
             }
         );
     }

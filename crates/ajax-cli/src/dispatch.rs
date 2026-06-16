@@ -1,15 +1,9 @@
 use ajax_core::{
     adapters::CommandRunner,
     commands::{self, CommandContext, CommandError},
-    models::{LifecycleStatus, Task},
+    models::{LifecycleStatus, OperatorAction, Task},
     registry::{InMemoryRegistry, Registry},
-    task_operations::drop_task::{
-        execute_drop_task_operation, plan_drop_confirmation, plan_drop_task_operation,
-        DropTaskCompletion,
-    },
-    task_operations::task_command::{
-        execute_task_command_operation, plan_task_command_operation, TaskCommandKind,
-    },
+    slices::{drop, repair, resume, review, ship},
 };
 use clap::ArgMatches;
 
@@ -20,7 +14,7 @@ use crate::{
 };
 
 pub(crate) fn render_task_command<R: CommandRunner>(
-    kind: TaskCommandKind,
+    action: OperatorAction,
     subcommand: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
@@ -31,23 +25,22 @@ pub(crate) fn render_task_command<R: CommandRunner>(
     let confirmed = subcommand.get_flag("yes");
     let mut state_changed = false;
     if matches!(
-        kind,
-        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
+        action,
+        OperatorAction::Resume | OperatorAction::Review | OperatorAction::Repair
     ) {
         if let Ok(changed) = commands::refresh_git_substrate_evidence(context, runner) {
             state_changed |= changed;
         }
     }
-    let plan =
-        plan_task_command_operation(context, kind, task, open_mode).map_err(command_error)?;
+    let plan = plan_task_action(context, action, task, open_mode).map_err(command_error)?;
     if !execute {
         return Ok(RenderedCommand {
             output: render_plan(plan, subcommand.get_flag("json"))?,
             state_changed,
         });
     }
-    let (outputs, operation_state_changed) = execute_task_command_operation(
-        context, kind, task, &plan, confirmed, runner,
+    let (outputs, operation_state_changed) = execute_task_action(
+        context, action, task, &plan, confirmed, runner,
     )
     .map_err(|(error, error_state_changed)| {
         let cli_error = command_error(error);
@@ -61,6 +54,38 @@ pub(crate) fn render_task_command<R: CommandRunner>(
         output: render_execution_outputs(&outputs, None),
         state_changed: state_changed || operation_state_changed,
     })
+}
+
+fn plan_task_action(
+    context: &CommandContext<InMemoryRegistry>,
+    action: OperatorAction,
+    task: &str,
+    open_mode: commands::OpenMode,
+) -> Result<ajax_core::use_cases::CommandPlan, CommandError> {
+    match action {
+        OperatorAction::Resume => resume::plan(context, task, open_mode),
+        OperatorAction::Review => review::plan(context, task),
+        OperatorAction::Repair => repair::plan(context, task, open_mode),
+        OperatorAction::Ship => ship::plan(context, task),
+        OperatorAction::Start | OperatorAction::Drop => unreachable!("not a task command action"),
+    }
+}
+
+fn execute_task_action<R: CommandRunner>(
+    context: &mut CommandContext<InMemoryRegistry>,
+    action: OperatorAction,
+    task: &str,
+    plan: &ajax_core::use_cases::CommandPlan,
+    confirmed: bool,
+    runner: &mut R,
+) -> Result<(Vec<ajax_core::adapters::CommandOutput>, bool), (CommandError, bool)> {
+    match action {
+        OperatorAction::Resume => resume::execute(context, task, plan, confirmed, runner),
+        OperatorAction::Review => review::execute(context, task, plan, confirmed, runner),
+        OperatorAction::Repair => repair::execute(context, task, plan, confirmed, runner),
+        OperatorAction::Ship => ship::execute(context, task, plan, confirmed, runner),
+        OperatorAction::Start | OperatorAction::Drop => unreachable!("not a task command action"),
+    }
 }
 
 pub(crate) fn render_drop_command<R: CommandRunner>(
@@ -84,7 +109,7 @@ pub(crate) fn render_drop_command<R: CommandRunner>(
             }
         }
     }
-    let plan = plan_drop_confirmation(context, task).map_err(command_error)?;
+    let plan = drop::plan_confirmation(context, task).map_err(command_error)?;
     Ok(RenderedCommand {
         output: render_plan(plan, subcommand.get_flag("json"))?,
         state_changed,
@@ -114,47 +139,30 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
     confirmed: bool,
     runner: &mut R,
 ) -> Result<RenderedCommand, CliError> {
-    let confirmation_plan = plan_drop_confirmation(context, task_handle).map_err(command_error)?;
+    let confirmation_plan = drop::plan_confirmation(context, task_handle).map_err(command_error)?;
     if !confirmation_plan.blocked_reasons.is_empty() {
         return Err(command_error(CommandError::PlanBlocked(
             confirmation_plan.blocked_reasons,
         )));
     }
     let task_before_drop = cli_task(context, task_handle)?;
-    let resuming_incomplete =
-        task_before_drop.lifecycle_status == LifecycleStatus::TeardownIncomplete;
-    let can_observe_before_confirmation = matches!(
-        task_before_drop.lifecycle_status,
-        LifecycleStatus::Merged | LifecycleStatus::Cleanable
-    ) && !task_before_drop
-        .has_side_flag(ajax_core::models::SideFlag::Dirty)
-        && !task_before_drop.has_side_flag(ajax_core::models::SideFlag::Conflicted)
-        && !task_before_drop.has_side_flag(ajax_core::models::SideFlag::Unpushed)
-        && task_before_drop.git_status.as_ref().is_none_or(|status| {
-            !status.dirty && !status.conflicted && status.unpushed_commits == 0
-        });
-    if confirmation_plan.requires_confirmation
-        && !confirmed
-        && !resuming_incomplete
-        && !can_observe_before_confirmation
-    {
-        return Err(command_error(CommandError::ConfirmationRequired));
-    }
+    let operation_confirmed =
+        drop::resolve_execution_confirmation(task_before_drop, &confirmation_plan, confirmed)
+            .map_err(command_error)?;
 
-    let operation =
-        plan_drop_task_operation(context, task_handle, runner).map_err(command_error)?;
-    let operation_confirmed = confirmed || resuming_incomplete || can_observe_before_confirmation;
+    let operation = drop::plan_operation(context, task_handle, runner).map_err(command_error)?;
     let (outputs, completion) =
-        execute_drop_task_operation(context, task_handle, operation, operation_confirmed, runner)
-            .map_err(|error| match error {
-            CommandError::ConfirmationRequired | CommandError::PlanBlocked(_) => {
-                command_error(error)
-            }
-            error => enrich_drop_failure_message(context, task_handle, command_error(error))
-                .after_state_change(),
-        })?;
+        drop::execute(context, task_handle, operation, operation_confirmed, runner).map_err(
+            |error| match error {
+                CommandError::ConfirmationRequired | CommandError::PlanBlocked(_) => {
+                    command_error(error)
+                }
+                error => enrich_drop_failure_message(context, task_handle, command_error(error))
+                    .after_state_change(),
+            },
+        )?;
     match completion {
-        DropTaskCompletion::Removed => {
+        ajax_core::slices::drop::DropTaskCompletion::Removed => {
             let output = if outputs.is_empty() {
                 format!("removed task: {task_handle}")
             } else {
@@ -165,7 +173,7 @@ pub(crate) fn execute_observed_drop<R: CommandRunner>(
                 state_changed: true,
             })
         }
-        DropTaskCompletion::TeardownIncomplete {
+        ajax_core::slices::drop::DropTaskCompletion::TeardownIncomplete {
             failed_step,
             detail,
         } => Err(CliError::CommandFailedAfterStateChange(

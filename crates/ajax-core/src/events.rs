@@ -187,7 +187,6 @@ pub fn apply_monitor_event_to_registry<R: Registry>(
             .get_task_mut(task_id)
             .ok_or_else(|| RegistryError::TaskNotFound(task_id.clone()))?;
         crate::live::apply_trusted_observation(task, observation);
-        task.annotations = crate::attention::annotate(task);
         task.lifecycle_status
     };
     if current_lifecycle != previous_lifecycle {

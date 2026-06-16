@@ -72,7 +72,6 @@ impl Registry for InMemoryRegistry {
         }
 
         task.refresh_runtime_projection();
-        refresh_task_annotations(&mut task);
         self.tasks.insert(task_id.clone(), task);
         self.events.retain(|event| event.task_id != task_id);
         self.step_receipts
@@ -124,7 +123,6 @@ impl Registry for InMemoryRegistry {
 
         task.last_activity_at = SystemTime::now();
         task.remove_side_flag(SideFlag::Stale);
-        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::LifecycleChanged,
@@ -160,7 +158,6 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_git_status(status);
-        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -180,7 +177,6 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_tmux_status(status);
-        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -200,7 +196,6 @@ impl Registry for InMemoryRegistry {
         };
 
         task.apply_worktrunk_status(status);
-        refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
@@ -221,8 +216,6 @@ impl Registry for InMemoryRegistry {
         let previous_lifecycle = task.lifecycle_status;
 
         crate::live::apply_observation(task, observation);
-        refresh_task_annotations(task);
-
         if task.lifecycle_status != previous_lifecycle {
             self.events.push(RegistryEvent::new(
                 task_id.clone(),
@@ -271,10 +264,6 @@ impl Registry for InMemoryRegistry {
         });
         receipts
     }
-}
-
-fn refresh_task_annotations(task: &mut Task) {
-    task.annotations = crate::attention::annotate(task);
 }
 
 pub trait RegistryStore {
@@ -379,6 +368,15 @@ mod tests {
     use super::{
         InMemoryRegistry, Registry, RegistryError, RegistryEventKind, RegistrySnapshotError,
     };
+
+    #[test]
+    fn registry_mutations_do_not_refresh_or_store_annotations() {
+        let source = include_str!("registry.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(!production.contains("refresh_task_annotations"));
+        assert!(!production.contains("task.annotations"));
+    }
     use crate::models::{
         AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, RuntimeHealth,
         SideFlag, StepReceipt, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
@@ -503,8 +501,9 @@ mod tests {
 
         let tasks = registry.list_tasks();
 
-        assert_eq!(tasks[0].annotations.len(), 1);
-        assert_eq!(tasks[0].annotations[0].kind, AnnotationKind::Reviewable);
+        let annotations = crate::attention::annotate(tasks[0]);
+        assert_eq!(annotations.len(), 1);
+        assert_eq!(annotations[0].kind, AnnotationKind::Reviewable);
     }
 
     #[test]

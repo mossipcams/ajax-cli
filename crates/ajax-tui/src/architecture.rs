@@ -58,6 +58,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tui_architecture_rejects_action_availability_derivation() {
+        let source = include_str!("cockpit_state.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+
+        assert!(!production.contains("task_action_decisions("));
+        assert!(!production.contains("available_operator_actions("));
+        assert!(!production.contains("task_operation_eligibility("));
+    }
+
+    #[test]
+    fn tui_lib_defines_no_state_transition_or_rendering_implementation() {
+        let source = include_str!("lib.rs");
+        for forbidden in ["impl App", "fn render_cockpit(", "fn ensure_visible("] {
+            assert!(!source.contains(forbidden), "{forbidden}");
+        }
+    }
+
     fn forbidden_runtime_dependencies() -> Vec<String> {
         FORBIDDEN_RUNTIME_DEPENDENCIES
             .iter()

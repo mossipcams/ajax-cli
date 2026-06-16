@@ -1,7 +1,7 @@
 use crate::{
     adapters::CommandSpec,
+    capability_policy,
     models::Task,
-    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
     use_cases::{CommandContext, CommandError, CommandPlan},
 };
@@ -12,9 +12,8 @@ pub fn review_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("diff task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Diff)
-    {
+    let reasons = capability_policy::review_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
         return Ok(plan);
     }

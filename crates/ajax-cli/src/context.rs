@@ -358,11 +358,11 @@ fn merge_registries(
             )));
         }
         match (disk_task, baseline_task) {
-            (Some(disk_task), Some(baseline_task)) if disk_task == baseline_task => {
+            (Some(disk_task), Some(baseline_task)) if disk_task.durable_state_eq(baseline_task) => {
                 *merged.get_task_mut(&memory_task.id).expect("disk task") = memory_task.clone();
             }
-            (Some(_), Some(baseline_task)) if memory_task == baseline_task => {}
-            (Some(disk_task), _) if disk_task == memory_task => {}
+            (Some(_), Some(baseline_task)) if memory_task.durable_state_eq(baseline_task) => {}
+            (Some(disk_task), _) if disk_task.durable_state_eq(memory_task) => {}
             // The task was on disk when this writer loaded but another writer
             // has deleted it since: the deletion wins over any in-memory edits,
             // otherwise every later save fails with a permanent conflict.

@@ -2,9 +2,9 @@ use super::lookup::find_task;
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::CommandSpec,
+    capability_policy,
     live::LiveStatusKind,
-    models::{LifecycleStatus, LiveObservation, SideFlag},
-    operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
+    models::{LifecycleStatus, LiveObservation, SideFlag, TaskCondition, TaskConditionKind},
     registry::Registry,
 };
 
@@ -14,9 +14,8 @@ pub fn check_task_plan<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let mut plan = CommandPlan::new(format!("check task: {qualified_handle}"));
-    if let OperationEligibility::Blocked(reasons) =
-        task_operation_eligibility(task, TaskOperation::Check)
-    {
+    let reasons = capability_policy::review_blocked_reasons(task);
+    if !reasons.is_empty() {
         plan.blocked_reasons = reasons;
         return Ok(plan);
     }
@@ -51,6 +50,7 @@ pub fn mark_task_check_started<R: Registry>(
             "check running",
         ));
         task.remove_side_flag(SideFlag::TestsFailed);
+        task.clear_condition(TaskConditionKind::LatestCheckFailed);
     }
     Ok(())
 }
@@ -71,6 +71,7 @@ pub fn mark_task_check_succeeded<R: Registry>(
     }
     if let Some(task) = context.registry.get_task_mut(&task.id) {
         task.remove_side_flag(SideFlag::TestsFailed);
+        task.clear_condition(TaskConditionKind::LatestCheckFailed);
         if task
             .live_status
             .as_ref()
@@ -89,6 +90,9 @@ pub fn mark_task_check_failed<R: Registry>(
     let task = find_task(context, qualified_handle)?.clone();
     if let Some(task) = context.registry.get_task_mut(&task.id) {
         task.add_side_flag(SideFlag::TestsFailed);
+        task.record_condition(TaskCondition::latest_check_failed(
+            std::time::SystemTime::now(),
+        ));
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::CommandFailed,
             "check failed",

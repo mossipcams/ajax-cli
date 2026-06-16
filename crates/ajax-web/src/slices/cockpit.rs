@@ -1,10 +1,11 @@
 //! Browser Cockpit read experience.
 
 use ajax_core::{
-    commands::{self, CommandContext},
     models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
+    slices::cockpit,
+    use_cases::CommandContext,
 };
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -43,7 +44,7 @@ pub fn browser_cockpit_json<R: Registry>(
 }
 
 pub fn browser_cockpit_view<R: Registry>(context: &CommandContext<R>) -> BrowserCockpitView {
-    let view = commands::cockpit_view(context);
+    let view = cockpit::cockpit_view(context);
     BrowserCockpitView {
         backend: host_native_backend(),
         repos: view.repos,
@@ -123,7 +124,7 @@ pub fn browser_task_detail_view<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Option<BrowserTaskDetail> {
-    let view = commands::cockpit_view(context);
+    let view = cockpit::cockpit_view(context);
     let card = view
         .cards
         .iter()
@@ -154,7 +155,7 @@ pub fn browser_task_detail_view<R: Registry>(
         agent_activity,
         git: task.git_status.clone(),
         tmux: task.tmux_status.clone(),
-        annotations: task
+        annotations: card
             .annotations
             .iter()
             .map(|annotation| format!("{annotation:?}"))
@@ -495,7 +496,7 @@ mod tests {
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
-            remediations: ajax_core::remediation::remediations_for_task(&source),
+            remediations: ajax_core::slices::remediate::remediations_for_task(&source),
         };
 
         let browser = browser_task_card(&card);

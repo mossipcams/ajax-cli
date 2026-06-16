@@ -3,16 +3,118 @@ use crate::{
         AgentRuntimeStatus, Annotation, Evidence, LifecycleStatus, LiveStatusKind, OperatorAction,
         SideFlag, Task,
     },
-    operation::{task_operation_eligibility, TaskOperation},
     policy::merge_safety,
     ui_state::derive_operator_status,
 };
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RemediationId {
+    FixCi,
+    ResolveMergeConflicts,
+}
+
+impl RemediationId {
+    pub const fn compatibility_label(self) -> &'static str {
+        match self {
+            Self::FixCi => crate::remediation::FIX_CI,
+            Self::ResolveMergeConflicts => crate::remediation::RESOLVE_MERGE_CONFLICTS,
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            crate::remediation::FIX_CI => Some(Self::FixCi),
+            crate::remediation::RESOLVE_MERGE_CONFLICTS => Some(Self::ResolveMergeConflicts),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum TaskActionId {
+    BuiltIn(OperatorAction),
+    Remediation(RemediationId),
+}
+
+impl TaskActionId {
+    pub const fn compatibility_label(self) -> &'static str {
+        match self {
+            Self::BuiltIn(action) => action.as_str(),
+            Self::Remediation(remediation) => remediation.compatibility_label(),
+        }
+    }
+
+    pub fn from_compatibility_label(label: &str) -> Option<Self> {
+        OperatorAction::from_label(label)
+            .map(Self::BuiltIn)
+            .or_else(|| RemediationId::from_label(label).map(Self::Remediation))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ActionAvailability {
+    Available,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TaskActionDecision {
+    pub id: TaskActionId,
+    pub availability: ActionAvailability,
+    pub reason: String,
+    pub requires_confirmation: bool,
+}
+
+impl TaskActionDecision {
+    pub fn is_available(&self) -> bool {
+        self.availability == ActionAvailability::Available
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperatorActionPlan {
     pub action: OperatorAction,
     pub reason: String,
     pub available_actions: Vec<OperatorAction>,
+}
+
+pub fn task_action_decisions(task: &Task) -> Vec<TaskActionDecision> {
+    let built_ins = [
+        crate::slices::resume::decision(task),
+        crate::slices::review::decision(task),
+        crate::slices::ship::decision(task),
+        crate::slices::drop::decision(task),
+        crate::slices::repair::decision(task),
+    ];
+    let mut decisions = built_ins.into_iter().collect::<Vec<_>>();
+    decisions.extend(crate::slices::remediate::decisions(task));
+    decisions
+}
+
+pub(crate) fn available_built_in_decision(
+    action: OperatorAction,
+    reason: impl Into<String>,
+    requires_confirmation: bool,
+) -> TaskActionDecision {
+    TaskActionDecision {
+        id: TaskActionId::BuiltIn(action),
+        availability: ActionAvailability::Available,
+        reason: reason.into(),
+        requires_confirmation,
+    }
+}
+
+pub(crate) fn blocked_built_in_decision(
+    action: OperatorAction,
+    reason: impl Into<String>,
+    requires_confirmation: bool,
+) -> TaskActionDecision {
+    TaskActionDecision {
+        id: TaskActionId::BuiltIn(action),
+        availability: ActionAvailability::Blocked,
+        reason: reason.into(),
+        requires_confirmation,
+    }
 }
 
 pub fn operator_action(task: &Task) -> OperatorActionPlan {
@@ -134,10 +236,7 @@ fn fallback_operator_action(task: &Task) -> OperatorAction {
         LifecycleStatus::Cleanable | LifecycleStatus::Removing | LifecycleStatus::Removed => {
             OperatorAction::Drop
         }
-        LifecycleStatus::Merged
-            if task_operation_eligibility(task, TaskOperation::Clean).is_allowed()
-                || task_operation_eligibility(task, TaskOperation::Remove).is_allowed() =>
-        {
+        LifecycleStatus::Merged if crate::slices::drop::decision(task).is_available() => {
             OperatorAction::Drop
         }
         _ => OperatorAction::Resume,
@@ -175,30 +274,32 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
         return vec![OperatorAction::Repair];
     }
 
-    let mut actions =
-        if task.has_missing_substrate() || task.runtime_projection.observation_error.is_some() {
-            vec![OperatorAction::Repair]
-        } else {
-            Vec::new()
-        };
-    actions.extend(
-        [
-            (TaskOperation::Open, OperatorAction::Resume),
-            (TaskOperation::Merge, OperatorAction::Ship),
-            (TaskOperation::Clean, OperatorAction::Drop),
-            (TaskOperation::Remove, OperatorAction::Drop),
-        ]
-        .into_iter()
-        .filter(|(op, _)| task_operation_eligibility(task, *op).is_allowed())
-        .map(|(_, action)| action),
-    );
-    actions.dedup();
-    actions
+    let decisions = task_action_decisions(task);
+    [
+        OperatorAction::Repair,
+        OperatorAction::Resume,
+        OperatorAction::Ship,
+        OperatorAction::Drop,
+    ]
+    .into_iter()
+    .filter(|action| {
+        if *action == OperatorAction::Repair
+            && !task.has_missing_substrate()
+            && task.runtime_projection.observation_error.is_none()
+        {
+            return false;
+        }
+        decisions.iter().any(|decision| {
+            decision.id == TaskActionId::BuiltIn(*action) && decision.is_available()
+        })
+    })
+    .collect()
 }
 
 fn has_only_shell_substrate_gap(task: &Task) -> bool {
-    !task.has_side_flag(SideFlag::WorktreeMissing)
-        && !task.has_side_flag(SideFlag::BranchMissing)
+    let facts = task.facts();
+    !facts.worktree_missing
+        && !facts.branch_missing
         && !task.runtime_projection.health.is_git_substrate_gap()
         && !task
             .live_status
@@ -207,60 +308,38 @@ fn has_only_shell_substrate_gap(task: &Task) -> bool {
 }
 
 fn task_is_known_invalid(task: &Task) -> bool {
-    task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::WorktrunkMissing)
-        || task.has_side_flag(SideFlag::WorktreeMissing)
-        || task.has_side_flag(SideFlag::BranchMissing)
-        || task
-            .tmux_status
-            .as_ref()
-            .is_some_and(|status| !status.exists)
-        || task
-            .git_status
-            .as_ref()
-            .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
-        || task
-            .worktrunk_status
-            .as_ref()
-            .is_some_and(|status| !status.exists || !status.points_at_expected_path)
-        || task.live_status.as_ref().is_some_and(|live| {
-            matches!(
-                live.kind,
-                LiveStatusKind::WorktreeMissing
-                    | LiveStatusKind::TmuxMissing
-                    | LiveStatusKind::WorktrunkMissing
-            )
-        })
+    crate::slices::drop::invalid_task_requires_drop(task)
 }
 
 pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
+    let facts = task.facts();
     if let Some(live) = task.live_status.as_ref() {
         if let Some(reason) = blocker_reason_for_live(live.kind) {
             return Some(reason);
         }
     }
-    if task.has_side_flag(SideFlag::NeedsInput) {
+    if facts.needs_input {
         return Some("agent needs input");
     }
-    if task.has_side_flag(SideFlag::Conflicted) {
+    if facts.conflicted {
         return Some("git conflicts detected");
     }
-    if task.has_side_flag(SideFlag::TestsFailed) {
+    if facts.tests_failed {
         return Some("tests failed");
     }
-    if task.has_side_flag(SideFlag::AgentDead) {
+    if facts.agent_dead {
         return Some("agent appears dead");
     }
-    if task.has_side_flag(SideFlag::WorktrunkMissing) {
+    if facts.worktrunk_missing {
         return Some("worktrunk missing");
     }
-    if task.has_side_flag(SideFlag::TmuxMissing) {
+    if facts.tmux_missing {
         return Some("tmux session missing");
     }
-    if task.has_side_flag(SideFlag::WorktreeMissing) {
+    if facts.worktree_missing {
         return Some("worktree missing");
     }
-    if task.has_side_flag(SideFlag::BranchMissing) {
+    if facts.branch_missing {
         return Some("branch missing");
     }
     match task.agent_status {
@@ -291,7 +370,9 @@ fn blocker_reason_for_live(kind: LiveStatusKind) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::operator_action;
+    use super::{
+        operator_action, task_action_decisions, ActionAvailability, RemediationId, TaskActionId,
+    };
     use crate::{
         lifecycle::{mark_active, mark_reviewable},
         models::{
@@ -466,5 +547,202 @@ mod tests {
 
         assert_eq!(plan.action, OperatorAction::Resume);
         assert_eq!(plan.reason, "needs_input");
+    }
+
+    #[test]
+    fn task_action_decisions_include_builtin_and_remediation_actions() {
+        let mut task = task("ci");
+        task.live_status = Some(crate::models::LiveObservation::new(
+            crate::models::LiveStatusKind::CiFailed,
+            "ci failed",
+        ));
+
+        let decisions = task_action_decisions(&task);
+
+        assert!(decisions
+            .iter()
+            .any(|decision| { decision.id == TaskActionId::BuiltIn(OperatorAction::Resume) }));
+        assert!(decisions
+            .iter()
+            .any(|decision| { decision.id == TaskActionId::Remediation(RemediationId::FixCi) }));
+    }
+
+    #[test]
+    fn start_is_project_scoped_not_task_scoped() {
+        let decisions = task_action_decisions(&task("active"));
+
+        assert!(!decisions
+            .iter()
+            .any(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Start)));
+    }
+
+    #[test]
+    fn task_action_decisions_keep_eligibility_separate_from_surface_capability() {
+        let decisions = task_action_decisions(&task("active"));
+        let resume = decisions
+            .iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Resume))
+            .unwrap();
+
+        assert_eq!(resume.availability, ActionAvailability::Available);
+        assert_eq!(resume.id.compatibility_label(), "resume");
+    }
+
+    #[test]
+    fn built_in_recommendation_is_not_displaced_by_remediation_decisions() {
+        let mut task = clean_reviewable_task("ci");
+        task.live_status = Some(crate::models::LiveObservation::new(
+            crate::models::LiveStatusKind::CiFailed,
+            "ci failed",
+        ));
+
+        let plan = operator_action(&task);
+
+        assert_eq!(plan.action, OperatorAction::Ship);
+    }
+
+    #[test]
+    fn task_action_ids_are_typed_namespaced_and_keep_compatibility_labels() {
+        assert_eq!(
+            TaskActionId::BuiltIn(OperatorAction::Ship).compatibility_label(),
+            "ship"
+        );
+        assert_eq!(
+            TaskActionId::Remediation(RemediationId::ResolveMergeConflicts).compatibility_label(),
+            "resolve-merge-conflicts"
+        );
+    }
+
+    #[test]
+    fn task_action_decision_order_is_stable() {
+        let mut task = clean_reviewable_task("blocked");
+        task.live_status = Some(crate::models::LiveObservation::new(
+            crate::models::LiveStatusKind::MergeConflict,
+            "merge conflict",
+        ));
+        task.add_side_flag(SideFlag::TestsFailed);
+
+        let ids = task_action_decisions(&task)
+            .into_iter()
+            .map(|decision| decision.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ids,
+            vec![
+                TaskActionId::BuiltIn(OperatorAction::Resume),
+                TaskActionId::BuiltIn(OperatorAction::Review),
+                TaskActionId::BuiltIn(OperatorAction::Ship),
+                TaskActionId::BuiltIn(OperatorAction::Drop),
+                TaskActionId::BuiltIn(OperatorAction::Repair),
+                TaskActionId::Remediation(RemediationId::FixCi),
+                TaskActionId::Remediation(RemediationId::ResolveMergeConflicts),
+            ]
+        );
+    }
+
+    #[test]
+    fn drop_decision_carries_confirmation_requirement() {
+        let decision = task_action_decisions(&task("active"))
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Drop))
+            .unwrap();
+
+        assert!(decision.requires_confirmation);
+    }
+
+    #[test]
+    fn removed_task_action_decisions_preserve_existing_blocks() {
+        let mut task = task("removed");
+        task.lifecycle_status = LifecycleStatus::Removed;
+
+        let decisions = task_action_decisions(&task);
+
+        assert!(decisions
+            .iter()
+            .filter(|decision| matches!(decision.id, TaskActionId::BuiltIn(_)))
+            .all(|decision| !decision.is_available()));
+    }
+
+    #[test]
+    fn ship_decision_requires_reviewable_or_mergeable_lifecycle() {
+        let decision = task_action_decisions(&task("active"))
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Ship))
+            .unwrap();
+
+        assert!(!decision.is_available());
+        assert_eq!(
+            decision.reason,
+            "merge requires reviewable or mergeable lifecycle"
+        );
+    }
+
+    #[test]
+    fn drop_decision_preserves_clean_and_remove_eligibility_union() {
+        let decision = task_action_decisions(&task("active"))
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Drop))
+            .unwrap();
+
+        assert!(decision.is_available());
+    }
+
+    #[test]
+    fn review_decision_blocks_missing_worktree() {
+        let mut task = task("review");
+        task.add_side_flag(SideFlag::WorktreeMissing);
+
+        let decision = task_action_decisions(&task)
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Review))
+            .unwrap();
+
+        assert!(!decision.is_available());
+        assert!(decision.reason.contains("missing"));
+    }
+
+    #[test]
+    fn resume_decision_blocks_missing_required_substrate() {
+        let mut task = task("resume");
+        task.add_side_flag(SideFlag::TmuxMissing);
+
+        let decision = task_action_decisions(&task)
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Resume))
+            .unwrap();
+
+        assert!(!decision.is_available());
+        assert!(decision.reason.contains("missing"));
+    }
+
+    #[test]
+    fn repair_decision_remains_available_for_probe_failure() {
+        let mut task = task("repair");
+        task.record_runtime_probe_failure(
+            RuntimeObservationSource::TmuxProbe,
+            "tmux server unavailable",
+        );
+
+        let decision = task_action_decisions(&task)
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Repair))
+            .unwrap();
+
+        assert!(decision.is_available());
+    }
+
+    #[test]
+    fn repair_decision_allows_recoverable_tmux_and_task_window_loss() {
+        let mut task = task("repair");
+        task.add_side_flag(SideFlag::TmuxMissing);
+        task.add_side_flag(SideFlag::WorktrunkMissing);
+
+        let decision = task_action_decisions(&task)
+            .into_iter()
+            .find(|decision| decision.id == TaskActionId::BuiltIn(OperatorAction::Repair))
+            .unwrap();
+
+        assert!(decision.is_available());
     }
 }
