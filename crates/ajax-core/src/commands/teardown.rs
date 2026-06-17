@@ -428,20 +428,16 @@ fn worktree_roots<R: Registry>(context: &CommandContext<R>) -> Vec<PathBuf> {
 }
 
 fn sweep_trash_command(worktree_root: &Path) -> CommandSpec {
-    let trash_dir = worktree_root.join(".ajax-trash");
-    CommandSpec {
-        program: "sh".to_string(),
-        args: vec![
-            "-c".to_string(),
-            "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi"
-                .to_string(),
-            "ajax-trash-sweep".to_string(),
-            trash_dir.display().to_string(),
+    let trash_dir = worktree_root.join(".ajax-trash").display().to_string();
+    CommandSpec::new(
+        "sh",
+        [
+            "-c",
+            "if [ -d \"$1\" ]; then find \"$1\" -mindepth 1 -maxdepth 1 -mmin +60 -exec rm -rf {} +; fi",
+            "ajax-trash-sweep",
+            &trash_dir,
         ],
-        cwd: None,
-        mode: crate::adapters::CommandMode::Capture,
-        timeout: None,
-    }
+    )
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

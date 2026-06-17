@@ -2,14 +2,14 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, OperatorAction, TmuxStatus},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
 };
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::action_vocabulary::{browser_actions, supported_web_action, WebAction};
+use crate::action_vocabulary::{browser_actions, WebAction};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {
@@ -69,14 +69,6 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         status_explanation: card.status_explanation.clone(),
         actions: browser_actions(card),
     }
-}
-
-// Resume drops the operator into a native tmux pane and Start needs an
-// interactive title prompt; both are rejected by web action handling, so the
-// browser Cockpit should not surface them as buttons.
-#[allow(dead_code)]
-fn is_web_supported(action: OperatorAction) -> bool {
-    supported_web_action(action)
 }
 
 #[derive(Serialize)]

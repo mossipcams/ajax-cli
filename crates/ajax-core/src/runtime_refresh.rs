@@ -74,21 +74,7 @@ pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
     runner: &mut impl CommandRunner,
     agent_status_cache: &impl AgentStatusCache,
 ) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_agent_status_cache_and_tier(
-        context,
-        runner,
-        agent_status_cache,
-        RefreshTier::Full,
-    )
-}
-
-pub fn refresh_runtime_context_with_agent_status_cache_and_tier<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    agent_status_cache: &impl AgentStatusCache,
-    tier: RefreshTier,
-) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_tier(context, runner, agent_status_cache, tier)
+    refresh_runtime_context_with_tier(context, runner, agent_status_cache, RefreshTier::Full)
 }
 
 pub fn refresh_runtime_context_with_tier<R: Registry>(
@@ -699,7 +685,6 @@ mod tests {
 
     use super::{
         refresh_runtime_context, refresh_runtime_context_with_agent_status_cache,
-        refresh_runtime_context_with_agent_status_cache_and_tier,
         refresh_runtime_context_with_tier, AgentStatusCache, AgentStatusCacheEntry,
         AgentStatusCacheSource, NoAgentStatusCache, RefreshTier,
     };
@@ -1570,13 +1555,8 @@ mod tests {
             values: vec!["working".to_string()],
         };
 
-        refresh_runtime_context_with_agent_status_cache_and_tier(
-            &mut context,
-            &mut runner,
-            &cache,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+            .unwrap();
 
         let git_worktree_lists = runner
             .commands
@@ -1881,13 +1861,9 @@ mod tests {
             values: vec!["working".to_string()],
         };
 
-        let _changed = refresh_runtime_context_with_agent_status_cache_and_tier(
-            &mut context,
-            &mut runner,
-            &cache,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        let _changed =
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+                .unwrap();
 
         let git_worktree_lists = runner
             .commands
@@ -2177,13 +2153,8 @@ mod tests {
             values: vec!["working".to_string(); 24],
         };
 
-        refresh_runtime_context_with_agent_status_cache_and_tier(
-            &mut context,
-            &mut runner,
-            &cache,
-            RefreshTier::Live,
-        )
-        .unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Live)
+            .unwrap();
 
         let list_sessions = runner
             .commands

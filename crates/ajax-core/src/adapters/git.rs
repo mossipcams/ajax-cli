@@ -1,4 +1,4 @@
-use super::command::{CommandMode, CommandSpec};
+use super::command::CommandSpec;
 use crate::models::GitStatus;
 use std::time::Duration;
 
@@ -55,87 +55,48 @@ impl GitAdapter {
         branch: &str,
         start_point: &str,
     ) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "add".to_string(),
-                "-b".to_string(),
-                branch.to_string(),
-                worktree_path.to_string(),
-                start_point.to_string(),
+        CommandSpec::new(
+            &self.program,
+            [
+                "-C",
+                repo_path,
+                "worktree",
+                "add",
+                "-b",
+                branch,
+                worktree_path,
+                start_point,
             ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        )
     }
 
     pub fn remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "remove".to_string(),
-                worktree_path.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "worktree", "remove", worktree_path],
+        )
     }
 
     pub fn force_remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "worktree".to_string(),
-                "remove".to_string(),
-                "--force".to_string(),
-                worktree_path.to_string(),
+        CommandSpec::new(
+            &self.program,
+            [
+                "-C",
+                repo_path,
+                "worktree",
+                "remove",
+                "--force",
+                worktree_path,
             ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        )
     }
 
     pub fn delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "branch".to_string(),
-                "-d".to_string(),
-                branch.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        CommandSpec::new(&self.program, ["-C", repo_path, "branch", "-d", branch])
     }
 
     pub fn force_delete_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "-C".to_string(),
-                repo_path.to_string(),
-                "branch".to_string(),
-                "-D".to_string(),
-                branch.to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        CommandSpec::new(&self.program, ["-C", repo_path, "branch", "-D", branch])
     }
 
     pub fn switch_branch(&self, repo_path: &str, branch: &str) -> CommandSpec {
@@ -286,7 +247,7 @@ fn apply_branch_divergence(status: &mut GitStatus, branch_line: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{CommandMode, CommandSpec, GitAdapter, GIT_FETCH_TIMEOUT};
+    use super::{CommandSpec, GitAdapter, GIT_FETCH_TIMEOUT};
 
     #[test]
     fn sync_default_branch_fetches_origin_ref_before_fast_forwarding_local_branch() {
@@ -305,19 +266,10 @@ mod tests {
 
         assert_eq!(
             adapter.list_worktrees("/repos/ajax-cli"),
-            CommandSpec {
-                program: "git".to_string(),
-                args: vec![
-                    "-C".to_string(),
-                    "/repos/ajax-cli".to_string(),
-                    "worktree".to_string(),
-                    "list".to_string(),
-                    "--porcelain".to_string(),
-                ],
-                cwd: None,
-                mode: CommandMode::Capture,
-                timeout: None,
-            }
+            CommandSpec::new(
+                "git",
+                ["-C", "/repos/ajax-cli", "worktree", "list", "--porcelain"]
+            )
         );
     }
 

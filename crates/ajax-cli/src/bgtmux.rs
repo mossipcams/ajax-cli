@@ -3,7 +3,7 @@ use crate::{
     CliError,
 };
 use ajax_core::{
-    adapters::{CommandMode, CommandOutput, CommandRunner, CommandSpec, ProcessCommandRunner},
+    adapters::{CommandOutput, CommandRunner, CommandSpec, ProcessCommandRunner},
     commands::OpenMode,
 };
 use clap::{Arg, ArgAction, Command};
@@ -104,23 +104,13 @@ pub(crate) fn bgtmux_command(session: &str, open_mode: OpenMode) -> CommandSpec 
 }
 
 pub(crate) fn bgtmux_fixture_commands(session: &str) -> Vec<CommandSpec> {
+    let script = bgtmux_fixture_script();
     vec![
         CommandSpec::new("tmux", ["kill-session", "-t", session]),
-        CommandSpec {
-            program: "tmux".to_string(),
-            args: vec![
-                "new-session".to_string(),
-                "-d".to_string(),
-                "-s".to_string(),
-                session.to_string(),
-                "sh".to_string(),
-                "-lc".to_string(),
-                bgtmux_fixture_script(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        },
+        CommandSpec::new(
+            "tmux",
+            ["new-session", "-d", "-s", session, "sh", "-lc", &script],
+        ),
     ]
 }
 

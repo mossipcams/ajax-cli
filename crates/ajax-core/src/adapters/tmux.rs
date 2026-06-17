@@ -65,19 +65,10 @@ impl TmuxAdapter {
 
     pub fn send_agent_command(&self, session: &str, window: &str, command: &str) -> CommandSpec {
         let target = tmux_window_target(session, window);
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "send-keys".to_string(),
-                "-t".to_string(),
-                target,
-                command.to_string(),
-                "Enter".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        }
+        CommandSpec::new(
+            &self.program,
+            ["send-keys", "-t", &target, command, "Enter"],
+        )
     }
 
     pub fn kill_session(&self, session: &str) -> CommandSpec {
@@ -117,20 +108,11 @@ impl TmuxAdapter {
 
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
         let target = format!("{session}:{window}");
-        CommandSpec {
-            program: self.program.clone(),
-            args: vec![
-                "capture-pane".to_string(),
-                "-p".to_string(),
-                "-t".to_string(),
-                target,
-                "-S".to_string(),
-                "-80".to_string(),
-            ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: Some(TMUX_PROBE_TIMEOUT),
-        }
+        CommandSpec::new(
+            &self.program,
+            ["capture-pane", "-p", "-t", &target, "-S", "-80"],
+        )
+        .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
     pub fn parse_session_status(session: &str, list_sessions_output: &str) -> TmuxStatus {
