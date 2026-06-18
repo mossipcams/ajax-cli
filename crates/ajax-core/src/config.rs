@@ -38,7 +38,7 @@ pub enum RuntimePathSource {
     Env,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RuntimePathRequest {
     home: PathBuf,
     cli_profile: Option<String>,
@@ -57,16 +57,7 @@ impl RuntimePathRequest {
     pub fn new(home: impl Into<PathBuf>) -> Self {
         Self {
             home: home.into(),
-            cli_profile: None,
-            env_profile: None,
-            cli_home: None,
-            env_home: None,
-            cli_config: None,
-            env_config: None,
-            cli_state: None,
-            env_state: None,
-            cli_worktree_root: None,
-            env_worktree_root: None,
+            ..Self::default()
         }
     }
 
@@ -134,49 +125,33 @@ impl RuntimePathRequest {
             None => stable_runtime_paths(self.home, profile),
         };
 
-        if let Some(config_file) = self.cli_config {
+        if let Some((config_file, source)) = pick(self.cli_config, self.env_config) {
             paths.config_file = config_file;
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::ConfigFile,
-                source: RuntimePathSource::Cli,
-            });
-        } else if let Some(config_file) = self.env_config {
-            paths.config_file = config_file;
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::ConfigFile,
-                source: RuntimePathSource::Env,
-            });
+            paths.record_override(RuntimePathField::ConfigFile, source);
         }
-
-        if let Some(state_db) = self.cli_state {
+        if let Some((state_db, source)) = pick(self.cli_state, self.env_state) {
             paths.state_db = state_db;
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::StateDb,
-                source: RuntimePathSource::Cli,
-            });
-        } else if let Some(state_db) = self.env_state {
-            paths.state_db = state_db;
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::StateDb,
-                source: RuntimePathSource::Env,
-            });
+            paths.record_override(RuntimePathField::StateDb, source);
         }
-
-        if let Some(root) = self.cli_worktree_root {
+        if let Some((root, source)) = pick(self.cli_worktree_root, self.env_worktree_root) {
             paths.worktree_placement = WorktreePlacement::Root(root);
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::WorktreeRoot,
-                source: RuntimePathSource::Cli,
-            });
-        } else if let Some(root) = self.env_worktree_root {
-            paths.worktree_placement = WorktreePlacement::Root(root);
-            paths.overrides.push(RuntimePathOverride {
-                field: RuntimePathField::WorktreeRoot,
-                source: RuntimePathSource::Env,
-            });
+            paths.record_override(RuntimePathField::WorktreeRoot, source);
         }
 
         paths
+    }
+}
+
+/// Resolve a single tunable: a CLI value wins over an env value, and the winner
+/// reports which source it came from for `ajax runtime` to surface.
+fn pick<T>(cli: Option<T>, env: Option<T>) -> Option<(T, RuntimePathSource)> {
+    cli.map(|value| (value, RuntimePathSource::Cli))
+        .or_else(|| env.map(|value| (value, RuntimePathSource::Env)))
+}
+
+impl RuntimePaths {
+    fn record_override(&mut self, field: RuntimePathField, source: RuntimePathSource) {
+        self.overrides.push(RuntimePathOverride { field, source });
     }
 }
 

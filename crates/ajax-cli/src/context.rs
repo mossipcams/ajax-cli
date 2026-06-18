@@ -45,7 +45,7 @@ impl CliContextPaths {
 pub(crate) fn context_paths_from_matches(
     matches: &ArgMatches,
 ) -> Result<CliContextPaths, CliError> {
-    context_paths_from_matches_and_env(matches, RuntimeEnv::from_process()?)
+    context_paths_from_matches_and_env(matches, runtime_path_request_from_env()?)
 }
 
 pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
@@ -55,131 +55,65 @@ pub(crate) fn default_context_paths() -> Result<CliContextPaths, CliError> {
     context_paths_from_matches(&matches)
 }
 
+/// A CLI flag name paired with the `RuntimePathRequest` setter it feeds.
+type CliFlagOverride = (
+    &'static str,
+    fn(RuntimePathRequest, &str) -> RuntimePathRequest,
+);
+
 pub(crate) fn context_paths_from_matches_and_env(
     matches: &ArgMatches,
-    env: RuntimeEnv,
+    mut request: RuntimePathRequest,
 ) -> Result<CliContextPaths, CliError> {
-    let mut request = env.into_runtime_path_request();
+    // The `dev`/`stable` aliases are sugar for `--profile`; an explicit
+    // `--profile` flag still wins because it is applied last below.
+    if let Some((name @ ("dev" | "stable"), _)) = matches.subcommand() {
+        request = request.with_cli_profile(name);
+    }
 
-    if matches.subcommand().is_some_and(|(name, _)| name == "dev") {
-        request = request.with_cli_profile("dev");
-    }
-    if matches
-        .subcommand()
-        .is_some_and(|(name, _)| name == "stable")
-    {
-        request = request.with_cli_profile("stable");
-    }
-    if let Some(profile) = matches.get_one::<String>("profile") {
-        request = request.with_cli_profile(profile);
-    }
-    if let Some(home) = matches.get_one::<String>("home") {
-        request = request.with_cli_home(home);
-    }
-    if let Some(config) = matches.get_one::<String>("config") {
-        request = request.with_cli_config(config);
-    }
-    if let Some(state) = matches.get_one::<String>("state") {
-        request = request.with_cli_state(state);
-    }
-    if let Some(root) = matches.get_one::<String>("worktree-root") {
-        request = request.with_cli_worktree_root(root);
+    let cli_overrides: [CliFlagOverride; 5] = [
+        ("profile", |request, value| request.with_cli_profile(value)),
+        ("home", |request, value| request.with_cli_home(value)),
+        ("config", |request, value| request.with_cli_config(value)),
+        ("state", |request, value| request.with_cli_state(value)),
+        ("worktree-root", |request, value| {
+            request.with_cli_worktree_root(value)
+        }),
+    ];
+    for (flag, apply) in cli_overrides {
+        if let Some(value) = matches.get_one::<String>(flag) {
+            request = apply(request, value);
+        }
     }
 
     Ok(CliContextPaths::from_runtime_paths(request.resolve()))
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct RuntimeEnv {
-    home: PathBuf,
-    ajax_profile: Option<String>,
-    ajax_home: Option<PathBuf>,
-    ajax_config: Option<PathBuf>,
-    ajax_state: Option<PathBuf>,
-    ajax_worktree_root: Option<PathBuf>,
-}
-
-impl RuntimeEnv {
-    fn from_process() -> Result<Self, CliError> {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .ok_or_else(|| CliError::ContextLoad("HOME is not set".to_string()))?;
-        let mut env = Self::for_home(home);
-        if let Some(profile) = std::env::var_os("AJAX_PROFILE") {
-            env = env.with_ajax_profile(profile.to_string_lossy());
-        }
-        if let Some(home) = std::env::var_os("AJAX_HOME") {
-            env = env.with_ajax_home(home);
-        }
-        if let Some(config) = std::env::var_os("AJAX_CONFIG") {
-            env = env.with_ajax_config(config);
-        }
-        if let Some(state) = std::env::var_os("AJAX_STATE") {
-            env = env.with_ajax_state(state);
-        }
-        if let Some(root) = std::env::var_os("AJAX_WORKTREE_ROOT") {
-            env = env.with_ajax_worktree_root(root);
-        }
-
-        Ok(env)
+/// Seed a [`RuntimePathRequest`] from the process environment: `$HOME` plus the
+/// optional `AJAX_*` overrides. CLI flags are layered on top later, so these are
+/// recorded as env-sourced.
+fn runtime_path_request_from_env() -> Result<RuntimePathRequest, CliError> {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .ok_or_else(|| CliError::ContextLoad("HOME is not set".to_string()))?;
+    let mut request = RuntimePathRequest::new(home);
+    if let Some(profile) = std::env::var_os("AJAX_PROFILE") {
+        request = request.with_env_profile(profile.to_string_lossy().into_owned());
+    }
+    if let Some(home) = std::env::var_os("AJAX_HOME") {
+        request = request.with_env_home(home);
+    }
+    if let Some(config) = std::env::var_os("AJAX_CONFIG") {
+        request = request.with_env_config(config);
+    }
+    if let Some(state) = std::env::var_os("AJAX_STATE") {
+        request = request.with_env_state(state);
+    }
+    if let Some(root) = std::env::var_os("AJAX_WORKTREE_ROOT") {
+        request = request.with_env_worktree_root(root);
     }
 
-    fn for_home(home: impl Into<PathBuf>) -> Self {
-        Self {
-            home: home.into(),
-            ajax_profile: None,
-            ajax_home: None,
-            ajax_config: None,
-            ajax_state: None,
-            ajax_worktree_root: None,
-        }
-    }
-
-    fn with_ajax_profile(mut self, profile: impl Into<String>) -> Self {
-        self.ajax_profile = Some(profile.into());
-        self
-    }
-
-    fn with_ajax_home(mut self, home: impl Into<PathBuf>) -> Self {
-        self.ajax_home = Some(home.into());
-        self
-    }
-
-    fn with_ajax_config(mut self, config: impl Into<PathBuf>) -> Self {
-        self.ajax_config = Some(config.into());
-        self
-    }
-
-    fn with_ajax_state(mut self, state: impl Into<PathBuf>) -> Self {
-        self.ajax_state = Some(state.into());
-        self
-    }
-
-    fn with_ajax_worktree_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.ajax_worktree_root = Some(root.into());
-        self
-    }
-
-    fn into_runtime_path_request(self) -> RuntimePathRequest {
-        let mut request = RuntimePathRequest::new(self.home);
-        if let Some(profile) = self.ajax_profile {
-            request = request.with_env_profile(profile);
-        }
-        if let Some(home) = self.ajax_home {
-            request = request.with_env_home(home);
-        }
-        if let Some(config) = self.ajax_config {
-            request = request.with_env_config(config);
-        }
-        if let Some(state) = self.ajax_state {
-            request = request.with_env_state(state);
-        }
-        if let Some(root) = self.ajax_worktree_root {
-            request = request.with_env_worktree_root(root);
-        }
-
-        request
-    }
+    Ok(request)
 }
 
 pub(crate) fn load_context(
@@ -414,7 +348,7 @@ fn merge_registries(
 mod tests {
     use super::{
         context_paths_from_matches_and_env, load_context, load_tracked_context,
-        save_tracked_context, CliContextPaths, RuntimeEnv,
+        save_tracked_context, CliContextPaths,
     };
     use crate::build_cli;
     use ajax_core::{
@@ -496,7 +430,7 @@ mod tests {
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,
-            RuntimeEnv::for_home("/Users/matt").with_ajax_profile("dev"),
+            RuntimePathRequest::new("/Users/matt").with_env_profile("dev"),
         )
         .unwrap();
 
@@ -513,7 +447,7 @@ mod tests {
             .try_get_matches_from(["ajax-cli", "dev"])
             .unwrap();
         let paths =
-            context_paths_from_matches_and_env(&matches, RuntimeEnv::for_home("/Users/matt"))
+            context_paths_from_matches_and_env(&matches, RuntimePathRequest::new("/Users/matt"))
                 .unwrap();
 
         assert_eq!(paths.runtime_paths.profile, "dev");
@@ -530,7 +464,7 @@ mod tests {
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,
-            RuntimeEnv::for_home("/Users/matt").with_ajax_home("/tmp/ajax-home"),
+            RuntimePathRequest::new("/Users/matt").with_env_home("/tmp/ajax-home"),
         )
         .unwrap();
 
@@ -551,10 +485,10 @@ mod tests {
             .unwrap();
         let paths = context_paths_from_matches_and_env(
             &matches,
-            RuntimeEnv::for_home("/Users/matt")
-                .with_ajax_config("/tmp/config.toml")
-                .with_ajax_state("/tmp/state.db")
-                .with_ajax_worktree_root("/tmp/worktrees"),
+            RuntimePathRequest::new("/Users/matt")
+                .with_env_config("/tmp/config.toml")
+                .with_env_state("/tmp/state.db")
+                .with_env_worktree_root("/tmp/worktrees"),
         )
         .unwrap();
 
