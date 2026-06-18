@@ -107,12 +107,10 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
 ) -> Result<bool, ajax_core::commands::CommandError> {
     #[cfg(feature = "interactive")]
     {
-        use ajax_core::runtime_refresh::refresh_runtime_context_with_agent_status_cache_and_tier;
-
         let cache = crate::agent_status_cache::TmuxAgentStatusSnapshot::from_runtime_cache(
             &context.runtime_paths.cache_dir,
         );
-        refresh_runtime_context_with_agent_status_cache_and_tier(context, runner, &cache, tier)
+        ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &cache, tier)
     }
 
     #[cfg(not(feature = "interactive"))]

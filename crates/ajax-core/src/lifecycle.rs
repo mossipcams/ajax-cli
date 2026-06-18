@@ -69,14 +69,6 @@ pub fn restore_active(task: &mut Task) -> Result<(), LifecycleTransitionError> {
     )
 }
 
-pub fn mark_waiting(task: &mut Task) -> Result<(), LifecycleTransitionError> {
-    transition_lifecycle(
-        task,
-        LifecycleStatus::Waiting,
-        LifecycleTransitionReason::Generic,
-    )
-}
-
 pub fn mark_reviewable(task: &mut Task) -> Result<(), LifecycleTransitionError> {
     transition_lifecycle(
         task,

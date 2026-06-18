@@ -390,8 +390,7 @@ pub mod task_command {
 pub mod drop_task {
     use crate::{
         adapters::{
-            CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter,
-            TmuxAdapter,
+            CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter, TmuxAdapter,
         },
         commands::{
             self, CommandContext, CommandError, CommandPlan, DropObservation, DropOp, ResourceState,
@@ -663,21 +662,17 @@ pub mod drop_task {
     fn fast_remove_worktree(repo_path: &str, task: &Task) -> Result<CommandSpec, CommandError> {
         let worktree_path = task.worktree_path.display().to_string();
         let trash_path = fast_remove_trash_path(task)?;
-        Ok(CommandSpec {
-            program: "sh".to_string(),
-            args: vec![
-                "-c".to_string(),
-                "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }"
-                    .to_string(),
-                "ajax-fast-worktree-remove".to_string(),
-                repo_path.to_string(),
-                worktree_path,
-                trash_path,
+        Ok(CommandSpec::new(
+            "sh",
+            [
+                "-c",
+                "mkdir -p \"$(dirname \"$3\")\" && { [ ! -e \"$2\" ] || mv \"$2\" \"$3\"; } && { git -C \"$1\" worktree prune || git -C \"$1\" worktree remove --force \"$2\"; } && { rm -rf \"$3\" >/dev/null 2>&1 & }",
+                "ajax-fast-worktree-remove",
+                repo_path,
+                &worktree_path,
+                &trash_path,
             ],
-            cwd: None,
-            mode: CommandMode::Capture,
-            timeout: None,
-        })
+        ))
     }
 
     fn fast_remove_trash_path(task: &Task) -> Result<String, CommandError> {

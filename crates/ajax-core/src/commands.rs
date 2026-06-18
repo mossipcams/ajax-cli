@@ -106,9 +106,7 @@ fn list_tasks_from_tasks(tasks: &[&Task], repo: Option<&str>) -> TasksResponse {
     TasksResponse { tasks }
 }
 
-pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
-    crate::slices::review::review_queue(context)
-}
+pub use crate::slices::review::review_queue;
 
 fn review_queue_from_tasks(tasks: &[&Task]) -> TasksResponse {
     let tasks = tasks
