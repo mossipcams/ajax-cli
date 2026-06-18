@@ -530,49 +530,24 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
 }
 
 fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
-    let task_id = TaskId::new(row.get::<_, String>("task_id").map_err(database_error)?);
-    let repo = row.get::<_, String>("repo").map_err(database_error)?;
-    let handle = row.get::<_, String>("handle").map_err(database_error)?;
-    let title = row.get::<_, String>("title").map_err(database_error)?;
-    let branch = row.get::<_, String>("branch").map_err(database_error)?;
-    let base_branch = row
-        .get::<_, String>("base_branch")
-        .map_err(database_error)?;
-    let worktree_path = row
-        .get::<_, String>("worktree_path")
-        .map_err(database_error)?;
-    let tmux_session = row
-        .get::<_, String>("tmux_session")
-        .map_err(database_error)?;
-    let worktrunk_window = row
-        .get::<_, String>("worktrunk_window")
-        .map_err(database_error)?;
-    let selected_agent = parse_agent_client(
-        &row.get::<_, String>("selected_agent")
-            .map_err(database_error)?,
-    )?;
-    let persisted_lifecycle_status = parse_lifecycle_status(
-        &row.get::<_, String>("lifecycle_status")
-            .map_err(database_error)?,
-    )?;
-    let mut agent_status = parse_agent_runtime_status(
-        &row.get::<_, String>("agent_status")
-            .map_err(database_error)?,
-    )?;
-    let created_at = unix_parts_to_system_time(
-        row.get::<_, i64>("created_at_unix_seconds")
-            .map_err(database_error)?,
-        row.get::<_, u32>("created_at_subsec_nanos")
-            .map_err(database_error)?,
-    )?;
-    let last_activity_at = unix_parts_to_system_time(
-        row.get::<_, i64>("last_activity_at_unix_seconds")
-            .map_err(database_error)?,
-        row.get::<_, u32>("last_activity_at_subsec_nanos")
-            .map_err(database_error)?,
-    )?;
+    let task_id = TaskId::new(col::<String>(row, "task_id")?);
+    let repo = col::<String>(row, "repo")?;
+    let handle = col::<String>(row, "handle")?;
+    let title = col::<String>(row, "title")?;
+    let branch = col::<String>(row, "branch")?;
+    let base_branch = col::<String>(row, "base_branch")?;
+    let worktree_path = col::<String>(row, "worktree_path")?;
+    let tmux_session = col::<String>(row, "tmux_session")?;
+    let worktrunk_window = col::<String>(row, "worktrunk_window")?;
+    let selected_agent = parse_agent_client(&col::<String>(row, "selected_agent")?)?;
+    let persisted_lifecycle_status =
+        parse_lifecycle_status(&col::<String>(row, "lifecycle_status")?)?;
+    let mut agent_status = parse_agent_runtime_status(&col::<String>(row, "agent_status")?)?;
+    let created_at = timestamp_from_row(row, "created_at")?;
+    let last_activity_at = timestamp_from_row(row, "last_activity_at")?;
     let mut live_status = live_status_from_row(row)?;
-    let mut live_status_observed_at = live_status_observed_at_from_row(row)?;
+    let mut live_status_observed_at =
+        optional_timestamp_from_row(row, "live_status_observed_at", "live status observation")?;
     let git_status = git_status_from_row(row)?;
     let tmux_status = tmux_status_from_row(row)?;
     let worktrunk_status = worktrunk_status_from_row(row)?;
@@ -633,66 +608,19 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     task.tmux_status = tmux_status;
     task.worktrunk_status = worktrunk_status;
     task.runtime_projection = runtime_projection;
-    task.attention_acknowledged_at = attention_acknowledged_at_from_row(row)?;
+    task.attention_acknowledged_at =
+        optional_timestamp_from_row(row, "attention_acknowledged_at", "attention acknowledgment")?;
 
     Ok(task)
 }
 
-fn live_status_observed_at_from_row(
-    row: &Row<'_>,
-) -> Result<Option<SystemTime>, RegistrySnapshotError> {
-    let seconds = row
-        .get::<_, Option<i64>>("live_status_observed_at_unix_seconds")
-        .map_err(database_error)?;
-    let nanos = row
-        .get::<_, Option<u32>>("live_status_observed_at_subsec_nanos")
-        .map_err(database_error)?;
-    match (seconds, nanos) {
-        (Some(seconds), Some(nanos)) => Ok(Some(unix_parts_to_system_time(seconds, nanos)?)),
-        (None, None) => Ok(None),
-        _ => Err(RegistrySnapshotError::Decode(
-            "live status observation timestamp is incomplete".to_string(),
-        )),
-    }
-}
-
-fn attention_acknowledged_at_from_row(
-    row: &Row<'_>,
-) -> Result<Option<SystemTime>, RegistrySnapshotError> {
-    let seconds = row
-        .get::<_, Option<i64>>("attention_acknowledged_at_unix_seconds")
-        .map_err(database_error)?;
-    let nanos = row
-        .get::<_, Option<u32>>("attention_acknowledged_at_subsec_nanos")
-        .map_err(database_error)?;
-    match (seconds, nanos) {
-        (Some(seconds), Some(nanos)) => Ok(Some(unix_parts_to_system_time(seconds, nanos)?)),
-        (None, None) => Ok(None),
-        _ => Err(RegistrySnapshotError::Decode(
-            "attention acknowledgment timestamp is incomplete".to_string(),
-        )),
-    }
-}
-
 fn runtime_projection_from_row(row: &Row<'_>) -> Result<RuntimeProjection, RegistrySnapshotError> {
-    let health = parse_runtime_health(
-        &row.get::<_, String>("runtime_health")
-            .map_err(database_error)?,
-    )?;
-    let observed_at = unix_parts_to_system_time(
-        row.get::<_, i64>("runtime_observed_at_unix_seconds")
-            .map_err(database_error)?,
-        row.get::<_, u32>("runtime_observed_at_subsec_nanos")
-            .map_err(database_error)?,
-    )?;
-    let source = parse_runtime_observation_source(
-        &row.get::<_, String>("runtime_observation_source")
-            .map_err(database_error)?,
-    )?;
+    let health = parse_runtime_health(&col::<String>(row, "runtime_health")?)?;
+    let observed_at = timestamp_from_row(row, "runtime_observed_at")?;
+    let source =
+        parse_runtime_observation_source(&col::<String>(row, "runtime_observation_source")?)?;
 
-    let observation_error = row
-        .get::<_, Option<String>>("runtime_observation_error")
-        .map_err(database_error)?;
+    let observation_error = col::<Option<String>>(row, "runtime_observation_error")?;
 
     Ok(match observation_error {
         Some(error) => {
@@ -703,15 +631,10 @@ fn runtime_projection_from_row(row: &Row<'_>) -> Result<RuntimeProjection, Regis
 }
 
 fn live_status_from_row(row: &Row<'_>) -> Result<Option<LiveObservation>, RegistrySnapshotError> {
-    let Some(kind) = row
-        .get::<_, Option<String>>("live_status_kind")
-        .map_err(database_error)?
-    else {
+    let Some(kind) = col::<Option<String>>(row, "live_status_kind")? else {
         return Ok(None);
     };
-    let summary = row
-        .get::<_, Option<String>>("live_status_summary")
-        .map_err(database_error)?
+    let summary = col::<Option<String>>(row, "live_status_summary")?
         .ok_or_else(|| RegistrySnapshotError::Decode("live status summary missing".to_string()))?;
 
     Ok(Some(LiveObservation::new(
@@ -721,90 +644,65 @@ fn live_status_from_row(row: &Row<'_>) -> Result<Option<LiveObservation>, Regist
 }
 
 fn git_status_from_row(row: &Row<'_>) -> Result<Option<GitStatus>, RegistrySnapshotError> {
-    let Some(worktree_exists) = row
-        .get::<_, Option<bool>>("git_worktree_exists")
-        .map_err(database_error)?
-    else {
+    let Some(worktree_exists) = col::<Option<bool>>(row, "git_worktree_exists")? else {
         return Ok(None);
     };
 
     Ok(Some(GitStatus {
         worktree_exists,
-        branch_exists: required_optional(
-            row.get("git_branch_exists").map_err(database_error)?,
-            "git branch",
-        )?,
-        current_branch: row.get("git_current_branch").map_err(database_error)?,
-        dirty: required_optional(row.get("git_dirty").map_err(database_error)?, "git dirty")?,
-        ahead: required_optional(row.get("git_ahead").map_err(database_error)?, "git ahead")?,
-        behind: required_optional(row.get("git_behind").map_err(database_error)?, "git behind")?,
-        merged: required_optional(row.get("git_merged").map_err(database_error)?, "git merged")?,
-        untracked_files: required_optional(
-            row.get("git_untracked_files").map_err(database_error)?,
-            "git untracked files",
-        )?,
-        unpushed_commits: required_optional(
-            row.get("git_unpushed_commits").map_err(database_error)?,
-            "git unpushed commits",
-        )?,
-        conflicted: required_optional(
-            row.get("git_conflicted").map_err(database_error)?,
-            "git conflicted",
-        )?,
-        last_commit: row.get("git_last_commit").map_err(database_error)?,
+        branch_exists: req(row, "git_branch_exists", "git branch")?,
+        current_branch: col(row, "git_current_branch")?,
+        dirty: req(row, "git_dirty", "git dirty")?,
+        ahead: req(row, "git_ahead", "git ahead")?,
+        behind: req(row, "git_behind", "git behind")?,
+        merged: req(row, "git_merged", "git merged")?,
+        untracked_files: req(row, "git_untracked_files", "git untracked files")?,
+        unpushed_commits: req(row, "git_unpushed_commits", "git unpushed commits")?,
+        conflicted: req(row, "git_conflicted", "git conflicted")?,
+        last_commit: col(row, "git_last_commit")?,
     }))
 }
 
 fn tmux_status_from_row(row: &Row<'_>) -> Result<Option<TmuxStatus>, RegistrySnapshotError> {
-    let Some(exists) = row
-        .get::<_, Option<bool>>("tmux_exists")
-        .map_err(database_error)?
-    else {
+    let Some(exists) = col::<Option<bool>>(row, "tmux_exists")? else {
         return Ok(None);
     };
-    let session_name = row
-        .get::<_, Option<String>>("tmux_session_name")
-        .map_err(database_error)?
-        .ok_or_else(|| RegistrySnapshotError::Decode("tmux session missing".to_string()))?;
-
     Ok(Some(TmuxStatus {
         exists,
-        session_name,
+        session_name: req(row, "tmux_session_name", "tmux session")?,
     }))
 }
 
 fn worktrunk_status_from_row(
     row: &Row<'_>,
 ) -> Result<Option<WorktrunkStatus>, RegistrySnapshotError> {
-    let Some(exists) = row
-        .get::<_, Option<bool>>("worktrunk_exists")
-        .map_err(database_error)?
-    else {
+    let Some(exists) = col::<Option<bool>>(row, "worktrunk_exists")? else {
         return Ok(None);
     };
-    let window_name = row
-        .get::<_, Option<String>>("worktrunk_window_name")
-        .map_err(database_error)?
-        .ok_or_else(|| RegistrySnapshotError::Decode("worktrunk window missing".to_string()))?;
-    let current_path = row
-        .get::<_, Option<String>>("worktrunk_current_path")
-        .map_err(database_error)?
-        .ok_or_else(|| RegistrySnapshotError::Decode("worktrunk path missing".to_string()))?;
-    let points_at_expected_path = row
-        .get::<_, Option<bool>>("worktrunk_points_at_expected_path")
-        .map_err(database_error)?
-        .ok_or_else(|| RegistrySnapshotError::Decode("worktrunk path flag missing".to_string()))?;
-
     Ok(Some(WorktrunkStatus {
         exists,
-        window_name,
-        current_path: PathBuf::from(current_path),
-        points_at_expected_path,
+        window_name: req(row, "worktrunk_window_name", "worktrunk window")?,
+        current_path: PathBuf::from(req::<String>(
+            row,
+            "worktrunk_current_path",
+            "worktrunk path",
+        )?),
+        points_at_expected_path: req(
+            row,
+            "worktrunk_points_at_expected_path",
+            "worktrunk path flag",
+        )?,
     }))
 }
 
-fn required_optional<T>(value: Option<T>, label: &'static str) -> Result<T, RegistrySnapshotError> {
-    value.ok_or_else(|| RegistrySnapshotError::Decode(format!("{label} missing")))
+/// Reads a nullable column that must be present, mapping `NULL` to a decode error.
+fn req<T: rusqlite::types::FromSql>(
+    row: &Row<'_>,
+    name: &str,
+    label: &str,
+) -> Result<T, RegistrySnapshotError> {
+    col::<Option<T>>(row, name)?
+        .ok_or_else(|| RegistrySnapshotError::Decode(format!("{label} missing")))
 }
 
 fn task_indexes_by_id(tasks: &[Task]) -> BTreeMap<TaskId, usize> {
@@ -994,6 +892,10 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
         .live_status_observed_at
         .map(system_time_to_unix_parts)
         .transpose()?;
+    let git = task.git_status.as_ref();
+    let tmux = task.tmux_status.as_ref();
+    let worktrunk = task.worktrunk_status.as_ref();
+    let live = task.live_status.as_ref();
     transaction
         .execute(
             "INSERT INTO registry_tasks \
@@ -1030,49 +932,27 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 created_at_nanos,
                 last_activity_seconds,
                 last_activity_nanos,
-                task.live_status
-                    .as_ref()
-                    .map(|status| live_status_kind_name(status.kind)),
-                task.live_status
-                    .as_ref()
-                    .map(|status| status.summary.as_str()),
+                live.map(|status| live_status_kind_name(status.kind)),
+                live.map(|status| status.summary.as_str()),
                 live_status_observed_parts.map(|(seconds, _)| seconds),
                 live_status_observed_parts.map(|(_, nanos)| nanos),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.worktree_exists),
-                task.git_status.as_ref().map(|status| status.branch_exists),
-                task.git_status
-                    .as_ref()
-                    .and_then(|status| status.current_branch.as_deref()),
-                task.git_status.as_ref().map(|status| status.dirty),
-                task.git_status.as_ref().map(|status| status.ahead),
-                task.git_status.as_ref().map(|status| status.behind),
-                task.git_status.as_ref().map(|status| status.merged),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.untracked_files),
-                task.git_status
-                    .as_ref()
-                    .map(|status| status.unpushed_commits),
-                task.git_status.as_ref().map(|status| status.conflicted),
-                task.git_status
-                    .as_ref()
-                    .and_then(|status| status.last_commit.as_deref()),
-                task.tmux_status.as_ref().map(|status| status.exists),
-                task.tmux_status
-                    .as_ref()
-                    .map(|status| status.session_name.as_str()),
-                task.worktrunk_status.as_ref().map(|status| status.exists),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.window_name.as_str()),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.current_path.to_string_lossy().to_string()),
-                task.worktrunk_status
-                    .as_ref()
-                    .map(|status| status.points_at_expected_path),
+                git.map(|status| status.worktree_exists),
+                git.map(|status| status.branch_exists),
+                git.and_then(|status| status.current_branch.as_deref()),
+                git.map(|status| status.dirty),
+                git.map(|status| status.ahead),
+                git.map(|status| status.behind),
+                git.map(|status| status.merged),
+                git.map(|status| status.untracked_files),
+                git.map(|status| status.unpushed_commits),
+                git.map(|status| status.conflicted),
+                git.and_then(|status| status.last_commit.as_deref()),
+                tmux.map(|status| status.exists),
+                tmux.map(|status| status.session_name.as_str()),
+                worktrunk.map(|status| status.exists),
+                worktrunk.map(|status| status.window_name.as_str()),
+                worktrunk.map(|status| status.current_path.to_string_lossy().to_string()),
+                worktrunk.map(|status| status.points_at_expected_path),
                 task.runtime_projection.health.as_str(),
                 runtime_observed_seconds,
                 runtime_observed_nanos,
@@ -1169,6 +1049,33 @@ fn database_error(error: rusqlite::Error) -> RegistrySnapshotError {
     RegistrySnapshotError::Database(error.to_string())
 }
 
+fn col<T: rusqlite::types::FromSql>(row: &Row<'_>, name: &str) -> Result<T, RegistrySnapshotError> {
+    row.get(name).map_err(database_error)
+}
+
+fn timestamp_from_row(row: &Row<'_>, prefix: &str) -> Result<SystemTime, RegistrySnapshotError> {
+    unix_parts_to_system_time(
+        col(row, &format!("{prefix}_unix_seconds"))?,
+        col(row, &format!("{prefix}_subsec_nanos"))?,
+    )
+}
+
+fn optional_timestamp_from_row(
+    row: &Row<'_>,
+    prefix: &str,
+    label: &str,
+) -> Result<Option<SystemTime>, RegistrySnapshotError> {
+    let seconds: Option<i64> = col(row, &format!("{prefix}_unix_seconds"))?;
+    let nanos: Option<u32> = col(row, &format!("{prefix}_subsec_nanos"))?;
+    match (seconds, nanos) {
+        (Some(seconds), Some(nanos)) => Ok(Some(unix_parts_to_system_time(seconds, nanos)?)),
+        (None, None) => Ok(None),
+        _ => Err(RegistrySnapshotError::Decode(format!(
+            "{label} timestamp is incomplete"
+        ))),
+    }
+}
+
 fn system_time_to_unix_parts(time: SystemTime) -> Result<(i64, u32), RegistrySnapshotError> {
     let duration = time
         .duration_since(UNIX_EPOCH)
@@ -1223,176 +1130,113 @@ fn table_has_column(
     Ok(columns.iter().any(|existing| existing == column))
 }
 
-fn agent_client_name(value: AgentClient) -> &'static str {
-    match value {
-        AgentClient::Claude => "Claude",
-        AgentClient::Codex => "Codex",
-        AgentClient::Other => "Other",
-    }
+/// Generates a paired encoder/decoder for an enum whose persisted label is its
+/// variant name. Keeps both directions in sync from a single variant list.
+macro_rules! string_codec {
+    ($to:ident, $from:ident, $ty:ty, $label:literal, [$($variant:ident),+ $(,)?]) => {
+        fn $to(value: $ty) -> &'static str {
+            match value {
+                $(<$ty>::$variant => stringify!($variant),)+
+            }
+        }
+
+        fn $from(value: &str) -> Result<$ty, RegistrySnapshotError> {
+            $(if value == stringify!($variant) {
+                return Ok(<$ty>::$variant);
+            })+
+            Err(RegistrySnapshotError::Decode(format!(
+                concat!("unknown ", $label, ": {}"),
+                value
+            )))
+        }
+    };
 }
 
-fn parse_agent_client(value: &str) -> Result<AgentClient, RegistrySnapshotError> {
-    match value {
-        "Claude" => Ok(AgentClient::Claude),
-        "Codex" => Ok(AgentClient::Codex),
-        "Other" => Ok(AgentClient::Other),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown agent client: {value}"
-        ))),
-    }
-}
+string_codec!(
+    agent_client_name,
+    parse_agent_client,
+    AgentClient,
+    "agent client",
+    [Claude, Codex, Other,]
+);
 
-fn lifecycle_status_name(value: LifecycleStatus) -> &'static str {
-    match value {
-        LifecycleStatus::Created => "Created",
-        LifecycleStatus::Provisioning => "Provisioning",
-        LifecycleStatus::Active => "Active",
-        LifecycleStatus::Waiting => "Waiting",
-        LifecycleStatus::Reviewable => "Reviewable",
-        LifecycleStatus::Mergeable => "Mergeable",
-        LifecycleStatus::Merged => "Merged",
-        LifecycleStatus::Cleanable => "Cleanable",
-        LifecycleStatus::Removing => "Removing",
-        LifecycleStatus::TeardownIncomplete => "TeardownIncomplete",
-        LifecycleStatus::Removed => "Removed",
-        LifecycleStatus::Orphaned => "Orphaned",
-        LifecycleStatus::Error => "Error",
-    }
-}
+string_codec!(
+    lifecycle_status_name,
+    parse_lifecycle_status,
+    LifecycleStatus,
+    "lifecycle status",
+    [
+        Created,
+        Provisioning,
+        Active,
+        Waiting,
+        Reviewable,
+        Mergeable,
+        Merged,
+        Cleanable,
+        Removing,
+        TeardownIncomplete,
+        Removed,
+        Orphaned,
+        Error,
+    ]
+);
 
-fn parse_lifecycle_status(value: &str) -> Result<LifecycleStatus, RegistrySnapshotError> {
-    match value {
-        "Created" => Ok(LifecycleStatus::Created),
-        "Provisioning" => Ok(LifecycleStatus::Provisioning),
-        "Active" => Ok(LifecycleStatus::Active),
-        "Waiting" => Ok(LifecycleStatus::Waiting),
-        "Reviewable" => Ok(LifecycleStatus::Reviewable),
-        "Mergeable" => Ok(LifecycleStatus::Mergeable),
-        "Merged" => Ok(LifecycleStatus::Merged),
-        "Cleanable" => Ok(LifecycleStatus::Cleanable),
-        "Removing" => Ok(LifecycleStatus::Removing),
-        "TeardownIncomplete" => Ok(LifecycleStatus::TeardownIncomplete),
-        "Removed" => Ok(LifecycleStatus::Removed),
-        "Orphaned" => Ok(LifecycleStatus::Orphaned),
-        "Error" => Ok(LifecycleStatus::Error),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown lifecycle status: {value}"
-        ))),
-    }
-}
+string_codec!(
+    agent_runtime_status_name,
+    parse_agent_runtime_status,
+    AgentRuntimeStatus,
+    "agent runtime status",
+    [NotStarted, Running, Waiting, Blocked, Dead, Done, Unknown,]
+);
 
-fn agent_runtime_status_name(value: AgentRuntimeStatus) -> &'static str {
-    match value {
-        AgentRuntimeStatus::NotStarted => "NotStarted",
-        AgentRuntimeStatus::Running => "Running",
-        AgentRuntimeStatus::Waiting => "Waiting",
-        AgentRuntimeStatus::Blocked => "Blocked",
-        AgentRuntimeStatus::Dead => "Dead",
-        AgentRuntimeStatus::Done => "Done",
-        AgentRuntimeStatus::Unknown => "Unknown",
-    }
-}
+string_codec!(
+    side_flag_name,
+    parse_side_flag,
+    SideFlag,
+    "side flag",
+    [
+        Dirty,
+        AgentRunning,
+        AgentDead,
+        NeedsInput,
+        TestsFailed,
+        TmuxMissing,
+        WorktreeMissing,
+        WorktrunkMissing,
+        BranchMissing,
+        Stale,
+        Conflicted,
+        Unpushed,
+    ]
+);
 
-fn parse_agent_runtime_status(value: &str) -> Result<AgentRuntimeStatus, RegistrySnapshotError> {
-    match value {
-        "NotStarted" => Ok(AgentRuntimeStatus::NotStarted),
-        "Running" => Ok(AgentRuntimeStatus::Running),
-        "Waiting" => Ok(AgentRuntimeStatus::Waiting),
-        "Blocked" => Ok(AgentRuntimeStatus::Blocked),
-        "Dead" => Ok(AgentRuntimeStatus::Dead),
-        "Done" => Ok(AgentRuntimeStatus::Done),
-        "Unknown" => Ok(AgentRuntimeStatus::Unknown),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown agent runtime status: {value}"
-        ))),
-    }
-}
-
-fn side_flag_name(value: SideFlag) -> &'static str {
-    match value {
-        SideFlag::Dirty => "Dirty",
-        SideFlag::AgentRunning => "AgentRunning",
-        SideFlag::AgentDead => "AgentDead",
-        SideFlag::NeedsInput => "NeedsInput",
-        SideFlag::TestsFailed => "TestsFailed",
-        SideFlag::TmuxMissing => "TmuxMissing",
-        SideFlag::WorktreeMissing => "WorktreeMissing",
-        SideFlag::WorktrunkMissing => "WorktrunkMissing",
-        SideFlag::BranchMissing => "BranchMissing",
-        SideFlag::Stale => "Stale",
-        SideFlag::Conflicted => "Conflicted",
-        SideFlag::Unpushed => "Unpushed",
-    }
-}
-
-fn parse_side_flag(value: &str) -> Result<SideFlag, RegistrySnapshotError> {
-    match value {
-        "Dirty" => Ok(SideFlag::Dirty),
-        "AgentRunning" => Ok(SideFlag::AgentRunning),
-        "AgentDead" => Ok(SideFlag::AgentDead),
-        "NeedsInput" => Ok(SideFlag::NeedsInput),
-        "TestsFailed" => Ok(SideFlag::TestsFailed),
-        "TmuxMissing" => Ok(SideFlag::TmuxMissing),
-        "WorktreeMissing" => Ok(SideFlag::WorktreeMissing),
-        "WorktrunkMissing" => Ok(SideFlag::WorktrunkMissing),
-        "BranchMissing" => Ok(SideFlag::BranchMissing),
-        "Stale" => Ok(SideFlag::Stale),
-        "Conflicted" => Ok(SideFlag::Conflicted),
-        "Unpushed" => Ok(SideFlag::Unpushed),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown side flag: {value}"
-        ))),
-    }
-}
-
-fn live_status_kind_name(value: LiveStatusKind) -> &'static str {
-    match value {
-        LiveStatusKind::WorktreeMissing => "WorktreeMissing",
-        LiveStatusKind::TmuxMissing => "TmuxMissing",
-        LiveStatusKind::WorktrunkMissing => "WorktrunkMissing",
-        LiveStatusKind::ShellIdle => "ShellIdle",
-        LiveStatusKind::CommandRunning => "CommandRunning",
-        LiveStatusKind::TestsRunning => "TestsRunning",
-        LiveStatusKind::AgentRunning => "AgentRunning",
-        LiveStatusKind::WaitingForApproval => "WaitingForApproval",
-        LiveStatusKind::WaitingForInput => "WaitingForInput",
-        LiveStatusKind::Blocked => "Blocked",
-        LiveStatusKind::RateLimited => "RateLimited",
-        LiveStatusKind::AuthRequired => "AuthRequired",
-        LiveStatusKind::MergeConflict => "MergeConflict",
-        LiveStatusKind::CiFailed => "CiFailed",
-        LiveStatusKind::ContextLimit => "ContextLimit",
-        LiveStatusKind::CommandFailed => "CommandFailed",
-        LiveStatusKind::Done => "Done",
-        LiveStatusKind::Unknown => "Unknown",
-    }
-}
-
-fn parse_live_status_kind(value: &str) -> Result<LiveStatusKind, RegistrySnapshotError> {
-    match value {
-        "WorktreeMissing" => Ok(LiveStatusKind::WorktreeMissing),
-        "TmuxMissing" => Ok(LiveStatusKind::TmuxMissing),
-        "WorktrunkMissing" => Ok(LiveStatusKind::WorktrunkMissing),
-        "ShellIdle" => Ok(LiveStatusKind::ShellIdle),
-        "CommandRunning" => Ok(LiveStatusKind::CommandRunning),
-        "TestsRunning" => Ok(LiveStatusKind::TestsRunning),
-        "AgentRunning" => Ok(LiveStatusKind::AgentRunning),
-        "WaitingForApproval" => Ok(LiveStatusKind::WaitingForApproval),
-        "WaitingForInput" => Ok(LiveStatusKind::WaitingForInput),
-        "Blocked" => Ok(LiveStatusKind::Blocked),
-        "RateLimited" => Ok(LiveStatusKind::RateLimited),
-        "AuthRequired" => Ok(LiveStatusKind::AuthRequired),
-        "MergeConflict" => Ok(LiveStatusKind::MergeConflict),
-        "CiFailed" => Ok(LiveStatusKind::CiFailed),
-        "ContextLimit" => Ok(LiveStatusKind::ContextLimit),
-        "CommandFailed" => Ok(LiveStatusKind::CommandFailed),
-        "Done" => Ok(LiveStatusKind::Done),
-        "Unknown" => Ok(LiveStatusKind::Unknown),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown live status kind: {value}"
-        ))),
-    }
-}
+string_codec!(
+    live_status_kind_name,
+    parse_live_status_kind,
+    LiveStatusKind,
+    "live status kind",
+    [
+        WorktreeMissing,
+        TmuxMissing,
+        WorktrunkMissing,
+        ShellIdle,
+        CommandRunning,
+        TestsRunning,
+        AgentRunning,
+        WaitingForApproval,
+        WaitingForInput,
+        Blocked,
+        RateLimited,
+        AuthRequired,
+        MergeConflict,
+        CiFailed,
+        ContextLimit,
+        CommandFailed,
+        Done,
+        Unknown,
+    ]
+);
 
 fn parse_runtime_health(value: &str) -> Result<RuntimeHealth, RegistrySnapshotError> {
     RuntimeHealth::from_label(value)
@@ -1407,26 +1251,13 @@ fn parse_runtime_observation_source(
     })
 }
 
-fn registry_event_kind_name(value: RegistryEventKind) -> &'static str {
-    match value {
-        RegistryEventKind::TaskCreated => "TaskCreated",
-        RegistryEventKind::LifecycleChanged => "LifecycleChanged",
-        RegistryEventKind::SubstrateChanged => "SubstrateChanged",
-        RegistryEventKind::UserNote => "UserNote",
-    }
-}
-
-fn parse_registry_event_kind(value: &str) -> Result<RegistryEventKind, RegistrySnapshotError> {
-    match value {
-        "TaskCreated" => Ok(RegistryEventKind::TaskCreated),
-        "LifecycleChanged" => Ok(RegistryEventKind::LifecycleChanged),
-        "SubstrateChanged" => Ok(RegistryEventKind::SubstrateChanged),
-        "UserNote" => Ok(RegistryEventKind::UserNote),
-        _ => Err(RegistrySnapshotError::Decode(format!(
-            "unknown registry event kind: {value}"
-        ))),
-    }
-}
+string_codec!(
+    registry_event_kind_name,
+    parse_registry_event_kind,
+    RegistryEventKind,
+    "registry event kind",
+    [TaskCreated, LifecycleChanged, SubstrateChanged, UserNote,]
+);
 
 fn parse_task_operation_kind(value: &str) -> Result<TaskOperationKind, RegistrySnapshotError> {
     TaskOperationKind::from_label(value).ok_or_else(|| {
