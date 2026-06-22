@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.7...ajax-cli-v0.20.0) (2026-06-22)
+
+
+### Features
+
+* normalize sqlite registry schema to v8 ([#179](https://github.com/mossipcams/ajax-cli/issues/179)) ([bf1b602](https://github.com/mossipcams/ajax-cli/commit/bf1b6026402af8f758d35a23cf298e41f63e6177))
+
+
+### Bug Fixes
+
+* use github.token for release please ([#180](https://github.com/mossipcams/ajax-cli/issues/180)) ([5679ab8](https://github.com/mossipcams/ajax-cli/commit/5679ab8e62580b595a74dfbbe476a87ac2e7387b))
+
 ## [0.19.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.6...ajax-cli-v0.19.7) (2026-06-18)
 
 
