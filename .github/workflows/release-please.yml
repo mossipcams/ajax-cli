@@ -17,24 +17,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Resolve release token
-        id: token
-        env:
-          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          if [ -n "$RELEASE_PLEASE_TOKEN" ]; then
-            echo "token=${RELEASE_PLEASE_TOKEN}" >> "$GITHUB_OUTPUT"
-          else
-            echo "token=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
-            echo "::warning title=Missing RELEASE_PLEASE_TOKEN::Falling back to github.token. Release Please PRs created with this token may not trigger downstream CI in the same way as PAT/App tokens."
-          fi
-
       - name: Run Release Please
         id: release
         uses: googleapis/release-please-action@v4
         with:
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ github.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
@@ -50,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          token: ${{ steps.token.outputs.token }}
+          token: ${{ github.token }}
 
       - name: Sync Cargo.lock with bumped version
         if: ${{ steps.release.outputs.pr }}
