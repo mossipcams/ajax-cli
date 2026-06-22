@@ -173,22 +173,28 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. Schema version 7 records
-expected runtime identity, last observed Git/tmux evidence, derived runtime
-health, observation source, observation time, probe error, the optional attention
-acknowledgment timestamp, the reduced live-status observation timestamp, and
-typed events. It also stores step receipts for Ajax-owned operation evidence.
-Both timestamps use nullable typed seconds/nanoseconds columns with strict pair
-validation. `migrate_v5_to_v6` adds acknowledgment and runtime-observation
-fields; `migrate_v6_to_v7` adds reduced-live observation time and backfills it
-from `last_activity_at` only for rows that already contain live status.
-Concurrent acknowledgment and live-status edits to the same task surface an
-explicit revision conflict rather than a silent overwrite. Git and tmux still
-own live substrate reality; Ajax reconciles their observations into SQLite so
-Cockpit, command planning, and JSON output can read one coherent task record.
-Loading legacy rows normalizes workflow `Waiting` into an active lifecycle with
-waiting runtime evidence, and normalizes legacy `Unknown` sentinels into
-explicit not-observed evidence.
+SQLite is the fast read model for Ajax task state. Schema version 8 splits the
+registry into focused tables: `registry_tasks` stores durable task intent;
+`registry_task_workflow` stores lifecycle, agent runtime status, activity
+timestamps, and attention acknowledgment; `registry_task_live_status` stores
+the optional live-status kind, summary, and observation timestamp;
+`registry_task_runtime_projection` stores reduced runtime health, source,
+observed-at, and optional probe error; `registry_task_git_evidence`,
+`registry_task_tmux_evidence`, and `registry_task_worktrunk_evidence` store the
+cached substrate observations; and `registry_events`, `step_receipts`, and
+`registry_meta` keep typed history, operation evidence, and revision state.
+Both workflow timestamps and observation timestamps use nullable typed
+seconds/nanoseconds columns with strict pair validation. `migrate_v7_to_v8`
+renames the wide v7 task table, copies the data into the normalized tables, and
+drops the temporary legacy table in one migration pass. Older migrations still
+remain available for databases created before v7, and concurrent acknowledgment
+and live-status edits to the same task still surface an explicit revision
+conflict rather than a silent overwrite. Git and tmux still own live substrate
+reality; Ajax reconciles their observations into SQLite so Cockpit, command
+planning, and JSON output can read one coherent task record. Loading legacy
+rows normalizes workflow `Waiting` into an active lifecycle with waiting
+runtime evidence, and normalizes legacy `Unknown` sentinels into explicit
+not-observed evidence.
 
 Registry ghosts are tasks that should not survive SQLite save/load and should
 not appear in Cockpit. `ajax-core::ghost_task` is the single classifier for that
