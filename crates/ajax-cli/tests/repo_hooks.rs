@@ -130,6 +130,33 @@ fn github_actions_runs_full_remote_validation_on_push_and_pull_request() {
 }
 
 #[test]
+fn github_actions_release_please_uses_release_token_when_available() {
+    let root = workspace_root();
+    let workflow_path = root.join(".github/workflows/release-please.yml");
+    let workflow = std::fs::read_to_string(&workflow_path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", workflow_path.display()));
+
+    assert!(
+        workflow.contains("RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}"),
+        "Release Please should read the configured release token secret:\n{workflow}"
+    );
+    assert!(
+        workflow.contains("GITHUB_TOKEN: ${{ github.token }}"),
+        "Release Please should keep github.token as a fallback:\n{workflow}"
+    );
+    assert!(
+        workflow.contains("if [ -n \"$RELEASE_PLEASE_TOKEN\" ]; then")
+            && workflow.contains("echo \"token=${RELEASE_PLEASE_TOKEN}\" >> \"$GITHUB_OUTPUT\"")
+            && workflow.contains("echo \"token=${GITHUB_TOKEN}\" >> \"$GITHUB_OUTPUT\""),
+        "Release Please should prefer RELEASE_PLEASE_TOKEN and fall back to github.token:\n{workflow}"
+    );
+    assert!(
+        workflow.contains("token: ${{ steps.token.outputs.token }}"),
+        "Release Please action and checkout should use the resolved token:\n{workflow}"
+    );
+}
+
+#[test]
 fn jscpd_configuration_scans_project_sources_without_generated_outputs() {
     let root = workspace_root();
     let config_path = root.join(".jscpd.json");
