@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.0...ajax-cli-v0.20.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* restore release please token selection ([#182](https://github.com/mossipcams/ajax-cli/issues/182)) ([8135d9a](https://github.com/mossipcams/ajax-cli/commit/8135d9a6e49dfc357e46f11eb30b578575831b34))
+
 ## [0.20.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.19.7...ajax-cli-v0.20.0) (2026-06-22)
 
 
