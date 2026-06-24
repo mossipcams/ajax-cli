@@ -1,6 +1,7 @@
 use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
+    ghost_task::is_registry_ghost_task,
     models::LifecycleStatus,
     registry::{
         InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
@@ -256,6 +257,7 @@ pub(crate) fn save_context_with_state(
     } else {
         context.registry.clone()
     };
+    prevent_accidental_empty_overwrite(paths, &registry, save_state, disk_revision)?;
 
     let next_revision = store
         .save_if_revision(&registry, disk_revision)
@@ -344,15 +346,46 @@ fn merge_registries(
     Ok(merged)
 }
 
+fn prevent_accidental_empty_overwrite(
+    paths: &CliContextPaths,
+    proposed: &InMemoryRegistry,
+    save_state: &ContextSaveState,
+    disk_revision: u64,
+) -> Result<(), CliError> {
+    if has_persistable_tasks(proposed) || has_persistable_tasks(&save_state.loaded_registry) {
+        return Ok(());
+    }
+    if disk_revision == 0 && !paths.state_file.exists() {
+        return Ok(());
+    }
+
+    let disk_context = load_context(paths)?;
+    if has_persistable_tasks(&disk_context.registry) {
+        return Err(CliError::ContextSave(
+            "refusing to save empty registry over non-empty disk state; reload state before saving"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn has_persistable_tasks(registry: &InMemoryRegistry) -> bool {
+    registry
+        .list_tasks()
+        .into_iter()
+        .any(|task| !is_registry_ghost_task(task))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         context_paths_from_matches_and_env, load_context, load_tracked_context,
-        save_tracked_context, CliContextPaths,
+        save_context_with_state, save_tracked_context, CliContextPaths, ContextSaveState,
     };
     use crate::build_cli;
     use ajax_core::{
-        config::{RuntimePathRequest, WorktreePlacement},
+        commands::CommandContext,
+        config::{Config, RuntimePathRequest, WorktreePlacement},
         models::{AgentClient, LifecycleStatus, Task, TaskId},
         registry::{
             InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
@@ -615,6 +648,108 @@ mod tests {
                 .title,
             "Refreshed by web"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_rejects_empty_registry_that_never_loaded_disk_tasks() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-empty-overwrite-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        let mut disk_registry = InMemoryRegistry::default();
+        disk_registry
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        store.save(&disk_registry).unwrap();
+
+        let empty_context = CommandContext::with_runtime_paths(
+            Config::default(),
+            InMemoryRegistry::default(),
+            paths.runtime_paths.clone(),
+        );
+        let mut save_state = ContextSaveState {
+            loaded_registry: InMemoryRegistry::default(),
+            loaded_revision: store.current_revision().unwrap(),
+        };
+
+        let error = save_context_with_state(&paths, &empty_context, &mut save_state).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("refusing to save empty registry"));
+        let reloaded = load_context(&paths).expect("reload");
+        assert!(reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_allows_empty_registry_when_disk_was_empty_at_load() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-empty-init-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let empty_context = CommandContext::with_runtime_paths(
+            Config::default(),
+            InMemoryRegistry::default(),
+            paths.runtime_paths.clone(),
+        );
+        let mut save_state = ContextSaveState::default();
+
+        save_context_with_state(&paths, &empty_context, &mut save_state)
+            .expect("empty registry initializes state");
+
+        let reloaded = load_context(&paths).expect("reload");
+        assert!(reloaded.registry.list_tasks().is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_allows_intentional_all_task_deletion_from_loaded_baseline() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-intentional-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&registry)
+            .unwrap();
+        let mut tracked = load_tracked_context(&paths).unwrap();
+
+        tracked
+            .context
+            .registry
+            .delete_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        save_tracked_context(&paths, &mut tracked).expect("intentional deletion persists");
+
+        let reloaded = load_context(&paths).expect("reload");
+        assert!(reloaded.registry.list_tasks().is_empty());
 
         let _ = std::fs::remove_dir_all(root);
     }

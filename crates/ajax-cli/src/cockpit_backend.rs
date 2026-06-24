@@ -1356,10 +1356,12 @@ mod cockpit_persistence_tests {
         refresh_cockpit_snapshot_with_paths, save_cockpit_state_to_sqlite,
         InteractiveCockpitHandler,
     };
-    use crate::context::{load_context, load_tracked_context, state_file_mtime};
+    use crate::context::{load_context, load_tracked_context, state_file_mtime, ContextSaveState};
     use crate::CliContextPaths;
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
+        commands::CommandContext,
+        config::Config,
         models::{AgentClient, LifecycleStatus, Task, TaskId},
         registry::{InMemoryRegistry, Registry as _, RegistryStore as _, SqliteRegistryStore},
     };
@@ -1577,6 +1579,35 @@ mod cockpit_persistence_tests {
             "cockpit save should persist in-memory task mutations during the interactive loop"
         );
         assert!(last_loaded_mtime.is_some(), "mtime should be tracked");
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn save_cockpit_state_to_sqlite_rejects_empty_save_over_non_empty_disk() {
+        let paths = temp_state_paths("empty-save-guard");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        store.save(&initial).unwrap();
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut save_state = ContextSaveState {
+            loaded_registry: InMemoryRegistry::default(),
+            loaded_revision: store.current_revision().unwrap(),
+        };
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+
+        let error =
+            save_cockpit_state_to_sqlite(&paths, &context, &mut save_state, &mut last_loaded_mtime)
+                .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("refusing to save empty registry"));
+        let on_disk = SqliteRegistryStore::new(&paths.state_file)
+            .load_tasks_only()
+            .expect("reload SQLite after rejected cockpit save");
+        assert!(on_disk.get_task(&TaskId::new("web/a")).is_some());
 
         let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
     }
