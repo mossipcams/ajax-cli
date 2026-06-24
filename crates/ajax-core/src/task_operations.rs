@@ -408,6 +408,12 @@ pub mod drop_task {
     }
 
     #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(super) enum DropExecutionDecision {
+        InProcess,
+        Command(CommandSpec),
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
     pub enum DropTaskCompletion {
         Removed,
         TeardownIncomplete { failed_step: DropOp, detail: String },
@@ -520,8 +526,8 @@ pub mod drop_task {
         let drop_ops = planned_drop_ops(context, qualified_handle, &operation.observation)?;
 
         for op in drop_ops {
-            match op {
-                DropOp::EnsureAgentStopped => {
+            match drop_op_execution_decision(context, qualified_handle, op, force)? {
+                DropExecutionDecision::InProcess => {
                     commands::mark_drop_agent_stopped(context, qualified_handle)?;
                     record_drop_step_event(context, qualified_handle, op)?;
                     record_drop_step_receipt(
@@ -531,10 +537,7 @@ pub mod drop_task {
                         StepReceiptStatus::Succeeded,
                     )?;
                 }
-                DropOp::EnsureTmuxSessionAbsent
-                | DropOp::EnsureWorktreeAbsent
-                | DropOp::EnsureBranchAbsent => {
-                    let command = drop_op_command(context, qualified_handle, op, force)?;
+                DropExecutionDecision::Command(command) => {
                     let output = runner.run(&command).map_err(CommandError::CommandRun)?;
                     let already_missing = output.status_code != 0
                         && drop_cleanup_resource_is_already_missing(&command, &output);
@@ -591,6 +594,25 @@ pub mod drop_task {
             complete_drop_task_operation(context, qualified_handle, &final_observation)?;
 
         Ok((outputs, completion))
+    }
+
+    pub(super) fn drop_op_execution_decision<R: Registry>(
+        context: &CommandContext<R>,
+        qualified_handle: &str,
+        op: DropOp,
+        force: bool,
+    ) -> Result<DropExecutionDecision, CommandError> {
+        Ok(match op {
+            DropOp::EnsureAgentStopped => DropExecutionDecision::InProcess,
+            DropOp::EnsureTmuxSessionAbsent
+            | DropOp::EnsureWorktreeAbsent
+            | DropOp::EnsureBranchAbsent => DropExecutionDecision::Command(drop_op_command(
+                context,
+                qualified_handle,
+                op,
+                force,
+            )?),
+        })
     }
 
     fn unknown_observation() -> DropObservation {
@@ -763,12 +785,10 @@ pub mod drop_task {
         qualified_handle: &str,
         observation: &DropObservation,
     ) -> Result<(), CommandError> {
-        for (op, state) in [
-            (DropOp::EnsureTmuxSessionAbsent, observation.tmux_session),
-            (DropOp::EnsureWorktreeAbsent, observation.worktree),
-            (DropOp::EnsureBranchAbsent, observation.branch),
-        ] {
-            if state == ResourceState::Absent {
+        for op in commands::DROP_TEARDOWN_ORDER {
+            if op.records_observed_absent_receipt()
+                && op.observed_state(observation) == ResourceState::Absent
+            {
                 record_drop_step_receipt(
                     context,
                     qualified_handle,
@@ -795,20 +815,13 @@ pub mod drop_task {
     }
 
     fn drop_step_receipt(task: &Task, op: DropOp, status: StepReceiptStatus) -> StepReceipt {
-        let (step_key, target) = match op {
-            DropOp::EnsureAgentStopped => ("agent_stopped", task.tmux_session.clone()),
-            DropOp::EnsureTmuxSessionAbsent => ("tmux_session_absent", task.tmux_session.clone()),
-            DropOp::EnsureWorktreeAbsent => {
-                ("worktree_absent", task.worktree_path.display().to_string())
-            }
-            DropOp::EnsureBranchAbsent => ("branch_absent", task.branch.clone()),
-        };
+        let step_key = op.step_key();
 
         StepReceipt::new(
             task.id.clone(),
             TaskOperationKind::Drop,
             step_key,
-            target,
+            op.receipt_target(task),
             status,
             serde_json::json!({
                 "source": "command_result",
@@ -843,28 +856,10 @@ pub mod drop_task {
     }
 
     fn receipt_matches_present_resource(step_key: &str, observation: &DropObservation) -> bool {
-        matches!(
-            (step_key, observation),
-            (
-                "tmux_session_absent",
-                DropObservation {
-                    tmux_session: ResourceState::Present,
-                    ..
-                }
-            ) | (
-                "worktree_absent",
-                DropObservation {
-                    worktree: ResourceState::Present,
-                    ..
-                }
-            ) | (
-                "branch_absent",
-                DropObservation {
-                    branch: ResourceState::Present,
-                    ..
-                }
-            )
-        )
+        commands::DROP_TEARDOWN_ORDER
+            .into_iter()
+            .find(|op| op.step_key() == step_key)
+            .is_some_and(|op| op.observed_state(observation) == ResourceState::Present)
     }
 
     fn mark_observed_drop_failure<R: Registry>(
@@ -1052,8 +1047,8 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::drop_task::{
-        complete_drop_task_operation, execute_drop_task_operation, plan_drop_task_operation,
-        DropTaskCompletion,
+        complete_drop_task_operation, drop_op_execution_decision, execute_drop_task_operation,
+        plan_drop_task_operation, DropExecutionDecision, DropTaskCompletion,
     };
     use super::kernel::execute_external_plan;
     use super::start::{execute_start_task_operation, plan_start_task_operation};
@@ -2031,6 +2026,143 @@ mod tests {
     }
 
     #[test]
+    fn drop_execution_keeps_resource_specific_command_and_missing_rules() {
+        let context = context_with_cleanable_task();
+
+        let agent_decision = drop_op_execution_decision(
+            &context,
+            "web/fix-login",
+            DropOp::EnsureAgentStopped,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(agent_decision, DropExecutionDecision::InProcess));
+
+        let worktree_unforced = drop_op_execution_decision(
+            &context,
+            "web/fix-login",
+            DropOp::EnsureWorktreeAbsent,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            worktree_unforced,
+            DropExecutionDecision::Command(ref command)
+                if command
+                    == &crate::adapters::GitAdapter::new("git")
+                        .remove_worktree("/repo/web", "/repo/web__worktrees/ajax-fix-login")
+        ));
+
+        let worktree_forced = drop_op_execution_decision(
+            &context,
+            "web/fix-login",
+            DropOp::EnsureWorktreeAbsent,
+            true,
+        )
+        .unwrap();
+        assert!(matches!(
+            worktree_forced,
+            DropExecutionDecision::Command(ref command)
+                if command.program == "sh"
+                    && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+        ));
+
+        let branch_unforced = drop_op_execution_decision(
+            &context,
+            "web/fix-login",
+            DropOp::EnsureBranchAbsent,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            branch_unforced,
+            DropExecutionDecision::Command(ref command)
+                if command.program == "git"
+                    && command.args.iter().any(|arg| arg == "-d")
+        ));
+
+        let branch_forced =
+            drop_op_execution_decision(&context, "web/fix-login", DropOp::EnsureBranchAbsent, true)
+                .unwrap();
+        assert!(matches!(
+            branch_forced,
+            DropExecutionDecision::Command(ref command)
+                if command.program == "git"
+                    && command.args.iter().any(|arg| arg == "-D")
+        ));
+
+        let tmux_decision = drop_op_execution_decision(
+            &context,
+            "web/fix-login",
+            DropOp::EnsureTmuxSessionAbsent,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            tmux_decision,
+            DropExecutionDecision::Command(ref command)
+                if command.program == "tmux"
+                    && command.args.iter().any(|arg| arg == "kill-session")
+        ));
+    }
+
+    #[test]
+    fn drop_resource_catalog_preserves_receipt_policy_and_targets() {
+        let task = context_with_cleanable_task()
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .clone();
+
+        let receipts = [
+            DropOp::EnsureAgentStopped,
+            DropOp::EnsureWorktreeAbsent,
+            DropOp::EnsureBranchAbsent,
+            DropOp::EnsureTmuxSessionAbsent,
+        ]
+        .into_iter()
+        .map(|op| {
+            (
+                op,
+                op.step_key(),
+                op.receipt_target(&task),
+                op.records_observed_absent_receipt(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            receipts,
+            vec![
+                (
+                    DropOp::EnsureAgentStopped,
+                    "agent_stopped",
+                    "ajax-web-fix-login".to_string(),
+                    false,
+                ),
+                (
+                    DropOp::EnsureWorktreeAbsent,
+                    "worktree_absent",
+                    "/repo/web__worktrees/ajax-fix-login".to_string(),
+                    true,
+                ),
+                (
+                    DropOp::EnsureBranchAbsent,
+                    "branch_absent",
+                    "ajax/fix-login".to_string(),
+                    true,
+                ),
+                (
+                    DropOp::EnsureTmuxSessionAbsent,
+                    "tmux_session_absent",
+                    "ajax-web-fix-login".to_string(),
+                    true,
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn drop_operation_removes_failed_or_orphaned_tasks_when_resources_are_absent() {
         for lifecycle_status in [LifecycleStatus::Error, LifecycleStatus::Orphaned] {
             let mut context = context();
@@ -2615,6 +2747,45 @@ mod tests {
             .metadata
             .get("drop_failed_detail")
             .is_some_and(|detail| detail.contains("tmux")));
+    }
+
+    #[test]
+    fn tidy_still_projects_each_successful_cleanup_command() {
+        let mut context = context_with_cleanable_task();
+        let task_id = TaskId::new("web/fix-login");
+        {
+            let task = context.registry.get_task_mut(&task_id).unwrap();
+            task.agent_status = AgentRuntimeStatus::Running;
+        }
+
+        let trash_sweeps = crate::commands::sweep_trash_commands(&context);
+        let plan = crate::commands::clean_task_plan(&context, "web/fix-login").unwrap();
+        let mut runner_outputs: Vec<CommandOutput> =
+            trash_sweeps.iter().map(|_| output(0, "", "")).collect();
+        runner_outputs.push(output(1, "", "boom"));
+        runner_outputs.extend(plan.commands.iter().map(|_| output(0, "", "")));
+        runner_outputs.push(output(1, "", "unexpected git command"));
+        runner_outputs.push(output(1, "", "unexpected git command"));
+        let mut runner = RecordingQueuedRunner::new(runner_outputs);
+
+        let (_outputs, state_changed) =
+            execute_sweep_cleanup_operation(&mut context, true, &mut runner).unwrap();
+
+        let task = context.registry.get_task(&task_id).unwrap();
+        assert!(state_changed);
+        assert_eq!(task.lifecycle_status, LifecycleStatus::TeardownIncomplete);
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| !status.worktree_exists && !status.branch_exists));
+        assert!(task
+            .tmux_status
+            .as_ref()
+            .is_some_and(|status| !status.exists));
+        assert!(task
+            .worktrunk_status
+            .as_ref()
+            .is_some_and(|status| !status.exists));
     }
 
     #[test]
