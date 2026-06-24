@@ -33,7 +33,7 @@ pub use teardown::{
     observe_drop_resources, observe_drop_resources_with_cache, plan_drop_from_observation,
     plan_drop_from_observation_for_task, remove_task_plan, sweep_cleanup_candidates,
     sweep_cleanup_plan, sweep_trash_commands, DropObservation, DropOp, RepoDropObservationCache,
-    ResourceState,
+    ResourceState, DROP_TEARDOWN_ORDER,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
