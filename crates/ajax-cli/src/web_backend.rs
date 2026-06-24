@@ -699,6 +699,37 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn web_bridge_rejects_empty_save_over_non_empty_sqlite_state() {
+        let dir = scratch_dir("empty-save-guard");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let saved_context = reviewable_context();
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        store.save(&saved_context.registry).unwrap();
+        let mut context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let mut bridge = super::CliRuntimeBridge {
+            paths: Some(paths.clone()),
+            last_loaded_mtime: crate::context::state_file_mtime(&paths),
+            save_state: crate::context::ContextSaveState {
+                loaded_registry: InMemoryRegistry::default(),
+                loaded_revision: store.current_revision().unwrap(),
+            },
+        };
+
+        let error = bridge.persist_changed_state(&mut context).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("refusing to save empty registry"));
+        let reloaded = crate::context::load_context(&paths).expect("reload after rejected save");
+        assert!(reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_some());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
