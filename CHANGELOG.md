@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.1...ajax-cli-v0.20.2) (2026-06-24)
+
+
+### Bug Fixes
+
+* prevent empty registry saves from wiping state ([#184](https://github.com/mossipcams/ajax-cli/issues/184)) ([02a944d](https://github.com/mossipcams/ajax-cli/commit/02a944d50c698398b56b8070a03933fe9c35d525))
+
 ## [0.20.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.0...ajax-cli-v0.20.1) (2026-06-22)
 
 
