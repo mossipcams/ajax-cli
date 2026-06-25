@@ -1,6 +1,7 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    analysis::git_evidence::worktree_matches_task_intent,
     lifecycle::force_mark_removed,
     models::{
         AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
@@ -615,14 +616,13 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
         ObservationOutput::Unsupported | ObservationOutput::Unknown => ResourceState::Unknown,
     };
 
-    let expected_worktree = task.worktree_path.display().to_string();
     let parsed_worktrees = match &worktrees_output {
         ObservationOutput::Output(output) => GitAdapter::parse_worktrees(output),
         ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
     };
     let observed_worktree = parsed_worktrees
         .iter()
-        .find(|worktree| worktree.path == expected_worktree);
+        .find(|worktree| worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch));
     let worktree = match worktrees_output {
         ObservationOutput::Output(_) => state_from_bool(observed_worktree.is_some()),
         ObservationOutput::Unsupported => task

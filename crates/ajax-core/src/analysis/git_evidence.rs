@@ -1,4 +1,20 @@
-use crate::{adapters::GitAdapter, models::GitStatus};
+use crate::{
+    adapters::{git::GitWorktree, GitAdapter},
+    models::GitStatus,
+};
+use std::path::Path;
+
+pub fn worktree_matches_task_intent(
+    worktree: &GitWorktree,
+    expected_path: &Path,
+    expected_branch: &str,
+) -> bool {
+    Path::new(&worktree.path) == expected_path
+        && worktree
+            .branch
+            .as_deref()
+            .is_some_and(|branch| branch == expected_branch)
+}
 
 pub fn interpret_git_status(
     porcelain_branch_output: &str,
@@ -31,9 +47,11 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        analysis::git_evidence::interpret_git_status,
+        adapters::git::GitWorktree,
+        analysis::git_evidence::{interpret_git_status, worktree_matches_task_intent},
         models::{GitStatus, SideFlag, Task},
     };
+    use std::path::Path;
 
     fn previous_status() -> GitStatus {
         GitStatus {
@@ -193,5 +211,58 @@ mod tests {
         let interpreted = interpret_git_status("", None, false);
 
         assert_eq!(interpreted, None);
+    }
+
+    struct WorktreeMatchCase {
+        worktree_path: &'static str,
+        worktree_branch: Option<&'static str>,
+        expected_path: &'static str,
+        expected_branch: &'static str,
+        expected_match: bool,
+    }
+
+    #[rstest]
+    #[case::matching_path_and_branch(WorktreeMatchCase {
+        worktree_path: "/repo/web__worktrees/ajax-fix-login",
+        worktree_branch: Some("ajax/fix-login"),
+        expected_path: "/repo/web__worktrees/ajax-fix-login",
+        expected_branch: "ajax/fix-login",
+        expected_match: true,
+    })]
+    #[case::wrong_branch_at_expected_path(WorktreeMatchCase {
+        worktree_path: "/repo/web__worktrees/ajax-fix-login",
+        worktree_branch: Some("dependabot/pip/minor"),
+        expected_path: "/repo/web__worktrees/ajax-fix-login",
+        expected_branch: "ajax/fix-login",
+        expected_match: false,
+    })]
+    #[case::wrong_path_on_expected_branch(WorktreeMatchCase {
+        worktree_path: "/repo/web__worktrees/dependabot-pip",
+        worktree_branch: Some("ajax/fix-login"),
+        expected_path: "/repo/web__worktrees/ajax-fix-login",
+        expected_branch: "ajax/fix-login",
+        expected_match: false,
+    })]
+    #[case::detached_or_missing_branch(WorktreeMatchCase {
+        worktree_path: "/repo/web__worktrees/ajax-fix-login",
+        worktree_branch: None,
+        expected_path: "/repo/web__worktrees/ajax-fix-login",
+        expected_branch: "ajax/fix-login",
+        expected_match: false,
+    })]
+    fn worktree_matches_task_intent_requires_path_and_branch(#[case] case: WorktreeMatchCase) {
+        let worktree = GitWorktree {
+            path: case.worktree_path.to_string(),
+            branch: case.worktree_branch.map(str::to_string),
+        };
+
+        assert_eq!(
+            worktree_matches_task_intent(
+                &worktree,
+                Path::new(case.expected_path),
+                case.expected_branch
+            ),
+            case.expected_match
+        );
     }
 }
