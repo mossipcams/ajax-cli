@@ -1,0 +1,13 @@
+{
+  "sequence": 7,
+  "lines": ["$ cargo test", "running 42 tests", "test result: ok."],
+  "tmux_exists": true,
+  "state": {
+    "kind": "WaitingForApproval",
+    "command": null,
+    "prompt": "Approve this change?",
+    "answerable": true,
+    "fingerprint": "abc123",
+    "choices": []
+  }
+}
