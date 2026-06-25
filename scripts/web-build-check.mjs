@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 1.2 build-layout check. Runs the production build and asserts the
+// Build-layout check. Runs the production build and asserts the
 // emitted shell is deterministic and serving-compatible:
 //   - dist/index.html, dist/app.js, dist/app.css all exist
 //   - the HTML keeps the __AJAX_APP_VERSION__ placeholder Rust replaces
@@ -35,7 +35,7 @@ if (existsSync(join(distDir, "index.html"))) {
     html.includes('href="/manifest.webmanifest"'),
     "built index.html dropped the manifest link",
   );
-  const scripts = html.match(/<script[^>]*\bsrc=/g) ?? [];
+  const scripts = html.match(/<script[^>]*(?<![a-z-])src=/g) ?? [];
   check(scripts.length === 1, `expected one local script, found ${scripts.length}`);
   const styles = html.match(/<link[^>]*rel="stylesheet"/g) ?? [];
   check(styles.length === 1, `expected one local stylesheet, found ${styles.length}`);
