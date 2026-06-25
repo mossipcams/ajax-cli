@@ -1,6 +1,7 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::{CommandRunner, CommandSpec, GitAdapter, TmuxAdapter},
+    analysis::git_evidence::worktree_matches_task_intent,
     lifecycle::force_mark_removed,
     models::{
         AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
@@ -463,34 +464,63 @@ pub enum DropOp {
     EnsureBranchAbsent,
 }
 
-pub fn drop_op_step_key(op: DropOp) -> &'static str {
-    match op {
-        DropOp::EnsureAgentStopped => "agent_stopped",
-        DropOp::EnsureTmuxSessionAbsent => "tmux_session_absent",
-        DropOp::EnsureWorktreeAbsent => "worktree_absent",
-        DropOp::EnsureBranchAbsent => "branch_absent",
+pub const DROP_TEARDOWN_ORDER: [DropOp; 4] = [
+    DropOp::EnsureAgentStopped,
+    DropOp::EnsureWorktreeAbsent,
+    DropOp::EnsureBranchAbsent,
+    DropOp::EnsureTmuxSessionAbsent,
+];
+
+impl DropOp {
+    pub fn observed_state(self, observation: &DropObservation) -> ResourceState {
+        match self {
+            DropOp::EnsureAgentStopped => observation.agent,
+            DropOp::EnsureWorktreeAbsent => observation.worktree,
+            DropOp::EnsureBranchAbsent => observation.branch,
+            DropOp::EnsureTmuxSessionAbsent => observation.tmux_session,
+        }
     }
+
+    pub fn step_key(self) -> &'static str {
+        match self {
+            DropOp::EnsureAgentStopped => "agent_stopped",
+            DropOp::EnsureTmuxSessionAbsent => "tmux_session_absent",
+            DropOp::EnsureWorktreeAbsent => "worktree_absent",
+            DropOp::EnsureBranchAbsent => "branch_absent",
+        }
+    }
+
+    pub fn records_observed_absent_receipt(self) -> bool {
+        matches!(
+            self,
+            DropOp::EnsureTmuxSessionAbsent
+                | DropOp::EnsureWorktreeAbsent
+                | DropOp::EnsureBranchAbsent
+        )
+    }
+
+    pub fn receipt_target(self, task: &Task) -> String {
+        match self {
+            DropOp::EnsureAgentStopped | DropOp::EnsureTmuxSessionAbsent => {
+                task.tmux_session.clone()
+            }
+            DropOp::EnsureWorktreeAbsent => task.worktree_path.display().to_string(),
+            DropOp::EnsureBranchAbsent => task.branch.clone(),
+        }
+    }
+}
+
+pub fn drop_op_step_key(op: DropOp) -> &'static str {
+    op.step_key()
 }
 
 /// Tear down git resources before killing tmux so a failed drop can be retried while the
 /// session is still attachable.
 pub fn plan_drop_from_observation(observation: &DropObservation) -> Vec<DropOp> {
-    let mut ops = Vec::new();
-
-    if observation.agent != ResourceState::Absent {
-        ops.push(DropOp::EnsureAgentStopped);
-    }
-    if observation.worktree != ResourceState::Absent {
-        ops.push(DropOp::EnsureWorktreeAbsent);
-    }
-    if observation.branch != ResourceState::Absent {
-        ops.push(DropOp::EnsureBranchAbsent);
-    }
-    if observation.tmux_session != ResourceState::Absent {
-        ops.push(DropOp::EnsureTmuxSessionAbsent);
-    }
-
-    ops
+    DROP_TEARDOWN_ORDER
+        .into_iter()
+        .filter(|op| op.observed_state(observation) != ResourceState::Absent)
+        .collect()
 }
 
 pub fn plan_drop_from_observation_for_task(
@@ -511,7 +541,7 @@ pub fn plan_drop_from_observation_for_task(
 
     plan_drop_from_observation(observation)
         .into_iter()
-        .filter(|op| !completed.contains(drop_op_step_key(*op)))
+        .filter(|op| !completed.contains(op.step_key()))
         .collect()
 }
 
@@ -586,14 +616,13 @@ pub fn observe_drop_resources_with_cache<R: Registry>(
         ObservationOutput::Unsupported | ObservationOutput::Unknown => ResourceState::Unknown,
     };
 
-    let expected_worktree = task.worktree_path.display().to_string();
     let parsed_worktrees = match &worktrees_output {
         ObservationOutput::Output(output) => GitAdapter::parse_worktrees(output),
         ObservationOutput::Unsupported | ObservationOutput::Unknown => Vec::new(),
     };
     let observed_worktree = parsed_worktrees
         .iter()
-        .find(|worktree| worktree.path == expected_worktree);
+        .find(|worktree| worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch));
     let worktree = match worktrees_output {
         ObservationOutput::Output(_) => state_from_bool(observed_worktree.is_some()),
         ObservationOutput::Unsupported => task
@@ -813,7 +842,10 @@ fn apply_drop_observation_evidence<R: Registry>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::mark_task_cleanup_step_completed;
+    use super::*;
     use crate::{
         adapters::{CommandMode, CommandSpec},
         commands::CommandContext,
@@ -895,5 +927,54 @@ mod tests {
             .git_status
             .as_ref()
             .is_some_and(|status| !status.worktree_exists));
+    }
+
+    #[test]
+    fn drop_resource_catalog_preserves_order_states_and_step_keys() {
+        let observation = DropObservation {
+            agent: ResourceState::Present,
+            tmux_session: ResourceState::Absent,
+            worktree: ResourceState::Unknown,
+            branch: ResourceState::Present,
+        };
+
+        let ordered_ops = DROP_TEARDOWN_ORDER.to_vec();
+
+        assert_eq!(
+            ordered_ops,
+            vec![
+                DropOp::EnsureAgentStopped,
+                DropOp::EnsureWorktreeAbsent,
+                DropOp::EnsureBranchAbsent,
+                DropOp::EnsureTmuxSessionAbsent,
+            ]
+        );
+        assert_eq!(
+            ordered_ops
+                .iter()
+                .map(|op| op.observed_state(&observation))
+                .collect::<Vec<_>>(),
+            vec![
+                ResourceState::Present,
+                ResourceState::Unknown,
+                ResourceState::Present,
+                ResourceState::Absent,
+            ]
+        );
+
+        let step_keys = ordered_ops
+            .iter()
+            .map(|op| op.step_key())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            step_keys,
+            vec![
+                "agent_stopped",
+                "worktree_absent",
+                "branch_absent",
+                "tmux_session_absent",
+            ]
+        );
+        assert_eq!(step_keys.len(), BTreeSet::from_iter(step_keys).len());
     }
 }

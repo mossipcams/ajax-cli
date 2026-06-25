@@ -2,6 +2,28 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.4...ajax-cli-v0.20.5) (2026-06-25)
+
+
+### Bug Fixes
+
+* streamline web cockpit detail view and stop poll jitter ([#191](https://github.com/mossipcams/ajax-cli/issues/191)) ([4a72879](https://github.com/mossipcams/ajax-cli/commit/4a7287939fcff8305d28d70da491d2667869555f))
+
+## [0.20.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.3...ajax-cli-v0.20.4) (2026-06-25)
+
+
+### Bug Fixes
+
+* prevent ctrl-q save conflicts after cockpit reload ([#188](https://github.com/mossipcams/ajax-cli/issues/188)) ([2687b6d](https://github.com/mossipcams/ajax-cli/commit/2687b6d1372cf1b6c6f8c479c36fe9d413801f09))
+* prevent stale autosnooze task reappearance ([#190](https://github.com/mossipcams/ajax-cli/issues/190)) ([1e5c803](https://github.com/mossipcams/ajax-cli/commit/1e5c8036a24b46e7508a31b5503a05e059f3fac7))
+
+## [0.20.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.2...ajax-cli-v0.20.3) (2026-06-24)
+
+
+### Bug Fixes
+
+* consolidate drop teardown resource metadata ([#186](https://github.com/mossipcams/ajax-cli/issues/186)) ([6791322](https://github.com/mossipcams/ajax-cli/commit/6791322475ab1094550d8e530c0fe729675282fd))
+
 ## [0.20.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.1...ajax-cli-v0.20.2) (2026-06-24)
 
 

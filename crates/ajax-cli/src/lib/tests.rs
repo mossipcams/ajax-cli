@@ -4945,16 +4945,6 @@ fn drop_execute_completes_when_branch_is_already_missing() {
                     "--format=%(refname:short)"
                 ]
             ),
-            CommandSpec::new(
-                "git",
-                [
-                    "-C",
-                    "/Users/matt/projects/web",
-                    "worktree",
-                    "remove",
-                    "/tmp/worktrees/web-fix-login"
-                ]
-            ),
             CommandSpec::new("tmux", ["list-sessions", "-F", "#{session_name}"])
                 .with_timeout(std::time::Duration::from_secs(8)),
             CommandSpec::new(

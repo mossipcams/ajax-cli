@@ -33,13 +33,13 @@ pub use teardown::{
     observe_drop_resources, observe_drop_resources_with_cache, plan_drop_from_observation,
     plan_drop_from_observation_for_task, remove_task_plan, sweep_cleanup_candidates,
     sweep_cleanup_plan, sweep_trash_commands, DropObservation, DropOp, RepoDropObservationCache,
-    ResourceState,
+    ResourceState, DROP_TEARDOWN_ORDER,
 };
 pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
-    analysis::git_evidence::interpret_git_status,
+    analysis::git_evidence::{interpret_git_status, worktree_matches_task_intent},
     config::Config,
     models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
@@ -427,10 +427,9 @@ pub fn refresh_git_substrate_evidence<R: Registry>(
             .collect::<BTreeSet<_>>();
 
         for task in repo_tasks {
-            let expected_worktree = task.worktree_path.display().to_string();
-            let observed_worktree = worktrees
-                .iter()
-                .find(|worktree| worktree.path == expected_worktree);
+            let observed_worktree = worktrees.iter().find(|worktree| {
+                worktree_matches_task_intent(worktree, &task.worktree_path, &task.branch)
+            });
             let worktree_exists = observed_worktree.is_some();
             let branch_exists = branches.contains(&task.branch)
                 || observed_worktree
@@ -2009,6 +2008,49 @@ mod tests {
         assert_eq!(git_status.unpushed_commits, 0);
         assert!(task.has_side_flag(SideFlag::WorktreeMissing));
         assert!(task.has_side_flag(SideFlag::BranchMissing));
+    }
+
+    #[test]
+    fn refresh_git_substrate_evidence_rejects_other_branch_at_expected_path() {
+        let mut context = context_with_tasks();
+        let task_id = TaskId::new("task-1");
+        context
+            .registry
+            .update_git_status(
+                &task_id,
+                GitStatus {
+                    worktree_exists: false,
+                    branch_exists: true,
+                    current_branch: None,
+                    dirty: false,
+                    ahead: 0,
+                    behind: 0,
+                    merged: false,
+                    untracked_files: 0,
+                    unpushed_commits: 0,
+                    conflicted: false,
+                    last_commit: Some("abc123".to_string()),
+                },
+            )
+            .unwrap();
+        let mut runner = QueuedRunner::new(vec![
+            output(
+                0,
+                "worktree /tmp/worktrees/web-fix-login\nHEAD 1111111\nbranch refs/heads/dependabot/pip/minor\n\n",
+            ),
+            output(0, "main\najax/fix-login\n"),
+        ]);
+
+        let changed = refresh_git_substrate_evidence(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let task = context.registry.get_task(&task_id).unwrap();
+        let git_status = task.git_status.as_ref().unwrap();
+        assert!(!git_status.worktree_exists);
+        assert!(git_status.branch_exists);
+        assert_eq!(git_status.current_branch, None);
+        assert!(task.has_side_flag(SideFlag::WorktreeMissing));
+        assert!(!task.has_side_flag(SideFlag::BranchMissing));
     }
 
     #[test]
