@@ -1998,6 +1998,24 @@ mod tests {
         assert!(json["cockpit"].is_object());
     }
 
+    #[test]
+    fn committed_operation_fixture_matches_production_response_builder() {
+        let context = crate::slices::cockpit::tests::browser_contract_context();
+        let response = super::operation_success_response(
+            OperateOutcome {
+                state_changed: true,
+                output: "Operation completed successfully.".to_string(),
+            },
+            &context,
+        )
+        .unwrap();
+        let actual: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../web/src/fixtures/operation.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
+
     #[tokio::test]
     async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
         let state = super::WebAppState::new(

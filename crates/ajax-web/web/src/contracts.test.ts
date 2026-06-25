@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   IncompatibleResponseError,
   assertCockpit,
+  assertOperationResponse,
   assertPaneSnapshot,
   isTaskStatus,
 } from "./contracts";
@@ -64,13 +65,62 @@ describe("assertCockpit", () => {
 
 describe("assertPaneSnapshot", () => {
   it("accepts a valid snapshot", () => {
-    const snap = assertPaneSnapshot({ sequence: 3, lines: ["a"], tmux_exists: true, state: null });
+    const snap = assertPaneSnapshot({
+      sequence: 3,
+      lines: ["a"],
+      truncated: false,
+      tmux_exists: true,
+      state: null,
+    });
     expect(snap.sequence).toBe(3);
   });
 
   it("rejects a non-numeric sequence", () => {
     expect(() =>
-      assertPaneSnapshot({ sequence: "3", lines: [], tmux_exists: true, state: null }),
+      assertPaneSnapshot({
+        sequence: "3",
+        lines: [],
+        truncated: false,
+        tmux_exists: true,
+        state: null,
+      }),
     ).toThrow(IncompatibleResponseError);
+  });
+});
+
+describe("assertOperationResponse", () => {
+  it("accepts a production operation envelope", () => {
+    const response = assertOperationResponse({
+      ok: true,
+      state_changed: true,
+      output: "done",
+      cockpit: {
+        backend: { authority: "host-native", control_enabled: true },
+        repos: { repos: [] },
+        cards: [],
+        inbox: { items: [] },
+      },
+    });
+
+    expect(response.ok).toBe(true);
+  });
+
+  it("rejects a malformed nested cockpit projection", () => {
+    expect(() =>
+      assertOperationResponse({
+        ok: true,
+        state_changed: true,
+        cockpit: { cards: "not-an-array" },
+      }),
+    ).toThrow(IncompatibleResponseError);
+  });
+
+  it("rejects malformed envelope fields", () => {
+    expect(() => assertOperationResponse({ ok: "yes" })).toThrow(
+      IncompatibleResponseError,
+    );
+    expect(() => assertOperationResponse({ ok: false, error: 42 })).toThrow(
+      IncompatibleResponseError,
+    );
   });
 });

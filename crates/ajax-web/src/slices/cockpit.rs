@@ -251,7 +251,7 @@ fn browser_agent_attempt(attempt: &AgentAttempt) -> BrowserAgentAttempt {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{browser_cockpit_json, browser_task_card};
     use ajax_core::{
         commands::CommandContext,
@@ -736,55 +736,35 @@ mod tests {
     }
 
     #[test]
-    fn browser_contract_fixture_inventory_includes_representative_payloads() {
-        let fixtures = browser_contract_fixtures();
-        let lookup = |name| {
-            fixtures
-                .iter()
-                .find(|(fixture_name, _)| *fixture_name == name)
-                .map(|(_, value)| value)
-                .expect("fixture present")
-        };
+    fn committed_cockpit_fixture_matches_production_serialization() {
+        let context = browser_contract_context();
+        let actual = serde_json::to_value(super::browser_cockpit_view(&context)).unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/fixtures/cockpit.json")).unwrap();
 
-        assert!(fixtures.iter().any(|(name, _)| *name == "cockpit"));
-        assert!(fixtures.iter().any(|(name, _)| *name == "task_detail"));
-        assert!(fixtures.iter().any(|(name, _)| *name == "pane"));
-        assert!(fixtures
-            .iter()
-            .any(|(name, _)| *name == "start_task_request"));
-        assert!(fixtures
-            .iter()
-            .any(|(name, _)| *name == "task_answer_request"));
-        assert!(fixtures
-            .iter()
-            .any(|(name, _)| *name == "operation_success"));
-        assert!(fixtures.iter().any(|(name, _)| *name == "operation_error"));
-
-        assert_eq!(lookup("cockpit")["backend"]["authority"], "host-native");
-        assert_eq!(lookup("cockpit")["cards"][0]["repo"], "web");
-        assert_eq!(lookup("task_detail")["repo"], "web");
-        assert_eq!(
-            lookup("task_detail")["next_step"],
-            "Clear the approval request, then let the task continue."
-        );
-        assert_eq!(lookup("pane")["state"]["kind"], "WaitingForApproval");
-        assert_eq!(lookup("pane")["state"]["fingerprint"], "abc123");
-        assert_eq!(lookup("start_task_request")["request_id"], "start-1");
-        assert_eq!(lookup("task_answer_request")["answer"], "approve");
-        assert_eq!(lookup("operation_success")["ok"], true);
-        assert_eq!(
-            lookup("operation_success")["cockpit"]["cards"][0]["repo"],
-            "web"
-        );
-        assert_eq!(lookup("operation_error")["ok"], false);
-        assert_eq!(lookup("operation_error")["state_changed"], false);
+        assert_eq!(committed, actual);
     }
 
-    fn browser_contract_fixtures() -> Vec<(&'static str, serde_json::Value)> {
+    #[test]
+    fn committed_task_detail_fixture_matches_production_serialization() {
+        let context = browser_contract_context();
+        let actual = serde_json::to_value(
+            super::browser_task_detail_view(&context, "web/fix-login").unwrap(),
+        )
+        .unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/fixtures/task-detail.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
+
+    pub(crate) fn browser_contract_context() -> CommandContext<InMemoryRegistry> {
         use ajax_core::config::ManagedRepo;
         use ajax_core::models::{
-            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId,
+            AgentAttempt, AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, Task, TaskId,
         };
+        use std::time::{Duration, SystemTime};
 
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
@@ -808,62 +788,17 @@ mod tests {
             LiveStatusKind::WaitingForApproval,
             "waiting for review",
         ));
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.created_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        task.last_activity_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000);
+        task.agent_attempts.push(AgentAttempt {
+            agent: AgentClient::Codex,
+            launch_target: "worktrunk".to_string(),
+            started_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            finished_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000)),
+            status: AgentRuntimeStatus::Done,
+        });
         registry.create_task(task).unwrap();
-        let context = CommandContext::new(config, registry);
-
-        let cockpit = serde_json::to_value(super::browser_cockpit_view(&context)).unwrap();
-        let detail = serde_json::to_value(
-            super::browser_task_detail_view(&context, "web/fix-login").unwrap(),
-        )
-        .unwrap();
-        let pane = serde_json::json!({
-            "sequence": 7,
-            "lines": ["$ cargo test", "running 42 tests", "test result: ok."],
-            "tmux_exists": true,
-            "state": {
-                "kind": "WaitingForApproval",
-                "command": null,
-                "prompt": "Approve this change?",
-                "answerable": true,
-                "fingerprint": "abc123",
-                "choices": []
-            }
-        });
-        let start_task_request = serde_json::to_value(crate::slices::operate::StartTaskRequest {
-            repo: "web".to_string(),
-            title: "Fix login".to_string(),
-            agent: "codex".to_string(),
-            request_id: "start-1".to_string(),
-        })
-        .unwrap();
-        let task_answer_request = serde_json::to_value(crate::slices::pane::TaskAnswerRequest {
-            answer: ajax_core::agent_prompt::OperatorAnswer::Approve,
-            fingerprint: "abc123".to_string(),
-            request_id: "answer-1".to_string(),
-        })
-        .unwrap();
-
-        let operation_success = serde_json::json!({
-            "ok": true,
-            "state_changed": true,
-            "output": "Operation completed successfully.",
-            "cockpit": cockpit.clone(),
-        });
-        let operation_error = serde_json::json!({
-            "ok": false,
-            "state_changed": false,
-            "error": "task operation already in progress",
-            "cockpit": cockpit,
-        });
-
-        vec![
-            ("cockpit", cockpit),
-            ("task_detail", detail),
-            ("pane", pane),
-            ("start_task_request", start_task_request),
-            ("task_answer_request", task_answer_request),
-            ("operation_success", operation_success),
-            ("operation_error", operation_error),
-        ]
+        CommandContext::new(config, registry)
     }
 }

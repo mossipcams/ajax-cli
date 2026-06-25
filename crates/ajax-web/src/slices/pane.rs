@@ -830,4 +830,37 @@ mod tests {
 
         assert_eq!(error, TaskAnswerError::RateLimited);
     }
+
+    #[test]
+    fn committed_pane_fixture_matches_serialized_browser_dto() {
+        let actual = serde_json::to_value(super::BrowserPaneSnapshot {
+            sequence: 7,
+            lines: vec![
+                "$ cargo test".to_string(),
+                "running 42 tests".to_string(),
+                "test result: ok.".to_string(),
+            ],
+            truncated: false,
+            tmux_exists: true,
+            state: Some(super::BrowserPaneState {
+                kind: "WaitingForApproval".to_string(),
+                summary: "Approve this change?".to_string(),
+                command: None,
+                prompt: Some("Approve this change?".to_string()),
+                choices: vec![super::BrowserPaneChoice {
+                    index: 0,
+                    label: "Approve".to_string(),
+                    role: "affirm".to_string(),
+                }],
+                confidence: Some("high".to_string()),
+                fingerprint: Some("abc123".to_string()),
+                answerable: true,
+            }),
+        })
+        .unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/fixtures/pane.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
 }

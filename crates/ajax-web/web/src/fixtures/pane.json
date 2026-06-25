@@ -1,13 +1,26 @@
 {
   "sequence": 7,
-  "lines": ["$ cargo test", "running 42 tests", "test result: ok."],
+  "lines": [
+    "$ cargo test",
+    "running 42 tests",
+    "test result: ok."
+  ],
+  "truncated": false,
   "tmux_exists": true,
   "state": {
     "kind": "WaitingForApproval",
+    "summary": "Approve this change?",
     "command": null,
     "prompt": "Approve this change?",
-    "answerable": true,
+    "choices": [
+      {
+        "index": 0,
+        "label": "Approve",
+        "role": "affirm"
+      }
+    ],
+    "confidence": "high",
     "fingerprint": "abc123",
-    "choices": []
+    "answerable": true
   }
 }

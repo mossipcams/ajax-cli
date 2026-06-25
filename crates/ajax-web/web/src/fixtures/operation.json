@@ -1,24 +1,57 @@
 {
+  "ok": true,
+  "state_changed": true,
+  "output": "Operation completed successfully.",
   "cockpit": {
     "backend": {
       "authority": "host-native",
       "control_enabled": true,
       "warning": null
     },
-    "repos": { "repos": [{ "name": "web" }] },
+    "repos": {
+      "repos": [
+        {
+          "name": "web",
+          "path": "/repo/web",
+          "active_tasks": 0,
+          "reviewable_tasks": 1,
+          "cleanable_tasks": 0,
+          "attention_items": 1
+        }
+      ]
+    },
     "cards": [
       {
         "id": "web/fix-login",
         "qualified_handle": "web/fix-login",
         "repo": "web",
         "title": "Fix login",
-        "status": "idle",
-        "status_explanation": null,
-        "actions": []
+        "status": "waiting",
+        "status_explanation": "Waiting for approval",
+        "actions": [
+          {
+            "action": "ship",
+            "destructive": false,
+            "confirmation_required": false
+          },
+          {
+            "action": "drop",
+            "destructive": true,
+            "confirmation_required": true
+          }
+        ]
       }
     ],
-    "inbox": { "items": [] }
-  },
-  "output": "Operation completed successfully.",
-  "error": null
+    "inbox": {
+      "items": [
+        {
+          "task_id": "web/fix-login",
+          "task_handle": "web/fix-login",
+          "severity": 1,
+          "reason": "Waiting for approval",
+          "action": "Resume"
+        }
+      ]
+    }
+  }
 }

@@ -43,6 +43,32 @@ jobs:
       - name: Check duplication
         run: npm run lint:duplication
 
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Check frontend contracts
+        run: npm run verify:web-contract-gate
+
+      - name: Check Svelte and TypeScript
+        run: npm run web:check
+
+      - name: Test frontend
+        run: npm run web:test -- --run
+
   check:
     name: Cargo Check
     runs-on: ubuntu-latest
@@ -168,6 +194,7 @@ jobs:
       - docs
       - audit
       - smoke
+      - web
     if: ${{ always() }}
 
     steps:

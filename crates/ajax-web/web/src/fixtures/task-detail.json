@@ -6,34 +6,41 @@
   "base_branch": "main",
   "worktree_path": "/repo/web__worktrees/ajax-fix-login",
   "tmux_session": "ajax-web-fix-login",
-  "lifecycle": "reviewable",
-  "agent": "codex",
-  "agent_status": "idle",
+  "lifecycle": "Reviewable",
+  "agent": "Codex",
+  "agent_status": "Waiting",
   "status": "waiting",
-  "status_explanation": "Waiting for review",
+  "status_explanation": "Waiting for approval",
   "runtime_observation_error": null,
   "actions": [
     {
-      "action": "review",
-      "label": "Review",
+      "action": "ship",
       "destructive": false,
       "confirmation_required": false
+    },
+    {
+      "action": "drop",
+      "destructive": true,
+      "confirmation_required": true
     }
   ],
-  "live_status_kind": null,
-  "live_status_summary": null,
-  "next_step": "Open the PR and ship it.",
-  "agent_activity": null,
-  "git": { "unpushed_commits": 0 },
+  "live_status_kind": "WaitingForApproval",
+  "live_status_summary": "waiting for review",
+  "next_step": "Clear the approval request, then let the task continue.",
+  "agent_activity": "waiting for review",
+  "git": null,
   "tmux": null,
-  "annotations": [],
+  "annotations": [
+    "Annotation { kind: NeedsMe, severity: 1, evidence: LiveStatus(WaitingForApproval), suggests: Resume }",
+    "Annotation { kind: Reviewable, severity: 3, evidence: Lifecycle(Reviewable), suggests: Review }"
+  ],
   "created_unix_secs": 1700000000,
   "last_activity_unix_secs": 1700001000,
   "agent_attempts": [
     {
       "started_unix_secs": 1700000000,
       "completed_unix_secs": 1700001000,
-      "outcome": "completed"
+      "outcome": "Done"
     }
   ]
 }
