@@ -2,7 +2,7 @@
   import type { BrowserCockpitView, WebAction } from "../types";
   import { actionLabel } from "../state";
   import { CONFIRM_TIMEOUT_MS } from "../polling";
-  import { postOperation } from "../api";
+  import { postOperation, requestId } from "../api";
 
   interface Props {
     actions: WebAction[];
@@ -20,6 +20,10 @@
   let pendingAction = $state<string | null>(null);
   let runningAction = $state<string | null>(null);
   let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => () => {
+    if (confirmTimer) clearTimeout(confirmTimer);
+  });
 
   const REMEDIATION = new Set(["fix-ci", "resolve-merge-conflicts"]);
 
@@ -41,7 +45,7 @@
       const result = await postOperation({
         task_handle: handle,
         action: action.action,
-        request_id: crypto.randomUUID(),
+        request_id: requestId(),
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {

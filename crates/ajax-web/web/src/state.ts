@@ -37,6 +37,9 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
 
 export function statusMeta(status: string): StatusMeta {
   const key = (status || "").toLowerCase();
+  if (!(STATUS_ORDER as string[]).includes(key)) {
+    console.warn(`[ajax] unknown task status: ${JSON.stringify(status)} — defaulting to idle`);
+  }
   const tone = (STATUS_ORDER as string[]).includes(key) ? (key as TaskStatus) : "idle";
   return { tone, label: STATUS_LABELS[tone] };
 }

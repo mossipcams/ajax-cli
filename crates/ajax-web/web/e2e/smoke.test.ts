@@ -215,7 +215,7 @@ test("settings view renders restart and diagnostics controls", async ({ page }) 
 });
 
 test("update banner appears when version changes between polls", async ({ page }) => {
-  await page.addInitScript((versions: { a: unknown; b: unknown }) => {
+  await page.addInitScript((versions: { a: unknown; b: unknown; cockpit: unknown }) => {
     let count = 0;
     const orig = globalThis.fetch.bind(globalThis);
     globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
