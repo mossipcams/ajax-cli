@@ -486,23 +486,74 @@ mod tests {
     }
 
     #[test]
-    fn terminal_details_expose_focused_mobile_shortcuts() {
+    fn detail_view_offers_only_honest_terminal_shortcuts() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
+        // The two output helpers that genuinely work over the web survive.
         for expected in [
-            "terminal-shortcuts",
-            "Continue",
-            "Approve plan",
-            "Run tests",
-            "Show diff",
-            "Stop task",
-            "Restart task",
             "Copy last error",
             "Copy visible output",
             "function runTerminalShortcut",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }
+
+        // The fake pills that only popped "needs terminal mode" are gone — the
+        // web view points at the real terminal instead of pretending to be one.
+        for forbidden in [
+            "terminal-shortcuts",
+            "\"Continue\"",
+            "\"Run tests\"",
+            "\"Stop task\"",
+            "\"Restart task\"",
+            "needs terminal mode",
+        ] {
+            assert!(
+                !script.contains(forbidden),
+                "app.js must not contain dead terminal shortcut {forbidden}"
+            );
+        }
+    }
+
+    #[test]
+    fn detail_view_only_rebuilds_when_content_changes() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+
+        // The detail view polls every second; it must guard the full DOM rebuild
+        // behind a fingerprint and patch live status in place, or the view
+        // jitters (animations restart, disclosures rebuild) on every tick.
+        for expected in [
+            "function detailFingerprint",
+            "function updateDetailLiveSummaries",
+            "lastDetailFingerprint",
+            "if (fp !== lastDetailFingerprint)",
+            "function paneFingerprint",
+            "function refreshInteractPanelFromPane",
+            "if (fp === lastPaneFingerprint) return;",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+    }
+
+    #[test]
+    fn detail_view_exposes_open_in_tmux_escape_hatch() {
+        let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
+        let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
+
+        // The glance view's load-bearing affordance: a one-tap copy of the tmux
+        // attach command so the operator can drop into a real SSH session.
+        for expected in [
+            "function renderEscapeHatch",
+            "Open in tmux",
+            "tmux attach -t ",
+            "escape-hatch",
+        ] {
+            assert!(script.contains(expected), "app.js missing {expected}");
+        }
+        assert!(
+            css.contains(".escape-hatch-row .pill {\n  min-height: 44px;"),
+            "escape hatch buttons must use 44px touch targets"
+        );
     }
 
     #[test]
@@ -558,21 +609,29 @@ mod tests {
     }
 
     #[test]
-    fn dashboard_detail_view_uses_operator_cards_instead_of_pane_log() {
+    fn detail_view_is_a_linear_glance_not_a_dashboard_grid() {
         let script = std::str::from_utf8(static_asset("/app.js").unwrap().body).unwrap();
 
+        // The conditional decision surface, the read-only terminal snapshot, and
+        // the open-state-persistent disclosure remain.
         for expected in [
-            "Current status",
             "Needs from you",
-            "Recent milestones",
-            "View terminal details",
+            "function renderNeedsFromYou",
+            "View terminal output",
             "terminalDetailsOpen",
             "\"toggle\"",
         ] {
             assert!(script.contains(expected), "app.js missing {expected}");
         }
 
+        // The three-card mini-dashboard (which re-printed status three ways) and
+        // the raw pane-log UI are gone.
         for removed in [
+            "dashboard-card-grid",
+            "renderDashboardCard",
+            "Current status",
+            "Recent milestones",
+            "renderMilestones",
             "Pane is quiet.",
             "Pinned to bottom",
             "Type your response",
@@ -585,7 +644,7 @@ mod tests {
         ] {
             assert!(
                 !script.contains(removed),
-                "app.js should not foreground pane UI copy {removed}"
+                "app.js should not foreground retired dashboard/pane UI copy {removed}"
             );
         }
     }
@@ -617,8 +676,8 @@ mod tests {
 
         // Task 3: iOS-sized touch targets and copy-on-tap escape hatch.
         assert!(
-            css.contains(".terminal-shortcuts .pill {\n  min-height: 44px;"),
-            "terminal shortcuts must use 44px touch targets"
+            css.contains(".escape-hatch-row .pill {\n  min-height: 44px;"),
+            "escape hatch buttons must use 44px touch targets"
         );
         assert!(
             script.contains("data-copy-value"),
