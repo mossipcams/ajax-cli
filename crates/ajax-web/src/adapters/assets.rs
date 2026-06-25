@@ -1,7 +1,5 @@
 //! Static PWA asset embedding and lookup mechanisms.
 
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
 pub struct StaticAsset {
@@ -24,16 +22,23 @@ pub fn pwa_shell_html() -> String {
 pub fn app_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| {
-        let mut hasher = DefaultHasher::new();
+        // FNV-1a: stable across toolchain versions (DefaultHasher is not).
+        // Process all asset bytes sequentially for a single combined fingerprint.
+        const FNV_OFFSET: u64 = 14695981039346656037;
+        const FNV_PRIME: u64 = 1099511628211;
+        let mut hash: u64 = FNV_OFFSET;
         for asset in [
             include_bytes!("../../web/dist/index.html").as_slice(),
             include_bytes!("../../web/dist/app.js").as_slice(),
             include_bytes!("../../web/dist/app.css").as_slice(),
             include_bytes!("../../web/dist/sw.js").as_slice(),
         ] {
-            asset.hash(&mut hasher);
+            for &byte in asset {
+                hash ^= byte as u64;
+                hash = hash.wrapping_mul(FNV_PRIME);
+            }
         }
-        format!("{}-{:016x}", env!("CARGO_PKG_VERSION"), hasher.finish())
+        format!("{}-{:016x}", env!("CARGO_PKG_VERSION"), hash)
     })
 }
 
