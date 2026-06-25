@@ -64,9 +64,13 @@ export async function buildDiagnosticsReport(
 
 /** Copy to clipboard; returns true when the native clipboard accepted it. */
 export async function copyText(text: string): Promise<boolean> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return true;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // NotAllowedError when backgrounded on iOS, SecurityError in some contexts.
   }
   return false;
 }

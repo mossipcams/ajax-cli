@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { parseRoute, dashboardHash, settingsHash, taskHash, projectHash, type Route } from "../routes";
   import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
-  import { fetchCockpit, fetchDetail, fetchVersion } from "../api";
+  import { ApiError, fetchCockpit, fetchDetail, fetchVersion } from "../api";
   import { REFRESH_INTERVAL_MS, VERSION_POLL_MS } from "../polling";
   import { unregisterExistingServiceWorkers } from "../diagnostics";
   import ConnectionStatus from "./ConnectionStatus.svelte";
@@ -47,8 +47,10 @@
     try {
       detail = await fetchDetail(handle);
       connection = "connected";
-    } catch {
-      connection = "backend unreachable";
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "network") {
+        connection = "backend unreachable";
+      }
     }
   }
 
