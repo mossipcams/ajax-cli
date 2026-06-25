@@ -7,17 +7,19 @@ import { join } from "node:path";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
 
-// The Svelte entry lives in `app.html` (not `index.html`) so the legacy
-// `index.html` that Rust still serves stays untouched during the migration.
-// We rename the built `dist/app.html` to `dist/index.html` so the eventual
-// Rust embed (Phase 1.3) finds the conventional name.
+// The Svelte entry lives in `app.html` so Vite uses a predictable output name.
+// We rename the built `dist/app.html` to `dist/index.html` so the Rust embed
+// in adapters/assets.rs finds the conventional name.
 function renameAppHtml() {
   return {
     name: "ajax-rename-app-html",
     closeBundle() {
       const from = join(root, "dist", "app.html");
       const to = join(root, "dist", "index.html");
-      if (existsSync(from)) renameSync(from, to);
+      if (!existsSync(from)) {
+        throw new Error(`ajax-rename-app-html: expected dist/app.html but it was not produced — the build may be incomplete`);
+      }
+      renameSync(from, to);
     },
   };
 }
@@ -39,6 +41,8 @@ export default defineConfig({
       input: join(root, "app.html"),
       output: {
         entryFileNames: "app.js",
+        // Dynamic imports are forbidden: splitting would produce app2.js etc.
+        // which the Rust embed contract does not account for (see assets.rs).
         chunkFileNames: "app.js",
         assetFileNames: (asset) => {
           const name = asset.names?.[0] ?? "";

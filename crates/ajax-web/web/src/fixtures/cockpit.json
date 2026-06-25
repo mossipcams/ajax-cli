@@ -1,0 +1,51 @@
+{
+  "backend": {
+    "authority": "host-native",
+    "control_enabled": true,
+    "warning": null
+  },
+  "repos": {
+    "repos": [
+      { "name": "web" },
+      { "name": "api" }
+    ]
+  },
+  "cards": [
+    {
+      "id": "web/fix-login",
+      "qualified_handle": "web/fix-login",
+      "repo": "web",
+      "title": "Fix login",
+      "status": "waiting",
+      "status_explanation": "Waiting for review",
+      "actions": [
+        {
+          "action": "review",
+          "label": "Review",
+          "destructive": false,
+          "confirmation_required": false
+        },
+        {
+          "action": "drop",
+          "label": "Drop",
+          "destructive": true,
+          "confirmation_required": true
+        }
+      ]
+    },
+    {
+      "id": "api/add-auth",
+      "qualified_handle": "api/add-auth",
+      "repo": "api",
+      "title": "Add auth",
+      "status": "running",
+      "status_explanation": null,
+      "actions": []
+    }
+  ],
+  "inbox": {
+    "items": [
+      { "task_handle": "web/fix-login", "severity": 2 }
+    ]
+  }
+}

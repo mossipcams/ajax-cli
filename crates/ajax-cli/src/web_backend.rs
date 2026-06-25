@@ -328,20 +328,28 @@ mod tests {
     }
 
     #[test]
-    fn mobile_shell_exposes_redesigned_structure() {
+    fn mobile_shell_is_the_bundled_svelte_mount_point() {
         let html = render_mobile_shell();
 
-        assert!(html.contains("id=\"inbox\""));
-        assert!(html.contains("id=\"repos\""));
-        assert!(html.contains("class=\"cockpit-chrome\""));
-        assert!(html.contains("id=\"connection-status\""));
-        assert!(html.contains("id=\"new-task-row\""));
-        assert!(html.contains("id=\"result-panel\""));
-        assert!(html.contains("id=\"settings-view\""));
-        assert!(html.contains("id=\"restart-server\""));
-        // Retired with the move to Safari-first + redesigned dashboard.
-        assert!(!html.contains("id=\"pwa-warning\""));
-        assert!(!html.contains("id=\"attention-summary\""));
+        // The shell is now the bundled Svelte mount point; the cockpit chrome,
+        // inbox, task rows, settings, etc. are rendered client-side.
+        assert!(html.contains("id=\"app\""));
+        assert!(html.contains("type=\"module\""));
+        assert!(html.contains("href=\"/manifest.webmanifest\""));
+        for legacy in [
+            "id=\"inbox\"",
+            "id=\"repos\"",
+            "class=\"cockpit-chrome\"",
+            "id=\"new-task-row\"",
+            "id=\"settings-view\"",
+            "id=\"pwa-warning\"",
+            "id=\"attention-summary\"",
+        ] {
+            assert!(
+                !html.contains(legacy),
+                "static shell should no longer hardcode {legacy}"
+            );
+        }
     }
 
     #[test]
@@ -436,16 +444,13 @@ mod tests {
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let script = String::from_utf8_lossy(&app.body);
+        // String literals survive minification — assert the same-origin API the
+        // bundled client speaks to. Runtime behavior is covered by Vitest.
+        assert!(!app.body.is_empty());
         assert!(script.contains("/api/cockpit"));
-        assert!(script.contains("cache: \"no-store\""));
-        assert!(script.contains("const REFRESH_INTERVAL_MS = 1000"));
-        assert!(script.contains("refreshInFlight"));
+        assert!(script.contains("no-store"));
         assert!(script.contains("/api/operations"));
         assert!(script.contains("request_id"));
-        assert!(script.contains("structureFingerprint"));
-        assert!(script.contains("updateLiveSummaries"));
-        assert!(script.contains("card.actions"));
-        assert!(!script.contains("card.action_states"));
         assert!(script.contains("#/settings"));
         assert!(script.contains("/api/server/restart"));
     }

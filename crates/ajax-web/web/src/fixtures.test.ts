@@ -1,0 +1,105 @@
+// Phase 6.2: Contract fixture parity. These tests verify that the representative
+// fixture JSON files satisfy the TypeScript boundary guards and DTO shape.
+// If Rust changes a serialized field name or enum casing these tests will fail,
+// prompting a synchronized types.ts update.
+import { describe, it, expect } from "vitest";
+import { assertCockpit, assertPaneSnapshot } from "./contracts";
+import type { BrowserTaskDetail, OperationResponse } from "./types";
+
+import cockpit from "./fixtures/cockpit.json";
+import taskDetail from "./fixtures/task-detail.json";
+import pane from "./fixtures/pane.json";
+import operation from "./fixtures/operation.json";
+
+describe("cockpit fixture", () => {
+  it("passes boundary guard without throwing", () => {
+    const view = assertCockpit(cockpit);
+    expect(view.cards).toHaveLength(2);
+  });
+
+  it("has explicit repo identity on every card", () => {
+    const view = assertCockpit(cockpit);
+    for (const card of view.cards) {
+      expect(typeof card.repo).toBe("string");
+      expect(card.repo.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("actions carry no status field", () => {
+    const view = assertCockpit(cockpit);
+    for (const card of view.cards) {
+      for (const action of card.actions) {
+        expect((action as unknown as Record<string, unknown>).status).toBeUndefined();
+      }
+    }
+  });
+
+  it("destructive action has confirmation_required", () => {
+    const view = assertCockpit(cockpit);
+    const drop = view.cards[0].actions.find((a) => a.action === "drop");
+    expect(drop?.destructive).toBe(true);
+    expect(drop?.confirmation_required).toBe(true);
+  });
+
+  it("inbox items reference existing card handles", () => {
+    const handles = new Set(cockpit.cards.map((c) => c.qualified_handle));
+    for (const item of cockpit.inbox.items) {
+      expect(handles.has(item.task_handle)).toBe(true);
+    }
+  });
+});
+
+describe("task-detail fixture", () => {
+  it("has all required top-level fields", () => {
+    const d = taskDetail as BrowserTaskDetail;
+    expect(typeof d.qualified_handle).toBe("string");
+    expect(typeof d.repo).toBe("string");
+    expect(typeof d.status).toBe("string");
+    expect(Array.isArray(d.actions)).toBe(true);
+    expect(typeof d.created_unix_secs).toBe("number");
+    expect(typeof d.last_activity_unix_secs).toBe("number");
+  });
+
+  it("next_step is a string when guidance is available", () => {
+    const d = taskDetail as BrowserTaskDetail;
+    expect(typeof d.next_step).toBe("string");
+  });
+
+  it("agent_attempts is an array of attempts", () => {
+    const d = taskDetail as BrowserTaskDetail;
+    expect(Array.isArray(d.agent_attempts)).toBe(true);
+    expect(d.agent_attempts[0].started_unix_secs).toBeTypeOf("number");
+  });
+});
+
+describe("pane fixture", () => {
+  it("passes boundary guard without throwing", () => {
+    const snap = assertPaneSnapshot(pane);
+    expect(snap.sequence).toBe(7);
+    expect(snap.lines).toHaveLength(3);
+  });
+
+  it("state fingerprint is a non-empty string for answerable prompts", () => {
+    const snap = assertPaneSnapshot(pane);
+    expect(snap.state?.answerable).toBe(true);
+    expect(typeof snap.state?.fingerprint).toBe("string");
+    expect((snap.state?.fingerprint?.length ?? 0) > 0).toBe(true);
+  });
+});
+
+describe("operation response fixture", () => {
+  it("refreshed cockpit passes boundary guard", () => {
+    const resp = operation as OperationResponse;
+    if (resp.cockpit) {
+      const view = assertCockpit(resp.cockpit);
+      expect(view.cards).toHaveLength(1);
+    }
+  });
+
+  it("output is a string when present", () => {
+    const resp = operation as OperationResponse;
+    if (resp.output != null) {
+      expect(typeof resp.output).toBe("string");
+    }
+  });
+});

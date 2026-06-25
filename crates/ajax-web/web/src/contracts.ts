@@ -6,6 +6,7 @@
 import type {
   BrowserCockpitView,
   BrowserPaneSnapshot,
+  BrowserTaskDetail,
   TaskStatus,
   WebAction,
 } from "./types";
@@ -31,6 +32,12 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function assertAction(value: unknown): WebAction {
   if (!isObject(value) || typeof value.action !== "string") {
     throw new IncompatibleResponseError("action missing string `action` id");
+  }
+  if (typeof value.destructive !== "boolean") {
+    throw new IncompatibleResponseError("action.destructive is not a boolean");
+  }
+  if (typeof value.confirmation_required !== "boolean") {
+    throw new IncompatibleResponseError("action.confirmation_required is not a boolean");
   }
   return value as unknown as WebAction;
 }
@@ -67,5 +74,28 @@ export function assertPaneSnapshot(value: unknown): BrowserPaneSnapshot {
   if (value.lines !== undefined && !Array.isArray(value.lines)) {
     throw new IncompatibleResponseError("pane.lines is not an array");
   }
+  if (typeof value.tmux_exists !== "boolean") {
+    throw new IncompatibleResponseError("pane.tmux_exists is not a boolean");
+  }
   return value as unknown as BrowserPaneSnapshot;
+}
+
+export function assertDetail(value: unknown): BrowserTaskDetail {
+  if (!isObject(value)) {
+    throw new IncompatibleResponseError("task detail is not an object");
+  }
+  if (typeof value.qualified_handle !== "string") {
+    throw new IncompatibleResponseError("detail.qualified_handle is not a string");
+  }
+  if (!isTaskStatus(value.status)) {
+    throw new IncompatibleResponseError(`detail.status is invalid: ${String(value.status)}`);
+  }
+  if (!Array.isArray(value.actions)) {
+    throw new IncompatibleResponseError("detail.actions is not an array");
+  }
+  value.actions.forEach(assertAction);
+  if (!Array.isArray(value.agent_attempts)) {
+    throw new IncompatibleResponseError("detail.agent_attempts is not an array");
+  }
+  return value as unknown as BrowserTaskDetail;
 }

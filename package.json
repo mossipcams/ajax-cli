@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "test": "npm run verify",
-    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run lint:duplication",
+    "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run lint:duplication && npm run web:check",
     "lint:duplication": "jscpd --config .jscpd.json",
     "verify:probity": "node scripts/verify-probity.mjs",
     "dev:web": "./scripts/dev-web-restart.sh",
@@ -12,11 +12,14 @@
     "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
     "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
     "web:build:check": "node scripts/web-build-check.mjs",
+    "web:dist:check": "node scripts/web-dist-check.mjs",
     "web:dev": "vite --config crates/ajax-web/web/vite.config.mts",
+    "web:smoke": "playwright test --config crates/ajax-web/web/playwright.config.mts",
     "prepare": "husky"
   },
   "devDependencies": {
     "@nizos/probity": "^1.5.0",
+    "@playwright/test": "^1.61.1",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/svelte": "^5.2.6",

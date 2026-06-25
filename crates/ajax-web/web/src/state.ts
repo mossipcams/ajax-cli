@@ -3,7 +3,52 @@
 // view over server-projected data the browser may select, filter, sort, or
 // bound, but never author.
 
-import type { BrowserTaskCard, TaskStatus } from "./types";
+import type { BrowserTaskCard, TaskStatus, WebAction } from "./types";
+
+/** Presentation labels matching the legacy `actionLabel`. Server-provided
+ * labels win; otherwise title-case the action id. */
+const ACTION_LABELS: Record<string, string> = {
+  "fix-ci": "Fix CI",
+  "resolve-merge-conflicts": "Resolve conflicts",
+};
+
+export function titleCase(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
+export function actionLabel(action: WebAction): string {
+  if (action.label) return action.label;
+  return ACTION_LABELS[action.action] ?? titleCase(action.action);
+}
+
+/** Status tone + label for badges/dots. The browser only renders the canonical
+ * four-state contract; Rust owns derivation. */
+export interface StatusMeta {
+  tone: TaskStatus;
+  label: string;
+}
+
+const STATUS_LABELS: Record<TaskStatus, string> = {
+  running: "Running",
+  waiting: "Waiting",
+  idle: "Idle",
+  error: "Error",
+};
+
+export function statusMeta(status: string): StatusMeta {
+  const key = (status || "").toLowerCase();
+  if (!(STATUS_ORDER as string[]).includes(key)) {
+    console.warn(`[ajax] unknown task status: ${JSON.stringify(status)} — defaulting to idle`);
+  }
+  const tone = (STATUS_ORDER as string[]).includes(key) ? (key as TaskStatus) : "idle";
+  return { tone, label: STATUS_LABELS[tone] };
+}
+
+export function severityBucket(value: number): "high" | "medium" | "low" {
+  if (value <= 2) return "high";
+  if (value <= 3) return "medium";
+  return "low";
+}
 
 /** Presentation-only ordering. NOT a priority policy (that lives in Rust). */
 export const STATUS_ORDER: TaskStatus[] = ["running", "waiting", "error", "idle"];

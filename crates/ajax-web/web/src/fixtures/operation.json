@@ -1,0 +1,24 @@
+{
+  "cockpit": {
+    "backend": {
+      "authority": "host-native",
+      "control_enabled": true,
+      "warning": null
+    },
+    "repos": { "repos": [{ "name": "web" }] },
+    "cards": [
+      {
+        "id": "web/fix-login",
+        "qualified_handle": "web/fix-login",
+        "repo": "web",
+        "title": "Fix login",
+        "status": "idle",
+        "status_explanation": null,
+        "actions": []
+      }
+    ],
+    "inbox": { "items": [] }
+  },
+  "output": "Operation completed successfully.",
+  "error": null
+}

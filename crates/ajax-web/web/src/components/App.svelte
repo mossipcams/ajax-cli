@@ -1,35 +1,118 @@
 <script lang="ts">
-  import { parseRoute, dashboardHash, settingsHash, type Route } from "../routes";
-  import type { ConnectionState } from "../types";
+  import { untrack } from "svelte";
+  import { parseRoute, dashboardHash, settingsHash, taskHash, projectHash, type Route } from "../routes";
+  import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
+  import { ApiError, fetchCockpit, fetchDetail, fetchVersion } from "../api";
+  import { REFRESH_INTERVAL_MS, VERSION_POLL_MS } from "../polling";
+  import { unregisterExistingServiceWorkers } from "../diagnostics";
   import ConnectionStatus from "./ConnectionStatus.svelte";
   import ResultPanel from "./ResultPanel.svelte";
+  import TaskList from "./TaskList.svelte";
+  import TaskDetail from "./TaskDetail.svelte";
+  import SettingsView from "./SettingsView.svelte";
+  import NewTaskSheet from "./NewTaskSheet.svelte";
 
-  // Shallow, replaceable UI state only — no task truth lives here.
+  // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
+  let cockpit = $state<BrowserCockpitView | null>(null);
+  let detail = $state<BrowserTaskDetail | null>(null);
   let connection = $state<ConnectionState>("checking");
   let connectionDetail = $state<string | null>(null);
-  let statusText = $state("— loading");
   let updateAvailable = $state(false);
+  let sheetOpen = $state(false);
   let result = $state<{ message: string; output?: string | null; isError: boolean } | null>(null);
 
-  // Task-specific view state is discarded whenever the route leaves detail, so a
-  // stale pane buffer can never bleed across task selections.
-  let activeTaskHandle = $state<string | null>(null);
-  $effect(() => {
-    activeTaskHandle = route.kind === "task" ? (route.handle ?? null) : null;
-  });
+  let selectedProject = $derived(route.kind === "project" ? (route.project ?? null) : null);
+  let bootVersion: string | null = null;
 
+  function showResult(message: string, output: string | null | undefined, isError: boolean) {
+    result = { message, output, isError };
+  }
+
+  function applyCockpit(next: BrowserCockpitView) {
+    cockpit = next;
+    connection = "connected";
+  }
+
+  async function loadCockpit() {
+    if (document.hidden) return;
+    try {
+      applyCockpit(await fetchCockpit());
+    } catch {
+      connection = "backend unreachable";
+    }
+  }
+
+  async function loadDetail(handle: string) {
+    try {
+      detail = await fetchDetail(handle);
+      connection = "connected";
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "network") {
+        connection = "backend unreachable";
+      }
+    }
+  }
+
+  async function checkVersion() {
+    try {
+      const { version } = await fetchVersion();
+      if (!version) return;
+      if (bootVersion === null) bootVersion = version;
+      else if (version !== bootVersion) updateAvailable = true;
+    } catch {
+      // Offline: keep the pinned version and retry later.
+    }
+  }
+
+  // Cockpit polling — mount once; the interval callback is not a tracked read.
   $effect(() => {
-    const onHashChange = () => {
-      route = parseRoute(location.hash);
+    unregisterExistingServiceWorkers();
+    void loadCockpit();
+    void checkVersion();
+    const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);
+    const versionTimer = setInterval(checkVersion, VERSION_POLL_MS);
+    const onHashChange = () => (route = parseRoute(location.hash));
+    const onResume = () => {
+      void checkVersion();
+      void loadCockpit();
     };
     window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
+    window.addEventListener("focus", onResume);
+    window.addEventListener("pageshow", onResume);
+    document.addEventListener("visibilitychange", onResume);
+    return () => {
+      clearInterval(cockpitTimer);
+      clearInterval(versionTimer);
+      window.removeEventListener("hashchange", onHashChange);
+      window.removeEventListener("focus", onResume);
+      window.removeEventListener("pageshow", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+    };
+  });
+
+  // Detail loading — re-run only when the selected task handle changes.
+  $effect(() => {
+    const handle = route.kind === "task" ? route.handle : null;
+    if (!handle) {
+      detail = null;
+      return;
+    }
+    untrack(() => {
+      detail = null;
+      void loadDetail(handle);
+    });
   });
 
   function go(hash: string) {
     location.hash = hash;
   }
+
+  let statusText = $derived(
+    cockpit
+      ? `${cockpit.cards.length} ${cockpit.cards.length === 1 ? "task" : "tasks"}`
+      : "— loading",
+  );
 </script>
 
 <div class="cockpit-chrome">
@@ -52,9 +135,9 @@
     <ConnectionStatus
       state={connection}
       detail={connectionDetail}
-      onRetry={() => {}}
+      onRetry={() => loadCockpit()}
       onReload={() => location.reload()}
-      onCopyDiagnostics={() => {}}
+      onCopyDiagnostics={() => go(settingsHash())}
     />
   </header>
 
@@ -73,24 +156,73 @@
 <main>
   {#if route.kind === "settings"}
     <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
-      <!-- SettingsView mounts here in Phase 4.6 -->
+      <SettingsView
+        detailHandle={null}
+        onResult={showResult}
+        onBack={() => go(dashboardHash())}
+        onRestarted={() => {
+          go(dashboardHash());
+          void loadCockpit();
+        }}
+      />
     </section>
   {:else if route.kind === "task"}
-    <section data-outlet="task" data-testid="outlet-task" data-handle={activeTaskHandle} aria-live="polite">
-      <!-- TaskDetail + PanePanel mount here in Phase 4.4/4.5 -->
-    </section>
-  {:else if route.kind === "project"}
-    <section data-outlet="project" data-testid="outlet-project" data-project={route.project} aria-live="polite">
-      <!-- TaskList (filtered) mounts here in Phase 4.1 -->
+    <section data-outlet="task" data-testid="outlet-task" data-handle={route.handle} aria-live="polite">
+      {#if detail}
+        <TaskDetail
+          {detail}
+          onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+          onCockpit={applyCockpit}
+          onResult={showResult}
+          onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
+        />
+      {:else}
+        <p class="empty">Loading task…</p>
+      {/if}
     </section>
   {:else}
-    <section data-outlet="dashboard" data-testid="outlet-dashboard" aria-live="polite">
-      <!-- TaskList mounts here in Phase 4.1 -->
+    <section
+      data-outlet={route.kind === "project" ? "project" : "dashboard"}
+      data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
+      aria-live="polite"
+    >
+      {#if cockpit}
+        <TaskList
+          {cockpit}
+          {selectedProject}
+          onSelectProject={(project) => go(project ? projectHash(project) : dashboardHash())}
+          onOpenTask={(handle) => go(taskHash(handle))}
+          onCockpit={applyCockpit}
+          onResult={showResult}
+          onMutated={() => loadCockpit()}
+        />
+      {:else}
+        <p class="empty">— loading</p>
+      {/if}
+      <button
+        class="new-task-row"
+        type="button"
+        data-bottom-action="new-task"
+        onclick={() => (sheetOpen = true)}
+      >
+        <span class="new-task-glyph" aria-hidden="true">+</span>
+        <span class="new-task-label">{selectedProject ? `New task in ${selectedProject}` : "New task"}</span>
+      </button>
     </section>
   {/if}
 </main>
 
 <nav class="bottom-nav" aria-label="Mobile navigation">
   <button type="button" data-bottom-route="#/" onclick={() => go(dashboardHash())}>Dashboard</button>
-  <button type="button" data-bottom-action="new-task">New</button>
+  <button type="button" data-bottom-action="new-task" onclick={() => (sheetOpen = true)}>New</button>
 </nav>
+
+{#if sheetOpen}
+  <NewTaskSheet
+    repos={cockpit?.repos?.repos ?? []}
+    {selectedProject}
+    onClose={() => (sheetOpen = false)}
+    onCockpit={applyCockpit}
+    onResult={showResult}
+  />
+{/if}
