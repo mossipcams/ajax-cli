@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.4...ajax-cli-v0.20.5) (2026-06-25)
+
+
+### Bug Fixes
+
+* streamline web cockpit detail view and stop poll jitter ([#191](https://github.com/mossipcams/ajax-cli/issues/191)) ([4a72879](https://github.com/mossipcams/ajax-cli/commit/4a7287939fcff8305d28d70da491d2667869555f))
+
 ## [0.20.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.3...ajax-cli-v0.20.4) (2026-06-25)
 
 
