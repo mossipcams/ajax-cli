@@ -8,6 +8,7 @@ All notable Ajax CLI changes should be recorded here.
 ### Bug Fixes
 
 * balance bottom nav after dropping Settings button ([#193](https://github.com/mossipcams/ajax-cli/issues/193)) ([07e205e](https://github.com/mossipcams/ajax-cli/commit/07e205e9926f5198b74432c149bab3ab799acad7))
+* reconcile renamed task tmux sessions ([#198](https://github.com/mossipcams/ajax-cli/issues/198)) ([f4a8918](https://github.com/mossipcams/ajax-cli/commit/f4a89186f3b2055bad2411ad09a6158501906cf5))
 * reload cockpit state on sqlite revision changes ([#194](https://github.com/mossipcams/ajax-cli/issues/194)) ([13a54bb](https://github.com/mossipcams/ajax-cli/commit/13a54bb61905f4fdf525af6f446b4ee67b5cc372))
 
 ## [0.20.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.4...ajax-cli-v0.20.5) (2026-06-25)
