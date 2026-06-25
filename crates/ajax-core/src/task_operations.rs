@@ -2026,6 +2026,55 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_does_not_remove_other_branch_at_expected_path() {
+        let mut context = context_with_cleanable_task();
+        let mut outputs = vec![
+            output(0, "ajax-web-fix-login\n", ""),
+            output(
+                0,
+                "worktree /repo/web__worktrees/ajax-fix-login\nbranch refs/heads/dependabot/pip/minor\n\n",
+                "",
+            ),
+            output(0, "ajax/fix-login\n", ""),
+        ];
+        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(completion, DropTaskCompletion::Removed);
+        assert_eq!(outputs.len(), 2);
+        assert!(runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "branch")
+                && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        }));
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "worktree")
+                && command.args.iter().any(|arg| arg == "remove")
+        }));
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "sh"
+                && command.args.get(2).map(String::as_str) == Some("ajax-fast-worktree-remove")
+        }));
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_none());
+    }
+
+    #[test]
     fn drop_execution_keeps_resource_specific_command_and_missing_rules() {
         let context = context_with_cleanable_task();
 
