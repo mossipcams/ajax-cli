@@ -3,7 +3,7 @@
 // identically. Callers receive typed results and normalized errors; they must
 // not parse responses or branch on raw status codes themselves.
 
-import { assertCockpit, assertPaneSnapshot, IncompatibleResponseError } from "./contracts";
+import { assertCockpit, assertDetail, assertPaneSnapshot } from "./contracts";
 import { RESTART_POLL_MS, RESTART_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
@@ -81,13 +81,12 @@ async function getJson(path: string): Promise<unknown> {
 
 export async function fetchCockpit(): Promise<BrowserCockpitView> {
   const value = await getJson("/api/cockpit");
-  if (value instanceof IncompatibleResponseError) throw value;
   return assertCockpit(value);
 }
 
 export async function fetchDetail(handle: string): Promise<BrowserTaskDetail> {
   const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}`);
-  return value as BrowserTaskDetail;
+  return assertDetail(value);
 }
 
 export async function fetchVersion(): Promise<VersionResponse> {
