@@ -89,6 +89,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             &mut cached_snapshot,
             paths,
             &mut last_loaded_mtime,
+            save_state.as_deref_mut(),
         )?;
         let pending = ajax_tui::run_interactive_with_flash_and_refresh(
             snapshot.repos,
@@ -103,6 +104,7 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 cached_snapshot: &mut cached_snapshot,
                 paths,
                 last_loaded_mtime: &mut last_loaded_mtime,
+                save_state: save_state.as_deref_mut(),
             },
             open_new_task_repo.take(),
         )
@@ -416,9 +418,10 @@ pub(crate) fn refresh_cockpit_snapshot_with_paths<R: CommandRunner>(
     cached_snapshot: &mut Option<CockpitSnapshot>,
     paths: Option<&CliContextPaths>,
     last_loaded_mtime: &mut Option<SystemTime>,
+    save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<CockpitSnapshot, CliError> {
     if let Some(paths) = paths {
-        reload_cockpit_context_if_stale(context, paths, last_loaded_mtime)?;
+        reload_cockpit_context_if_stale(context, paths, last_loaded_mtime, save_state)?;
     }
     refresh_cockpit_snapshot(context, runner, state_changed, cached_snapshot)
 }
@@ -427,6 +430,7 @@ fn reload_cockpit_context_if_stale(
     context: &mut CommandContext<InMemoryRegistry>,
     paths: &CliContextPaths,
     last_loaded_mtime: &mut Option<SystemTime>,
+    save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<bool, CliError> {
     let Some(mtime) = state_file_mtime(paths) else {
         return Ok(false);
@@ -435,6 +439,9 @@ fn reload_cockpit_context_if_stale(
         return Ok(false);
     }
     let fresh = load_context(paths)?;
+    if let Some(save_state) = save_state {
+        *save_state = crate::context::tracked_save_state(paths, &fresh.registry)?;
+    }
     context.registry = fresh.registry;
     *last_loaded_mtime = Some(mtime);
     Ok(true)
@@ -469,6 +476,7 @@ struct InteractiveCockpitHandler<'a, R: CommandRunner> {
     cached_snapshot: &'a mut Option<CockpitSnapshot>,
     paths: Option<&'a CliContextPaths>,
     last_loaded_mtime: &'a mut Option<SystemTime>,
+    save_state: Option<&'a mut crate::context::ContextSaveState>,
 }
 
 impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandler<'_, R> {
@@ -494,6 +502,7 @@ impl<R: CommandRunner> ajax_tui::CockpitEventHandler for InteractiveCockpitHandl
             self.cached_snapshot,
             self.paths,
             self.last_loaded_mtime,
+            self.save_state.as_deref_mut(),
         )
         .map(Some)
         .map_err(|error| std::io::Error::other(error.to_string()))
@@ -1432,6 +1441,7 @@ mod cockpit_persistence_tests {
             &mut cached_snapshot,
             Some(&paths),
             &mut last_loaded_mtime,
+            None,
         )
         .unwrap();
         assert_eq!(first.cards.len(), 1);
@@ -1457,6 +1467,7 @@ mod cockpit_persistence_tests {
             &mut cached_snapshot,
             Some(&paths),
             &mut last_loaded_mtime,
+            None,
         )
         .unwrap();
 
@@ -1473,6 +1484,76 @@ mod cockpit_persistence_tests {
         assert_ne!(
             mtime_before_reload, last_loaded_mtime,
             "last_loaded_mtime should advance after SQLite revision changes"
+        );
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn cockpit_save_uses_reloaded_sqlite_state_as_its_concurrency_baseline() {
+        let paths = temp_state_paths("reload-save-baseline");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+
+        thread::sleep(Duration::from_millis(50));
+        let mut concurrent = initial.clone();
+        concurrent
+            .get_task_mut(&TaskId::new("web/a"))
+            .expect("concurrent task")
+            .metadata
+            .insert("web".to_string(), "persisted".to_string());
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&concurrent)
+            .unwrap();
+
+        let mut cached_snapshot = None;
+        let mut state_changed = false;
+        let mut runner = EmptyTmuxRunner;
+        refresh_cockpit_snapshot_with_paths(
+            &mut tracked.context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+            Some(&paths),
+            &mut last_loaded_mtime,
+            Some(&mut tracked.save_state),
+        )
+        .expect("reload concurrent SQLite state");
+
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/a"))
+            .expect("reloaded task")
+            .metadata
+            .insert("native".to_string(), "persisted".to_string());
+
+        save_cockpit_state_to_sqlite(
+            &paths,
+            &tracked.context,
+            &mut tracked.save_state,
+            &mut last_loaded_mtime,
+        )
+        .expect("save after Cockpit reload");
+
+        let reloaded = load_context(&paths).expect("reload saved state");
+        let task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/a"))
+            .expect("saved task");
+        assert_eq!(
+            task.metadata.get("web").map(String::as_str),
+            Some("persisted")
+        );
+        assert_eq!(
+            task.metadata.get("native").map(String::as_str),
+            Some("persisted")
         );
 
         let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
@@ -1501,6 +1582,7 @@ mod cockpit_persistence_tests {
                 cached_snapshot: &mut cached_snapshot,
                 paths: Some(&paths),
                 last_loaded_mtime: &mut last_loaded_mtime,
+                save_state: None,
             };
             handler.on_refresh().unwrap().expect("first snapshot")
         };
@@ -1523,6 +1605,7 @@ mod cockpit_persistence_tests {
                 cached_snapshot: &mut cached_snapshot,
                 paths: Some(&paths),
                 last_loaded_mtime: &mut last_loaded_mtime,
+                save_state: None,
             };
             handler.on_refresh().unwrap().expect("second snapshot")
         };
