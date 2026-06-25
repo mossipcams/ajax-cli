@@ -432,6 +432,20 @@ fn reload_cockpit_context_if_stale(
     last_loaded_mtime: &mut Option<SystemTime>,
     save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<bool, CliError> {
+    if let Some(save_state) = save_state {
+        let revision = ajax_core::registry::SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .map_err(|error| CliError::ContextLoad(format!("state revision failed: {error}")))?;
+        if revision == save_state.loaded_revision {
+            *last_loaded_mtime = state_file_mtime(paths);
+            return Ok(false);
+        }
+        let fresh = load_context(paths)?;
+        *save_state = crate::context::tracked_save_state(paths, &fresh.registry)?;
+        context.registry = fresh.registry;
+        *last_loaded_mtime = state_file_mtime(paths);
+        return Ok(true);
+    }
     let Some(mtime) = state_file_mtime(paths) else {
         return Ok(false);
     };
@@ -439,9 +453,6 @@ fn reload_cockpit_context_if_stale(
         return Ok(false);
     }
     let fresh = load_context(paths)?;
-    if let Some(save_state) = save_state {
-        *save_state = crate::context::tracked_save_state(paths, &fresh.registry)?;
-    }
     context.registry = fresh.registry;
     *last_loaded_mtime = Some(mtime);
     Ok(true)
@@ -1541,6 +1552,80 @@ mod cockpit_persistence_tests {
             &mut last_loaded_mtime,
         )
         .expect("save after Cockpit reload");
+
+        let reloaded = load_context(&paths).expect("reload saved state");
+        let task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/a"))
+            .expect("saved task");
+        assert_eq!(
+            task.metadata.get("web").map(String::as_str),
+            Some("persisted")
+        );
+        assert_eq!(
+            task.metadata.get("native").map(String::as_str),
+            Some("persisted")
+        );
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn cockpit_save_reloads_sqlite_even_when_mtime_stays_the_same() {
+        let paths = temp_state_paths("reload-save-mtime-stall");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        let mut last_loaded_mtime;
+
+        let mut concurrent = initial.clone();
+        concurrent
+            .get_task_mut(&TaskId::new("web/a"))
+            .expect("concurrent task")
+            .metadata
+            .insert("web".to_string(), "persisted".to_string());
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&concurrent)
+            .unwrap();
+
+        // Simulate a filesystem where the timestamp cache did not advance
+        // even though SQLite revision did. The reload path should still notice
+        // the revision change and refresh the save baseline.
+        last_loaded_mtime = state_file_mtime(&paths);
+
+        let mut cached_snapshot = None;
+        let mut state_changed = false;
+        let mut runner = EmptyTmuxRunner;
+        refresh_cockpit_snapshot_with_paths(
+            &mut tracked.context,
+            &mut runner,
+            &mut state_changed,
+            &mut cached_snapshot,
+            Some(&paths),
+            &mut last_loaded_mtime,
+            Some(&mut tracked.save_state),
+        )
+        .expect("reload concurrent SQLite state even when mtime is unchanged");
+
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/a"))
+            .expect("reloaded task")
+            .metadata
+            .insert("native".to_string(), "persisted".to_string());
+
+        save_cockpit_state_to_sqlite(
+            &paths,
+            &tracked.context,
+            &mut tracked.save_state,
+            &mut last_loaded_mtime,
+        )
+        .expect("save after Cockpit reload with stale mtime");
 
         let reloaded = load_context(&paths).expect("reload saved state");
         let task = reloaded

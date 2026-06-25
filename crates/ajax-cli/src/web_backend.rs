@@ -144,15 +144,15 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         runner: &mut C,
         tier: RefreshTier,
     ) -> Result<bool, WebError> {
-        self.reload_context_if_stale(context)?;
+        let reloaded = self.reload_context_if_stale(context)?;
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        if state_changed {
+        if reloaded || state_changed {
             self.persist_changed_state(context)
                 .map_err(web_error_from_cli)?;
         }
-        Ok(state_changed)
+        Ok(reloaded || state_changed)
     }
 
     fn execute_operate(
@@ -212,20 +212,28 @@ impl CliRuntimeBridge {
     fn reload_context_if_stale(
         &mut self,
         context: &mut CommandContext<InMemoryRegistry>,
-    ) -> Result<(), WebError> {
+    ) -> Result<bool, WebError> {
         let Some(paths) = self.paths.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(mtime) = state_file_mtime(paths) else {
-            return Ok(());
+            return Ok(false);
         };
-        if self.last_loaded_mtime != Some(mtime) {
-            let tracked = load_tracked_context(paths).map_err(web_error_from_cli)?;
-            *context = tracked.context;
-            self.save_state = tracked.save_state;
-            self.last_loaded_mtime = Some(mtime);
+        let revision = ajax_core::registry::SqliteRegistryStore::new(&paths.state_file)
+            .current_revision()
+            .map_err(|error| {
+                web_error_from_cli(CliError::ContextLoad(format!(
+                    "state revision failed: {error}"
+                )))
+            })?;
+        if self.last_loaded_mtime == Some(mtime) && revision == self.save_state.loaded_revision {
+            return Ok(false);
         }
-        Ok(())
+        let tracked = load_tracked_context(paths).map_err(web_error_from_cli)?;
+        *context = tracked.context;
+        self.save_state = tracked.save_state;
+        self.last_loaded_mtime = Some(mtime);
+        Ok(true)
     }
 
     fn persist_changed_state(
@@ -663,9 +671,65 @@ mod tests {
             .expect("second refresh");
 
         assert_eq!(context.registry.list_tasks().len(), tasks_after_first);
+        assert!(bridge.last_loaded_mtime.is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn web_refresh_reloads_sqlite_even_when_mtime_stays_the_same() {
+        let root = std::env::temp_dir().join(format!("ajax-web-revision-{}", std::process::id()));
+        let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let initial = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&initial.registry)
+            .unwrap();
+
+        let mut context = crate::context::load_context(&paths).unwrap();
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+
+        let mut concurrent = initial.registry.clone();
+        concurrent
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("concurrent task")
+            .metadata
+            .insert("web".to_string(), "persisted".to_string());
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&concurrent)
+            .unwrap();
+
+        // Simulate a missed mtime window: the disk revision changed, but the
+        // cached timestamp still points at the rewritten file.
+        bridge.last_loaded_mtime = crate::context::state_file_mtime(&paths);
+
+        let mut runner = LiveRefreshRunner;
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .expect("refresh should reload the newer SQLite revision");
+
+        context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("reloaded task")
+            .metadata
+            .insert("native".to_string(), "persisted".to_string());
+
+        bridge
+            .persist_changed_state(&mut context)
+            .expect("save after web reload with stale mtime");
+
+        let reloaded = crate::context::load_context(&paths).expect("reload saved state");
+        let task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("saved task");
         assert_eq!(
-            bridge.last_loaded_mtime,
-            crate::context::state_file_mtime(&paths)
+            task.metadata.get("web").map(String::as_str),
+            Some("persisted")
+        );
+        assert_eq!(
+            task.metadata.get("native").map(String::as_str),
+            Some("persisted")
         );
 
         let _ = std::fs::remove_dir_all(root);
