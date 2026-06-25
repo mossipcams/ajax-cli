@@ -10,7 +10,7 @@
 
   let { message, output = null, isError = false, onDismiss }: Props = $props();
 
-  let trimmedOutput = $derived(output && output.trim() ? output.trim() : null);
+  let trimmedOutput = $derived(output?.trim() || null);
 
   // Auto-dismiss mirrors the legacy 12s result timer. Re-arm whenever the
   // message changes so each result gets its own countdown.

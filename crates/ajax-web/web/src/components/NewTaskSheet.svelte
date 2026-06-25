@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { BrowserCockpitView, RepoSummary } from "../types";
-  import { startTask } from "../api";
+  import { requestId, startTask } from "../api";
 
   interface Props {
     repos: RepoSummary[];
@@ -43,7 +43,7 @@
         repo,
         title: title.trim(),
         agent,
-        request_id: crypto.randomUUID(),
+        request_id: requestId(),
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (!result.ok) {

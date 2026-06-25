@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { BrowserPaneState, BrowserTaskDetail } from "../types";
-  import { ApiError, fetchPane, postAnswer } from "../api";
+  import { ApiError, fetchPane, postAnswer, requestId } from "../api";
   import { applyPaneDelta, type PaneBuffer } from "../state";
   import { MAX_LOG_ENTRIES, paneInterval } from "../polling";
   import { copyText } from "../diagnostics";
@@ -18,6 +18,7 @@
   let paneState = $state<BrowserPaneState | null>(null);
   let tmuxExists = $state<boolean>(true);
   let terminalOpen = $state<boolean>(false);
+  let submitting = $state(false);
 
   let tmuxMissing = $derived(tmuxExists === false);
   let kind = $derived(paneState?.kind ?? detail.live_status_kind ?? null);
@@ -73,8 +74,9 @@
       onResult?.("This approval is no longer current — refresh the task", null, true);
       return;
     }
+    submitting = true;
     try {
-      await postAnswer(handle, { answer, fingerprint, request_id: crypto.randomUUID() });
+      await postAnswer(handle, { answer, fingerprint, request_id: requestId() });
     } catch (error) {
       if (error instanceof ApiError) {
         if (error.kind === "conflict") {
@@ -89,6 +91,8 @@
         return;
       }
       onResult?.("Could not send answer — network error", null, true);
+    } finally {
+      submitting = false;
     }
   }
 
@@ -114,8 +118,8 @@
       {#if paneState?.command}<code class="interact-card-body">{paneState.command}</code>{/if}
       {#if canAnswer}
         <div class="interact-card-actions">
-          <button type="button" class="pill is-primary" onclick={() => sendAnswer("approve")}>Approve</button>
-          <button type="button" class="pill is-danger" onclick={() => sendAnswer("deny")}>Deny</button>
+          <button type="button" class="pill is-primary" disabled={submitting} onclick={() => sendAnswer("approve")}>Approve</button>
+          <button type="button" class="pill is-danger" disabled={submitting} onclick={() => sendAnswer("deny")}>Deny</button>
         </div>
       {:else}
         <p class="interact-hint">Open the terminal below for this approval.</p>
