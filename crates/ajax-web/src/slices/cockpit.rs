@@ -734,4 +734,136 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn browser_contract_fixture_inventory_includes_representative_payloads() {
+        let fixtures = browser_contract_fixtures();
+        let lookup = |name| {
+            fixtures
+                .iter()
+                .find(|(fixture_name, _)| *fixture_name == name)
+                .map(|(_, value)| value)
+                .expect("fixture present")
+        };
+
+        assert!(fixtures.iter().any(|(name, _)| *name == "cockpit"));
+        assert!(fixtures.iter().any(|(name, _)| *name == "task_detail"));
+        assert!(fixtures.iter().any(|(name, _)| *name == "pane"));
+        assert!(fixtures
+            .iter()
+            .any(|(name, _)| *name == "start_task_request"));
+        assert!(fixtures
+            .iter()
+            .any(|(name, _)| *name == "task_answer_request"));
+        assert!(fixtures
+            .iter()
+            .any(|(name, _)| *name == "operation_success"));
+        assert!(fixtures.iter().any(|(name, _)| *name == "operation_error"));
+
+        assert_eq!(lookup("cockpit")["backend"]["authority"], "host-native");
+        assert_eq!(lookup("cockpit")["cards"][0]["repo"], "web");
+        assert_eq!(lookup("task_detail")["repo"], "web");
+        assert_eq!(
+            lookup("task_detail")["next_step"],
+            "Clear the approval request, then let the task continue."
+        );
+        assert_eq!(lookup("pane")["state"]["kind"], "WaitingForApproval");
+        assert_eq!(lookup("pane")["state"]["fingerprint"], "abc123");
+        assert_eq!(lookup("start_task_request")["request_id"], "start-1");
+        assert_eq!(lookup("task_answer_request")["answer"], "approve");
+        assert_eq!(lookup("operation_success")["ok"], true);
+        assert_eq!(
+            lookup("operation_success")["cockpit"]["cards"][0]["repo"],
+            "web"
+        );
+        assert_eq!(lookup("operation_error")["ok"], false);
+        assert_eq!(lookup("operation_error")["state_changed"], false);
+    }
+
+    fn browser_contract_fixtures() -> Vec<(&'static str, serde_json::Value)> {
+        use ajax_core::config::ManagedRepo;
+        use ajax_core::models::{
+            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId,
+        };
+
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for review",
+        ));
+        registry.create_task(task).unwrap();
+        let context = CommandContext::new(config, registry);
+
+        let cockpit = serde_json::to_value(super::browser_cockpit_view(&context)).unwrap();
+        let detail = serde_json::to_value(
+            super::browser_task_detail_view(&context, "web/fix-login").unwrap(),
+        )
+        .unwrap();
+        let pane = serde_json::json!({
+            "sequence": 7,
+            "lines": ["$ cargo test", "running 42 tests", "test result: ok."],
+            "tmux_exists": true,
+            "state": {
+                "kind": "WaitingForApproval",
+                "command": null,
+                "prompt": "Approve this change?",
+                "answerable": true,
+                "fingerprint": "abc123",
+                "choices": []
+            }
+        });
+        let start_task_request = serde_json::to_value(crate::slices::operate::StartTaskRequest {
+            repo: "web".to_string(),
+            title: "Fix login".to_string(),
+            agent: "codex".to_string(),
+            request_id: "start-1".to_string(),
+        })
+        .unwrap();
+        let task_answer_request = serde_json::to_value(crate::slices::pane::TaskAnswerRequest {
+            answer: ajax_core::agent_prompt::OperatorAnswer::Approve,
+            fingerprint: "abc123".to_string(),
+            request_id: "answer-1".to_string(),
+        })
+        .unwrap();
+
+        let operation_success = serde_json::json!({
+            "ok": true,
+            "state_changed": true,
+            "output": "Operation completed successfully.",
+            "cockpit": cockpit.clone(),
+        });
+        let operation_error = serde_json::json!({
+            "ok": false,
+            "state_changed": false,
+            "error": "task operation already in progress",
+            "cockpit": cockpit,
+        });
+
+        vec![
+            ("cockpit", cockpit),
+            ("task_detail", detail),
+            ("pane", pane),
+            ("start_task_request", start_task_request),
+            ("task_answer_request", task_answer_request),
+            ("operation_success", operation_success),
+            ("operation_error", operation_error),
+        ]
+    }
 }

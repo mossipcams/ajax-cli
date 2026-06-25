@@ -321,7 +321,7 @@ fn browser_pane_state(state: core_pane::PaneState) -> BrowserPaneState {
 /// (`approve` / `deny` / `select`) plus the `fingerprint` of the prompt they were
 /// answering — the server re-captures the live pane and refuses to send keys if
 /// the prompt has changed.
-#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskAnswerRequest {
     #[serde(flatten)]
     pub answer: OperatorAnswer,
@@ -644,11 +644,15 @@ mod tests {
         }
     }
 
-    fn answer_request(answer: OperatorAnswer, fingerprint: &str) -> TaskAnswerRequest {
+    fn answer_request(
+        answer: OperatorAnswer,
+        fingerprint: &str,
+        request_id: &str,
+    ) -> TaskAnswerRequest {
         TaskAnswerRequest {
             answer,
             fingerprint: fingerprint.to_string(),
-            request_id: "req-1".to_string(),
+            request_id: request_id.to_string(),
         }
     }
 
@@ -681,7 +685,7 @@ mod tests {
             &sequences,
             &mut inputs,
             "web/fix-login",
-            answer_request(OperatorAnswer::Approve, &fingerprint),
+            answer_request(OperatorAnswer::Approve, &fingerprint, "req-1"),
             Instant::now(),
         )
         .expect("approve accepted");
@@ -712,7 +716,7 @@ mod tests {
             &sequences,
             &mut inputs,
             "web/fix-login",
-            answer_request(OperatorAnswer::Approve, "stale-fingerprint"),
+            answer_request(OperatorAnswer::Approve, "stale-fingerprint", "req-1"),
             Instant::now(),
         )
         .unwrap_err();
@@ -745,7 +749,7 @@ mod tests {
             &sequences,
             &mut inputs,
             "web/fix-login",
-            answer_request(OperatorAnswer::Approve, &fingerprint),
+            answer_request(OperatorAnswer::Approve, &fingerprint, "req-1"),
             Instant::now(),
         )
         .unwrap_err();
@@ -771,7 +775,7 @@ mod tests {
                 &sequences,
                 &mut inputs,
                 "web/fix-login",
-                answer_request(OperatorAnswer::Approve, &fingerprint),
+                answer_request(OperatorAnswer::Approve, &fingerprint, "req-1"),
                 Instant::now(),
             )
             .expect("accepted");
@@ -783,5 +787,47 @@ mod tests {
             .filter(|command| command.args.first().map(String::as_str) == Some("send-keys"))
             .count();
         assert_eq!(send_count, 1, "the repeat request_id must not resend keys");
+    }
+
+    #[test]
+    fn answer_rate_limits_after_too_many_inputs() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: YES_NO_PANE.to_string(),
+            commands: Vec::new(),
+        };
+        let fingerprint = current_fingerprint(YES_NO_PANE, AgentClient::Codex);
+
+        for index in 0..super::INPUT_RATE_LIMIT {
+            answer_task_prompt(
+                &context,
+                &mut runner,
+                &sequences,
+                &mut inputs,
+                "web/fix-login",
+                answer_request(
+                    OperatorAnswer::Approve,
+                    &fingerprint,
+                    &format!("req-{index}"),
+                ),
+                Instant::now(),
+            )
+            .expect("accepted");
+        }
+
+        let error = answer_task_prompt(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            answer_request(OperatorAnswer::Approve, &fingerprint, "req-rate"),
+            Instant::now(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, TaskAnswerError::RateLimited);
     }
 }
