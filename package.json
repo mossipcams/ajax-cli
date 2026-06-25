@@ -10,6 +10,8 @@
     "dev:web": "./scripts/dev-web-restart.sh",
     "web:check": "svelte-check --tsconfig crates/ajax-web/web/tsconfig.json",
     "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
+    "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
+    "web:build:check": "node scripts/web-build-check.mjs",
     "web:dev": "vite --config crates/ajax-web/web/vite.config.mts",
     "prepare": "husky"
   },
