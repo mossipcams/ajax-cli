@@ -1,0 +1,39 @@
+{
+  "qualified_handle": "web/fix-login",
+  "repo": "web",
+  "title": "Fix login",
+  "branch": "ajax/fix-login",
+  "base_branch": "main",
+  "worktree_path": "/repo/web__worktrees/ajax-fix-login",
+  "tmux_session": "ajax-web-fix-login",
+  "lifecycle": "reviewable",
+  "agent": "codex",
+  "agent_status": "idle",
+  "status": "waiting",
+  "status_explanation": "Waiting for review",
+  "runtime_observation_error": null,
+  "actions": [
+    {
+      "action": "review",
+      "label": "Review",
+      "destructive": false,
+      "confirmation_required": false
+    }
+  ],
+  "live_status_kind": null,
+  "live_status_summary": null,
+  "next_step": "Open the PR and ship it.",
+  "agent_activity": null,
+  "git": { "unpushed_commits": 0 },
+  "tmux": null,
+  "annotations": [],
+  "created_unix_secs": 1700000000,
+  "last_activity_unix_secs": 1700001000,
+  "agent_attempts": [
+    {
+      "started_unix_secs": 1700000000,
+      "completed_unix_secs": 1700001000,
+      "outcome": "completed"
+    }
+  ]
+}
