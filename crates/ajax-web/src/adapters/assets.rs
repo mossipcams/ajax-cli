@@ -11,6 +11,10 @@ pub fn pwa_shell_html() -> String {
     include_str!("../../web/dist/index.html").replace("__AJAX_APP_VERSION__", app_version())
 }
 
+/// Fingerprint the embedded shell assets into the version string.
+///
+/// This keeps the runtime version stable within a build while still changing
+/// whenever any shipped shell asset changes.
 pub fn shell_version_from_assets(
     index_html: &[u8],
     app_js: &[u8],
