@@ -81,8 +81,12 @@ let paneInFlight = false;
 let paneTimer = null;
 let paneAvailable = false;
 let lastInteractKind = null;
-// Survive re-renders so disclosures stay open once opened. The interact panel is
-// rebuilt on every pane poll and the whole detail view on every detail refresh.
+// The detail view polls every second and the pane on its own cadence. We only
+// rebuild the DOM when the rendered content actually changes — otherwise a full
+// replaceChildren() every tick restarts animations and makes the view jitter.
+let lastDetailFingerprint = null;
+let lastPaneFingerprint = null;
+// Survive re-renders so disclosures stay open once opened.
 let terminalDetailsOpen = false;
 let metaDetailsOpen = false;
 
@@ -579,6 +583,9 @@ async function loadCockpit() {
 
 function renderDetail(detail) {
   lastDetailData = detail;
+  // The panel below is rendered from the current pane snapshot; keep the pane
+  // fingerprint in sync so the next pane tick doesn't redundantly re-render it.
+  lastPaneFingerprint = paneFingerprint(lastPaneData);
   detailContainer.replaceChildren();
 
   const header = el("div", "detail-header");
@@ -660,13 +667,55 @@ async function loadDetail() {
       body: "ok",
     });
     const detail = await response.json();
-    renderDetail(detail);
+    // Keep the cached copy fresh so the pane tick renders against current data,
+    // but only rebuild the DOM when the structural fingerprint actually changes.
+    lastDetailData = detail;
+    const fp = detailFingerprint(detail);
+    if (fp !== lastDetailFingerprint) {
+      renderDetail(detail);
+      lastDetailFingerprint = fp;
+    } else {
+      updateDetailLiveSummaries(detail);
+    }
     setOnline(true);
   } catch (error) {
     recordFetchFailure(`/api/tasks/${detailHandle}`, error, null);
     setOnline(false);
   } finally {
     detailInFlight = false;
+  }
+}
+
+// The skeleton of the detail view — header, the blocks the interact panel
+// renders, and the meta disclosure. Live status text/tone are excluded; they
+// update in place via updateDetailLiveSummaries so the view stays still.
+function detailFingerprint(detail) {
+  return JSON.stringify({
+    title: detail.title,
+    handle: detail.qualified_handle,
+    branch: detail.branch,
+    base: detail.base_branch,
+    worktree: detail.worktree_path,
+    unpushed: detail.git && detail.git.unpushed_commits,
+    agent: detail.agent,
+    agentStatus: detail.agent_status,
+    tmux: detail.tmux_session,
+    kind: detail.live_status_kind,
+    actions: actionStructureSignature(detail),
+  });
+}
+
+function updateDetailLiveSummaries(detail) {
+  const meta = statusMeta(detail.status);
+  const pill = detailContainer.querySelector(".interact-state.is-hero .interact-pill");
+  if (pill) {
+    const cls = `interact-pill tone-${meta.tone}`;
+    if (pill.className !== cls) pill.className = cls;
+    if (pill.textContent !== meta.label) pill.textContent = meta.label;
+  }
+  const summary = detailContainer.querySelector(".interact-state.is-hero .interact-summary");
+  if (summary && detail.status_explanation && summary.textContent !== detail.status_explanation) {
+    summary.textContent = detail.status_explanation;
   }
 }
 
@@ -876,6 +925,7 @@ function renderInteractPanel(detail, pane) {
   const meta = statusMeta(detail.status);
   lastInteractKind = kind;
 
+  // Status hero: the one-line answer to "what is this task doing right now".
   const stateRow = el("div", "interact-state is-hero");
   const pill = el("span", `interact-pill tone-${meta.tone}`, meta.label);
   stateRow.append(pill);
@@ -884,51 +934,36 @@ function renderInteractPanel(detail, pane) {
   }
   panel.append(stateRow);
 
+  // Only render the decision surface when the task is actually blocked on you.
+  const needs = renderNeedsFromYou(detail, pane, tmuxMissing);
+  if (needs) panel.append(needs);
+
   const band = renderNextActionBand(detail);
   if (band) panel.append(band);
 
-  const cards = el("div", "dashboard-card-grid");
-  cards.append(renderDashboardCard("Current status", renderCurrentStatus(detail, pane)));
-  cards.append(renderDashboardCard("Needs from you", renderNeedsFromYou(detail, pane, tmuxMissing)));
-  cards.append(renderDashboardCard("Recent milestones", renderMilestones(detail, pane)));
-  panel.append(cards);
+  // The escape hatch: this view is a glance, not a terminal — hand the operator
+  // a real way into the tmux session for anything the web can't do.
+  panel.append(renderEscapeHatch(detail, pane, tmuxMissing));
 
   panel.append(renderTerminalDetails(detail, pane, tmuxMissing));
 
   return panel;
 }
 
-function renderDashboardCard(title, body) {
-  const card = el("section", "interact-card dashboard-card");
-  card.append(el("div", "interact-card-label", title));
-  card.append(body);
-  return card;
-}
-
-function renderCurrentStatus(detail, pane) {
-  const wrap = el("div", "dashboard-card-body");
-  wrap.append(el("p", "interact-card-body", detail.status_explanation || "No status explanation."));
-  const meta = el("dl", "dashboard-meta");
-  appendGridRow(meta, "Task", detail.qualified_handle);
-  appendGridRow(meta, "Lifecycle", detail.lifecycle || "—");
-  appendGridRow(meta, "State", statusMeta(detail.status).label);
-  if (paneAvailable && pane && pane.truncated) {
-    appendGridRow(meta, "Terminal", "Live snapshot available");
-  }
-  wrap.append(meta);
-  return wrap;
-}
-
 function renderNeedsFromYou(detail, pane, tmuxMissing) {
-  const wrap = el("div", "dashboard-card-body");
+  const kind = detail.live_status_kind;
+
   if (tmuxMissing) {
+    const wrap = el("section", "needs-block");
+    wrap.append(el("div", "interact-card-label", "Needs from you"));
     wrap.append(el("p", "interact-card-body", "Tmux session is missing. Sync the task to recover."));
     return wrap;
   }
 
-  const kind = detail.live_status_kind;
   const command = interactCommand(detail, pane);
   if (kind === "WaitingForApproval" && command) {
+    const wrap = el("section", "needs-block");
+    wrap.append(el("div", "interact-card-label", "Needs from you"));
     wrap.append(el("p", "interact-card-body", "The agent is blocked on an approval decision."));
     wrap.append(el("code", "interact-card-body", command));
     if (pane && pane.state && pane.state.answerable && pane.state.fingerprint) {
@@ -943,20 +978,62 @@ function renderNeedsFromYou(detail, pane, tmuxMissing) {
       actions.append(deny);
       wrap.append(actions);
     } else {
-      wrap.append(el("p", "interact-hint", "Open the terminal for this approval."));
+      wrap.append(el("p", "interact-hint", "Open the terminal below for this approval."));
     }
     return wrap;
   }
 
   const prompt = interactPrompt(detail, pane);
   if (kind === "WaitingForInput") {
+    const wrap = el("section", "needs-block");
+    wrap.append(el("div", "interact-card-label", "Needs from you"));
     if (prompt) wrap.append(el("p", "interact-card-body", prompt));
-    wrap.append(el("p", "interact-hint", "Open the terminal for free-form replies."));
+    wrap.append(el("p", "interact-hint", "Open the terminal below for free-form replies."));
     return wrap;
   }
 
-  wrap.append(el("p", "interact-card-body", "No immediate operator decision is blocking this task."));
-  return wrap;
+  // Nothing is blocking — render nothing rather than a filler card.
+  return null;
+}
+
+function renderEscapeHatch(detail, pane, tmuxMissing) {
+  const block = el("section", "escape-hatch");
+  block.append(el("div", "interact-card-label", "Open in terminal"));
+
+  const session = detail.tmux_session;
+  if (tmuxMissing || !session) {
+    block.append(
+      el("p", "interact-card-body", "Terminal session unavailable — sync the task to recover."),
+    );
+    return block;
+  }
+
+  block.append(
+    el("p", "escape-hatch-hint", "Continue this task in your SSH session — tap to copy the command."),
+  );
+
+  const command = `tmux attach -t ${session}`;
+  const row = el("div", "escape-hatch-row");
+
+  const open = el("button", "pill is-primary", "Open in tmux");
+  open.type = "button";
+  open.dataset.copyValue = command;
+  open.setAttribute("aria-label", "Copy tmux attach command");
+  row.append(open);
+
+  const copyOut = el("button", "pill", "Copy output");
+  copyOut.type = "button";
+  copyOut.dataset.terminalShortcut = "Copy visible output";
+  row.append(copyOut);
+
+  const copyErr = el("button", "pill", "Copy last error");
+  copyErr.type = "button";
+  copyErr.dataset.terminalShortcut = "Copy last error";
+  row.append(copyErr);
+
+  block.append(row);
+  block.append(el("code", "escape-hatch-cmd", command));
+  return block;
 }
 
 function renderNextActionBand(detail) {
@@ -996,39 +1073,6 @@ function nextStepMessage(detail, primary) {
   }
 }
 
-function renderMilestones(detail, pane) {
-  const list = el("ul", "milestone-list");
-  for (const entry of milestoneEntries(detail, pane)) {
-    const item = el("li", "milestone-entry");
-    item.append(el("span", "milestone-dot"));
-    item.append(el("span", "milestone-text", entry));
-    list.append(item);
-  }
-  return list;
-}
-
-function milestoneEntries(detail, pane) {
-  const entries = [];
-  entries.push(detail.status_explanation || detail.live_status_summary || "Task opened in Cockpit.");
-  if (detail.git) {
-    entries.push(
-      `${detail.git.ahead || 0} ahead · ${detail.git.behind || 0} behind · ${detail.git.dirty ? "dirty worktree" : "clean worktree"}`,
-    );
-  }
-  if (detail.agent_attempts && detail.agent_attempts.length) {
-    for (const attempt of detail.agent_attempts.slice(-3).reverse()) {
-      const started = new Date(attempt.started_unix_secs * 1000);
-      entries.push(`${titleCase(attempt.outcome)} at ${started.toLocaleString()}`);
-    }
-  } else if (detail.agent_activity) {
-    entries.push(detail.agent_activity);
-  }
-  if (pane && pane.state && pane.state.command) {
-    entries.push(`Pending command: ${pane.state.command}`);
-  }
-  return entries.slice(0, 4);
-}
-
 function renderTerminalDetails(detail, pane, tmuxMissing) {
   const details = document.createElement("details");
   details.className = "terminal-details";
@@ -1037,26 +1081,8 @@ function renderTerminalDetails(detail, pane, tmuxMissing) {
     terminalDetailsOpen = details.open;
   });
   const summary = document.createElement("summary");
-  summary.textContent = "View terminal details";
+  summary.textContent = "View terminal output";
   details.append(summary);
-
-  const shortcuts = el("div", "terminal-shortcuts");
-  for (const label of [
-    "Continue",
-    "Approve plan",
-    "Run tests",
-    "Show diff",
-    "Stop task",
-    "Restart task",
-    "Copy last error",
-    "Copy visible output",
-  ]) {
-    const button = el("button", "pill", label);
-    button.type = "button";
-    button.dataset.terminalShortcut = label;
-    shortcuts.append(button);
-  }
-  details.append(shortcuts);
 
   if (tmuxMissing) {
     details.append(el("p", "interact-hint", "Terminal session is unavailable for this task."));
@@ -1110,22 +1136,33 @@ async function runTerminalShortcut(label) {
     case "Copy last error":
       await copyTextResult(lastErrorOutput(), "Last error copied", "No visible error found");
       return;
-    case "Show diff": {
-      const button = detailContainer.querySelector('button[data-action="review"]');
-      if (button && !button.disabled) runAction(button);
-      else showResult("Show diff is unavailable for this task", null, true);
-      return;
-    }
-    case "Approve plan":
-      if (lastPaneData?.state?.fingerprint) {
-        await sendAnswer("approve", lastPaneData.state.fingerprint);
-      } else {
-        showResult("No current approval prompt", null, true);
-      }
-      return;
     default:
-      showResult(`${label} needs terminal mode for now`, null, true);
+      showResult(`${label} is unavailable here — open the terminal`, null, true);
   }
+}
+
+// Everything in the interact panel that the pane data can change. When this is
+// unchanged between polls we skip the re-render so the panel doesn't flicker.
+function paneFingerprint(pane) {
+  if (!pane) return "null";
+  const state = pane.state || {};
+  return JSON.stringify({
+    tmux: pane.tmux_exists,
+    lines: Array.isArray(pane.lines) ? pane.lines : [],
+    kind: state.kind,
+    command: state.command,
+    prompt: state.prompt,
+    answerable: state.answerable,
+    fingerprint: state.fingerprint,
+  });
+}
+
+function refreshInteractPanelFromPane() {
+  if (!lastDetailData) return;
+  const fp = paneFingerprint(lastPaneData);
+  if (fp === lastPaneFingerprint) return;
+  lastPaneFingerprint = fp;
+  renderInteractPanelInto(lastDetailData, lastPaneData);
 }
 
 function renderInteractPanelInto(detail, pane) {
@@ -1223,7 +1260,7 @@ async function loadPane() {
       const data = await response.json().catch(() => ({}));
       paneAvailable = true;
       lastPaneData = { sequence: paneSequence, lines: [], tmux_exists: false, state: null, ...data };
-      if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+      refreshInteractPanelFromPane();
       setOnline(true);
       return;
     }
@@ -1245,7 +1282,7 @@ async function loadPane() {
       paneSequence = incomingSeq;
     }
     paneAvailable = true;
-    if (lastDetailData) renderInteractPanelInto(lastDetailData, lastPaneData);
+    refreshInteractPanelFromPane();
     setOnline(true);
   } catch (error) {
     setOnline(false);
@@ -1262,6 +1299,8 @@ function resetInteractState() {
   paneAvailable = false;
   lastInteractKind = null;
   lastDetailData = null;
+  lastDetailFingerprint = null;
+  lastPaneFingerprint = null;
 }
 
 // HASH ROUTER ---------------------------------------------------------------
