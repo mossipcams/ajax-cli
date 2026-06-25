@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 1.4 build-freshness check. Rebuilds the web shell and fails if the
+// Build-freshness check. Rebuilds the web shell and fails if the
 // committed `dist/` no longer matches `src/` — i.e. someone edited the frontend
 // without regenerating the embedded bundle Rust serves. Run via
 // `npm run web:dist:check`, including in CI.
