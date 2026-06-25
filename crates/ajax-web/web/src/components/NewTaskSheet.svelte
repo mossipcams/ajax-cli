@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type { BrowserCockpitView, RepoSummary } from "../types";
   import { startTask } from "../api";
 
@@ -12,10 +13,13 @@
 
   let { repos, selectedProject = null, onClose, onCockpit, onResult }: Props = $props();
 
+  // Capture the initial repo once; the form then owns the selection locally.
   let repo = $state(
-    selectedProject && repos.some((r) => r.name === selectedProject)
-      ? selectedProject
-      : (repos[0]?.name ?? ""),
+    untrack(() =>
+      selectedProject && repos.some((r) => r.name === selectedProject)
+        ? selectedProject
+        : (repos[0]?.name ?? ""),
+    ),
   );
   let title = $state("");
   let agent = $state("codex");

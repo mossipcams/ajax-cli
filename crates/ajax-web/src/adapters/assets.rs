@@ -10,7 +10,7 @@ pub struct StaticAsset {
 }
 
 pub fn pwa_shell_html() -> String {
-    include_str!("../../web/index.html").replace("__AJAX_APP_VERSION__", app_version())
+    include_str!("../../web/dist/index.html").replace("__AJAX_APP_VERSION__", app_version())
 }
 
 /// Build identifier for the served PWA shell.
@@ -26,10 +26,10 @@ pub fn app_version() -> &'static str {
     VERSION.get_or_init(|| {
         let mut hasher = DefaultHasher::new();
         for asset in [
-            include_bytes!("../../web/index.html").as_slice(),
-            include_bytes!("../../web/app.js").as_slice(),
-            include_bytes!("../../web/app.css").as_slice(),
-            include_bytes!("../../web/sw.js").as_slice(),
+            include_bytes!("../../web/dist/index.html").as_slice(),
+            include_bytes!("../../web/dist/app.js").as_slice(),
+            include_bytes!("../../web/dist/app.css").as_slice(),
+            include_bytes!("../../web/dist/sw.js").as_slice(),
         ] {
             asset.hash(&mut hasher);
         }
@@ -41,35 +41,35 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
     match path {
         "/app.css" => Some(StaticAsset {
             content_type: "text/css; charset=utf-8",
-            body: include_bytes!("../../web/app.css"),
+            body: include_bytes!("../../web/dist/app.css"),
         }),
         "/app.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/app.js"),
+            body: include_bytes!("../../web/dist/app.js"),
         }),
         "/manifest.webmanifest" => Some(StaticAsset {
             content_type: "application/manifest+json; charset=utf-8",
-            body: include_bytes!("../../web/manifest.webmanifest"),
+            body: include_bytes!("../../web/dist/manifest.webmanifest"),
         }),
         "/sw.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/sw.js"),
+            body: include_bytes!("../../web/dist/sw.js"),
         }),
         "/icons/icon-192.png" => Some(StaticAsset {
             content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-192.png"),
+            body: include_bytes!("../../web/dist/icons/icon-192.png"),
         }),
         "/icons/icon-512.png" => Some(StaticAsset {
             content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-512.png"),
+            body: include_bytes!("../../web/dist/icons/icon-512.png"),
         }),
         "/icons/icon-maskable-512.png" => Some(StaticAsset {
             content_type: "image/png",
-            body: include_bytes!("../../web/icons/icon-maskable-512.png"),
+            body: include_bytes!("../../web/dist/icons/icon-maskable-512.png"),
         }),
         "/icons/apple-touch-icon.png" => Some(StaticAsset {
             content_type: "image/png",
-            body: include_bytes!("../../web/icons/apple-touch-icon.png"),
+            body: include_bytes!("../../web/dist/icons/apple-touch-icon.png"),
         }),
         _ => None,
     }

@@ -234,6 +234,48 @@ body.is-offline .connection-status {
   cursor: pointer;
 }
 
+/* Inputs must stay at least 16px so iOS Safari does not zoom on focus. */
+input,
+select,
+textarea {
+  font-size: 16px;
+  font-family: inherit;
+}
+
+/* Task action pills (card + detail). */
+.action {
+  flex: 0 0 auto;
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  padding: 8px 14px;
+  min-height: 44px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.action.primary {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: var(--ink);
+}
+
+.action.confirming {
+  border-color: var(--terracotta-bright);
+  color: var(--terracotta-bright);
+}
+
+.escape-hatch-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.escape-hatch-row .pill {
+  min-height: 44px;
+}
+
 /* Bottom navigation ------------------------------------------------------ */
 
 .bottom-nav {
