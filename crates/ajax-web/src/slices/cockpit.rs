@@ -2,7 +2,7 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, TmuxStatus},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, LiveStatusKind, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
 };
@@ -86,16 +86,18 @@ fn repo_of_handle(qualified_handle: &str) -> String {
 /// the workflow copy the legacy browser invented from `live_status_kind` —
 /// including its dead `primary.status === "supported"` assumption, which never
 /// matched because `WebAction` has no `status` field.
-fn browser_next_step(live_status_kind: Option<&str>, actions: &[WebAction]) -> String {
-    match live_status_kind {
-        Some("WaitingForApproval") => {
+fn browser_next_step(kind: Option<&LiveStatusKind>, actions: &[WebAction]) -> String {
+    match kind {
+        Some(LiveStatusKind::WaitingForApproval) => {
             "Clear the approval request, then let the task continue.".to_string()
         }
-        Some("WaitingForInput") => "Open the terminal to reply directly to the agent.".to_string(),
-        Some("CiFailed") => {
+        Some(LiveStatusKind::WaitingForInput) => {
+            "Open the terminal to reply directly to the agent.".to_string()
+        }
+        Some(LiveStatusKind::CiFailed) => {
             "Inspect the failing check and run Fix CI if you want Ajax to remediate it.".to_string()
         }
-        Some("MergeConflict") => {
+        Some(LiveStatusKind::MergeConflict) => {
             "Run Resolve conflicts to repair the branch before reviewing or shipping.".to_string()
         }
         _ => match actions.first() {
@@ -183,12 +185,16 @@ pub fn browser_task_detail_view<R: Registry>(
         .find(|card| card.qualified_handle == qualified_handle)?;
     let task = context.registry.get_task(&card.id)?.clone();
     let actions = browser_actions(card);
-    let agent_activity = task.live_status.as_ref().map(|live| live.summary.clone());
     let live_status_kind = task
         .live_status
         .as_ref()
         .map(|live| format!("{:?}", live.kind));
-    let next_step = Some(browser_next_step(live_status_kind.as_deref(), &actions));
+    let live_status_summary = task.live_status.as_ref().map(|live| live.summary.clone());
+    let agent_activity = live_status_summary.clone();
+    let next_step = Some(browser_next_step(
+        task.live_status.as_ref().map(|live| &live.kind),
+        &actions,
+    ));
 
     Some(BrowserTaskDetail {
         qualified_handle: task.qualified_handle(),
@@ -206,7 +212,7 @@ pub fn browser_task_detail_view<R: Registry>(
         runtime_observation_error: task.runtime_projection.observation_error.clone(),
         actions,
         live_status_kind,
-        live_status_summary: task.live_status.as_ref().map(|live| live.summary.clone()),
+        live_status_summary,
         next_step,
         agent_activity,
         git: task.git_status.clone(),
@@ -682,14 +688,15 @@ mod tests {
 
         // With actions but no special live-status kind, guidance names the first
         // action. (Replaces the dead `primary.status === "supported"` JS check.)
-        let first = detail.actions.first().map(|action| action.action.clone());
-        if let Some(action) = first {
-            assert!(
-                detail.next_step.as_deref().unwrap().starts_with("Use "),
-                "expected action-led guidance for action {action}, got {:?}",
-                detail.next_step
-            );
-        }
+        assert!(
+            !detail.actions.is_empty(),
+            "Reviewable task must expose at least one action"
+        );
+        assert!(
+            detail.next_step.as_deref().unwrap().starts_with("Use "),
+            "expected action-led guidance, got {:?}",
+            detail.next_step
+        );
     }
 
     #[test]
