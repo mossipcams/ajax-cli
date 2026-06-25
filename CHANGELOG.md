@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.20.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.5...ajax-cli-v0.20.6) (2026-06-25)
+
+
+### Bug Fixes
+
+* balance bottom nav after dropping Settings button ([#193](https://github.com/mossipcams/ajax-cli/issues/193)) ([07e205e](https://github.com/mossipcams/ajax-cli/commit/07e205e9926f5198b74432c149bab3ab799acad7))
+* reload cockpit state on sqlite revision changes ([#194](https://github.com/mossipcams/ajax-cli/issues/194)) ([13a54bb](https://github.com/mossipcams/ajax-cli/commit/13a54bb61905f4fdf525af6f446b4ee67b5cc372))
+
 ## [0.20.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.4...ajax-cli-v0.20.5) (2026-06-25)
 
 
