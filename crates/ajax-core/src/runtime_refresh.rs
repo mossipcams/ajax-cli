@@ -83,7 +83,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     agent_status_cache: &impl AgentStatusCache,
     tier: RefreshTier,
 ) -> Result<bool, CommandError> {
-    let tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
+    let mut tasks: Vec<Task> = context.registry.list_tasks().into_iter().cloned().collect();
     let should_probe_tasks = tasks.iter().any(should_probe_live_substrate);
     if !should_probe_tasks {
         return Ok(false);
@@ -148,15 +148,26 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         .iter()
         .map(|task| (task.id.clone(), task.clone()))
         .collect();
-    let task_snapshots: Vec<Task> = probe_task_ids
+    let mut task_snapshots: Vec<Task> = probe_task_ids
         .iter()
         .filter_map(|task_id| task_lookup.get(task_id).cloned())
         .collect();
     let should_discover_orphans = task_snapshots.iter().any(should_probe_live_substrate);
-    let should_scan_orphans = should_scan_for_orphan_worktrees(&task_snapshots)
-        || unregistered_ajax_sessions_in_tmux(&sessions_output, &registered_sessions);
+    let has_unregistered_ajax_sessions =
+        unregistered_ajax_sessions_in_tmux(&sessions_output, &registered_sessions);
+    let should_scan_orphans =
+        should_scan_for_orphan_worktrees(&task_snapshots) || has_unregistered_ajax_sessions;
     let should_run_orphan_discovery =
         should_discover_orphans && (tier == RefreshTier::Full || should_scan_orphans);
+    let matching_panes_output = if has_unregistered_ajax_sessions {
+        runner
+            .run(&tmux.list_all_panes())
+            .ok()
+            .filter(|output| output.status_code == 0)
+            .map(|output| output.stdout)
+    } else {
+        None
+    };
     let windows_output = if task_snapshots
         .iter()
         .any(|task| TmuxAdapter::parse_session_status(&task.tmux_session, &sessions_output).exists)
@@ -173,6 +184,34 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
     } else {
         None
     };
+    if let Some(output) = matching_panes_output.as_ref() {
+        for task in &mut tasks {
+            if TmuxAdapter::parse_session_status(&task.tmux_session, &sessions_output).exists {
+                continue;
+            }
+            let expected_path = task.worktree_path.to_string_lossy();
+            let Some(session) = output.lines().find_map(|line| {
+                let mut fields = line.splitn(3, '\t');
+                let session = fields.next()?;
+                let _window = fields.next()?;
+                let path = fields.next()?;
+                (path == expected_path).then(|| session.to_string())
+            }) else {
+                continue;
+            };
+            task.tmux_session = session.clone();
+            if let Some(snapshot) = task_snapshots
+                .iter_mut()
+                .find(|snapshot| snapshot.id == task.id)
+            {
+                snapshot.tmux_session = session.clone();
+            }
+            if let Some(stored) = context.registry.get_task_mut(&task.id) {
+                stored.tmux_session = session;
+            }
+            changed = true;
+        }
+    }
 
     for task_snapshot in task_snapshots {
         let task_id = task_snapshot.id.clone();
@@ -420,6 +459,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             context,
             runner,
             &sessions_output,
+            windows_output
+                .as_ref()
+                .and_then(|output| output.as_ref().ok())
+                .map(String::as_str)
+                .or(matching_panes_output.as_deref()),
             &mut registered_task_handles,
             &mut registered_runtime_tasks,
         )?;
@@ -541,6 +585,7 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
     sessions_output: &str,
+    windows_output: Option<&str>,
     registered_tasks: &mut BTreeSet<(String, String)>,
     registered_runtime_tasks: &mut Vec<(TaskId, String, String, PathBuf)>,
 ) -> Result<bool, CommandError> {
@@ -581,7 +626,32 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
             }
 
             let task_id = TaskId::new(format!("{}/{}", repo.name, handle));
-            let tmux_session = format!("ajax-{}-{handle}", repo.name);
+            let existing_session_for_worktree = registered_runtime_tasks
+                .iter()
+                .find(
+                    |(_, existing_repo, existing_branch, existing_worktree_path)| {
+                        existing_repo == &repo.name
+                            && existing_worktree_path.to_string_lossy() == worktree.path
+                            && existing_branch != branch
+                    },
+                )
+                .and_then(|(existing_task_id, _, _, _)| context.registry.get_task(existing_task_id))
+                .map(|task| task.tmux_session.clone())
+                .filter(|session| {
+                    TmuxAdapter::parse_session_status(session, sessions_output).exists
+                });
+            let session_for_worktree_window = windows_output.and_then(|output| {
+                output.lines().find_map(|line| {
+                    let mut fields = line.splitn(3, '\t');
+                    let session = fields.next()?;
+                    let _window = fields.next()?;
+                    let path = fields.next()?;
+                    (path == worktree.path).then(|| session.to_string())
+                })
+            });
+            let tmux_session = existing_session_for_worktree
+                .or(session_for_worktree_window)
+                .unwrap_or_else(|| format!("ajax-{}-{handle}", repo.name));
             let tmux_status = TmuxAdapter::parse_session_status(&tmux_session, sessions_output);
 
             let mut task = Task::new(
@@ -2107,6 +2177,164 @@ mod tests {
             .registry
             .get_task(&TaskId::new("web/fix-login"))
             .is_some());
+    }
+
+    #[test]
+    fn branch_rename_preserves_live_session_for_same_worktree() {
+        struct RenamedBranchRunner;
+
+        impl CommandRunner for RenamedBranchRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                let stdout = match command.args.as_slice() {
+                    [command, ..] if command == "list-sessions" => "ajax-web-stale-task\n",
+                    [command, ..] if command == "list-windows" => {
+                        "ajax-web-stale-task\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                    }
+                    [_, repo, subcommand, action, flag]
+                        if repo == REPO_PATH
+                            && subcommand == "worktree"
+                            && action == "list"
+                            && flag == "--porcelain" =>
+                    {
+                        "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/renamed-task\n\n"
+                    }
+                    [_, repo, subcommand, format]
+                        if repo == REPO_PATH
+                            && subcommand == "branch"
+                            && format == "--format=%(refname:short)" =>
+                    {
+                        "main\najax/renamed-task\n"
+                    }
+                    [command, ..] if command == "capture-pane" => {
+                        "› Continue implementation\n\n  gpt-5.5 high · ~/repo\n"
+                    }
+                    _ => "",
+                };
+
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let config = Config {
+            repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut stale = Task::new(
+            TaskId::new("web/stale-task"),
+            REPO_NAME,
+            "stale-task",
+            "Stale task",
+            "ajax/stale-task",
+            BASE_BRANCH,
+            TASK_WORKTREE,
+            "ajax-web-stale-task",
+            TASK_WINDOW,
+            AgentClient::Codex,
+        );
+        stale.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(stale).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = RenamedBranchRunner;
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        assert!(context
+            .registry
+            .get_task(&TaskId::new("web/stale-task"))
+            .is_none());
+        let renamed = context
+            .registry
+            .get_task(&TaskId::new("web/renamed-task"))
+            .unwrap();
+        assert_eq!(renamed.tmux_session, "ajax-web-stale-task");
+        assert_eq!(
+            renamed.tmux_status.as_ref().map(|status| status.exists),
+            Some(true)
+        );
+        assert!(!renamed.has_side_flag(SideFlag::TmuxMissing));
+    }
+
+    #[test]
+    fn orphan_recovery_adopts_session_whose_window_points_at_worktree() {
+        struct MatchingWindowRunner;
+
+        impl CommandRunner for MatchingWindowRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                let stdout = match command.args.as_slice() {
+                    [command, ..] if command == "list-sessions" => "ajax-web-old-name\n",
+                    [command, ..] if command == "list-panes" => {
+                        "ajax-web-old-name\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                    }
+                    [_, repo, subcommand, action, flag]
+                        if repo == REPO_PATH
+                            && subcommand == "worktree"
+                            && action == "list"
+                            && flag == "--porcelain" =>
+                    {
+                        "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/renamed-task\n\n"
+                    }
+                    [_, repo, subcommand, format]
+                        if repo == REPO_PATH
+                            && subcommand == "branch"
+                            && format == "--format=%(refname:short)" =>
+                    {
+                        "main\najax/renamed-task\n"
+                    }
+                    [command, ..] if command == "capture-pane" => {
+                        "› Continue implementation\n\n  gpt-5.5 high · ~/repo\n"
+                    }
+                    _ => "",
+                };
+
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: stdout.to_string(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let config = Config {
+            repos: vec![ManagedRepo::new(REPO_NAME, REPO_PATH, BASE_BRANCH)],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut renamed = Task::new(
+            TaskId::new("web/renamed-task"),
+            REPO_NAME,
+            "renamed-task",
+            "Renamed task",
+            "ajax/renamed-task",
+            BASE_BRANCH,
+            TASK_WORKTREE,
+            "ajax-web-renamed-task",
+            TASK_WINDOW,
+            AgentClient::Codex,
+        );
+        renamed.lifecycle_status = LifecycleStatus::Active;
+        registry.create_task(renamed).unwrap();
+        let mut context = CommandContext::new(config, registry);
+        let mut runner = MatchingWindowRunner;
+
+        let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        assert!(changed);
+        let renamed = context
+            .registry
+            .get_task(&TaskId::new("web/renamed-task"))
+            .unwrap();
+        assert_eq!(renamed.tmux_session, "ajax-web-old-name");
+        assert_eq!(
+            renamed.tmux_status.as_ref().map(|status| status.exists),
+            Some(true)
+        );
+        assert!(!renamed.has_side_flag(SideFlag::TmuxMissing));
     }
 
     fn context_with_many_active_tasks(count: usize) -> CommandContext<InMemoryRegistry> {
