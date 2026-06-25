@@ -4,3 +4,5 @@ graphify-out/
 node_modules/
 __pycache__/
 *.egg-info/
+# Built web shell — embedded into the binary starting in migration Phase 1.3.
+crates/ajax-web/web/dist/
