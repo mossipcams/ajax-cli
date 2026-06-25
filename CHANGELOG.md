@@ -2,6 +2,20 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.21.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.6...ajax-cli-v0.21.0) (2026-06-25)
+
+
+### Features
+
+* **web:** begin Svelte+TS migration — contracts, toolchain, typed boundaries ([#196](https://github.com/mossipcams/ajax-cli/issues/196)) ([ad3d2f7](https://github.com/mossipcams/ajax-cli/commit/ad3d2f7d7a7865402f7e0ed26833e0e29e68738a))
+* **web:** build Svelte entry and mount the shell ([#197](https://github.com/mossipcams/ajax-cli/issues/197)) ([1508627](https://github.com/mossipcams/ajax-cli/commit/1508627415113fc10d3248d977f902952505757f))
+* **web:** migrate cockpit UI areas to Svelte and switch Rust serving to bundle ([#200](https://github.com/mossipcams/ajax-cli/issues/200)) ([31c16e7](https://github.com/mossipcams/ajax-cli/commit/31c16e7afe8b7250de644b2b3dbab2e960e36367))
+
+
+### Bug Fixes
+
+* **web:** enforce frontend contract parity ([#204](https://github.com/mossipcams/ajax-cli/issues/204)) ([184821c](https://github.com/mossipcams/ajax-cli/commit/184821c4e2ee47f64570abe7a10551ba49beebd6))
+
 ## [0.20.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.20.5...ajax-cli-v0.20.6) (2026-06-25)
 
 
