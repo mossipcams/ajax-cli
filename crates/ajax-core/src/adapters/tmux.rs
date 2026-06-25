@@ -106,6 +106,19 @@ impl TmuxAdapter {
         .with_timeout(TMUX_PROBE_TIMEOUT)
     }
 
+    pub fn list_all_panes(&self) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            [
+                "list-panes",
+                "-a",
+                "-F",
+                "#{session_name}\t#{window_name}\t#{pane_current_path}",
+            ],
+        )
+        .with_timeout(TMUX_PROBE_TIMEOUT)
+    }
+
     pub fn capture_pane(&self, session: &str, window: &str) -> CommandSpec {
         let target = format!("{session}:{window}");
         CommandSpec::new(
