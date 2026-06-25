@@ -1,0 +1,76 @@
+import { describe, it, expect } from "vitest";
+import {
+  IncompatibleResponseError,
+  assertCockpit,
+  assertPaneSnapshot,
+  isTaskStatus,
+} from "./contracts";
+
+describe("isTaskStatus", () => {
+  it("accepts the four canonical statuses", () => {
+    for (const s of ["running", "waiting", "idle", "error"]) {
+      expect(isTaskStatus(s)).toBe(true);
+    }
+  });
+  it("rejects anything else", () => {
+    expect(isTaskStatus("done")).toBe(false);
+    expect(isTaskStatus(undefined)).toBe(false);
+  });
+});
+
+describe("assertCockpit", () => {
+  const valid = {
+    backend: { authority: "host-native", control_enabled: true },
+    repos: { repos: [] },
+    cards: [],
+    inbox: { items: [] },
+  };
+
+  it("accepts a well-formed cockpit", () => {
+    expect(assertCockpit(valid).cards).toEqual([]);
+  });
+
+  it("rejects a non-object top level", () => {
+    expect(() => assertCockpit(null)).toThrow(IncompatibleResponseError);
+    expect(() => assertCockpit([])).toThrow(IncompatibleResponseError);
+  });
+
+  it("rejects a missing cards array", () => {
+    expect(() => assertCockpit({ ...valid, cards: undefined })).toThrow(
+      IncompatibleResponseError,
+    );
+  });
+
+  it("rejects a card with an invalid status", () => {
+    const bad = { ...valid, cards: [{ qualified_handle: "x/y", repo: "x", status: "nope", actions: [] }] };
+    expect(() => assertCockpit(bad)).toThrow(IncompatibleResponseError);
+  });
+
+  it("rejects a malformed action", () => {
+    const bad = {
+      ...valid,
+      cards: [
+        {
+          qualified_handle: "x/y",
+          repo: "x",
+          status: "idle",
+          actions: [{ label: "no action id" }],
+        },
+      ],
+    };
+    expect(() => assertCockpit(bad)).toThrow(IncompatibleResponseError);
+  });
+});
+
+describe("assertPaneSnapshot", () => {
+  it("accepts a valid snapshot", () => {
+    const snap = assertPaneSnapshot({ sequence: 3, lines: ["a"], tmux_exists: true, state: null });
+    expect(snap.sequence).toBe(3);
+  });
+
+  it("rejects a non-numeric sequence", () => {
+    expect(() =>
+      assertPaneSnapshot({ sequence: "3", lines: [], tmux_exists: true, state: null }),
+    ).toThrow(IncompatibleResponseError);
+  });
+});
