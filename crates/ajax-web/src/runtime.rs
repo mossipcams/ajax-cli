@@ -1434,6 +1434,7 @@ mod tests {
             .unwrap();
         assert_eq!(shell.status(), StatusCode::OK);
         assert_eq!(shell.headers()["content-type"], "text/html; charset=utf-8");
+        assert_eq!(shell.headers()["cache-control"], "no-store");
         let shell_body = to_bytes(shell.into_body(), usize::MAX).await.unwrap();
         assert!(std::str::from_utf8(&shell_body)
             .unwrap()
@@ -1454,6 +1455,7 @@ mod tests {
             cockpit.headers()["content-type"],
             "application/json; charset=utf-8"
         );
+        assert_eq!(cockpit.headers()["cache-control"], "no-store");
         let cockpit_body = to_bytes(cockpit.into_body(), usize::MAX).await.unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&cockpit_body).unwrap()["cards"],
@@ -1461,6 +1463,7 @@ mod tests {
         );
 
         let missing_api = app
+            .clone()
             .oneshot(
                 AxumRequest::builder()
                     .uri("/api/missing")
@@ -1474,10 +1477,34 @@ mod tests {
             missing_api.headers()["content-type"],
             "application/json; charset=utf-8"
         );
+        assert_eq!(missing_api.headers()["cache-control"], "no-store");
         let missing_api_body = to_bytes(missing_api.into_body(), usize::MAX).await.unwrap();
         assert!(!std::str::from_utf8(&missing_api_body)
             .unwrap()
             .contains("Ajax Cockpit"));
+
+        let missing_asset = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/does-not-exist.css")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(missing_asset.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            missing_asset.headers()["content-type"],
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(missing_asset.headers()["cache-control"], "no-store");
+        let missing_asset_body = to_bytes(missing_asset.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&missing_asset_body).unwrap(),
+            "not found"
+        );
     }
 
     #[tokio::test]
@@ -1716,6 +1743,7 @@ mod tests {
         let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
         assert_eq!(first_json["ok"], true);
         assert_eq!(first_json["request_id"], "req-1");
+        assert!(first_json["cockpit"].is_object());
 
         let second = app
             .oneshot(
@@ -1766,6 +1794,11 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
+            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(json["ok"], true);
+            assert_eq!(json["request_id"], "start-1");
+            assert!(json["cockpit"].is_object());
         }
 
         let guard = state
@@ -1807,6 +1840,220 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], false);
         assert!(json["error"].as_str().unwrap_or_default().contains("json"));
+    }
+
+    #[tokio::test]
+    async fn answer_endpoint_returns_unprocessable_entity_for_non_answerable_prompt() {
+        let state = super::WebAppState::new(
+            answer_task_context(),
+            PaneRunner {
+                response: Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: "› Write tests for @filename\ngpt-5.4 high · ~/.ajax-dev/x\n"
+                        .to_string(),
+                    stderr: String::new(),
+                }),
+                run_count: 0,
+            },
+            TestBridge::default(),
+            scratch_dir("axum-answer-422"),
+        );
+        let app = super::axum_app(state);
+        let fingerprint = ajax_core::agent_prompt::parse_prompt(
+            ajax_core::models::AgentClient::Codex,
+            &[
+                "› Write tests for @filename".to_string(),
+                "gpt-5.4 high · ~/.ajax-dev/x".to_string(),
+            ],
+        )
+        .expect("prompt")
+        .fingerprint;
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/tasks/web/fix-login/answer")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-422"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("open the terminal"));
+    }
+
+    #[tokio::test]
+    async fn answer_endpoint_returns_rate_limited_when_input_budget_is_exhausted() {
+        let state = super::WebAppState::new(
+            answer_task_context(),
+            PaneRunner {
+                response: Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: "Run `cargo test`? [y/n]\n".to_string(),
+                    stderr: String::new(),
+                }),
+                run_count: 0,
+            },
+            TestBridge::default(),
+            scratch_dir("axum-answer-429"),
+        );
+        let app = super::axum_app(state);
+        let fingerprint = ajax_core::agent_prompt::parse_prompt(
+            ajax_core::models::AgentClient::Codex,
+            &["Run `cargo test`? [y/n]".to_string()],
+        )
+        .expect("prompt")
+        .fingerprint;
+
+        for index in 0..10 {
+            let response = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .method("POST")
+                        .uri("/api/tasks/web/fix-login/answer")
+                        .header("content-type", "application/json")
+                        .body(Body::from(format!(
+                            r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-{index}"}}"#
+                        )))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        let limited = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/tasks/web/fix-login/answer")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-429"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = to_bytes(limited.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("too many inputs"));
+    }
+
+    #[tokio::test]
+    async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge {
+                operate_result: Err(ActionFailure {
+                    message: "bridge failed".to_string(),
+                    state_changed: true,
+                }),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-operation-error"),
+        );
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/operations")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"op-error-1","task_handle":"web/fix-login","action":"review"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["request_id"], "op-error-1");
+        assert_eq!(json["state_changed"], true);
+        assert_eq!(json["error"], "bridge failed");
+        assert!(json["cockpit"].is_object());
+    }
+
+    #[test]
+    fn committed_operation_fixture_matches_production_response_builder() {
+        let context = crate::slices::cockpit::tests::browser_contract_context();
+        let response = super::operation_success_response(
+            OperateOutcome {
+                state_changed: true,
+                output: "Operation completed successfully.".to_string(),
+            },
+            &context,
+        )
+        .unwrap();
+        let actual: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../web/src/fixtures/operation.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
+
+    #[tokio::test]
+    async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
+        let state = super::WebAppState::new(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            OkRunner,
+            TestBridge {
+                start_result: Err(ActionFailure {
+                    message: "start failed".to_string(),
+                    state_changed: true,
+                }),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-start-error"),
+        );
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/tasks")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"start-error-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["request_id"], "start-error-1");
+        assert_eq!(json["state_changed"], true);
+        assert_eq!(json["error"], "start failed");
+        assert!(json["cockpit"].is_object());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

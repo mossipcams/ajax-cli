@@ -6,8 +6,14 @@
   },
   "repos": {
     "repos": [
-      { "name": "web" },
-      { "name": "api" }
+      {
+        "name": "web",
+        "path": "/repo/web",
+        "active_tasks": 0,
+        "reviewable_tasks": 1,
+        "cleanable_tasks": 0,
+        "attention_items": 1
+      }
     ]
   },
   "cards": [
@@ -17,35 +23,30 @@
       "repo": "web",
       "title": "Fix login",
       "status": "waiting",
-      "status_explanation": "Waiting for review",
+      "status_explanation": "Waiting for approval",
       "actions": [
         {
-          "action": "review",
-          "label": "Review",
+          "action": "ship",
           "destructive": false,
           "confirmation_required": false
         },
         {
           "action": "drop",
-          "label": "Drop",
           "destructive": true,
           "confirmation_required": true
         }
       ]
-    },
-    {
-      "id": "api/add-auth",
-      "qualified_handle": "api/add-auth",
-      "repo": "api",
-      "title": "Add auth",
-      "status": "running",
-      "status_explanation": null,
-      "actions": []
     }
   ],
   "inbox": {
     "items": [
-      { "task_handle": "web/fix-login", "severity": 2 }
+      {
+        "task_id": "web/fix-login",
+        "task_handle": "web/fix-login",
+        "severity": 1,
+        "reason": "Waiting for approval",
+        "action": "Resume"
+      }
     ]
   }
 }

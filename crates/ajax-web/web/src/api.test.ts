@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { ApiError, postAnswer, postOperation, fetchCockpit } from "./api";
+import { postAnswer, postOperation, fetchCockpit } from "./api";
 
 function mockFetch(impl: () => Promise<Response> | Response) {
   vi.stubGlobal("fetch", vi.fn(impl));
@@ -43,21 +43,21 @@ describe("fetchCockpit", () => {
 
 describe("postAnswer status mapping", () => {
   it("maps 409 to a conflict error", async () => {
-    mockFetch(() => json({}, 409));
+    mockFetch(() => json({ ok: false, error: "stale" }, 409));
     await expect(
       postAnswer("web/x", { answer: "approve", fingerprint: "f", request_id: "r" }),
     ).rejects.toMatchObject({ kind: "conflict" });
   });
 
   it("maps 422 to a terminal-escalation error", async () => {
-    mockFetch(() => json({}, 422));
+    mockFetch(() => json({ ok: false, error: "terminal required" }, 422));
     await expect(
       postAnswer("web/x", { answer: "deny", fingerprint: "f", request_id: "r" }),
     ).rejects.toMatchObject({ kind: "terminal" });
   });
 
   it("maps 429 to a rate-limit error", async () => {
-    mockFetch(() => json({}, 429));
+    mockFetch(() => json({ ok: false, error: "too many inputs" }, 429));
     await expect(
       postAnswer("web/x", { answer: "approve", fingerprint: "f", request_id: "r" }),
     ).rejects.toMatchObject({ kind: "rate-limit" });
@@ -66,7 +66,9 @@ describe("postAnswer status mapping", () => {
 
 describe("postOperation", () => {
   it("returns the refreshed cockpit projection on success", async () => {
-    mockFetch(() => json({ cockpit: validCockpit, output: "done" }));
+    mockFetch(() =>
+      json({ ok: true, state_changed: true, cockpit: validCockpit, output: "done" }),
+    );
     const result = await postOperation({
       task_handle: "web/x",
       action: "review",
@@ -76,16 +78,28 @@ describe("postOperation", () => {
     expect(result.response.cockpit?.cards).toEqual([]);
   });
 
-  it("surfaces a non-JSON error body as an http error", async () => {
+  it("rejects a non-JSON mutation response as incompatible", async () => {
     mockFetch(
       () => new Response("boom", { status: 500, headers: { "content-type": "text/plain" } }),
     );
-    const result = await postOperation({
-      task_handle: "web/x",
-      action: "review",
-      request_id: "r",
-    });
-    expect(result.ok).toBe(false);
-    expect(result.error).toBeInstanceOf(ApiError);
+    await expect(
+      postOperation({
+        task_handle: "web/x",
+        action: "review",
+        request_id: "r",
+      }),
+    ).rejects.toMatchObject({ kind: "incompatible" });
+  });
+
+  it("rejects a malformed mutation envelope as incompatible", async () => {
+    mockFetch(() => json({ ok: true, cockpit: { cards: "not-an-array" } }));
+
+    await expect(
+      postOperation({
+        task_handle: "web/x",
+        action: "review",
+        request_id: "r",
+      }),
+    ).rejects.toMatchObject({ kind: "incompatible" });
   });
 });

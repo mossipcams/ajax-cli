@@ -3,7 +3,13 @@
 // identically. Callers receive typed results and normalized errors; they must
 // not parse responses or branch on raw status codes themselves.
 
-import { assertCockpit, assertDetail, assertPaneSnapshot } from "./contracts";
+import {
+  assertCockpit,
+  assertDetail,
+  assertOperationResponse,
+  assertPaneSnapshot,
+  assertTaskInputResponse,
+} from "./contracts";
 import { RESTART_POLL_MS, RESTART_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
@@ -13,6 +19,7 @@ import type {
   OperationResponse,
   StartTaskRequest,
   TaskAnswerRequest,
+  TaskInputResponse,
   VersionResponse,
 } from "./types";
 
@@ -113,11 +120,7 @@ export async function fetchPane(handle: string, since: number): Promise<PaneResu
   }
   if (response.status === 404) return { kind: "missing" };
   if (response.status === 409) {
-    const data = (await readJson(response)) as Partial<BrowserPaneSnapshot>;
-    return {
-      kind: "conflict",
-      snapshot: { sequence: since, lines: [], tmux_exists: false, state: null, ...data },
-    };
+    return { kind: "conflict", snapshot: assertPaneSnapshot(await readJson(response)) };
   }
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
@@ -125,7 +128,7 @@ export async function fetchPane(handle: string, since: number): Promise<PaneResu
   return { kind: "ok", snapshot: assertPaneSnapshot(await readJson(response)) };
 }
 
-async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: OperationResponse }> {
+async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -137,8 +140,20 @@ async function postJson(path: string, body: unknown): Promise<{ response: Respon
   } catch (error) {
     throw new ApiError("network", error instanceof Error ? error.message : String(error));
   }
-  const payload = (await readJson(response)) as OperationResponse;
+  const payload = await readJson(response);
   return { response, payload };
+}
+
+function errorMessage(payload: unknown, fallback: string): string {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
+  }
+  return fallback;
 }
 
 /** Operations and task-start return a refreshed cockpit projection; callers
@@ -150,7 +165,8 @@ export interface MutationResult {
 }
 
 export async function postOperation(req: OperationRequest): Promise<MutationResult> {
-  const { response, payload } = await postJson("/api/operations", req);
+  const { response, payload: rawPayload } = await postJson("/api/operations", req);
+  const payload = assertOperationResponse(rawPayload);
   if (response.ok) return { ok: true, response: payload };
   return {
     ok: false,
@@ -160,7 +176,8 @@ export async function postOperation(req: OperationRequest): Promise<MutationResu
 }
 
 export async function startTask(req: StartTaskRequest): Promise<MutationResult> {
-  const { response, payload } = await postJson("/api/tasks", req);
+  const { response, payload: rawPayload } = await postJson("/api/tasks", req);
+  const payload = assertOperationResponse(rawPayload);
   if (response.ok) return { ok: true, response: payload };
   return {
     ok: false,
@@ -169,12 +186,16 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
   };
 }
 
-export async function postAnswer(handle: string, req: TaskAnswerRequest): Promise<OperationResponse> {
+export async function postAnswer(handle: string, req: TaskAnswerRequest): Promise<TaskInputResponse> {
   const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/answer`, req);
   if (!response.ok) {
-    throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
   }
-  return payload;
+  return assertTaskInputResponse(payload);
 }
 
 export async function checkHealth(): Promise<boolean> {
@@ -201,7 +222,8 @@ export async function waitForServerOnline(
 }
 
 export async function restartServer(): Promise<OperationResponse> {
-  const { response, payload } = await postJson("/api/server/restart", {});
+  const { response, payload: rawPayload } = await postJson("/api/server/restart", {});
+  const payload = assertOperationResponse(rawPayload);
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
   }

@@ -122,22 +122,26 @@ export type PaneStateKind =
   | string;
 
 export interface BrowserPaneChoice {
+  index: number;
   label: string;
-  value: string;
+  role: "affirm" | "deny" | "neutral";
 }
 
 export interface BrowserPaneState {
   kind: PaneStateKind;
+  summary?: string;
   command?: string | null;
   prompt?: string | null;
-  answerable?: boolean;
-  fingerprint?: string | null;
   choices?: BrowserPaneChoice[];
+  confidence?: "high" | "low";
+  fingerprint?: string | null;
+  answerable: boolean;
 }
 
 export interface BrowserPaneSnapshot {
   sequence: number;
   lines: string[];
+  truncated?: boolean;
   tmux_exists: boolean;
   state: BrowserPaneState | null;
 }
@@ -163,9 +167,17 @@ export interface OperationRequest {
 
 /** Operation/start envelopes return a refreshed projection on state change. */
 export interface OperationResponse {
+  ok?: boolean;
+  request_id?: string;
+  state_changed?: boolean;
   cockpit?: BrowserCockpitView;
   output?: string | null;
   error?: string | null;
+  restarting?: boolean;
+}
+
+export interface TaskInputResponse {
+  sequence_hint: number;
 }
 
 export interface VersionResponse {

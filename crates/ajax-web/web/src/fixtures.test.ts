@@ -3,8 +3,12 @@
 // If Rust changes a serialized field name or enum casing these tests will fail,
 // prompting a synchronized types.ts update.
 import { describe, it, expect } from "vitest";
-import { assertCockpit, assertPaneSnapshot } from "./contracts";
-import type { BrowserTaskDetail, OperationResponse } from "./types";
+import {
+  assertCockpit,
+  assertDetail,
+  assertOperationResponse,
+  assertPaneSnapshot,
+} from "./contracts";
 
 import cockpit from "./fixtures/cockpit.json";
 import taskDetail from "./fixtures/task-detail.json";
@@ -14,7 +18,7 @@ import operation from "./fixtures/operation.json";
 describe("cockpit fixture", () => {
   it("passes boundary guard without throwing", () => {
     const view = assertCockpit(cockpit);
-    expect(view.cards).toHaveLength(2);
+    expect(view.cards).toHaveLength(1);
   });
 
   it("has explicit repo identity on every card", () => {
@@ -51,7 +55,7 @@ describe("cockpit fixture", () => {
 
 describe("task-detail fixture", () => {
   it("has all required top-level fields", () => {
-    const d = taskDetail as BrowserTaskDetail;
+    const d = assertDetail(taskDetail);
     expect(typeof d.qualified_handle).toBe("string");
     expect(typeof d.repo).toBe("string");
     expect(typeof d.status).toBe("string");
@@ -61,12 +65,12 @@ describe("task-detail fixture", () => {
   });
 
   it("next_step is a string when guidance is available", () => {
-    const d = taskDetail as BrowserTaskDetail;
+    const d = assertDetail(taskDetail);
     expect(typeof d.next_step).toBe("string");
   });
 
   it("agent_attempts is an array of attempts", () => {
-    const d = taskDetail as BrowserTaskDetail;
+    const d = assertDetail(taskDetail);
     expect(Array.isArray(d.agent_attempts)).toBe(true);
     expect(d.agent_attempts[0].started_unix_secs).toBeTypeOf("number");
   });
@@ -89,7 +93,7 @@ describe("pane fixture", () => {
 
 describe("operation response fixture", () => {
   it("refreshed cockpit passes boundary guard", () => {
-    const resp = operation as OperationResponse;
+    const resp = assertOperationResponse(operation);
     if (resp.cockpit) {
       const view = assertCockpit(resp.cockpit);
       expect(view.cards).toHaveLength(1);
@@ -97,7 +101,7 @@ describe("operation response fixture", () => {
   });
 
   it("output is a string when present", () => {
-    const resp = operation as OperationResponse;
+    const resp = assertOperationResponse(operation);
     if (resp.output != null) {
       expect(typeof resp.output).toBe("string");
     }

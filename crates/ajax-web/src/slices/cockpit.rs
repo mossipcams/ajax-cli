@@ -251,7 +251,7 @@ fn browser_agent_attempt(attempt: &AgentAttempt) -> BrowserAgentAttempt {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{browser_cockpit_json, browser_task_card};
     use ajax_core::{
         commands::CommandContext,
@@ -733,5 +733,72 @@ mod tests {
                 "WebAction must not expose a `status` field"
             );
         }
+    }
+
+    #[test]
+    fn committed_cockpit_fixture_matches_production_serialization() {
+        let context = browser_contract_context();
+        let actual = serde_json::to_value(super::browser_cockpit_view(&context)).unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/fixtures/cockpit.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
+
+    #[test]
+    fn committed_task_detail_fixture_matches_production_serialization() {
+        let context = browser_contract_context();
+        let actual = serde_json::to_value(
+            super::browser_task_detail_view(&context, "web/fix-login").unwrap(),
+        )
+        .unwrap();
+        let committed: serde_json::Value =
+            serde_json::from_str(include_str!("../../web/src/fixtures/task-detail.json")).unwrap();
+
+        assert_eq!(committed, actual);
+    }
+
+    pub(crate) fn browser_contract_context() -> CommandContext<InMemoryRegistry> {
+        use ajax_core::config::ManagedRepo;
+        use ajax_core::models::{
+            AgentAttempt, AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation,
+            LiveStatusKind, Task, TaskId,
+        };
+        use std::time::{Duration, SystemTime};
+
+        let config = Config {
+            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
+            ..Config::default()
+        };
+        let mut registry = InMemoryRegistry::default();
+        let mut task = Task::new(
+            TaskId::new("web/fix-login"),
+            "web",
+            "fix-login",
+            "Fix login",
+            "ajax/fix-login",
+            "main",
+            "/repo/web__worktrees/ajax-fix-login",
+            "ajax-web-fix-login",
+            "worktrunk",
+            AgentClient::Codex,
+        );
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.live_status = Some(LiveObservation::new(
+            LiveStatusKind::WaitingForApproval,
+            "waiting for review",
+        ));
+        task.agent_status = AgentRuntimeStatus::Waiting;
+        task.created_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        task.last_activity_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000);
+        task.agent_attempts.push(AgentAttempt {
+            agent: AgentClient::Codex,
+            launch_target: "worktrunk".to_string(),
+            started_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            finished_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000)),
+            status: AgentRuntimeStatus::Done,
+        });
+        registry.create_task(task).unwrap();
+        CommandContext::new(config, registry)
     }
 }
