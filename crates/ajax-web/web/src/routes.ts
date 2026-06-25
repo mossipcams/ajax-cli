@@ -12,16 +12,24 @@ export interface Route {
 const TASK_PREFIX = "#/t/";
 const PROJECT_PREFIX = "#/p/";
 
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 export function parseRoute(hash: string): Route {
   const value = hash || "#/";
   if (value === "#/settings") return { kind: "settings" };
   if (value.startsWith(TASK_PREFIX)) {
-    const handle = decodeURIComponent(value.slice(TASK_PREFIX.length));
+    const handle = safeDecode(value.slice(TASK_PREFIX.length));
     if (!handle) return { kind: "dashboard" };
     return { kind: "task", handle };
   }
   if (value.startsWith(PROJECT_PREFIX)) {
-    const project = decodeURIComponent(value.slice(PROJECT_PREFIX.length));
+    const project = safeDecode(value.slice(PROJECT_PREFIX.length));
     if (!project) return { kind: "dashboard" };
     return { kind: "project", project };
   }
