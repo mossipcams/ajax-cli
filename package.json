@@ -8,11 +8,23 @@
     "lint:duplication": "jscpd --config .jscpd.json",
     "verify:probity": "node scripts/verify-probity.mjs",
     "dev:web": "./scripts/dev-web-restart.sh",
+    "web:check": "svelte-check --tsconfig crates/ajax-web/web/tsconfig.json",
+    "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
+    "web:dev": "vite --config crates/ajax-web/web/vite.config.mts",
     "prepare": "husky"
   },
   "devDependencies": {
     "@nizos/probity": "^1.5.0",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/svelte": "^5.2.6",
     "husky": "^9.1.7",
-    "jscpd": "^4.2.3"
+    "jscpd": "^4.2.3",
+    "jsdom": "^25.0.1",
+    "svelte": "^5.19.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
   }
 }
