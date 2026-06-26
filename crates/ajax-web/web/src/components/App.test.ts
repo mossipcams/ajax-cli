@@ -1,15 +1,29 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
 import App from "./App.svelte";
+import cockpit from "../fixtures/cockpit.json";
+import taskDetail from "../fixtures/task-detail.json";
 
 function setHash(hash: string) {
   window.location.hash = hash;
   window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    text: () => Promise.resolve(JSON.stringify(body)),
+  };
+}
+
 describe("App shell", () => {
   beforeEach(() => {
     window.location.hash = "";
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders the shared chrome", () => {
@@ -39,5 +53,79 @@ describe("App shell", () => {
     const { findByTestId } = render(App);
     setHash("#/t/web%2Ffix-login");
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
+  });
+
+  it("reports reachable cockpit HTTP failures as disconnected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        text: () => Promise.resolve("Service Unavailable"),
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+
+    expect(await findByText("disconnected: HTTP 503")).toBeInTheDocument();
+    expect(queryByText("backend unreachable")).toBeNull();
+  });
+
+  it("reports cockpit network failures as backend unreachable with detail", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
+
+    const { findByText } = render(App);
+
+    expect(await findByText("backend unreachable: Failed to fetch")).toBeInTheDocument();
+  });
+
+  it("reports reachable detail HTTP failures as disconnected", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) {
+          return Promise.resolve(jsonResponse({ error: "detail unavailable" }, 500));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByText } = render(App);
+    setHash("#/t/web%2Ffix-login");
+
+    expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
+  });
+
+  it("clears detail failure text after a later successful detail load", async () => {
+    let detailCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) {
+          detailCalls += 1;
+          if (detailCalls <= 2) {
+            return Promise.resolve(jsonResponse({ error: "detail unavailable" }, 500));
+          }
+          return Promise.resolve(jsonResponse(taskDetail));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+    setHash("#/t/web%2Ffix-login");
+    expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
+
+    setHash("#/");
+    setHash("#/t/web%2Ffix-login");
+
+    expect(await findByText("connected")).toBeInTheDocument();
+    expect(queryByText("disconnected: HTTP 500")).toBeNull();
   });
 });
