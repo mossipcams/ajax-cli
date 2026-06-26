@@ -1,5 +1,4 @@
 use ajax_core::adapters::{CommandRunError, CommandRunner};
-#[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
 use ajax_core::commands::OpenMode;
 use ajax_core::commands::{self, CommandContext};
