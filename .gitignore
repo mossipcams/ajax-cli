@@ -4,3 +4,7 @@ graphify-out/
 node_modules/
 __pycache__/
 *.egg-info/
+
+# Playwright (web:smoke) run artifacts
+test-results/
+playwright-report/
