@@ -42,6 +42,7 @@ use crate::adapters::http::{
 };
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
@@ -224,9 +225,12 @@ where
         let tcp_listener = tokio::net::TcpListener::bind(address)
             .await
             .map_err(|error| WebError::CommandFailed(format!("web bind failed: {error}")))?;
+        let (accepted_tls_tx, accepted_tls_rx) = tokio::sync::mpsc::channel(1024);
         let tls_listener = TlsListener {
             listener: tcp_listener,
             acceptor: tokio_rustls::TlsAcceptor::from(tls_config),
+            accepted_tls_tx,
+            accepted_tls_rx,
         };
         axum::serve(tls_listener, axum_app(state))
             .await
@@ -237,6 +241,14 @@ where
 struct TlsListener {
     listener: tokio::net::TcpListener,
     acceptor: tokio_rustls::TlsAcceptor,
+    accepted_tls_tx: tokio::sync::mpsc::Sender<(
+        tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+        SocketAddr,
+    )>,
+    accepted_tls_rx: tokio::sync::mpsc::Receiver<(
+        tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+        SocketAddr,
+    )>,
 }
 
 impl Listener for TlsListener {
@@ -245,19 +257,36 @@ impl Listener for TlsListener {
 
     async fn accept(&mut self) -> (Self::Io, Self::Addr) {
         loop {
-            let (stream, address) = match self.listener.accept().await {
-                Ok(accepted) => accepted,
-                Err(error) => {
-                    eprintln!("Ajax web accept error: {error}");
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
+            tokio::select! {
+                accepted = self.accepted_tls_rx.recv() => {
+                    if let Some((stream, address)) = accepted {
+                        return (stream, address);
+                    }
                 }
-            };
-            match self.acceptor.accept(stream).await {
-                Ok(stream) => return (stream, address),
-                Err(error) => {
-                    eprintln!("Ajax web TLS handshake error from {address}: {error}");
-                    continue;
+                accepted = self.listener.accept() => {
+                    let (stream, address) = match accepted {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            eprintln!("Ajax web accept error: {error}");
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            continue;
+                        }
+                    };
+                    let acceptor = self.acceptor.clone();
+                    let accepted_tls_tx = self.accepted_tls_tx.clone();
+                    tokio::spawn(async move {
+                        match tokio::time::timeout(TLS_HANDSHAKE_TIMEOUT, acceptor.accept(stream)).await {
+                            Ok(Ok(stream)) => {
+                                let _ = accepted_tls_tx.send((stream, address)).await;
+                            }
+                            Ok(Err(error)) => {
+                                eprintln!("Ajax web TLS handshake error from {address}: {error}");
+                            }
+                            Err(_) => {
+                                eprintln!("Ajax web TLS handshake timeout from {address}");
+                            }
+                        }
+                    });
                 }
             }
         }
@@ -1164,7 +1193,11 @@ mod tests {
         body::{to_bytes, Body},
         http::{Request as AxumRequest, StatusCode},
     };
-    use std::time::Duration;
+    use std::{
+        io::{Read, Write},
+        sync::Arc,
+        time::Duration,
+    };
     use tower::ServiceExt;
 
     #[derive(Clone)]
@@ -1505,6 +1538,117 @@ mod tests {
             std::str::from_utf8(&missing_asset_body).unwrap(),
             "not found"
         );
+    }
+
+    #[tokio::test]
+    async fn tls_listener_idle_tcp_connection_does_not_block_health_request() {
+        let state = super::WebAppState::new(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("tls-idle-health"),
+        );
+        let identity = crate::adapters::tls::load_or_create_identity(&state.state_dir).unwrap();
+        let tls_config = crate::adapters::tls::tls_server_config(&identity).unwrap();
+        let tcp_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = tcp_listener.local_addr().unwrap();
+        let (accepted_tls_tx, accepted_tls_rx) = tokio::sync::mpsc::channel(1024);
+        let tls_listener = super::TlsListener {
+            listener: tcp_listener,
+            acceptor: tokio_rustls::TlsAcceptor::from(tls_config),
+            accepted_tls_tx,
+            accepted_tls_rx,
+        };
+        let server = tokio::spawn(async move {
+            axum::serve(tls_listener, super::axum_app(state))
+                .await
+                .unwrap();
+        });
+
+        let idle_connection = tokio::net::TcpStream::connect(address).await.unwrap();
+        let health =
+            tokio::time::timeout(Duration::from_millis(500), tls_get(address, "/api/health")).await;
+
+        drop(idle_connection);
+        server.abort();
+
+        let response = health.expect("health request timed out").unwrap();
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains(r#"{"ok":true}"#), "{response}");
+    }
+
+    #[derive(Debug)]
+    struct AcceptAnyServerCert;
+
+    impl rustls::client::danger::ServerCertVerifier for AcceptAnyServerCert {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &rustls::pki_types::CertificateDer<'_>,
+            _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+            _server_name: &rustls::pki_types::ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: rustls::pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            _message: &[u8],
+            _cert: &rustls::pki_types::CertificateDer<'_>,
+            _dss: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            vec![
+                rustls::SignatureScheme::RSA_PKCS1_SHA256,
+                rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+                rustls::SignatureScheme::RSA_PSS_SHA256,
+                rustls::SignatureScheme::ED25519,
+            ]
+        }
+    }
+
+    async fn tls_get(address: std::net::SocketAddr, path: &str) -> std::io::Result<String> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || tls_get_blocking(address, &path))
+            .await
+            .unwrap()
+    }
+
+    fn tls_get_blocking(address: std::net::SocketAddr, path: &str) -> std::io::Result<String> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(AcceptAnyServerCert))
+            .with_no_client_auth();
+        let server_name = rustls::pki_types::ServerName::try_from("localhost").unwrap();
+        let connection = rustls::ClientConnection::new(Arc::new(config), server_name)
+            .map_err(std::io::Error::other)?;
+        let stream = std::net::TcpStream::connect(address)?;
+        let mut stream = rustls::StreamOwned::new(connection, stream);
+        stream.write_all(
+            format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .as_bytes(),
+        )?;
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response)?;
+        Ok(String::from_utf8_lossy(&response).into_owned())
     }
 
     #[tokio::test]
