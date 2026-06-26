@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.21.2...ajax-cli-v0.22.0) (2026-06-26)
+
+
+### Features
+
+* **web:** modernize mobile cockpit with touch gestures, skeleton loads, and depth ([#210](https://github.com/mossipcams/ajax-cli/issues/210)) ([b280991](https://github.com/mossipcams/ajax-cli/commit/b2809915eab85448ad5adf5df6ed99c943e21d72))
+
+
+### Bug Fixes
+
+* allow empty registry wipe save ([#211](https://github.com/mossipcams/ajax-cli/issues/211)) ([7778248](https://github.com/mossipcams/ajax-cli/commit/77782486bf36303b1f3ba9963b4cf1789d1ddadd))
+
 ## [0.21.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.21.1...ajax-cli-v0.21.2) (2026-06-26)
 
 
