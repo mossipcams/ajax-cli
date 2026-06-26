@@ -117,3 +117,87 @@
     </div>
   </form>
 </div>
+
+<style>
+  /* NEW TASK SHEET — bottom-rising modal. Rendered only while open, so no
+     body-class toggle is needed (the legacy #new-task-sheet display switch). */
+  #new-task-sheet {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(0, 0, 0, 0.6);
+  }
+
+  .sheet-card {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius);
+    padding: 22px;
+    width: min(440px, 100%);
+    margin-bottom: max(8px, env(safe-area-inset-bottom));
+    animation: sheet-rise 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .sheet-card h2 {
+    margin: 0 0 16px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .sheet-card label {
+    display: block;
+    margin-top: 14px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .sheet-card input,
+  .sheet-card select {
+    width: 100%;
+    margin-top: 5px;
+    padding: 10px 12px;
+    font-size: 16px;
+    background: var(--paper);
+    color: var(--ink);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .sheet-card input:focus,
+  .sheet-card select:focus {
+    outline: none;
+    border-color: var(--teal-bright);
+  }
+
+  .sheet-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  .sheet-error {
+    margin: 12px 0 0;
+    color: var(--terracotta-bright);
+    font-size: 12px;
+  }
+
+  @keyframes sheet-rise {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @media (max-width: 380px) {
+    .sheet-card { padding: 18px; }
+  }
+</style>

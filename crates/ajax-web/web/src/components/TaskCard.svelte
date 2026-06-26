@@ -50,3 +50,97 @@
     </button>
   </div>
 </article>
+
+<style>
+  /* INBOX CARD — the part that earns the attention. The card is an <article>;
+     its body is a button (.inbox-card-open-body) so actions stay tappable. */
+  .inbox-card {
+    position: relative;
+    padding: 14px 16px 14px 17px;
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--tone, var(--rule-strong));
+    border-radius: var(--radius);
+    transition: background 140ms ease, transform 140ms ease, border-color 140ms ease;
+  }
+
+  .inbox-card:hover {
+    background: var(--paper-high);
+  }
+
+  .inbox-card:active {
+    transform: scale(0.995);
+  }
+
+  .inbox-card[data-severity="high"] {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--tone-bg) 70%, transparent),
+      var(--paper-raised) 42%
+    );
+  }
+
+  .inbox-card-open-body {
+    display: block;
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    border: none;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .inbox-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .inbox-card-handle {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink);
+  }
+
+  .status-badge {
+    flex: none;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    color: var(--tone, var(--ink-muted));
+    background: var(--tone-bg, transparent);
+    padding: 3px 9px;
+    border-radius: 999px;
+  }
+
+  .inbox-card-reason {
+    margin: 8px 0 0;
+    padding-left: 19px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
+  }
+
+  .inbox-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding-left: 19px;
+  }
+
+  @media (max-width: 380px) {
+    .inbox-card-handle { font-size: 14px; }
+  }
+</style>

@@ -86,3 +86,77 @@
     {/if}
   </div>
 </section>
+
+<style>
+  /* SETTINGS VIEW — rendered only on the settings route (legacy used a
+     body.view-settings toggle; routing replaces it). */
+  .settings-view {
+    display: block;
+  }
+
+  .settings-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .settings-header h2 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 1.25;
+    text-transform: none;
+    color: var(--ink);
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+  }
+
+  .settings-back {
+    flex: none;
+    min-height: 44px;
+    padding: 7px 16px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .settings-section {
+    margin-top: 22px;
+    padding-top: 16px;
+    border-top: 1px solid var(--rule);
+  }
+
+  .settings-section h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .settings-note {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .settings-note :global(code) {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--mustard-bright);
+  }
+
+  .settings-status {
+    margin: 12px 0 0;
+    font-size: 13px;
+    color: var(--ink-muted);
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+</style>

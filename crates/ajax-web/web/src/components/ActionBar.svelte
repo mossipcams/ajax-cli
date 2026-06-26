@@ -98,3 +98,12 @@
     </button>
   {/each}
 </div>
+
+<style>
+  /* Row of action buttons (buttons themselves use the global .action styles). */
+  .action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+</style>

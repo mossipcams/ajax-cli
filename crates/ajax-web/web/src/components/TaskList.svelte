@@ -158,3 +158,201 @@
 {#if visibleCount === 0}
   <p class="empty">{selectedProject ? `No tasks in ${selectedProject}` : "All quiet"}</p>
 {/if}
+
+<style>
+  /* PROJECT NAV ----------------------------------------------------------- */
+  .project-nav {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0 18px;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .project-nav-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-right: 4px;
+  }
+
+  .project-pill {
+    background: transparent;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    color: var(--ink-soft);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    padding: 5px 12px;
+    min-height: 28px;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  .project-pill:hover,
+  .project-pill:focus-visible {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+    outline: none;
+  }
+
+  .project-pill.is-active {
+    background: var(--mustard);
+    border-color: var(--mustard);
+    color: #1c1714;
+    font-weight: 600;
+  }
+
+  /* SECTION HEADS — small caps + count chip ------------------------------- */
+  .section-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 26px 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .group:first-of-type .section-head {
+    margin-top: 6px;
+  }
+
+  .section-head::after {
+    content: "";
+    flex: 1 1 auto;
+  }
+
+  .section-head-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .section-head.attention .section-head-title {
+    color: var(--mustard-bright);
+  }
+
+  .section-head-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--paper-high);
+    color: var(--ink-soft);
+    font-size: 11px;
+    font-weight: 700;
+    font-feature-settings: "tnum";
+  }
+
+  .section-head.attention .section-head-count {
+    background: var(--mustard);
+    color: #1c1714;
+  }
+
+  /* INBOX LIST — grid of attention cards (cards styled in TaskCard) -------- */
+  .inbox-list {
+    display: grid;
+    gap: 10px;
+  }
+
+  /* CALM TASK LIST — light, glanceable rows -------------------------------- */
+  .task-group + .task-group {
+    margin-top: 16px;
+  }
+
+  .task-group-title {
+    margin: 0 0 6px;
+    padding-left: 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .task-list {
+    display: grid;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--paper-tint);
+  }
+
+  .task-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 13px 14px;
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--rule);
+    color: var(--ink);
+    text-align: left;
+    transition: background 120ms ease;
+  }
+
+  .task-row:first-child {
+    border-top: none;
+  }
+
+  .task-row:hover,
+  .task-row:focus-visible {
+    background: var(--paper-raised);
+    outline: none;
+  }
+
+  .task-row:active {
+    background: var(--paper-high);
+  }
+
+  .task-row-main {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .task-row-handle {
+    font-size: 14.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink);
+  }
+
+  .task-row-sub {
+    font-size: 12px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .task-row-status {
+    flex: none;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--tone, var(--ink-muted));
+  }
+
+  .task-row-chevron {
+    flex: none;
+    font-size: 18px;
+    line-height: 1;
+    color: var(--ink-faint);
+  }
+</style>
