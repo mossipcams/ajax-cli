@@ -11,6 +11,9 @@
   import TaskDetail from "./TaskDetail.svelte";
   import SettingsView from "./SettingsView.svelte";
   import NewTaskSheet from "./NewTaskSheet.svelte";
+  import Skeleton from "./Skeleton.svelte";
+  import { pullToRefresh } from "../gestures/pullToRefreshAction";
+  import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -21,6 +24,7 @@
   let updateAvailable = $state(false);
   let sheetOpen = $state(false);
   let result = $state<{ message: string; output?: string | null; isError: boolean } | null>(null);
+  let pullDistance = $state(0);
 
   let selectedProject = $derived(route.kind === "project" ? (route.project ?? null) : null);
   let bootVersion: string | null = null;
@@ -77,11 +81,23 @@
     }
   }
 
+  // Run non-critical boot work once the browser is idle so it never blocks
+  // first paint. Falls back to a near-immediate timer where unsupported (iOS).
+  function whenIdle(callback: () => void): number {
+    if (typeof requestIdleCallback === "function") return requestIdleCallback(callback);
+    return setTimeout(callback, 1) as unknown as number;
+  }
+
+  function cancelIdle(handle: number) {
+    if (typeof cancelIdleCallback === "function") cancelIdleCallback(handle);
+    else clearTimeout(handle);
+  }
+
   // Cockpit polling — mount once; the interval callback is not a tracked read.
   $effect(() => {
     unregisterExistingServiceWorkers();
     void loadCockpit();
-    void checkVersion();
+    const idleHandle = whenIdle(() => void checkVersion());
     const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);
     const versionTimer = setInterval(checkVersion, VERSION_POLL_MS);
     const onHashChange = () => (route = parseRoute(location.hash));
@@ -94,6 +110,7 @@
     window.addEventListener("pageshow", onResume);
     document.addEventListener("visibilitychange", onResume);
     return () => {
+      cancelIdle(idleHandle);
       clearInterval(cockpitTimer);
       clearInterval(versionTimer);
       window.removeEventListener("hashchange", onHashChange);
@@ -189,7 +206,7 @@
           onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
         />
       {:else}
-        <p class="empty">Loading task…</p>
+        <Skeleton testid="task-skeleton" rows={6} />
       {/if}
     </section>
   {:else}
@@ -197,7 +214,16 @@
       data-outlet={route.kind === "project" ? "project" : "dashboard"}
       data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
       aria-live="polite"
+      use:pullToRefresh={{ onRefresh: () => loadCockpit(), onDistance: (d) => (pullDistance = d) }}
     >
+      <div
+        class="pull-indicator"
+        class:armed={pullDistance >= PULL_THRESHOLD}
+        style="height: {pullDistance}px"
+        aria-hidden="true"
+      >
+        <span class="pull-spinner"></span>
+      </div>
       {#if cockpit}
         <TaskList
           {cockpit}
@@ -209,7 +235,7 @@
           onMutated={() => loadCockpit()}
         />
       {:else}
-        <p class="empty">— loading</p>
+        <Skeleton testid="dashboard-skeleton" rows={4} />
       {/if}
       <button
         class="new-task-row"
@@ -240,6 +266,30 @@
 {/if}
 
 <style>
+  /* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
+  .pull-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    margin-bottom: 0;
+  }
+
+  .pull-spinner {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid var(--rule-strong);
+    border-top-color: var(--teal-bright);
+    opacity: 0.5;
+    transition: opacity 140ms var(--ease), transform 140ms var(--ease);
+  }
+
+  .pull-indicator.armed .pull-spinner {
+    opacity: 1;
+    transform: rotate(180deg);
+  }
+
   /* NEW TASK ROW — dashed call-to-action below the calm task list. */
   .new-task-row {
     display: flex;

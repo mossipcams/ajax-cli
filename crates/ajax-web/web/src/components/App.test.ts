@@ -42,6 +42,19 @@ describe("App shell", () => {
     expect(container.querySelector("[data-outlet='settings']")).toBeNull();
   });
 
+  it("shows a dashboard skeleton while the cockpit projection is loading", () => {
+    const { container } = render(App);
+    expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();
+    expect(container.querySelector(".empty")).toBeNull();
+  });
+
+  it("shows a task skeleton while a task detail is loading", async () => {
+    const { container, findByTestId } = render(App);
+    setHash("#/t/web%2Ffix-login");
+    await findByTestId("outlet-task");
+    expect(container.querySelector("[data-testid='task-skeleton']")).toBeInTheDocument();
+  });
+
   it("shows the settings outlet on the settings route", async () => {
     const { container, findByTestId } = render(App);
     setHash("#/settings");
@@ -53,6 +66,31 @@ describe("App shell", () => {
     const { findByTestId } = render(App);
     setHash("#/t/web%2Ffix-login");
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
+  });
+
+  it("defers the version check until the browser is idle", async () => {
+    let idleCb: (() => void) | null = null;
+    vi.stubGlobal("requestIdleCallback", (cb: () => void) => {
+      idleCb = cb;
+      return 1;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(App);
+
+    const hitVersion = () =>
+      fetchMock.mock.calls.some(([path]) => String(path) === "/api/version");
+
+    expect(hitVersion()).toBe(false);
+    expect(typeof idleCb).toBe("function");
+    idleCb!();
+    await vi.waitFor(() => expect(hitVersion()).toBe(true));
   });
 
   it("reports reachable cockpit HTTP failures as disconnected", async () => {

@@ -38,8 +38,27 @@
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --label-tracking: 0.18em;
   --shell: 560px;
+
+  /* Spacing scale — 4px rhythm. Use in place of ad-hoc pixel values. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Radii */
   --radius: 10px;
   --radius-sm: 6px;
+  --radius-lg: 14px;
+
+  /* Depth — shadows tuned for the dark walnut surface, not flat black. */
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --elev-2: 0 6px 20px rgba(0, 0, 0, 0.34);
+
+  /* Motion — shared easings so transitions feel like one system. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Canonical task status tones — set --tone / --tone-bg consumed by status dots,
@@ -493,11 +512,12 @@ main {
 
 /* INTERACT PANEL shell (TaskDetail + PanePanel) --------------------------- */
 .interact-panel {
-  margin-top: 18px;
-  padding: 16px;
+  margin-top: var(--space-5);
+  padding: var(--space-4);
   background: var(--paper-raised);
   border: 1px solid var(--rule);
-  border-radius: var(--radius);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-1);
 }
 
 .interact-card-label {
@@ -527,6 +547,7 @@ main {
   background: color-mix(in srgb, var(--paper) 94%, transparent);
   -webkit-backdrop-filter: saturate(140%) blur(12px);
   backdrop-filter: saturate(140%) blur(12px);
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.28);
 }
 
 .bottom-nav button {
