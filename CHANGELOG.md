@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.21.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.21.1...ajax-cli-v0.21.2) (2026-06-26)
+
+
+### Bug Fixes
+
+* **web:** classify reachable backend errors ([#207](https://github.com/mossipcams/ajax-cli/issues/207)) ([5b456b6](https://github.com/mossipcams/ajax-cli/commit/5b456b6a7a38a4901f9d2ce68ea89e7e44df00de))
+* **web:** prevent tls accept starvation ([#209](https://github.com/mossipcams/ajax-cli/issues/209)) ([febb44e](https://github.com/mossipcams/ajax-cli/commit/febb44e07546d46f16d2787d829ad8d3c38d605d))
+
 ## [0.21.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.21.0...ajax-cli-v0.21.1) (2026-06-26)
 
 
