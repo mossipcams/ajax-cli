@@ -56,16 +56,19 @@
      its body is a button (.inbox-card-open-body) so actions stay tappable. */
   .inbox-card {
     position: relative;
-    padding: 14px 16px 14px 17px;
+    padding: var(--space-4) var(--space-4) var(--space-4) 17px;
     background: var(--paper-raised);
     border: 1px solid var(--rule);
     border-left: 3px solid var(--tone, var(--rule-strong));
-    border-radius: var(--radius);
-    transition: background 140ms ease, transform 140ms ease, border-color 140ms ease;
+    border-radius: var(--radius-lg);
+    box-shadow: var(--elev-1);
+    transition: background 160ms var(--ease), transform 160ms var(--ease-spring),
+      border-color 160ms var(--ease), box-shadow 160ms var(--ease);
   }
 
   .inbox-card:hover {
     background: var(--paper-high);
+    box-shadow: var(--elev-2);
   }
 
   .inbox-card:active {

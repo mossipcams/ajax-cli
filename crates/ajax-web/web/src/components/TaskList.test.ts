@@ -81,4 +81,36 @@ describe("TaskList", () => {
     await fireEvent.click(container.querySelector(".task-row[data-handle='api/c']")!);
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
+
+  it("reveals a swipe action behind a calm row that has actions", () => {
+    const withAction: BrowserCockpitView = {
+      ...cockpit,
+      cards: [
+        {
+          id: "web/b",
+          qualified_handle: "web/b",
+          repo: "web",
+          title: "B",
+          status: "idle",
+          actions: [
+            { action: "review", label: "Review", destructive: false, confirmation_required: false },
+          ],
+        },
+      ],
+      inbox: { items: [] },
+    };
+    const { container } = render(TaskList, { props: { cockpit: withAction } });
+    const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
+    expect(wrap).not.toBeNull();
+    expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
+    // The row itself must remain present and tappable.
+    expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
+  });
+
+  it("renders no reveal for a calm row without actions", () => {
+    const { container } = render(TaskList, { props: { cockpit } });
+    const wrap = container.querySelector(".task-row-wrap[data-handle='api/c']");
+    expect(wrap).not.toBeNull();
+    expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
+  });
 });

@@ -385,3 +385,52 @@ For each failed command, include:
 - Whether it was fixed or remains unresolved
 
 Do not describe CI, tests, formatting, Clippy, docs, security checks, or any validation as passing unless the relevant commands were actually run and passed.
+
+## Code search and structural refactoring
+
+Use `rg` as the default text search tool and `rg --files` as the default file discovery tool. Use ast-grep when the task depends on Rust/TypeScript syntax or code shape rather than exact text.
+
+Prefer:
+
+```bash
+rg "search text"
+rg "TODO|FIXME"
+rg "Result<|anyhow|thiserror"
+rg --files
+rg --files | rg '(^|/)(Cargo.toml|package.json|AGENTS.md|CLAUDE.md)$'
+rg --files | rg '(^|/)(crates|scripts|tests)/'
+```
+
+Do not use `grep`, `find`, `ls -R`, or broad shell commands for repo search unless `rg` is unavailable or the task specifically requires another tool. Use raw `rg` when exact search results matter, especially for debugging, security-sensitive work, or migration planning.
+
+Use ast-grep for syntax-aware structural searches, migration inventories, and safer refactor planning. ast-grep uses `--globs` for include/exclude patterns, not ripgrep-style `-g`.
+
+Useful Ajax searches:
+
+```bash
+rg 'unwrap\(|expect\(|panic!' crates
+rg 'Command::new|std::process|tmux|git ' crates
+rg 'ports|adapters|domain|analysis|use_case|registry' crates
+rg 'cargo check|cargo clippy|nextest|cargo test' AGENTS.md README.md .github scripts
+rg 'fetch\(|WebSocket|EventSource|serviceWorker|manifest' crates/ajax-web web scripts
+```
+
+Useful ast-grep searches:
+
+```bash
+ast-grep -p '$EXPR.unwrap()' --lang rust crates
+ast-grep -p '$EXPR.expect($MSG)' --lang rust crates
+ast-grep -p 'panic!($$$ARGS)' --lang rust crates
+ast-grep -p 'Command::new($CMD)' --lang rust crates
+ast-grep -p 'fn $NAME($$$ARGS) -> Result<$OK, $ERR> { $$$BODY }' --lang rust crates
+```
+
+Before broad refactors:
+
+1. Use `rg` to inventory text references.
+2. Use ast-grep to inventory structural matches.
+3. Inspect representative matches manually.
+4. Make the smallest safe change.
+5. Run the required focused and repo-level checks.
+
+Agents must read the actual source before editing and must not rely only on semantic search, generated summaries, or memory.

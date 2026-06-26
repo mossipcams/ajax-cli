@@ -14,6 +14,24 @@ describe("NewTaskSheet", () => {
     expect(select.value).toBe("api");
   });
 
+  it("dismisses when the grabber is dragged down past the threshold", () => {
+    const onClose = vi.fn();
+    const { container } = render(NewTaskSheet, { props: { repos, onClose } });
+    const grab = container.querySelector(".sheet-grab")!;
+    expect(grab).not.toBeNull();
+
+    const touch = (type: string, clientY: number) => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, "touches", { value: [{ clientY }] });
+      return event;
+    };
+    grab.dispatchEvent(touch("touchstart", 0));
+    grab.dispatchEvent(touch("touchmove", 300));
+    grab.dispatchEvent(new Event("touchend"));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects an empty title locally without calling the API", async () => {
     const spy = vi.spyOn(api, "startTask");
     const { container, getByText } = render(NewTaskSheet, { props: { repos } });

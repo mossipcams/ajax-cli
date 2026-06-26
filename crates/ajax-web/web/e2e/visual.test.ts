@@ -143,9 +143,10 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const badge = page.locator(".status-badge").first();
   expect(await badge.evaluate((el) => getComputedStyle(el).color)).toBe(MUSTARD);
 
-  // Task rows have the list padding (would be 0 if unstyled).
+  // Task rows have the list padding (would be 0 if unstyled). Padding follows
+  // the 4px spacing scale (--space-3).
   const row = page.locator(".task-row").first();
-  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("13px");
+  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("12px");
 
   // New-task row is the dashed CTA.
   const newTaskRow = page.locator(".new-task-row");
@@ -172,7 +173,7 @@ test("task detail panels and action buttons are styled", async ({ page }) => {
     return { bg: s.backgroundColor, radius: s.borderTopLeftRadius };
   });
   expect(panelStyle.bg).toBe(PAPER_RAISED);
-  expect(panelStyle.radius).toBe("10px");
+  expect(panelStyle.radius).toBe("14px");
 
   // Status pill is fully rounded.
   const pill = page.locator(".interact-pill").first();

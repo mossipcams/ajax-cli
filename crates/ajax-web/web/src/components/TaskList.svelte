@@ -2,6 +2,23 @@
   import type { BrowserCockpitView } from "../types";
   import { filterByProject, sortCards, statusMeta } from "../state";
   import TaskCard from "./TaskCard.svelte";
+  import ActionBar from "./ActionBar.svelte";
+  import { swipeReveal } from "../gestures/swipeRevealAction";
+  import { SWIPE_REVEAL_WIDTH } from "../gestures/swipeReveal";
+
+  // Per-row reveal offset, keyed by handle. A swipe slides the row left to
+  // expose its first action; tapping an open row closes it instead of opening.
+  let offsets = $state<Record<string, number>>({});
+  function setOffset(handle: string, offset: number) {
+    offsets = { ...offsets, [handle]: offset };
+  }
+  function rowTap(handle: string) {
+    if ((offsets[handle] ?? 0) > 0) {
+      setOffset(handle, 0);
+      return;
+    }
+    onOpenTask?.(handle);
+  }
 
   interface Props {
     cockpit: BrowserCockpitView;
@@ -132,22 +149,44 @@
         <div class="task-list">
           {#each group.cards as card (card.qualified_handle)}
             {@const meta = statusMeta(card.status)}
-            <button
-              type="button"
-              class="task-row tone-{meta.tone}"
-              data-handle={card.qualified_handle}
-              onclick={() => onOpenTask?.(card.qualified_handle)}
-            >
-              <span class="status-dot tone-{meta.tone}" aria-hidden="true"></span>
-              <div class="task-row-main">
-                <span class="task-row-handle">{card.qualified_handle}</span>
-                {#if card.status_explanation && card.status_explanation.toLowerCase() !== meta.label.toLowerCase()}
-                  <span class="task-row-sub">{card.status_explanation}</span>
-                {/if}
-              </div>
-              <span class="task-row-status">{meta.label}</span>
-              <span class="task-row-chevron">›</span>
-            </button>
+            {@const revealAction = card.actions?.[0]}
+            <div class="task-row-wrap" data-handle={card.qualified_handle}>
+              {#if revealAction}
+                <div class="task-row-reveal" style="width: {SWIPE_REVEAL_WIDTH}px">
+                  <ActionBar
+                    actions={[revealAction]}
+                    handle={card.qualified_handle}
+                    {onCockpit}
+                    {onResult}
+                    {onMutated}
+                  />
+                </div>
+              {/if}
+              <button
+                type="button"
+                class="task-row tone-{meta.tone}"
+                class:is-revealed={(offsets[card.qualified_handle] ?? 0) > 0}
+                data-handle={card.qualified_handle}
+                style="transform: translateX(-{offsets[card.qualified_handle] ?? 0}px)"
+                onclick={() => rowTap(card.qualified_handle)}
+                use:swipeReveal={revealAction
+                  ? {
+                      onOffset: (offset) => setOffset(card.qualified_handle, offset),
+                      onOpenChange: () => {},
+                    }
+                  : {}}
+              >
+                <span class="status-dot tone-{meta.tone}" aria-hidden="true"></span>
+                <div class="task-row-main">
+                  <span class="task-row-handle">{card.qualified_handle}</span>
+                  {#if card.status_explanation && card.status_explanation.toLowerCase() !== meta.label.toLowerCase()}
+                    <span class="task-row-sub">{card.status_explanation}</span>
+                  {/if}
+                </div>
+                <span class="task-row-status">{meta.label}</span>
+                <span class="task-row-chevron">›</span>
+              </button>
+            </div>
           {/each}
         </div>
       </section>
@@ -282,27 +321,48 @@
   .task-list {
     display: grid;
     border: 1px solid var(--rule);
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     overflow: hidden;
     background: var(--paper-tint);
+    box-shadow: var(--elev-1);
+  }
+
+  /* Each row sits in a clipping wrapper so the swipe-revealed action stays
+     hidden behind it until the row slides left. */
+  .task-row-wrap {
+    position: relative;
+    overflow: hidden;
+    border-top: 1px solid var(--rule);
+  }
+
+  .task-row-wrap:first-child {
+    border-top: none;
+  }
+
+  .task-row-reveal {
+    position: absolute;
+    inset: 0 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-right: var(--space-2);
   }
 
   .task-row {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-3);
     width: 100%;
-    padding: 13px 14px;
-    background: transparent;
+    min-height: 56px;
+    padding: var(--space-3) var(--space-4);
+    background: var(--paper-tint);
     border: none;
-    border-top: 1px solid var(--rule);
     color: var(--ink);
     text-align: left;
-    transition: background 120ms ease;
-  }
-
-  .task-row:first-child {
-    border-top: none;
+    transition: background 120ms var(--ease), transform 220ms var(--ease-spring);
+    touch-action: pan-y;
   }
 
   .task-row:hover,

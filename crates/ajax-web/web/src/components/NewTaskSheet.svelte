@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import type { BrowserCockpitView, RepoSummary } from "../types";
   import { requestId, startTask } from "../api";
+  import { sheetDrag } from "../gestures/sheetDragAction";
 
   interface Props {
     repos: RepoSummary[];
@@ -25,6 +26,7 @@
   let agent = $state("codex");
   let error = $state<string | null>(null);
   let submitting = $state(false);
+  let dragOffset = $state(0);
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -75,7 +77,20 @@
     if (event.key === "Escape") onClose?.();
   }}
 >
-  <form class="sheet-card" autocomplete="off" onsubmit={submit}>
+  <form
+    class="sheet-card"
+    autocomplete="off"
+    onsubmit={submit}
+    style="transform: translateY({dragOffset}px)"
+    class:is-dragging={dragOffset > 0}
+  >
+    <div
+      class="sheet-grab"
+      aria-hidden="true"
+      use:sheetDrag={{ onDismiss: () => onClose?.(), onOffset: (offset) => (dragOffset = offset) }}
+    >
+      <span class="sheet-grabber"></span>
+    </div>
     <h2 id="new-task-title">New task</h2>
 
     <label for="new-task-repo">Repository</label>
@@ -139,7 +154,29 @@
     padding: 22px;
     width: min(440px, 100%);
     margin-bottom: max(8px, env(safe-area-inset-bottom));
-    animation: sheet-rise 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    animation: sheet-rise 220ms var(--ease-spring);
+  }
+
+  /* Spring the card back to rest when a drag is released below threshold. */
+  .sheet-card:not(.is-dragging) {
+    transition: transform 220ms var(--ease-spring);
+  }
+
+  /* Grabber — the touch target for drag-to-dismiss. */
+  .sheet-grab {
+    display: flex;
+    justify-content: center;
+    padding: 4px 0 12px;
+    margin: -8px 0 0;
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .sheet-grabber {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rule-strong);
   }
 
   .sheet-card h2 {
