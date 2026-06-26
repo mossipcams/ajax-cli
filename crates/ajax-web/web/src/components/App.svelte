@@ -32,14 +32,25 @@
   function applyCockpit(next: BrowserCockpitView) {
     cockpit = next;
     connection = "connected";
+    connectionDetail = null;
+  }
+
+  function applyConnectionError(error: unknown) {
+    if (error instanceof ApiError) {
+      connection = error.kind === "network" ? "backend unreachable" : "disconnected";
+      connectionDetail = error.message;
+      return;
+    }
+    connection = "backend unreachable";
+    connectionDetail = error instanceof Error ? error.message : String(error);
   }
 
   async function loadCockpit() {
     if (document.hidden) return;
     try {
       applyCockpit(await fetchCockpit());
-    } catch {
-      connection = "backend unreachable";
+    } catch (error) {
+      applyConnectionError(error);
     }
   }
 
@@ -47,9 +58,10 @@
     try {
       detail = await fetchDetail(handle);
       connection = "connected";
+      connectionDetail = null;
     } catch (error) {
-      if (error instanceof ApiError && error.kind === "network") {
-        connection = "backend unreachable";
+      if (error instanceof ApiError) {
+        applyConnectionError(error);
       }
     }
   }
