@@ -1,4 +1,4 @@
-use ajax_core::adapters::CommandRunner;
+use ajax_core::adapters::{CommandRunError, CommandRunner};
 #[cfg(any(test, feature = "interactive", feature = "supervisor"))]
 use ajax_core::commands::CommandError;
 use ajax_core::commands::OpenMode;
@@ -11,7 +11,8 @@ use ajax_core::{
     adapters::environment::origin_fetch_age,
     registry::InMemoryRegistry,
     task_operations::start::{
-        execute_start_task_operation, plan_start_task_operation_with_observation,
+        execute_start_task_operation, execute_start_task_operation_with_checkpoint,
+        plan_start_task_operation_with_observation,
     },
     task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
     task_operations::task_command::TaskCommandKind,
@@ -289,8 +290,47 @@ pub(crate) fn render_matches_mut_with_paths(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut impl CommandRunner,
     paths: Option<&CliContextPaths>,
-    save_state: Option<&mut crate::context::ContextSaveState>,
+    mut save_state: Option<&mut crate::context::ContextSaveState>,
 ) -> Result<RenderedCommand, CliError> {
+    if let Some(("start", subcommand)) = matches.subcommand() {
+        if let (Some(paths), Some(save_state)) = (paths, save_state.as_deref_mut()) {
+            let request = new_task_request(subcommand)?;
+            let observation = start_plan_observation(context, &request);
+            let (_intent, plan) =
+                plan_start_task_operation_with_observation(context, request.clone(), observation)
+                    .map_err(command_error)?;
+
+            if !subcommand.get_flag("execute") {
+                return Ok(RenderedCommand {
+                    output: render_plan(plan, subcommand.get_flag("json"))?,
+                    state_changed: false,
+                });
+            }
+
+            let (outputs, task) = execute_start_task_operation_with_checkpoint(
+                context,
+                runner,
+                &request,
+                &plan,
+                subcommand.get_flag("yes"),
+                current_open_mode(),
+                |checkpoint_context| {
+                    crate::context::save_context_with_state(paths, checkpoint_context, save_state)
+                        .map_err(|error| {
+                            CommandError::CommandRun(CommandRunError::SpawnFailed(format!(
+                                "persist start checkpoint: {error}"
+                            )))
+                        })
+                },
+            )
+            .map_err(|error| command_error(error).after_state_change())?;
+            return Ok(RenderedCommand {
+                output: render_execution_outputs(&outputs, Some(&task.qualified_handle())),
+                state_changed: true,
+            });
+        }
+    }
+
     #[cfg(feature = "interactive")]
     if let Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) = matches.subcommand() {
         return render_cockpit_entry_command(
@@ -385,18 +425,27 @@ pub(crate) struct ExecuteNewTaskWithSession<'a> {
 }
 
 #[cfg(feature = "interactive")]
-pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskSessionRunner>(
+pub(crate) fn execute_new_task_plan_with_task_session_and_checkpoint<
+    R: CommandRunner,
+    S: TaskSessionRunner,
+    C,
+>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut R,
     task_session: &mut S,
     execution: &ExecuteNewTaskWithSession<'_>,
-) -> Result<TaskEntryPlanOutcome, CliError> {
+    mut checkpoint: C,
+) -> Result<TaskEntryPlanOutcome, CliError>
+where
+    C: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CommandError>,
+{
     let request = execution.request;
     let plan = execution.plan;
     let session_context = execution.session_context;
     let confirmed = execution.confirmed;
     let open_mode = execution.open_mode;
     let task = commands::record_new_task(context, request).map_err(command_error)?;
+    checkpoint(context).map_err(|error| command_error(error).after_state_change())?;
     let external_outputs =
         match execute_external_plan_with_success(plan, confirmed, runner, |index, _, _| {
             if let Some(step) = plan
@@ -405,6 +454,7 @@ pub(crate) fn execute_new_task_plan_with_task_session<R: CommandRunner, S: TaskS
                 .and_then(commands::start_provisioning_step_for_command)
             {
                 commands::mark_new_task_provisioning_step_completed(context, &task.id, step)?;
+                checkpoint(context)?;
             }
             Ok(())
         }) {

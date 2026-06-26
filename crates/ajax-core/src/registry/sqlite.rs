@@ -232,6 +232,23 @@ impl SqliteRegistryStore {
         registry: &InMemoryRegistry,
         expected_revision: u64,
     ) -> Result<u64, RegistrySnapshotError> {
+        self.save_if_revision_with_empty_policy(registry, expected_revision, false)
+    }
+
+    pub fn save_if_revision_allowing_empty_rewrite(
+        &self,
+        registry: &InMemoryRegistry,
+        expected_revision: u64,
+    ) -> Result<u64, RegistrySnapshotError> {
+        self.save_if_revision_with_empty_policy(registry, expected_revision, true)
+    }
+
+    fn save_if_revision_with_empty_policy(
+        &self,
+        registry: &InMemoryRegistry,
+        expected_revision: u64,
+        allow_empty_rewrite: bool,
+    ) -> Result<u64, RegistrySnapshotError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
@@ -246,6 +263,7 @@ impl SqliteRegistryStore {
                 actual,
             });
         }
+        prevent_accidental_empty_rewrite(&transaction, registry, allow_empty_rewrite)?;
         save_registry(&transaction, registry)?;
         let next = actual.saturating_add(1);
         transaction
@@ -519,6 +537,7 @@ impl RegistryStore for SqliteRegistryStore {
         let mut connection = self.open()?;
         Self::migrate(&connection)?;
         let transaction = connection.transaction().map_err(database_error)?;
+        prevent_accidental_empty_rewrite(&transaction, registry, false)?;
         save_registry(&transaction, registry)?;
         transaction
             .execute(
@@ -528,6 +547,30 @@ impl RegistryStore for SqliteRegistryStore {
             .map_err(database_error)?;
         transaction.commit().map_err(database_error)
     }
+}
+
+fn prevent_accidental_empty_rewrite(
+    transaction: &Transaction<'_>,
+    registry: &InMemoryRegistry,
+    allow_empty_rewrite: bool,
+) -> Result<(), RegistrySnapshotError> {
+    if allow_empty_rewrite || registry_has_persistable_tasks(registry) {
+        return Ok(());
+    }
+    let existing_task_count: i64 = transaction
+        .query_row("SELECT count(*) FROM registry_tasks", [], |row| row.get(0))
+        .map_err(database_error)?;
+    if existing_task_count > 0 {
+        return Err(RegistrySnapshotError::EmptyRegistryOverwrite);
+    }
+    Ok(())
+}
+
+fn registry_has_persistable_tasks(registry: &InMemoryRegistry) -> bool {
+    registry
+        .tasks
+        .values()
+        .any(|task| !is_registry_ghost_task(task))
 }
 
 fn save_registry(
@@ -1847,6 +1890,30 @@ mod tests {
         assert_eq!(deleted_receipt_count, 0);
         assert!(restored.get_task(&deleted_id).is_none());
         assert!(restored.get_task(&TaskId::new("task-2")).is_some());
+    }
+
+    #[test]
+    fn sqlite_registry_store_rejects_accidental_empty_rewrite_of_non_empty_disk() {
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(task("task-1", "web", "fix-login"))
+            .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "ajax-registry-store-{}-{}.db",
+            std::process::id(),
+            "sqlite-empty-rewrite"
+        ));
+        let store = SqliteRegistryStore::new(&path);
+        store.save(&registry).unwrap();
+
+        let error = store.save(&InMemoryRegistry::default()).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("refusing to save empty registry"));
+        let restored = store.load().unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(restored.get_task(&TaskId::new("task-1")).is_some());
     }
 
     #[test]

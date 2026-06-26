@@ -218,6 +218,13 @@ pub(crate) fn save_tracked_context(
 pub(crate) struct ContextSaveState {
     pub loaded_registry: InMemoryRegistry,
     pub loaded_revision: u64,
+    pub(crate) allow_empty_registry_once: bool,
+}
+
+impl ContextSaveState {
+    pub(crate) fn allow_empty_registry_once(&mut self) {
+        self.allow_empty_registry_once = true;
+    }
 }
 
 pub(crate) fn state_file_mtime(paths: &CliContextPaths) -> Option<SystemTime> {
@@ -257,10 +264,21 @@ pub(crate) fn save_context_with_state(
     } else {
         context.registry.clone()
     };
-    prevent_accidental_empty_overwrite(paths, &registry, save_state, disk_revision)?;
+    let allow_empty_registry = std::mem::take(&mut save_state.allow_empty_registry_once);
+    prevent_accidental_empty_overwrite(
+        paths,
+        &registry,
+        save_state,
+        disk_revision,
+        allow_empty_registry,
+    )?;
 
-    let next_revision = store
-        .save_if_revision(&registry, disk_revision)
+    let save_result = if allow_empty_registry {
+        store.save_if_revision_allowing_empty_rewrite(&registry, disk_revision)
+    } else {
+        store.save_if_revision(&registry, disk_revision)
+    };
+    let next_revision = save_result
         .map_err(|error| CliError::ContextSave(format!("state save failed: {error}")))?;
     save_state.loaded_registry = registry;
     save_state.loaded_revision = next_revision;
@@ -271,6 +289,7 @@ pub(crate) fn context_save_state_from_registry(registry: &InMemoryRegistry) -> C
     ContextSaveState {
         loaded_registry: registry.clone(),
         loaded_revision: 0,
+        allow_empty_registry_once: false,
     }
 }
 
@@ -351,12 +370,22 @@ fn prevent_accidental_empty_overwrite(
     proposed: &InMemoryRegistry,
     save_state: &ContextSaveState,
     disk_revision: u64,
+    allow_empty_registry: bool,
 ) -> Result<(), CliError> {
-    if has_persistable_tasks(proposed) || has_persistable_tasks(&save_state.loaded_registry) {
+    if has_persistable_tasks(proposed) {
         return Ok(());
     }
     if disk_revision == 0 && !paths.state_file.exists() {
         return Ok(());
+    }
+    if allow_empty_registry {
+        return Ok(());
+    }
+    if has_persistable_tasks(&save_state.loaded_registry) {
+        return Err(CliError::ContextSave(
+            "refusing to save empty registry over non-empty loaded state; authorize delete-all before saving"
+                .to_string(),
+        ));
     }
 
     let disk_context = load_context(paths)?;
@@ -678,9 +707,45 @@ mod tests {
         let mut save_state = ContextSaveState {
             loaded_registry: InMemoryRegistry::default(),
             loaded_revision: store.current_revision().unwrap(),
+            allow_empty_registry_once: false,
         };
 
         let error = save_context_with_state(&paths, &empty_context, &mut save_state).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("refusing to save empty registry"));
+        let reloaded = load_context(&paths).expect("reload");
+        assert!(reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .is_some());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_rejects_accidental_empty_after_non_empty_load() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-empty-after-load-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut registry = InMemoryRegistry::default();
+        registry
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&registry)
+            .unwrap();
+        let mut tracked = load_tracked_context(&paths).unwrap();
+
+        tracked.context.registry = InMemoryRegistry::default();
+        let error = save_tracked_context(&paths, &mut tracked).unwrap_err();
 
         assert!(error
             .to_string()
@@ -746,6 +811,7 @@ mod tests {
             .registry
             .delete_task(&TaskId::new("web/fix-login"))
             .unwrap();
+        tracked.save_state.allow_empty_registry_once();
         save_tracked_context(&paths, &mut tracked).expect("intentional deletion persists");
 
         let reloaded = load_context(&paths).expect("reload");

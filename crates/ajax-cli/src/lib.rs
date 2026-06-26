@@ -147,12 +147,14 @@ pub fn run_with_args(
         Ok(rendered) => rendered,
         Err(error) => {
             if error.state_changed() {
+                authorize_empty_registry_save_for_command(&matches, &mut tracked);
                 save_tracked_context(&paths, &mut tracked)?;
             }
             return Err(error);
         }
     };
     if rendered.state_changed {
+        authorize_empty_registry_save_for_command(&matches, &mut tracked);
         save_tracked_context(&paths, &mut tracked)?;
     }
 
@@ -200,12 +202,14 @@ pub fn run_with_args_to_writer(
         Ok(rendered) => rendered,
         Err(error) => {
             if error.state_changed() {
+                authorize_empty_registry_save_for_command(&matches, &mut tracked);
                 save_tracked_context(&paths, &mut tracked)?;
             }
             return Err(error);
         }
     };
     if rendered.state_changed {
+        authorize_empty_registry_save_for_command(&matches, &mut tracked);
         save_tracked_context(&paths, &mut tracked)?;
     }
     write_command_output(writer, &rendered.output)
@@ -295,12 +299,14 @@ pub fn run_with_context_paths_and_runner(
         Ok(rendered) => rendered,
         Err(error) => {
             if error.state_changed() {
+                authorize_empty_registry_save_for_command(&matches, &mut tracked);
                 save_tracked_context(paths, &mut tracked)?;
             }
             return Err(error);
         }
     };
     if rendered.state_changed {
+        authorize_empty_registry_save_for_command(&matches, &mut tracked);
         save_tracked_context(paths, &mut tracked)?;
     }
 
@@ -311,6 +317,15 @@ pub fn run_with_context_paths_and_runner(
 pub(crate) struct RenderedCommand {
     pub(crate) output: String,
     pub(crate) state_changed: bool,
+}
+
+fn authorize_empty_registry_save_for_command(matches: &ArgMatches, tracked: &mut TrackedContext) {
+    if matches
+        .subcommand()
+        .is_some_and(|(name, subcommand)| name == "drop" && subcommand.get_flag("execute"))
+    {
+        tracked.save_state.allow_empty_registry_once();
+    }
 }
 
 // The refreshed-read path lives in `execution_dispatch::render_refreshed_read_command`.

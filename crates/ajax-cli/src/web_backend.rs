@@ -752,8 +752,10 @@ mod tests {
 
         // Another writer deletes the task from disk, and the bridge misses the
         // reload window because its recorded mtime already matches the file.
-        SqliteRegistryStore::new(&paths.state_file)
-            .save(&InMemoryRegistry::default())
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        let revision = store.current_revision().unwrap();
+        store
+            .save_if_revision_allowing_empty_rewrite(&InMemoryRegistry::default(), revision)
             .unwrap();
         bridge.last_loaded_mtime = crate::context::state_file_mtime(&paths);
 
@@ -782,6 +784,7 @@ mod tests {
             save_state: crate::context::ContextSaveState {
                 loaded_registry: InMemoryRegistry::default(),
                 loaded_revision: store.current_revision().unwrap(),
+                allow_empty_registry_once: false,
             },
         };
 

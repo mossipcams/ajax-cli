@@ -1,6 +1,7 @@
 use ajax_core::{
-    adapters::CommandRunner,
-    commands::{self, CommandContext},
+    adapters::{CommandRunError, CommandRunner},
+    commands::{self, CommandContext, CommandError},
+    models::OperatorAction,
     registry::InMemoryRegistry,
     runtime_refresh::refresh_runtime_context_with_agent_status_cache,
 };
@@ -17,10 +18,11 @@ use std::{
 use crate::{
     agent_status_cache::TmuxAgentStatusSnapshot,
     cockpit_actions::{
-        execute_pending_cockpit_action_with_task_session, handle_pending_cockpit_result,
-        tui_cockpit_action, tui_cockpit_confirmed_action,
+        execute_pending_cockpit_action_with_task_session,
+        execute_pending_cockpit_action_with_task_session_and_checkpoint,
+        handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
     },
-    context::{load_context, state_file_mtime},
+    context::{load_context, save_context_with_state, state_file_mtime},
     render::render_response,
     task_session::PtyTaskSessionRunner,
     CliContextPaths, CliError, RenderedCommand,
@@ -116,13 +118,38 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
             });
         };
 
-        match execute_pending_cockpit_action_with_task_session(
-            &pending,
-            context,
-            runner,
-            &mut state_changed,
-            &mut task_session,
-        )? {
+        let mut checkpoint_saved = false;
+        let pending_result =
+            if let (Some(paths), Some(save_state)) = (paths, save_state.as_deref_mut()) {
+                execute_pending_cockpit_action_with_task_session_and_checkpoint(
+                    &pending,
+                    context,
+                    runner,
+                    &mut state_changed,
+                    &mut task_session,
+                    |checkpoint_context| {
+                        save_context_with_state(paths, checkpoint_context, save_state).map_err(
+                            |error| {
+                                CommandError::CommandRun(CommandRunError::SpawnFailed(format!(
+                                    "persist cockpit checkpoint: {error}"
+                                )))
+                            },
+                        )?;
+                        checkpoint_saved = true;
+                        Ok(())
+                    },
+                )
+            } else {
+                execute_pending_cockpit_action_with_task_session(
+                    &pending,
+                    context,
+                    runner,
+                    &mut state_changed,
+                    &mut task_session,
+                )
+            };
+
+        match pending_result? {
             crate::cockpit_actions::PendingCockpitExecution::OpenNewTask { repo } => {
                 open_new_task_repo = Some(repo);
             }
@@ -132,9 +159,17 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 }
             }
         }
+        if checkpoint_saved {
+            if let Some(paths) = paths {
+                last_loaded_mtime = state_file_mtime(paths);
+            }
+        }
 
         if state_changed {
             if let (Some(paths), Some(save_state)) = (paths, save_state.as_deref_mut()) {
+                if pending.action == OperatorAction::Drop.as_str() {
+                    save_state.allow_empty_registry_once();
+                }
                 save_cockpit_state_to_sqlite(paths, context, save_state, &mut last_loaded_mtime)?;
                 state_changed = false;
             }
@@ -1762,6 +1797,7 @@ mod cockpit_persistence_tests {
         let mut save_state = ContextSaveState {
             loaded_registry: InMemoryRegistry::default(),
             loaded_revision: store.current_revision().unwrap(),
+            allow_empty_registry_once: false,
         };
         let mut last_loaded_mtime = state_file_mtime(&paths);
 

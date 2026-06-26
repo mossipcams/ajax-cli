@@ -318,6 +318,7 @@ pub enum RegistrySnapshotError {
     RevisionConflict { expected: u64, actual: u64 },
     IncompatibleSchema { found: i64, supported: i64 },
     LegacySqlitePayloadSchema,
+    EmptyRegistryOverwrite,
 }
 
 impl fmt::Display for RegistrySnapshotError {
@@ -338,6 +339,10 @@ impl fmt::Display for RegistrySnapshotError {
             Self::LegacySqlitePayloadSchema => write!(
                 formatter,
                 "legacy SQLite payload schema is unsupported after the typed state rewrite; remove the state database to start fresh"
+            ),
+            Self::EmptyRegistryOverwrite => write!(
+                formatter,
+                "refusing to save empty registry over non-empty disk state"
             ),
         }
     }

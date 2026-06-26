@@ -3730,6 +3730,89 @@ fn new_execute_saves_registry_to_sqlite_state_file() {
 }
 
 #[test]
+fn start_execute_persists_task_before_first_external_command() {
+    struct PreExternalStateRunner {
+        state_file: PathBuf,
+        checked: bool,
+        outputs: std::collections::VecDeque<CommandOutput>,
+    }
+
+    impl CommandRunner for PreExternalStateRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if !self.checked {
+                self.checked = true;
+                let restored = SqliteRegistryStore::new(&self.state_file)
+                    .load()
+                    .expect("state should be readable before first external command");
+                assert!(
+                    restored
+                        .list_tasks()
+                        .iter()
+                        .any(|task| task.qualified_handle() == "web/fix-login"),
+                    "start task should be durable before the first external command"
+                );
+            }
+            self.outputs
+                .pop_front()
+                .ok_or_else(|| CommandRunError::SpawnFailed("missing queued output".to_string()))
+        }
+    }
+
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-new-execute-{}-{}",
+        std::process::id(),
+        "pre-external"
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config_file = directory.join("config.toml");
+    let state_file = directory.join("state.db");
+    std::fs::write(
+        &config_file,
+        r#"
+            [[repos]]
+            name = "web"
+            path = "/Users/matt/projects/web"
+            default_branch = "main"
+            "#,
+    )
+    .unwrap();
+    let mut runner = PreExternalStateRunner {
+        state_file: state_file.clone(),
+        checked: false,
+        outputs: vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+        ]
+        .into(),
+    };
+
+    run_with_context_paths_and_runner(
+        [
+            "ajax",
+            "start",
+            "--repo",
+            "web",
+            "--title",
+            "Fix login",
+            "--execute",
+            "--yes",
+        ],
+        &CliContextPaths::new(&config_file, &state_file),
+        &mut runner,
+    )
+    .unwrap();
+
+    std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+    assert!(runner.checked);
+}
+
+#[test]
 fn new_execute_persists_state_when_open_after_create_fails() {
     let directory = std::env::temp_dir().join(format!(
         "ajax-cli-new-execute-{}-{}",
@@ -6075,6 +6158,97 @@ fn pending_new_task_action_runs_after_title_is_collected() {
         .expect("start task should be recorded");
     assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
     assert!(state_changed);
+}
+
+#[test]
+fn cockpit_start_persists_task_before_first_external_command() {
+    struct PreExternalStateRunner {
+        state_file: PathBuf,
+        checked: bool,
+        outputs: std::collections::VecDeque<CommandOutput>,
+    }
+
+    impl CommandRunner for PreExternalStateRunner {
+        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            if !self.checked {
+                self.checked = true;
+                let restored = SqliteRegistryStore::new(&self.state_file)
+                    .load()
+                    .expect("state should be readable before first external command");
+                assert!(
+                    restored
+                        .list_tasks()
+                        .iter()
+                        .any(|task| task.qualified_handle() == "api/fix-login"),
+                    "cockpit start task should be durable before the first external command"
+                );
+            }
+            self.outputs
+                .pop_front()
+                .ok_or_else(|| CommandRunError::SpawnFailed("missing queued output".to_string()))
+        }
+    }
+
+    let directory = std::env::temp_dir().join(format!(
+        "ajax-cli-cockpit-start-{}-{}",
+        std::process::id(),
+        "pre-external"
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let config_file = directory.join("config.toml");
+    let state_file = directory.join("state.db");
+    let paths = CliContextPaths::new(&config_file, &state_file);
+    let mut context = CommandContext::with_runtime_paths(
+        Config {
+            repos: vec![ManagedRepo::new("api", "/Users/matt/projects/api", "main")],
+            ..Config::default()
+        },
+        InMemoryRegistry::default(),
+        paths.runtime_paths.clone(),
+    );
+    let mut save_state = crate::context::context_save_state_from_registry(&context.registry);
+    let pending = ajax_tui::PendingAction {
+        task_handle: "api".to_string(),
+        action: "start".to_string(),
+        task_title: Some("Fix login".to_string()),
+    };
+    let mut runner = PreExternalStateRunner {
+        state_file: state_file.clone(),
+        checked: false,
+        outputs: vec![
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+            output(0, ""),
+        ]
+        .into(),
+    };
+    let mut task_session = RecordingTaskSessionRunner::default();
+    let mut state_changed = false;
+
+    super::cockpit_actions::execute_pending_cockpit_action_with_task_session_and_checkpoint(
+        &pending,
+        &mut context,
+        &mut runner,
+        &mut state_changed,
+        &mut task_session,
+        |checkpoint_context| {
+            crate::context::save_context_with_state(&paths, checkpoint_context, &mut save_state)
+                .map_err(|error| {
+                    ajax_core::commands::CommandError::CommandRun(CommandRunError::SpawnFailed(
+                        format!("persist test checkpoint: {error}"),
+                    ))
+                })
+        },
+    )
+    .unwrap();
+
+    std::fs::remove_dir_all(Path::new(&directory)).unwrap();
+    assert!(runner.checked);
 }
 
 #[test]
