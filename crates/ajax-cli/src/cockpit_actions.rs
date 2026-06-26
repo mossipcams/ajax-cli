@@ -19,7 +19,9 @@ use crate::{
     cockpit_backend::build_cockpit_snapshot,
     command_error,
     dispatch::execute_observed_drop,
-    execution_dispatch::{execute_new_task_plan_with_task_session, ExecuteNewTaskWithSession},
+    execution_dispatch::{
+        execute_new_task_plan_with_task_session_and_checkpoint, ExecuteNewTaskWithSession,
+    },
     task_session::{
         execute_task_entry_plan, TaskEntryPlanOutcome, TaskSessionContext, TaskSessionRunner,
     },
@@ -294,6 +296,31 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
     state_changed: &mut bool,
     task_session: &mut S,
 ) -> Result<PendingCockpitExecution, CliError> {
+    execute_pending_cockpit_action_with_task_session_and_checkpoint(
+        pending,
+        context,
+        runner,
+        state_changed,
+        task_session,
+        |_| Ok(()),
+    )
+}
+
+pub(crate) fn execute_pending_cockpit_action_with_task_session_and_checkpoint<
+    R: CommandRunner,
+    S: TaskSessionRunner,
+    C,
+>(
+    pending: &ajax_tui::PendingAction,
+    context: &mut CommandContext<InMemoryRegistry>,
+    runner: &mut R,
+    state_changed: &mut bool,
+    task_session: &mut S,
+    mut checkpoint: C,
+) -> Result<PendingCockpitExecution, CliError>
+where
+    C: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CommandError>,
+{
     let session_context = TaskSessionContext::from_task_handle(&pending.task_handle);
     let task_entry_open_mode = commands::OpenMode::Attach;
     if pending.action == OperatorAction::Start.as_str() {
@@ -309,7 +336,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
         };
         let (_intent, plan) =
             plan_start_task_operation(context, request.clone()).map_err(command_error)?;
-        match execute_new_task_plan_with_task_session(
+        match execute_new_task_plan_with_task_session_and_checkpoint(
             context,
             runner,
             task_session,
@@ -320,6 +347,7 @@ pub(crate) fn execute_pending_cockpit_action_with_task_session<
                 confirmed: true,
                 open_mode: task_entry_open_mode,
             },
+            &mut checkpoint,
         )
         .inspect_err(|error| {
             if error.state_changed() {
