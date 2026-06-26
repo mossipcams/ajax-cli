@@ -226,3 +226,52 @@
     onResult={showResult}
   />
 {/if}
+
+<style>
+  /* NEW TASK ROW — dashed call-to-action below the calm task list. */
+  .new-task-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    margin-top: 16px;
+    padding: 13px 16px;
+    background: transparent;
+    border: 1px dashed var(--rule-strong);
+    border-radius: var(--radius);
+    color: var(--ink-soft);
+    text-align: left;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+
+  .new-task-row:hover,
+  .new-task-row:focus-visible {
+    background: var(--paper-tint);
+    border-color: var(--teal-bright);
+    color: var(--ink);
+    outline: none;
+  }
+
+  .new-task-glyph {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: var(--teal);
+    color: var(--ink);
+    font-size: 17px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .new-task-label {
+    flex: 1 1 auto;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+</style>

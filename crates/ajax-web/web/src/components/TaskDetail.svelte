@@ -83,3 +83,231 @@
     </dl>
   </details>
 </div>
+
+<style>
+  /* DETAIL HEADER --------------------------------------------------------- */
+  .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .detail-header .back {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    background: transparent;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    padding: 7px 16px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .detail-header .back:hover,
+  .detail-header .back:focus-visible {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+    outline: none;
+  }
+
+  .detail-title {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    line-height: 1.25;
+    text-transform: none;
+    color: var(--ink);
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+  }
+
+  /* INTERACT STATE — status hero ------------------------------------------ */
+  .interact-state {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .interact-state.is-hero {
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .interact-state.is-hero .interact-summary {
+    flex-basis: 100%;
+    font-size: 15px;
+    line-height: 1.45;
+    color: var(--ink);
+  }
+
+  .interact-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--rule-strong);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink);
+  }
+
+  .interact-pill.tone-running {
+    background: var(--teal-deep);
+    border-color: var(--teal);
+  }
+
+  .interact-pill.tone-running::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--teal-bright);
+    animation: pulse 2.2s ease-in-out infinite;
+  }
+
+  .interact-pill.tone-waiting,
+  .interact-pill.tone-attention {
+    background: rgba(201, 162, 74, 0.18);
+    border-color: var(--mustard);
+    color: var(--mustard-bright);
+  }
+
+  .interact-pill.tone-error,
+  .interact-pill.tone-danger {
+    background: rgba(188, 92, 62, 0.18);
+    border-color: var(--terracotta);
+    color: var(--terracotta-bright);
+  }
+
+  .interact-pill.tone-success {
+    background: rgba(54, 112, 105, 0.28);
+    border-color: var(--teal);
+  }
+
+  .interact-pill.tone-idle,
+  .interact-pill.tone-muted {
+    background: transparent;
+    border-color: var(--rule-strong);
+    color: var(--ink-muted);
+  }
+
+  .interact-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+    overflow-wrap: anywhere;
+  }
+
+  /* NEXT ACTION ----------------------------------------------------------- */
+  .next-action {
+    margin-top: 14px;
+    padding: 14px 15px;
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .next-action-hint {
+    margin: 8px 0 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  /* META DETAILS ---------------------------------------------------------- */
+  .meta-details {
+    margin-top: 18px;
+    border-top: 1px solid var(--rule);
+    padding-top: 16px;
+  }
+
+  .meta-details summary {
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .meta-group-label {
+    margin: 14px 0 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 104px 1fr;
+    gap: 8px 14px;
+    font-size: 13px;
+  }
+
+  .detail-grid dt {
+    color: var(--ink-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .detail-grid dd {
+    margin: 0;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    font-feature-settings: "tnum";
+  }
+
+  .meta-copy-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .meta-copy-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .meta-copy {
+    flex: none;
+    min-height: 28px;
+    padding: 4px 10px;
+    background: transparent;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+  }
+
+  .meta-copy:hover,
+  .meta-copy:focus-visible {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+    outline: none;
+  }
+
+  @media (max-width: 380px) {
+    .detail-title { font-size: 19px; }
+    .detail-grid { grid-template-columns: 92px 1fr; }
+  }
+</style>

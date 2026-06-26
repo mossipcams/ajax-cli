@@ -69,6 +69,12 @@ jobs:
       - name: Test frontend
         run: npm run web:test -- --run
 
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke and visual-regression tests
+        run: npm run web:smoke
+
   check:
     name: Cargo Check
     runs-on: ubuntu-latest

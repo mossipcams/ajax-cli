@@ -158,3 +158,103 @@
     {/if}
   </details>
 </section>
+
+<style>
+  /* NEEDS-FROM-YOU + ESCAPE HATCH cards ----------------------------------- */
+  .needs-block,
+  .escape-hatch {
+    margin-top: 14px;
+    padding: 14px 15px;
+    background: var(--paper);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .escape-hatch-hint {
+    margin: 8px 0 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .escape-hatch-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .escape-hatch-row :global(.pill) {
+    min-height: 44px;
+    font-size: 12px;
+  }
+
+  .escape-hatch-cmd {
+    display: block;
+    margin-top: 12px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--mustard-bright);
+    overflow-wrap: anywhere;
+  }
+
+  /* INTERACT CARD body / actions / hint ----------------------------------- */
+  .interact-card-body {
+    display: block;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  code.interact-card-body {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--mustard-bright);
+  }
+
+  .interact-card-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+
+  .interact-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--ink-muted);
+    font-style: italic;
+  }
+
+  /* TERMINAL OUTPUT ------------------------------------------------------- */
+  .terminal-details {
+    margin-top: 14px;
+    border-top: 1px solid var(--rule);
+    padding-top: 14px;
+  }
+
+  .terminal-details summary {
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .activity-excerpt {
+    margin: 0;
+    padding: 12px 14px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    color: var(--ink-soft);
+  }
+</style>
