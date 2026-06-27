@@ -10,7 +10,7 @@ use ajax_core::{
 use axum::{
     body::Bytes,
     extract::{Path as AxumPath, Query, Request as AxumRequest, State},
-    http::{header, HeaderMap, HeaderValue, Uri},
+    http::Uri,
     middleware::{from_fn_with_state, Next},
     response::Response as AxumResponse,
     routing::{get, post},
@@ -20,7 +20,6 @@ use axum::{
 use serde::Deserialize;
 use std::{
     collections::{BTreeSet, HashMap},
-    fs,
     net::{SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -30,7 +29,7 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     action_vocabulary::supported_web_action,
-    adapters::{server, tls},
+    adapters::{browser_session::BrowserSession, server, tls},
     slices::{cockpit, install},
     WebError,
 };
@@ -45,8 +44,6 @@ use crate::adapters::http::{
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const BROWSER_SESSION_COOKIE_NAME: &str = "ajax_browser_session";
-const BROWSER_SESSION_TOKEN_FILE: &str = "web-browser-session-token";
 
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
@@ -71,101 +68,6 @@ struct CockpitCacheEntry {
     response: Response,
     cached_at: Instant,
     revision: u64,
-}
-
-#[derive(Clone)]
-struct BrowserSession {
-    token: String,
-}
-
-impl BrowserSession {
-    fn new(token: impl Into<String>) -> Self {
-        Self {
-            token: token.into(),
-        }
-    }
-
-    fn test_default() -> Self {
-        Self::new("ajax-test-browser-session")
-    }
-
-    fn load_or_create(dir: &Path) -> Result<Self, WebError> {
-        let token_path = dir.join(BROWSER_SESSION_TOKEN_FILE);
-        if let Ok(token) = fs::read_to_string(&token_path) {
-            let token = token.trim();
-            if is_valid_session_token(token) {
-                return Ok(Self::new(token.to_string()));
-            }
-        }
-
-        fs::create_dir_all(dir).map_err(|error| {
-            WebError::CommandFailed(format!("web session dir create failed: {error}"))
-        })?;
-        let token = generate_session_token()?;
-        write_private_session_token(&token_path, &token)?;
-        Ok(Self::new(token))
-    }
-
-    fn cookie_pair(&self) -> String {
-        format!("{BROWSER_SESSION_COOKIE_NAME}={}", self.token)
-    }
-
-    fn set_cookie_value(&self) -> String {
-        format!(
-            "{}; Path=/; HttpOnly; Secure; SameSite=Strict",
-            self.cookie_pair()
-        )
-    }
-
-    fn apply_set_cookie(&self, headers: &mut HeaderMap) {
-        if let Ok(value) = HeaderValue::from_str(&self.set_cookie_value()) {
-            headers.insert(header::SET_COOKIE, value);
-        }
-    }
-
-    fn is_present(&self, headers: &HeaderMap) -> bool {
-        let expected = self.cookie_pair();
-        headers.get_all(header::COOKIE).iter().any(|value| {
-            value.to_str().ok().is_some_and(|cookies| {
-                cookies
-                    .split(';')
-                    .map(str::trim)
-                    .any(|cookie| cookie == expected)
-            })
-        })
-    }
-}
-
-fn generate_session_token() -> Result<String, WebError> {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes).map_err(|error| {
-        WebError::CommandFailed(format!("web session token generation failed: {error}"))
-    })?;
-    let mut token = String::with_capacity(bytes.len() * 2);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for byte in bytes {
-        token.push(HEX[(byte >> 4) as usize] as char);
-        token.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    Ok(token)
-}
-
-fn is_valid_session_token(token: &str) -> bool {
-    token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-fn write_private_session_token(path: &Path, token: &str) -> Result<(), WebError> {
-    fs::write(path, format!("{token}\n")).map_err(|error| {
-        WebError::CommandFailed(format!("web session token write failed: {error}"))
-    })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-            WebError::CommandFailed(format!("web session token chmod failed: {error}"))
-        })?;
-    }
-    Ok(())
 }
 
 impl<C, B> Clone for WebAppState<C, B> {
@@ -303,6 +205,22 @@ struct OperationCoordinator {
     in_flight_tasks: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ApiAccess {
+    Public,
+    BrowserSessionRequired,
+}
+
+fn api_access_policy(method: &str, path: &str) -> ApiAccess {
+    if !path.starts_with("/api/") {
+        return ApiAccess::Public;
+    }
+    match (method, path) {
+        ("GET", "/api/health") | ("POST", "/api/session") => ApiAccess::Public,
+        _ => ApiAccess::BrowserSessionRequired,
+    }
+}
+
 pub fn axum_app<C, B>(state: WebAppState<C, B>) -> Router
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -318,6 +236,7 @@ where
         .route("/sw.js", get(axum_service_worker))
         .route("/icons/{*path}", get(axum_icon))
         .route("/api/health", get(axum_health))
+        .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
         .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
@@ -446,6 +365,16 @@ async fn axum_pwa_shell<C, B>(State(state): State<WebAppState<C, B>>) -> AxumRes
     response
 }
 
+async fn axum_browser_session<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
+    browser_session_json_response(&state.browser_session)
+}
+
+fn browser_session_json_response(session: &BrowserSession) -> AxumResponse {
+    let mut response = json_value_response(200, serde_json::json!({ "ok": true }));
+    session.apply_set_cookie(response.headers_mut());
+    response
+}
+
 async fn require_browser_session<C, B>(
     State(state): State<WebAppState<C, B>>,
     request: AxumRequest,
@@ -456,7 +385,7 @@ where
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
     let path = request.uri().path();
-    if !path.starts_with("/api/") || path == "/api/health" {
+    if api_access_policy(request.method().as_str(), path) == ApiAccess::Public {
         return next.run(request).await;
     }
     if state.browser_session.is_present(request.headers()) {
@@ -1614,6 +1543,43 @@ mod tests {
         AxumRequest::builder().uri(uri).header("cookie", cookie)
     }
 
+    #[test]
+    fn axum_api_access_policy_classifies_public_and_protected_routes() {
+        use super::ApiAccess;
+
+        for (method, path) in [
+            ("GET", "/"),
+            ("GET", "/index.html"),
+            ("GET", "/app.js"),
+            ("GET", "/api/health"),
+            ("POST", "/api/session"),
+        ] {
+            assert_eq!(
+                super::api_access_policy(method, path),
+                ApiAccess::Public,
+                "{method} {path}"
+            );
+        }
+
+        for (method, path) in [
+            ("GET", "/api/session"),
+            ("GET", "/api/cockpit"),
+            ("GET", "/api/version"),
+            ("POST", "/api/server/restart"),
+            ("POST", "/api/operations"),
+            ("POST", "/api/tasks"),
+            ("GET", "/api/tasks/web%2Ffix-login"),
+            ("GET", "/api/tasks/web%2Ffix-login/pane"),
+            ("POST", "/api/tasks/web%2Ffix-login/answer"),
+        ] {
+            assert_eq!(
+                super::api_access_policy(method, path),
+                ApiAccess::BrowserSessionRequired,
+                "{method} {path}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn axum_router_serves_static_shell_and_cockpit_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -1769,28 +1735,100 @@ mod tests {
         assert_eq!(authenticated.status(), StatusCode::OK);
     }
 
-    #[test]
-    fn browser_session_token_is_persisted_private_and_reused() {
-        let dir = scratch_dir("browser-session-token");
-        let token_path = dir.join(super::BROWSER_SESSION_TOKEN_FILE);
+    #[tokio::test]
+    async fn axum_browser_session_renewal_bootstraps_api_access() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-session-renewal"),
+        );
+        let app = super::axum_app(state);
 
-        let first = super::BrowserSession::load_or_create(&dir).unwrap();
-        let saved = std::fs::read_to_string(&token_path).unwrap();
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
 
-        assert_eq!(saved.trim(), first.token);
-        assert_eq!(first.token.len(), 64);
-        assert!(first.token.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&token_path).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600);
-        }
+        let renewal = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .method("POST")
+                    .uri("/api/session")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(renewal.status(), StatusCode::OK);
+        let session_cookie = renewal
+            .headers()
+            .get("set-cookie")
+            .expect("session renewal should set browser session cookie")
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(session_cookie.starts_with("ajax_browser_session="));
 
-        let second = super::BrowserSession::load_or_create(&dir).unwrap();
-        assert_eq!(second.cookie_pair(), first.cookie_pair());
+        let authenticated = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .header("cookie", session_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authenticated.status(), StatusCode::OK);
+    }
 
-        std::fs::remove_dir_all(&dir).ok();
+    #[tokio::test]
+    async fn axum_session_renewal_response_is_cookie_json_without_shared_state() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-session-boundary"),
+        );
+        let response = super::browser_session_json_response(&state.browser_session);
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        assert!(response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .starts_with("ajax_browser_session="));
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({ "ok": true })
+        );
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.revision, 0);
+        assert!(!guard.bridge.refreshed);
+        assert_eq!(guard.bridge.operate_count, 0);
+        assert_eq!(guard.bridge.start_count, 0);
     }
 
     #[tokio::test]

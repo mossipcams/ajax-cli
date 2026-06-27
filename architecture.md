@@ -482,6 +482,8 @@ Browser files live under `crates/ajax-web/web`. The install slice owns serving
 the HTML shell, client JavaScript, stylesheet, optional web manifest, optional
 service worker, and app icons from that directory. `ajax-web::runtime` owns
 HTTP transport wiring, local TLS setup, and shell asset delivery.
+`ajax-web::adapters::browser_session` owns browser-session token persistence,
+cookie formatting, `Set-Cookie` application, and request-cookie matching.
 `ajax-cli` remains a thin native bridge: it resolves stable/dev context paths,
 reloads and saves the authoritative SQLite state, and delegates native command
 execution for browser-submitted actions.
@@ -500,11 +502,24 @@ refresh of the latest Cockpit projection. The browser may keep transient UI
 state such as "sending" or "failed," but it must not persist pending task
 operations or replay mutations after reload.
 
+Web API access follows an explicit adapter-level API access policy. Non-API shell and
+asset routes are public, `/api/health` is public for reachability checks, and
+`POST /api/session` is public only as a browser-session bootstrap on the
+private listener. Live-control API routes such as `/api/cockpit`,
+`/api/version`, `/api/server/restart`, `/api/operations`, `/api/tasks`, pane,
+and answer routes require the server-issued, HttpOnly, Secure, same-origin
+browser-session cookie. The HTML shell sets the cookie on normal loads, and
+`POST /api/session` exists only to renew or bootstrap that same cookie when a
+live browser shell receives a `401` from a protected API route. Session renewal
+does not authenticate public clients, create browser-owned task state, persist
+pending work, cache operational data, or replay mutations. It is a transport
+recovery mechanism for the host-native private listener.
+
 The app must function correctly without a service worker. If a service worker
 is kept, it is non-critical and limited to cleanup or safe static assets. It
 must never intercept or cache live Ajax endpoints, including `/api/cockpit`,
-`/api/actions`, health checks, polling endpoints, streaming endpoints,
-WebSocket/SSE endpoints, or any future `/api/*` endpoint.
+`/api/session`, `/api/actions`, health checks, polling endpoints, streaming
+endpoints, WebSocket/SSE endpoints, or any future `/api/*` endpoint.
 
 Browser storage is intentionally limited. The browser shell must not use
 IndexedDB, background sync, local task queues, offline mutation replay, or

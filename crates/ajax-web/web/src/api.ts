@@ -70,6 +70,14 @@ const GET_OPTIONS: RequestInit = {
   credentials: "same-origin",
 };
 
+const SESSION_RENEW_OPTIONS: RequestInit = {
+  method: "POST",
+  cache: "no-store",
+  credentials: "same-origin",
+};
+
+let browserSessionRenewal: Promise<void> | null = null;
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return {};
@@ -80,13 +88,48 @@ async function readJson(response: Response): Promise<unknown> {
   }
 }
 
-async function getJson(path: string): Promise<unknown> {
+async function renewBrowserSession(): Promise<void> {
+  if (!browserSessionRenewal) {
+    browserSessionRenewal = (async () => {
+      let response: Response;
+      try {
+        response = await fetch("/api/session", SESSION_RENEW_OPTIONS);
+      } catch (error) {
+        throw new ApiError(
+          "stale-session",
+          error instanceof Error ? error.message : String(error),
+          null,
+        );
+      }
+      if (!response.ok) {
+        throw new ApiError("stale-session", `HTTP ${response.status}`, response.status);
+      }
+    })().finally(() => {
+      browserSessionRenewal = null;
+    });
+  }
+  return browserSessionRenewal;
+}
+
+async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(path, GET_OPTIONS);
+    response = await fetch(path, init);
   } catch (error) {
     throw new ApiError("network", error instanceof Error ? error.message : String(error));
   }
+  if (response.status !== 401) return response;
+
+  await renewBrowserSession();
+  try {
+    return await fetch(path, init);
+  } catch (error) {
+    throw new ApiError("network", error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function getJson(path: string): Promise<unknown> {
+  const response = await fetchProtectedWithSessionRenewal(path, GET_OPTIONS);
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
   }
@@ -116,15 +159,10 @@ export type PaneResult =
 /** Pane deltas have bespoke status handling: 404 means the endpoint/task is
  * gone (degrade silently), 409 carries a conflict payload (e.g. tmux missing). */
 export async function fetchPane(handle: string, since: number): Promise<PaneResult> {
-  let response: Response;
-  try {
-    response = await fetch(
-      `/api/tasks/${encodeURIComponent(handle)}/pane?since=${since}`,
-      GET_OPTIONS,
-    );
-  } catch (error) {
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
-  }
+  const response = await fetchProtectedWithSessionRenewal(
+    `/api/tasks/${encodeURIComponent(handle)}/pane?since=${since}`,
+    GET_OPTIONS,
+  );
   if (response.status === 404) return { kind: "missing" };
   if (response.status === 409) {
     return { kind: "conflict", snapshot: assertPaneSnapshot(await readJson(response)) };
@@ -136,18 +174,13 @@ export async function fetchPane(handle: string, since: number): Promise<PaneResu
 }
 
 async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {
-  let response: Response;
-  try {
-    response = await fetch(path, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      credentials: "same-origin",
-      body: JSON.stringify(body),
-    });
-  } catch (error) {
-    throw new ApiError("network", error instanceof Error ? error.message : String(error));
-  }
+  const response = await fetchProtectedWithSessionRenewal(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    cache: "no-store",
+    credentials: "same-origin",
+    body: JSON.stringify(body),
+  });
   const payload = await readJson(response);
   return { response, payload };
 }

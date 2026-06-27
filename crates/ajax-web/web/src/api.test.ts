@@ -121,6 +121,153 @@ describe("GET transport options", () => {
   });
 });
 
+describe("browser session renewal", () => {
+  it("renews the browser session once after a cockpit 401 and retries the GET", async () => {
+    let cockpitCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        return Promise.resolve(
+          cockpitCalls === 1
+            ? json({ ok: false, error: "browser session required" }, 401)
+            : json(validCockpit),
+        );
+      }
+      if (path === "/api/session") return Promise.resolve(json({ ok: true }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const cockpit = await fetchCockpit();
+
+    expect(cockpit.cards).toEqual([]);
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/cockpit", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/cockpit", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+  });
+
+  it("renews the browser session once after a mutation 401 and retries the same POST", async () => {
+    const operationRequest = {
+      task_handle: "web/x",
+      action: "review",
+      request_id: "operate-request",
+    };
+    let operationCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/operations") {
+        operationCalls += 1;
+        return Promise.resolve(
+          operationCalls === 1
+            ? json({ ok: false, state_changed: false, error: "browser session required" }, 401)
+            : json({ ok: true, state_changed: true, cockpit: validCockpit, output: "done" }),
+        );
+      }
+      if (path === "/api/session") return Promise.resolve(json({ ok: true }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const result = await postOperation(operationRequest);
+
+    expect(result.ok).toBe(true);
+    expect(fetch).toHaveBeenNthCalledWith(1, "/api/operations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
+      body: JSON.stringify(operationRequest),
+    });
+    expect(fetch).toHaveBeenNthCalledWith(2, "/api/session", {
+      method: "POST",
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+    expect(fetch).toHaveBeenNthCalledWith(3, "/api/operations", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
+      body: JSON.stringify(operationRequest),
+    });
+  });
+
+  it("surfaces stale-session when renewal fails", async () => {
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        return Promise.resolve(json({ ok: false, error: "browser session required" }, 401));
+      }
+      if (path === "/api/session") {
+        return Promise.resolve(json({ ok: false, error: "renew failed" }, 503));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    await expect(fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
+  });
+
+  it("shares one session renewal across concurrent protected 401s", async () => {
+    let cockpitCalls = 0;
+    let detailCalls = 0;
+    let releaseSession!: () => void;
+    const sessionStarted = new Promise<void>((resolve) => {
+      releaseSession = resolve;
+    });
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        return Promise.resolve(cockpitCalls === 1 ? json({ ok: false }, 401) : json(validCockpit));
+      }
+      if (path === "/api/tasks/web%2Fx") {
+        detailCalls += 1;
+        return Promise.resolve(detailCalls === 1 ? json({ ok: false }, 401) : json(validDetail));
+      }
+      if (path === "/api/session") {
+        return sessionStarted.then(() => json({ ok: true }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    const cockpitPromise = fetchCockpit();
+    const detailPromise = fetchDetail("web/x");
+    await Promise.resolve();
+    releaseSession();
+
+    await expect(cockpitPromise).resolves.toMatchObject({ cards: [] });
+    await expect(detailPromise).resolves.toMatchObject({ qualified_handle: "web/x" });
+    const sessionCalls = vi
+      .mocked(fetch)
+      .mock.calls.filter(([path]) => String(path) === "/api/session");
+    expect(sessionCalls).toHaveLength(1);
+  });
+
+  it("does not renew the browser session for health checks", async () => {
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/health") return Promise.resolve(json({ ok: false }, 401));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    await expect(checkHealth()).resolves.toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledWith("/api/health", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
+  });
+});
+
 describe("postAnswer status mapping", () => {
   it("maps 409 to a conflict error", async () => {
     mockFetch(() => json({ ok: false, error: "stale" }, 409));
