@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.1...ajax-cli-v0.22.2) (2026-06-27)
+
+
+### Bug Fixes
+
+* gate web API with browser session ([#215](https://github.com/mossipcams/ajax-cli/issues/215)) ([e1ab2a1](https://github.com/mossipcams/ajax-cli/commit/e1ab2a1126c15c821416fe83c02bf75aec01d035))
+
 ## [0.22.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.0...ajax-cli-v0.22.1) (2026-06-27)
 
 
