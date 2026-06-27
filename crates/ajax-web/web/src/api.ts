@@ -29,6 +29,7 @@ export type ApiErrorKind =
   | "conflict" // 409 — agent moved on
   | "terminal" // 422 — needs the terminal instead
   | "rate-limit" // 429 — slow down
+  | "stale-session" // 401 — browser shell session cookie is missing or stale
   | "incompatible";
 
 export class ApiError extends Error {
@@ -57,6 +58,7 @@ export function requestId(): string {
 }
 
 function classifyStatus(status: number): ApiErrorKind {
+  if (status === 401) return "stale-session";
   if (status === 409) return "conflict";
   if (status === 422) return "terminal";
   if (status === 429) return "rate-limit";
