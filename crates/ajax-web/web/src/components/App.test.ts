@@ -125,6 +125,53 @@ describe("App shell", () => {
     expect(queryByText("disconnected: HTTP 401")).toBeNull();
   });
 
+  it("recovers a missing browser session before showing stale session", async () => {
+    let cockpitCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          cockpitCalls += 1;
+          return Promise.resolve(
+            cockpitCalls === 1
+              ? jsonResponse({ ok: false, error: "browser session required" }, 401)
+              : jsonResponse(cockpit),
+          );
+        }
+        if (path === "/api/session") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+
+    expect(await findByText("connected")).toBeInTheDocument();
+    expect(queryByText("stale session")).toBeNull();
+  });
+
+  it("reports stale session when browser session renewal fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") {
+          return Promise.resolve(jsonResponse({ ok: false, error: "browser session required" }, 401));
+        }
+        if (path === "/api/session") {
+          return Promise.resolve(jsonResponse({ ok: false, error: "renew failed" }, 503));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+
+    expect(await findByText("stale session: HTTP 503")).toBeInTheDocument();
+    expect(queryByText("connected")).toBeNull();
+  });
+
   it("reports cockpit network failures as backend unreachable with detail", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
 
