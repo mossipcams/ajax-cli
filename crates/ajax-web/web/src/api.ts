@@ -63,6 +63,11 @@ function classifyStatus(status: number): ApiErrorKind {
   return "http";
 }
 
+const GET_OPTIONS: RequestInit = {
+  cache: "no-store",
+  credentials: "same-origin",
+};
+
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return {};
@@ -76,7 +81,7 @@ async function readJson(response: Response): Promise<unknown> {
 async function getJson(path: string): Promise<unknown> {
   let response: Response;
   try {
-    response = await fetch(path, { cache: "no-store" });
+    response = await fetch(path, GET_OPTIONS);
   } catch (error) {
     throw new ApiError("network", error instanceof Error ? error.message : String(error));
   }
@@ -113,7 +118,7 @@ export async function fetchPane(handle: string, since: number): Promise<PaneResu
   try {
     response = await fetch(
       `/api/tasks/${encodeURIComponent(handle)}/pane?since=${since}`,
-      { cache: "no-store" },
+      GET_OPTIONS,
     );
   } catch (error) {
     throw new ApiError("network", error instanceof Error ? error.message : String(error));
@@ -135,6 +140,7 @@ async function postJson(path: string, body: unknown): Promise<{ response: Respon
       method: "POST",
       headers: { "content-type": "application/json" },
       cache: "no-store",
+      credentials: "same-origin",
       body: JSON.stringify(body),
     });
   } catch (error) {
@@ -200,7 +206,7 @@ export async function postAnswer(handle: string, req: TaskAnswerRequest): Promis
 
 export async function checkHealth(): Promise<boolean> {
   try {
-    const response = await fetch("/api/health", { cache: "no-store" });
+    const response = await fetch("/api/health", GET_OPTIONS);
     return response.ok;
   } catch {
     return false;
