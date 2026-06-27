@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.0...ajax-cli-v0.22.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* send Access credentials with web API fetches ([#213](https://github.com/mossipcams/ajax-cli/issues/213)) ([4849122](https://github.com/mossipcams/ajax-cli/commit/48491229f4bba5685999f9a23ceb7fb453a8fd71))
+
 ## [0.22.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.21.2...ajax-cli-v0.22.0) (2026-06-26)
 
 
