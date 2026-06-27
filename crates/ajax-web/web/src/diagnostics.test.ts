@@ -18,6 +18,10 @@ describe("diagnosticFetch", () => {
     vi.stubGlobal("fetch", mockFetch);
 
     const result = await diagnosticFetch("/api/version");
+    expect(mockFetch).toHaveBeenCalledWith("/api/version", {
+      cache: "no-store",
+      credentials: "same-origin",
+    });
     expect(result.ok).toBe(true);
     expect(result.status).toBe(200);
     expect(result.error).toBeNull();

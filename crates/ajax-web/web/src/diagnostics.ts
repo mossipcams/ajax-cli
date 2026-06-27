@@ -10,7 +10,7 @@ export interface DiagnosticCheck {
 
 export async function diagnosticFetch(path: string): Promise<DiagnosticCheck> {
   try {
-    const response = await fetch(path, { cache: "no-store" });
+    const response = await fetch(path, { cache: "no-store", credentials: "same-origin" });
     const text = await response.text();
     let body = text.slice(0, 600);
     try {
