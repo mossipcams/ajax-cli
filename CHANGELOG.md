@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.2...ajax-cli-v0.22.3) (2026-06-27)
+
+
+### Bug Fixes
+
+* **web:** renew browser session after stale API cookie ([#217](https://github.com/mossipcams/ajax-cli/issues/217)) ([38ed536](https://github.com/mossipcams/ajax-cli/commit/38ed5365085922998084f91aae161e4ac000e029))
+
 ## [0.22.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.1...ajax-cli-v0.22.2) (2026-06-27)
 
 
