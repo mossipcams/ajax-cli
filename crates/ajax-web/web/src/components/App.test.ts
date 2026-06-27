@@ -109,6 +109,22 @@ describe("App shell", () => {
     expect(queryByText("backend unreachable")).toBeNull();
   });
 
+  it("reports missing browser session as stale session", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve(JSON.stringify({ ok: false, error: "browser session required" })),
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+
+    expect(await findByText("stale session: HTTP 401")).toBeInTheDocument();
+    expect(queryByText("disconnected: HTTP 401")).toBeNull();
+  });
+
   it("reports cockpit network failures as backend unreachable with detail", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("Failed to fetch")));
 

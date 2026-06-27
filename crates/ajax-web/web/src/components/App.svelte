@@ -41,7 +41,12 @@
 
   function applyConnectionError(error: unknown) {
     if (error instanceof ApiError) {
-      connection = error.kind === "network" ? "backend unreachable" : "disconnected";
+      connection =
+        error.kind === "network"
+          ? "backend unreachable"
+          : error.kind === "stale-session"
+            ? "stale session"
+            : "disconnected";
       connectionDetail = error.message;
       return;
     }

@@ -96,7 +96,13 @@ pub(crate) fn serve_mobile_web_with_paths(
 ) -> Result<(), CliError> {
     let state_dir = companion_state_dir(paths)?;
     let bridge = CliRuntimeBridge::for_context(paths, context)?;
-    let state = runtime::WebAppState::new(context.clone(), ProcessCommandRunner, bridge, state_dir);
+    let state = runtime::WebAppState::load_or_create(
+        context.clone(),
+        ProcessCommandRunner,
+        bridge,
+        state_dir,
+    )
+    .map_err(cli_error_from_web)?;
     runtime::serve_axum_web(host, port, state).map_err(cli_error_from_web)
 }
 

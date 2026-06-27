@@ -9,8 +9,9 @@ use ajax_core::{
 };
 use axum::{
     body::Bytes,
-    extract::{Path as AxumPath, Query, State},
-    http::Uri,
+    extract::{Path as AxumPath, Query, Request as AxumRequest, State},
+    http::{header, HeaderMap, HeaderValue, Uri},
+    middleware::{from_fn_with_state, Next},
     response::Response as AxumResponse,
     routing::{get, post},
     serve::Listener,
@@ -19,6 +20,7 @@ use axum::{
 use serde::Deserialize;
 use std::{
     collections::{BTreeSet, HashMap},
+    fs,
     net::{SocketAddr, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -43,12 +45,15 @@ use crate::adapters::http::{
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+const BROWSER_SESSION_COOKIE_NAME: &str = "ajax_browser_session";
+const BROWSER_SESSION_TOKEN_FILE: &str = "web-browser-session-token";
 
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
     operations: Arc<Mutex<OperationCoordinator>>,
     cockpit_refresh_lock: Arc<tokio::sync::Mutex<()>>,
     state_dir: Arc<PathBuf>,
+    browser_session: Arc<BrowserSession>,
 }
 
 struct WebSharedState<C, B> {
@@ -68,6 +73,101 @@ struct CockpitCacheEntry {
     revision: u64,
 }
 
+#[derive(Clone)]
+struct BrowserSession {
+    token: String,
+}
+
+impl BrowserSession {
+    fn new(token: impl Into<String>) -> Self {
+        Self {
+            token: token.into(),
+        }
+    }
+
+    fn test_default() -> Self {
+        Self::new("ajax-test-browser-session")
+    }
+
+    fn load_or_create(dir: &Path) -> Result<Self, WebError> {
+        let token_path = dir.join(BROWSER_SESSION_TOKEN_FILE);
+        if let Ok(token) = fs::read_to_string(&token_path) {
+            let token = token.trim();
+            if is_valid_session_token(token) {
+                return Ok(Self::new(token.to_string()));
+            }
+        }
+
+        fs::create_dir_all(dir).map_err(|error| {
+            WebError::CommandFailed(format!("web session dir create failed: {error}"))
+        })?;
+        let token = generate_session_token()?;
+        write_private_session_token(&token_path, &token)?;
+        Ok(Self::new(token))
+    }
+
+    fn cookie_pair(&self) -> String {
+        format!("{BROWSER_SESSION_COOKIE_NAME}={}", self.token)
+    }
+
+    fn set_cookie_value(&self) -> String {
+        format!(
+            "{}; Path=/; HttpOnly; Secure; SameSite=Strict",
+            self.cookie_pair()
+        )
+    }
+
+    fn apply_set_cookie(&self, headers: &mut HeaderMap) {
+        if let Ok(value) = HeaderValue::from_str(&self.set_cookie_value()) {
+            headers.insert(header::SET_COOKIE, value);
+        }
+    }
+
+    fn is_present(&self, headers: &HeaderMap) -> bool {
+        let expected = self.cookie_pair();
+        headers.get_all(header::COOKIE).iter().any(|value| {
+            value.to_str().ok().is_some_and(|cookies| {
+                cookies
+                    .split(';')
+                    .map(str::trim)
+                    .any(|cookie| cookie == expected)
+            })
+        })
+    }
+}
+
+fn generate_session_token() -> Result<String, WebError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        WebError::CommandFailed(format!("web session token generation failed: {error}"))
+    })?;
+    let mut token = String::with_capacity(bytes.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    Ok(token)
+}
+
+fn is_valid_session_token(token: &str) -> bool {
+    token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn write_private_session_token(path: &Path, token: &str) -> Result<(), WebError> {
+    fs::write(path, format!("{token}\n")).map_err(|error| {
+        WebError::CommandFailed(format!("web session token write failed: {error}"))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+            WebError::CommandFailed(format!("web session token chmod failed: {error}"))
+        })?;
+    }
+    Ok(())
+}
+
 impl<C, B> Clone for WebAppState<C, B> {
     fn clone(&self) -> Self {
         Self {
@@ -75,6 +175,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             operations: Arc::clone(&self.operations),
             cockpit_refresh_lock: Arc::clone(&self.cockpit_refresh_lock),
             state_dir: Arc::clone(&self.state_dir),
+            browser_session: Arc::clone(&self.browser_session),
         }
     }
 }
@@ -151,7 +252,32 @@ impl<C, B> WebAppState<C, B> {
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
             cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
+            browser_session: Arc::new(BrowserSession::test_default()),
         }
+    }
+
+    pub fn load_or_create(
+        context: CommandContext<InMemoryRegistry>,
+        runner: C,
+        bridge: B,
+        state_dir: PathBuf,
+    ) -> Result<Self, WebError> {
+        let browser_session = BrowserSession::load_or_create(&state_dir)?;
+        Ok(Self {
+            shared: Arc::new(Mutex::new(WebSharedState {
+                context,
+                pane_sequences: crate::slices::pane::PaneSequenceState::default(),
+                pane_inputs: crate::slices::pane::PaneInputState::default(),
+                runner,
+                bridge,
+                revision: 0,
+                cockpit_cache: None,
+            })),
+            operations: Arc::new(Mutex::new(OperationCoordinator::default())),
+            cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            state_dir: Arc::new(state_dir),
+            browser_session: Arc::new(browser_session),
+        })
     }
 
     fn cached_cockpit_response(&self) -> Option<Response> {
@@ -182,9 +308,10 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
+    let session_state = state.clone();
     Router::new()
-        .route("/", get(axum_pwa_shell))
-        .route("/index.html", get(axum_pwa_shell))
+        .route("/", get(axum_pwa_shell::<C, B>))
+        .route("/index.html", get(axum_pwa_shell::<C, B>))
         .route("/app.css", get(axum_app_css))
         .route("/app.js", get(axum_app_js))
         .route("/manifest.webmanifest", get(axum_manifest))
@@ -202,6 +329,10 @@ where
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .fallback(axum_fallback)
+        .layer(from_fn_with_state(
+            session_state,
+            require_browser_session::<C, B>,
+        ))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
@@ -307,8 +438,34 @@ fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, WebError> {
         })
 }
 
-async fn axum_pwa_shell() -> AxumResponse {
-    html_response(install::pwa_shell().into_bytes())
+async fn axum_pwa_shell<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
+    let mut response = html_response(install::pwa_shell().into_bytes());
+    state
+        .browser_session
+        .apply_set_cookie(response.headers_mut());
+    response
+}
+
+async fn require_browser_session<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    request: AxumRequest,
+    next: Next,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let path = request.uri().path();
+    if !path.starts_with("/api/") || path == "/api/health" {
+        return next.run(request).await;
+    }
+    if state.browser_session.is_present(request.headers()) {
+        return next.run(request).await;
+    }
+    json_value_response(
+        401,
+        serde_json::json!({ "ok": false, "error": "browser session required" }),
+    )
 }
 
 async fn axum_app_css() -> AxumResponse {
@@ -1449,6 +1606,14 @@ mod tests {
         ))
     }
 
+    fn browser_session_cookie<C, B>(state: &super::WebAppState<C, B>) -> String {
+        state.browser_session.cookie_pair()
+    }
+
+    fn authenticated_request(cookie: &str, uri: &str) -> axum::http::request::Builder {
+        AxumRequest::builder().uri(uri).header("cookie", cookie)
+    }
+
     #[tokio::test]
     async fn axum_router_serves_static_shell_and_cockpit_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -1458,6 +1623,7 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-static"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let shell = app
@@ -1476,8 +1642,7 @@ mod tests {
         let cockpit = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1498,8 +1663,7 @@ mod tests {
         let missing_api = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/missing")
+                authenticated_request(&session_cookie, "/api/missing")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1538,6 +1702,95 @@ mod tests {
             std::str::from_utf8(&missing_asset_body).unwrap(),
             "not found"
         );
+    }
+
+    #[tokio::test]
+    async fn axum_api_routes_require_browser_session_cookie_except_health() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("axum-api-session"),
+        );
+        let app = super::axum_app(state);
+
+        let shell = app
+            .clone()
+            .oneshot(AxumRequest::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let session_cookie = shell
+            .headers()
+            .get("set-cookie")
+            .expect("shell should set browser session cookie")
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        assert!(session_cookie.starts_with("ajax_browser_session="));
+
+        let health = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(health.status(), StatusCode::OK);
+
+        let unauthenticated = app
+            .clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+
+        let authenticated = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/cockpit")
+                    .header("cookie", session_cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(authenticated.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn browser_session_token_is_persisted_private_and_reused() {
+        let dir = scratch_dir("browser-session-token");
+        let token_path = dir.join(super::BROWSER_SESSION_TOKEN_FILE);
+
+        let first = super::BrowserSession::load_or_create(&dir).unwrap();
+        let saved = std::fs::read_to_string(&token_path).unwrap();
+
+        assert_eq!(saved.trim(), first.token);
+        assert_eq!(first.token.len(), 64);
+        assert!(first.token.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&token_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+
+        let second = super::BrowserSession::load_or_create(&dir).unwrap();
+        assert_eq!(second.cookie_pair(), first.cookie_pair());
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[tokio::test]
@@ -1659,14 +1912,14 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-cockpit-cache"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         for _ in 0..2 {
             let response = app
                 .clone()
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/cockpit")
+                    authenticated_request(&session_cookie, "/api/cockpit")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -1690,13 +1943,13 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-cockpit-ttl"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let first = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1708,8 +1961,7 @@ mod tests {
 
         let second = app
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1732,13 +1984,13 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-cockpit-invalidate"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let cockpit = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1749,9 +2001,8 @@ mod tests {
         let operation = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"request_id":"invalidate-1","task_handle":"web/fix-login","action":"review"}"#,
@@ -1764,8 +2015,7 @@ mod tests {
 
         let refreshed = app
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1791,14 +2041,15 @@ mod tests {
             },
             scratch_dir("axum-cockpit-single-flight"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
+        let first_cookie = session_cookie.clone();
         let first = tokio::spawn(async move {
             first_app
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/cockpit")
+                    authenticated_request(&first_cookie, "/api/cockpit")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -1808,8 +2059,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(25)).await;
         let second = app
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
+                authenticated_request(&session_cookie, "/api/cockpit")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1835,12 +2085,12 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-version"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let response = app
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/version")
+                authenticated_request(&session_cookie, "/api/version")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -1867,15 +2117,15 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-idempotency"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let operation = r#"{"request_id":"req-1","task_handle":"web/fix-login","action":"review"}"#;
         let first = app
             .clone()
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(operation))
                     .unwrap(),
@@ -1891,9 +2141,8 @@ mod tests {
 
         let second = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(operation))
                     .unwrap(),
@@ -1920,6 +2169,7 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-start-idempotency"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
         let request =
             r#"{"request_id":"start-1","repo":"web","title":"Fix login","agent":"codex"}"#;
@@ -1928,9 +2178,8 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    AxumRequest::builder()
+                    authenticated_request(&session_cookie, "/api/tasks")
                         .method("POST")
-                        .uri("/api/tasks")
                         .header("content-type", "application/json")
                         .body(Body::from(request))
                         .unwrap(),
@@ -1961,13 +2210,13 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-json-error"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let response = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from("{not-json"))
                     .unwrap(),
@@ -2002,6 +2251,7 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-answer-422"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
         let fingerprint = ajax_core::agent_prompt::parse_prompt(
             ajax_core::models::AgentClient::Codex,
@@ -2015,9 +2265,8 @@ mod tests {
 
         let response = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
                     .method("POST")
-                    .uri("/api/tasks/web/fix-login/answer")
                     .header("content-type", "application/json")
                     .body(Body::from(format!(
                         r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-422"}}"#
@@ -2052,6 +2301,7 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-answer-429"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
         let fingerprint = ajax_core::agent_prompt::parse_prompt(
             ajax_core::models::AgentClient::Codex,
@@ -2064,9 +2314,8 @@ mod tests {
             let response = app
                 .clone()
                 .oneshot(
-                    AxumRequest::builder()
+                    authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
                         .method("POST")
-                        .uri("/api/tasks/web/fix-login/answer")
                         .header("content-type", "application/json")
                         .body(Body::from(format!(
                             r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-{index}"}}"#
@@ -2080,9 +2329,8 @@ mod tests {
 
         let limited = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
                     .method("POST")
-                    .uri("/api/tasks/web/fix-login/answer")
                     .header("content-type", "application/json")
                     .body(Body::from(format!(
                         r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-429"}}"#
@@ -2116,13 +2364,13 @@ mod tests {
             },
             scratch_dir("axum-operation-error"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let response = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"request_id":"op-error-1","task_handle":"web/fix-login","action":"review"}"#,
@@ -2174,13 +2422,13 @@ mod tests {
             },
             scratch_dir("axum-start-error"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let response = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/tasks")
                     .method("POST")
-                    .uri("/api/tasks")
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"request_id":"start-error-1","repo":"web","title":"Fix login","agent":"codex"}"#,
@@ -2209,15 +2457,16 @@ mod tests {
         };
         let state =
             super::WebAppState::new(context, OkRunner, bridge, scratch_dir("axum-conflict"));
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
+        let first_cookie = session_cookie.clone();
         let first = tokio::spawn(async move {
             first_app
                 .oneshot(
-                    AxumRequest::builder()
+                    authenticated_request(&first_cookie, "/api/operations")
                         .method("POST")
-                        .uri("/api/operations")
                         .header("content-type", "application/json")
                         .body(Body::from(
                             r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
@@ -2231,9 +2480,8 @@ mod tests {
 
         let conflict = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"request_id":"req-b","task_handle":"web/fix-login","action":"ship"}"#,
@@ -2272,14 +2520,15 @@ mod tests {
             },
             scratch_dir("axum-health-cockpit"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let slow_app = app.clone();
+        let slow_cookie = session_cookie.clone();
         let cockpit = tokio::spawn(async move {
             slow_app
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/cockpit")
+                    authenticated_request(&slow_cookie, "/api/cockpit")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -2318,14 +2567,15 @@ mod tests {
             },
             scratch_dir("axum-refresh-operation-race"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state.clone());
 
         let refresh_app = app.clone();
+        let refresh_cookie = session_cookie.clone();
         let cockpit = tokio::spawn(async move {
             refresh_app
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/cockpit")
+                    authenticated_request(&refresh_cookie, "/api/cockpit")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -2336,9 +2586,8 @@ mod tests {
 
         let operation = app
             .oneshot(
-                AxumRequest::builder()
+                authenticated_request(&session_cookie, "/api/operations")
                     .method("POST")
-                    .uri("/api/operations")
                     .header("content-type", "application/json")
                     .body(Body::from(
                         r#"{"request_id":"req-race","task_handle":"web/fix-login","action":"review"}"#,
@@ -2374,14 +2623,15 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-health-pane"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let slow_app = app.clone();
+        let slow_cookie = session_cookie.clone();
         let pane = tokio::spawn(async move {
             slow_app
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/tasks/web/fix-login/pane")
+                    authenticated_request(&slow_cookie, "/api/tasks/web/fix-login/pane")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -2417,14 +2667,15 @@ mod tests {
             TestBridge::default(),
             scratch_dir("axum-detail-pane"),
         );
+        let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
         let slow_app = app.clone();
+        let slow_cookie = session_cookie.clone();
         let pane = tokio::spawn(async move {
             slow_app
                 .oneshot(
-                    AxumRequest::builder()
-                        .uri("/api/tasks/web/fix-login/pane")
+                    authenticated_request(&slow_cookie, "/api/tasks/web/fix-login/pane")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -2435,8 +2686,7 @@ mod tests {
         let detail_started = std::time::Instant::now();
         let detail = app
             .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/tasks/web/fix-login")
+                authenticated_request(&session_cookie, "/api/tasks/web/fix-login")
                     .body(Body::empty())
                     .unwrap(),
             )
