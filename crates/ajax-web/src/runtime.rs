@@ -773,9 +773,27 @@ where
         if let Some(response) = operations.completed_response(&request_id) {
             return response.clone().into_axum_response();
         }
-        if !operations.in_flight_requests.insert(request_id.clone())
-            || !operations.in_flight_tasks.insert(task_key.clone())
-        {
+        if operations.has_in_flight_mutation() {
+            return json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": "task start already in progress",
+                }),
+            );
+        }
+        if !operations.in_flight_requests.insert(request_id.clone()) {
+            return json_value_response(
+                409,
+                serde_json::json!({
+                    "ok": false,
+                    "request_id": request_id,
+                    "error": "task start already in progress",
+                }),
+            );
+        }
+        if !operations.in_flight_tasks.insert(task_key.clone()) {
             operations.in_flight_requests.remove(&request_id);
             return json_value_response(
                 409,
@@ -2560,6 +2578,190 @@ mod tests {
             .unwrap_or_default()
             .contains("already in progress"));
 
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), first)
+                .await
+                .expect("first start request timed out")
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.start_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn axum_start_task_rejects_when_action_operation_is_in_flight_before_bridge_side_effects()
+    {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let state = super::WebAppState::new(
+            context_with_two_tasks(),
+            OkRunner,
+            TestBridge {
+                operate_entered: Some(Arc::clone(&entered)),
+                operate_release: Some(Arc::clone(&release)),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-start-blocked-by-action"),
+        );
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state.clone());
+
+        let first_app = app.clone();
+        let first_cookie = session_cookie.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(
+                    authenticated_request(&first_cookie, "/api/operations")
+                        .method("POST")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"request_id":"op-a","task_handle":"web/fix-login","action":"review"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("first operation request never entered the bridge");
+
+        let conflict = tokio::time::timeout(Duration::from_secs(5), async {
+            app.oneshot(
+                authenticated_request(&session_cookie, "/api/tasks")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"start-a","repo":"web","title":"Start while action runs","agent":"codex"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        })
+        .await
+        .expect("start request timed out");
+
+        {
+            let (lock, cvar) = &*release;
+            let mut released = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *released = true;
+            cvar.notify_all();
+        }
+
+        assert_eq!(conflict.status(), StatusCode::CONFLICT);
+        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["request_id"], "start-a");
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("already in progress"));
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), first)
+                .await
+                .expect("first operation request timed out")
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(guard.bridge.start_calls.load(Ordering::SeqCst), 0);
+        assert_eq!(guard.bridge.operate_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn axum_start_task_duplicate_request_id_does_not_clear_original_in_flight_marker() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let state = super::WebAppState::new(
+            context_with_web_repo(),
+            OkRunner,
+            TestBridge {
+                start_entered: Some(Arc::clone(&entered)),
+                start_release: Some(Arc::clone(&release)),
+                ..TestBridge::default()
+            },
+            scratch_dir("axum-start-duplicate-request-id"),
+        );
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state.clone());
+
+        let first_app = app.clone();
+        let first_cookie = session_cookie.clone();
+        let first = tokio::spawn(async move {
+            first_app
+                .oneshot(
+                    authenticated_request(&first_cookie, "/api/tasks")
+                        .method("POST")
+                        .header("content-type", "application/json")
+                        .body(Body::from(
+                            r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+                        ))
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("first start request never entered the bridge");
+
+        let duplicate_same_task = app
+            .clone()
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/tasks")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(duplicate_same_task.status(), StatusCode::CONFLICT);
+
+        let duplicate_different_task = tokio::time::timeout(Duration::from_secs(5), async {
+            app.oneshot(
+                authenticated_request(&session_cookie, "/api/tasks")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"request_id":"start-a","repo":"web","title":"Different task","agent":"codex"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        })
+        .await
+        .expect("duplicate start request timed out");
+
+        {
+            let (lock, cvar) = &*release;
+            let mut released = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *released = true;
+            cvar.notify_all();
+        }
+
+        assert_eq!(duplicate_different_task.status(), StatusCode::CONFLICT);
         assert_eq!(
             tokio::time::timeout(Duration::from_secs(5), first)
                 .await
