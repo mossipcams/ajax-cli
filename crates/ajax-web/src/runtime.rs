@@ -957,7 +957,7 @@ pub fn route<R: Registry>(
                     body: body.into_bytes(),
                 }),
                 Some(Err(error)) => Err(RouteError::Json(error)),
-                None => legacy_json_error_response(404, "task not found"),
+                None => Ok(text_response(404, "task not found")),
             }
         }
         ("GET", asset_path) => match install::static_asset(asset_path) {
@@ -966,20 +966,10 @@ pub fn route<R: Registry>(
                 content_type: asset.content_type,
                 body: asset.body.to_vec(),
             }),
-            None if asset_path.starts_with("/api/") => legacy_json_error_response(404, "not found"),
             None => Ok(text_response(404, "not found")),
         },
         _ => Ok(text_response(405, "method not allowed")),
     }
-}
-
-fn legacy_json_error_response(status_code: u16, error: &str) -> Result<Response, RouteError> {
-    Ok(Response {
-        status_code,
-        content_type: "application/json; charset=utf-8",
-        body: serde_json::to_vec(&serde_json::json!({ "ok": false, "error": error }))
-            .map_err(RouteError::Json)?,
-    })
 }
 
 pub fn route_with_bridge<C: CommandRunner>(
@@ -2931,7 +2921,7 @@ mod tests {
     }
 
     #[test]
-    fn get_task_detail_returns_404_for_unknown_handle() {
+    fn get_task_detail_returns_text_404_for_unknown_handle() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let response = route(
@@ -2945,16 +2935,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(
-            body,
-            serde_json::json!({ "ok": false, "error": "task not found" })
-        );
+        assert_eq!(response.content_type, "text/plain; charset=utf-8");
+        assert_eq!(String::from_utf8_lossy(&response.body), "task not found");
     }
 
     #[test]
-    fn unknown_legacy_api_path_returns_json_404() {
+    fn unknown_in_memory_api_path_stays_generic_404() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let response = route(
@@ -2968,12 +2954,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(
-            body,
-            serde_json::json!({ "ok": false, "error": "not found" })
-        );
+        assert_eq!(response.content_type, "text/plain; charset=utf-8");
+        assert_eq!(String::from_utf8_lossy(&response.body), "not found");
     }
 
     #[test]
@@ -3223,9 +3205,32 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn runtime_tests_do_not_compare_axum_against_old_router() {
+        let source = include_str!("runtime.rs");
+
+        for marker in [
+            concat!(
+                "stale_answer_responses_match_between_axum_and_",
+                "leg",
+                "acy"
+            ),
+            concat!("leg", "acy_", "response"),
+            concat!("leg", "acy_", "context"),
+            concat!("leg", "acy_", "runner"),
+            concat!("leg", "acy_", "bridge"),
+            concat!("leg", "acy_", "dir"),
+        ] {
+            assert!(
+                !source.contains(marker),
+                "runtime tests should not preserve old-router marker {marker}"
+            );
+        }
+    }
+
     #[tokio::test]
-    async fn stale_answer_responses_match_between_axum_and_legacy() {
-        let axum_state = super::WebAppState::new(
+    async fn axum_answer_endpoint_returns_conflict_for_stale_fingerprint() {
+        let state = super::WebAppState::new(
             answer_task_context(),
             PaneRunner {
                 response: Ok(CommandOutput {
@@ -3236,11 +3241,11 @@ mod tests {
                 run_count: 0,
             },
             TestBridge::default(),
-            scratch_dir("axum-answer-stale-parity"),
+            scratch_dir("axum-answer-stale"),
         );
-        let session_cookie = browser_session_cookie(&axum_state);
-        let app = super::axum_app(axum_state);
-        let axum_response = app
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let response = app
             .oneshot(
                 authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
                     .method("POST")
@@ -3252,45 +3257,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(axum_response.status(), StatusCode::CONFLICT);
-        let axum_body = to_bytes(axum_response.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let axum_json: serde_json::Value = serde_json::from_slice(&axum_body).unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
 
-        let mut legacy_context = answer_task_context();
-        let mut legacy_runner = PaneRunner {
-            response: Ok(CommandOutput {
-                status_code: 0,
-                stdout: "Run `cargo test`? [y/n]\n".to_string(),
-                stderr: String::new(),
-            }),
-            run_count: 0,
-        };
-        let mut legacy_bridge = TestBridge::default();
-        let legacy_dir = scratch_dir("legacy-answer-stale-parity");
-        let legacy_response = route_with_bridge(
-            Request {
-                method: "POST",
-                path: "/api/tasks/web/fix-login/answer",
-                body: r#"{"answer":"approve","fingerprint":"stale","request_id":"r1"}"#,
-            },
-            &mut legacy_context,
-            &mut legacy_runner,
-            &mut legacy_bridge,
-            &legacy_dir,
-        )
-        .unwrap();
-        assert_eq!(legacy_response.status_code, StatusCode::CONFLICT.as_u16());
-        let legacy_json: serde_json::Value = serde_json::from_slice(&legacy_response.body).unwrap();
-
-        for body in [&axum_json, &legacy_json] {
-            assert_eq!(body["ok"], false);
-            assert!(body["error"].is_string());
-            assert_eq!(body["stale"], true);
-        }
-        assert_eq!(axum_json["error"], legacy_json["error"]);
-        std::fs::remove_dir_all(&legacy_dir).ok();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"].is_string());
+        assert_eq!(json["stale"], true);
     }
 
     #[test]
