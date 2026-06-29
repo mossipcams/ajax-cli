@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.4...ajax-cli-v0.22.5) (2026-06-29)
+
+
+### Bug Fixes
+
+* **web:** harden api session renewal ([#222](https://github.com/mossipcams/ajax-cli/issues/222)) ([e8eb0e6](https://github.com/mossipcams/ajax-cli/commit/e8eb0e6b8e8b58f77f30a5a008a68ca5f47b7178))
+
 ## [0.22.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.3...ajax-cli-v0.22.4) (2026-06-29)
 
 
