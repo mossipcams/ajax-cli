@@ -97,6 +97,88 @@ mod tests {
     }
 
     #[test]
+    fn task_operations_kernel_is_file_backed() {
+        let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
+
+        assert!(
+            source.contains("pub mod kernel;"),
+            "task_operations.rs should declare kernel as a file-backed submodule"
+        );
+        assert!(
+            !source.contains("pub mod kernel {"),
+            "task_operations.rs should not contain an inline kernel module body"
+        );
+    }
+
+    #[test]
+    fn task_operations_start_is_file_backed() {
+        let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
+
+        assert!(
+            source.contains("pub mod start;"),
+            "task_operations.rs should declare start as a file-backed submodule"
+        );
+        assert!(
+            !source.contains("pub mod start {"),
+            "task_operations.rs should not contain an inline start module body"
+        );
+    }
+
+    #[test]
+    fn task_operations_task_command_is_file_backed() {
+        let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
+
+        assert!(
+            source.contains("pub mod task_command;"),
+            "task_operations.rs should declare task_command as a file-backed submodule"
+        );
+        assert!(
+            !source.contains("pub mod task_command {"),
+            "task_operations.rs should not contain an inline task_command module body"
+        );
+    }
+
+    #[test]
+    fn task_operations_drop_task_is_file_backed() {
+        let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
+
+        assert!(
+            source.contains("pub mod drop_task;"),
+            "task_operations.rs should declare drop_task as a file-backed submodule"
+        );
+        assert!(
+            !source.contains("pub mod drop_task {"),
+            "task_operations.rs should not contain an inline drop_task module body"
+        );
+    }
+
+    #[test]
+    fn task_operations_root_only_declares_submodules_and_tests() {
+        let source = std::fs::read_to_string("src/task_operations.rs").unwrap();
+
+        assert!(
+            source.contains("pub mod sweep_cleanup;"),
+            "task_operations.rs should declare sweep_cleanup as a file-backed submodule"
+        );
+        assert!(
+            !source.contains("pub mod sweep_cleanup {"),
+            "task_operations.rs should not contain an inline sweep_cleanup module body"
+        );
+        for inline in [
+            "pub mod kernel {",
+            "pub mod start {",
+            "pub mod task_command {",
+            "pub mod drop_task {",
+            "pub mod sweep_cleanup {",
+        ] {
+            assert!(
+                !source.contains(inline),
+                "task_operations.rs should not contain inline module `{inline}`"
+            );
+        }
+    }
+
+    #[test]
     fn commands_module_does_not_own_external_command_execution_loop() {
         let source = std::fs::read_to_string("src/commands.rs").unwrap();
 
