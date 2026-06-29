@@ -201,6 +201,29 @@ describe("browser session renewal", () => {
     });
   });
 
+  it("surfaces stale-session when a retried mutation still returns 401", async () => {
+    const operationRequest = {
+      task_handle: "web/x",
+      action: "review",
+      request_id: "operate-request",
+    };
+    let operationCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/operations") {
+        operationCalls += 1;
+        return Promise.resolve(json({ ok: false, error: "browser session required" }, 401));
+      }
+      if (path === "/api/session") return Promise.resolve(json({ ok: true }));
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    await expect(postOperation(operationRequest)).rejects.toMatchObject({
+      kind: "stale-session",
+    });
+    expect(operationCalls).toBe(2);
+  });
+
   it("surfaces stale-session when renewal fails", async () => {
     mockFetch((input) => {
       const path = String(input);
@@ -214,6 +237,25 @@ describe("browser session renewal", () => {
     });
 
     await expect(fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
+  });
+
+  it("surfaces stale-session when renewal returns an unsuccessful JSON body", async () => {
+    let cockpitCalls = 0;
+    mockFetch((input) => {
+      const path = String(input);
+      if (path === "/api/cockpit") {
+        cockpitCalls += 1;
+        return Promise.resolve(json({ ok: false, error: "browser session required" }, 401));
+      }
+      if (path === "/api/session") {
+        return Promise.resolve(json({ ok: false, error: "renew failed" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+
+    await expect(fetchCockpit()).rejects.toMatchObject({ kind: "stale-session" });
+    expect(cockpitCalls).toBe(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   it("shares one session renewal across concurrent protected 401s", async () => {

@@ -104,6 +104,16 @@ async function renewBrowserSession(): Promise<void> {
       if (!response.ok) {
         throw new ApiError("stale-session", `HTTP ${response.status}`, response.status);
       }
+      const payload = await readJson(response);
+      const renewed =
+        typeof payload === "object" && payload !== null && "ok" in payload && payload.ok === true;
+      if (!renewed) {
+        throw new ApiError(
+          "stale-session",
+          errorMessage(payload, "browser session renewal failed"),
+          response.status,
+        );
+      }
     })().finally(() => {
       browserSessionRenewal = null;
     });
@@ -122,8 +132,13 @@ async function fetchProtectedWithSessionRenewal(path: string, init: RequestInit)
 
   await renewBrowserSession();
   try {
-    return await fetch(path, init);
+    const retryResponse = await fetch(path, init);
+    if (retryResponse.status === 401) {
+      throw new ApiError("stale-session", "HTTP 401", 401);
+    }
+    return retryResponse;
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError("network", error instanceof Error ? error.message : String(error));
   }
 }
