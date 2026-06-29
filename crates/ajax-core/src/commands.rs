@@ -41,19 +41,18 @@ use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
     analysis::git_evidence::{interpret_git_status, worktree_matches_task_intent},
     config::Config,
-    models::{Annotation, GitStatus, LifecycleStatus, SideFlag, Task},
+    models::{GitStatus, LifecycleStatus, SideFlag, Task},
     output::{
-        AnnotationItem, CockpitProjection, CockpitResponse, CockpitView, InboxResponse,
-        InspectResponse, NextResponse, RepoSummary, ReposResponse, TasksResponse,
+        CockpitProjection, CockpitResponse, CockpitView, InboxResponse, InspectResponse,
+        NextResponse, RepoSummary, ReposResponse, TasksResponse,
     },
-    recommended::{evidence_label, operator_action},
     registry::Registry,
 };
 use lookup::find_task;
 use projection::{
-    annotations_for_task, cockpit_projection as build_cockpit_projection, cockpit_summary,
-    count_active_tasks, count_attention_items, count_lifecycle, is_cockpit_menu_task,
-    is_visible_task, task_summary,
+    cockpit_projection as build_cockpit_projection, cockpit_summary, count_active_tasks,
+    count_attention_items, count_lifecycle, inbox_from_cards, is_cockpit_menu_task,
+    is_visible_task, task_card, task_summary,
 };
 use std::{collections::BTreeSet, time::Duration, time::SystemTime};
 
@@ -106,7 +105,10 @@ fn list_tasks_from_tasks(tasks: &[&Task], repo: Option<&str>) -> TasksResponse {
     TasksResponse { tasks }
 }
 
-pub use crate::slices::review::review_queue;
+pub fn review_queue<R: Registry>(context: &CommandContext<R>) -> TasksResponse {
+    let all_tasks = context.registry.list_tasks();
+    review_queue_from_tasks(all_tasks.as_slice())
+}
 
 fn review_queue_from_tasks(tasks: &[&Task]) -> TasksResponse {
     let tasks = tasks
@@ -167,100 +169,22 @@ pub fn cockpit_inbox<R: Registry>(context: &CommandContext<R>) -> InboxResponse 
         .into_iter()
         .filter(|task| is_cockpit_menu_task(task))
         .collect::<Vec<_>>();
-    cockpit_inbox_from_tasks(tasks.as_slice())
+    inbox_from_tasks(tasks.as_slice())
 }
 
 fn inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
-    let visible = tasks
+    let cards = tasks
         .iter()
         .copied()
         .filter(|task| is_visible_task(task))
+        .map(task_card)
         .collect::<Vec<_>>();
-    InboxResponse {
-        items: annotation_items_matching(visible.as_slice(), |_| true),
-    }
-}
-
-fn cockpit_inbox_from_tasks(tasks: &[&Task]) -> InboxResponse {
-    let visible = tasks
-        .iter()
-        .copied()
-        .filter(|task| is_visible_task(task))
-        .collect::<Vec<_>>();
-    InboxResponse {
-        items: cockpit_status_items(visible.as_slice()),
-    }
-}
-
-fn cockpit_status_items(tasks: &[&Task]) -> Vec<AnnotationItem> {
-    let mut items = tasks
-        .iter()
-        .copied()
-        .filter_map(|task| {
-            let status = crate::ui_state::derive_operator_status(task);
-            let severity = match status.status {
-                crate::ui_state::TaskStatus::Waiting => 1,
-                crate::ui_state::TaskStatus::Error => 2,
-                crate::ui_state::TaskStatus::Running | crate::ui_state::TaskStatus::Idle => {
-                    return None;
-                }
-            };
-            Some(AnnotationItem {
-                task_id: task.id.clone(),
-                task_handle: task.qualified_handle(),
-                reason: status
-                    .explanation
-                    .unwrap_or_else(|| status.status.as_str().to_string()),
-                severity,
-                action: operator_action(task).action,
-            })
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        left.severity
-            .cmp(&right.severity)
-            .then_with(|| left.task_handle.cmp(&right.task_handle))
-    });
-    items
+    inbox_from_cards(&cards)
 }
 
 pub fn next<R: Registry>(context: &CommandContext<R>) -> NextResponse {
     NextResponse {
         item: inbox(context).items.into_iter().next(),
-    }
-}
-
-fn annotation_items_matching(
-    tasks: &[&Task],
-    include: impl Fn(&Annotation) -> bool,
-) -> Vec<AnnotationItem> {
-    let mut items = tasks
-        .iter()
-        .copied()
-        .filter_map(|task| {
-            annotations_for_task(task)
-                .into_iter()
-                .filter(|annotation| include(annotation))
-                .min_by_key(|annotation| annotation.severity)
-                .map(|annotation| annotation_item(task, annotation))
-        })
-        .collect::<Vec<_>>();
-    items.sort_by(|left, right| {
-        left.severity
-            .cmp(&right.severity)
-            .then_with(|| left.task_handle.cmp(&right.task_handle))
-            .then_with(|| left.reason.cmp(&right.reason))
-    });
-    items
-}
-
-fn annotation_item(task: &Task, annotation: Annotation) -> AnnotationItem {
-    AnnotationItem {
-        task_id: task.id.clone(),
-        task_handle: task.qualified_handle(),
-        reason: evidence_label(&annotation.evidence).to_string(),
-        severity: annotation.severity,
-        action: operator_action(task).action,
     }
 }
 
@@ -274,7 +198,7 @@ pub fn cockpit<R: Registry>(context: &CommandContext<R>) -> CockpitResponse {
     let tasks = list_tasks_from_tasks(all_tasks.as_slice(), None);
     let review = review_queue_from_tasks(all_tasks.as_slice());
     let inbox = inbox_from_tasks(all_tasks.as_slice());
-    let summary = cockpit_summary(&repos, &tasks, &review, &inbox);
+    let summary = cockpit_summary(&repos, &tasks, &review);
     let next = NextResponse {
         item: inbox.items.first().cloned(),
     };
@@ -299,8 +223,7 @@ pub fn cockpit_projection<R: Registry>(context: &CommandContext<R>) -> CockpitPr
         .collect::<Vec<_>>();
     let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
     let review = review_queue_from_tasks(cockpit_tasks.as_slice());
-    let inbox = inbox_from_tasks(cockpit_tasks.as_slice());
-    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
+    let summary = cockpit_summary(&repos, &tasks_list, &review);
     build_cockpit_projection(all_tasks.as_slice(), summary)
 }
 
@@ -314,9 +237,9 @@ pub fn cockpit_view<R: Registry>(context: &CommandContext<R>) -> CockpitView {
         .collect::<Vec<_>>();
     let tasks_list = list_tasks_from_tasks(cockpit_tasks.as_slice(), None);
     let review = review_queue_from_tasks(cockpit_tasks.as_slice());
-    let inbox = cockpit_inbox_from_tasks(cockpit_tasks.as_slice());
-    let summary = cockpit_summary(&repos, &tasks_list, &review, &inbox);
+    let summary = cockpit_summary(&repos, &tasks_list, &review);
     let projection = build_cockpit_projection(all_tasks.as_slice(), summary);
+    let inbox = inbox_from_cards(&projection.cards);
 
     CockpitView {
         repos,
@@ -1423,12 +1346,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(LiveStatusKind::WaitingForInput, "Waiting for input")]
-    #[case(LiveStatusKind::WaitingForApproval, "Waiting for approval")]
-    #[case(LiveStatusKind::CommandFailed, "Command failed")]
-    #[case(LiveStatusKind::Blocked, "Agent blocked")]
-    #[case(LiveStatusKind::MergeConflict, "Merge conflict")]
-    #[case(LiveStatusKind::CiFailed, "CI failed")]
+    #[case(LiveStatusKind::WaitingForInput, "waiting_for_input")]
+    #[case(LiveStatusKind::WaitingForApproval, "waiting_for_approval")]
+    #[case(LiveStatusKind::CommandFailed, "command_failed")]
+    #[case(LiveStatusKind::Blocked, "blocked")]
+    #[case(LiveStatusKind::MergeConflict, "merge_conflict")]
+    #[case(LiveStatusKind::CiFailed, "ci_failed")]
     fn cockpit_inbox_lists_waiting_and_blocker_live_statuses(
         #[case] live_status: LiveStatusKind,
         #[case] expected_reason: &str,
@@ -1780,7 +1703,7 @@ mod tests {
     }
 
     #[test]
-    fn inbox_returns_annotation_items_from_task_annotations() {
+    fn inbox_returns_canonical_status_items() {
         let context = context_with_tasks();
 
         let response = inbox(&context);
@@ -1793,7 +1716,7 @@ mod tests {
     }
 
     #[test]
-    fn next_returns_first_annotation_item() {
+    fn next_returns_first_canonical_status_item() {
         let context = context_with_tasks();
 
         let response = next(&context);

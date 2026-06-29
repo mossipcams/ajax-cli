@@ -1,11 +1,11 @@
 use crate::{
     attention::annotate,
-    models::{Annotation, LifecycleStatus, Task},
+    models::{Annotation, Evidence, LifecycleStatus, Task},
     output::{
-        CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse, ReposResponse, TaskCard,
-        TaskSummary, TasksResponse,
+        AnnotationItem, CockpitNextStep, CockpitProjection, CockpitSummary, InboxResponse,
+        ReposResponse, TaskCard, TaskSummary, TasksResponse,
     },
-    recommended::{available_operator_actions, operator_action},
+    recommended::{available_operator_actions, evidence_label, operator_action},
     remediation::remediations_for_task,
     ui_state::derive_operator_status,
 };
@@ -14,7 +14,6 @@ pub(super) fn cockpit_summary(
     repos: &ReposResponse,
     tasks: &TasksResponse,
     review: &TasksResponse,
-    _inbox: &InboxResponse,
 ) -> CockpitSummary {
     CockpitSummary {
         repos: repos.repos.len() as u32,
@@ -72,7 +71,6 @@ pub(super) fn task_summary(task: &Task) -> TaskSummary {
         lifecycle_status: format!("{:?}", task.lifecycle_status),
         status: operator_status.status,
         status_explanation: operator_status.explanation.clone(),
-        status_label: operator_status.status.as_str().to_string(),
         runtime_observation_error: task.runtime_projection.observation_error.clone(),
         needs_attention: !annotate(task).is_empty(),
         live_status: task.live_status.clone(),
@@ -105,6 +103,43 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
     }
 }
 
+pub(super) fn inbox_from_cards(cards: &[TaskCard]) -> InboxResponse {
+    let mut items = cards
+        .iter()
+        .filter_map(attention_item_from_card)
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.severity
+            .cmp(&right.severity)
+            .then_with(|| left.task_handle.cmp(&right.task_handle))
+    });
+    InboxResponse { items }
+}
+
+fn attention_item_from_card(card: &TaskCard) -> Option<AnnotationItem> {
+    let annotation = card.annotations.first()?;
+    Some(AnnotationItem {
+        task_id: card.id.clone(),
+        task_handle: card.qualified_handle.clone(),
+        reason: attention_reason(card, annotation),
+        severity: annotation.severity,
+        action: card.primary_action,
+    })
+}
+
+fn attention_reason(card: &TaskCard, annotation: &Annotation) -> String {
+    if matches!(
+        annotation.evidence,
+        Evidence::Lifecycle(LifecycleStatus::Reviewable | LifecycleStatus::Mergeable)
+    ) {
+        if let Some(explanation) = card.status_explanation.clone() {
+            return explanation;
+        }
+    }
+
+    evidence_label(&annotation.evidence).to_string()
+}
+
 pub(super) fn annotations_for_task(task: &Task) -> Vec<Annotation> {
     annotate(task)
 }
@@ -116,28 +151,22 @@ pub(super) fn cockpit_projection(tasks: &[&Task], summary: CockpitSummary) -> Co
         .filter(|task| is_cockpit_menu_task(task))
         .collect();
     let cards: Vec<TaskCard> = visible.iter().copied().map(task_card).collect();
-    let next = cards
-        .iter()
-        .filter_map(|card| {
-            card.annotations
+    let next = inbox_from_cards(&cards)
+        .items
+        .first()
+        .and_then(|item| {
+            cards
                 .iter()
-                .min_by_key(|annotation| annotation.severity)
-                .map(|annotation| (annotation.severity, card, annotation))
+                .find(|card| card.id == item.task_id)
+                .map(|card| (item, card))
         })
-        .min_by(
-            |(left_severity, left_card, _), (right_severity, right_card, _)| {
-                left_severity
-                    .cmp(right_severity)
-                    .then_with(|| left_card.qualified_handle.cmp(&right_card.qualified_handle))
-            },
-        )
-        .map(|(_, card, annotation)| CockpitNextStep {
-            task_id: card.id.clone(),
-            task_handle: card.qualified_handle.clone(),
+        .map(|(item, card)| CockpitNextStep {
+            task_id: item.task_id.clone(),
+            task_handle: item.task_handle.clone(),
             status: card.status,
             status_explanation: card.status_explanation.clone(),
-            action: annotation.suggests,
-            reason: format!("{:?}", annotation.evidence),
+            action: item.action,
+            reason: item.reason.clone(),
         });
     CockpitProjection {
         counts: summary,

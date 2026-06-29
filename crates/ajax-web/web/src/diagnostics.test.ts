@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { diagnosticFetch, copyText } from "./diagnostics";
+import { diagnosticFetch, buildDiagnosticsReport, copyText } from "./diagnostics";
 
 describe("diagnosticFetch", () => {
   beforeEach(() => {
@@ -53,6 +53,26 @@ describe("diagnosticFetch", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBeNull();
     expect(result.error).toContain("Failed to fetch");
+  });
+});
+
+describe("buildDiagnosticsReport", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve('{"ok":true}'),
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the supported Safari/browser shell without service worker state", async () => {
+    const report = await buildDiagnosticsReport();
+
+    expect(report.browser_mode).toBe("Safari/browser");
+    expect(report).not.toHaveProperty("service_worker_controller");
   });
 });
 

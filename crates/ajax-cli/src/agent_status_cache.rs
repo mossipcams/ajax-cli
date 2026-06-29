@@ -189,6 +189,7 @@ fn read_agent_runtime_entry(
 mod tests {
     use std::{
         fs::{self, File, FileTimes},
+        sync::atomic::{AtomicU64, Ordering},
         time::{Duration, SystemTime, UNIX_EPOCH},
     };
 
@@ -199,12 +200,18 @@ mod tests {
 
     use super::TmuxAgentStatusSnapshot;
 
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
     fn temp_cache_root() -> std::path::PathBuf {
         let suffix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!("ajax-agent-status-cache-{suffix}"))
+        let counter = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "ajax-agent-status-cache-{}-{suffix}-{counter}",
+            std::process::id()
+        ))
     }
 
     #[test]

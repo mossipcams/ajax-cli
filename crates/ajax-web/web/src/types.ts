@@ -1,7 +1,6 @@
 // Browser-facing DTOs. These mirror the Rust serialization in
-// `crates/ajax-web/src/slices/*` exactly. Any Rust DTO change must update this
-// file in the same commit (see MIGRATION_CHECKLIST.md). The browser must not
-// derive lifecycle, action validity, or status from these — it renders them.
+// `crates/ajax-web/src/slices/*` exactly. The browser must not derive
+// lifecycle, action validity, or status from these; it renders them.
 
 /** Canonical four-state task status owned by Rust. */
 export type TaskStatus = "running" | "waiting" | "idle" | "error";
@@ -23,7 +22,7 @@ export type AnswerIntent = "approve" | "deny";
 
 export interface WebAction {
   action: string;
-  label?: string;
+  label: string;
   destructive: boolean;
   confirmation_required: boolean;
 }
@@ -102,7 +101,6 @@ export interface BrowserTaskDetail {
   actions: WebAction[];
   live_status_kind?: string | null;
   live_status_summary?: string | null;
-  next_step?: string | null;
   agent_activity?: string | null;
   git?: GitStatus | null;
   tmux?: TmuxStatus | null;

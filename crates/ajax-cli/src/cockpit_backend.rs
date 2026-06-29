@@ -793,7 +793,7 @@ mod tests {
             Some("Waiting for approval")
         );
         assert!(snapshot.inbox.items.iter().any(|item| {
-            item.reason == "Waiting for approval" && item.task_handle == "web/fix-login"
+            item.reason == "waiting_for_approval" && item.task_handle == "web/fix-login"
         }));
         assert!(context
             .registry

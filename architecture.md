@@ -331,8 +331,8 @@ authority. Cockpit inbox membership is derived from canonical `Waiting` and
 `Error` status, while Review, Ship, Drop, and remediation availability continue
 to follow lifecycle, operation eligibility, and policy. CLI and Native Cockpit
 consume the canonical pair directly. Compatibility CLI JSON may retain
-`status_label` as the compact canonical enum label and annotation-based
-`needs_attention`; neither field is derived from a second UI-state reducer.
+annotation-based `needs_attention`, but it is not derived from a second
+UI-state reducer.
 
 Core remains browser-agnostic. It may expose Cockpit projections, action policy,
 task-operation outcomes, runtime reconciliation, and typed output contracts that
@@ -451,9 +451,8 @@ collapsible.
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
 the Ajax backend remain authoritative for task state and operations. The
-primary iPhone target is normal iOS Safari. iOS Home Screen PWA mode is
-experimental and not recommended for operations because WebKit lifecycle and
-cache behavior can leave the installed app stuck while Safari still works.
+primary iPhone target is normal iOS Safari. Web Cockpit does not ship an
+installable PWA surface; it has no manifest, service worker, or app icon routes.
 
 Web Cockpit is host-native only. `ajax-cli web` is the live-control backend and
 runs with the same host authority as SQLite, configured repos, worktrees, tmux
@@ -479,19 +478,18 @@ substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
-the HTML shell, client JavaScript, stylesheet, optional web manifest, optional
-service worker, and app icons from that directory. `ajax-web::runtime` owns
-HTTP transport wiring, local TLS setup, and shell asset delivery.
+the HTML shell, client JavaScript, and stylesheet from that directory.
+`ajax-web::runtime` owns HTTP transport wiring, local TLS setup, and shell asset
+delivery.
 `ajax-web::adapters::browser_session` owns browser-session token persistence,
 cookie formatting, `Set-Cookie` application, and request-cookie matching.
 `ajax-cli` remains a thin native bridge: it resolves stable/dev context paths,
 reloads and saves the authoritative SQLite state, and delegates native command
 execution for browser-submitted actions.
 
-Any manifest should stay small and non-critical: app name, short name,
-description, `start_url`, `scope`, theme/background colors, and icons. It must
-not make Home Screen installation the primary iPhone path or require native-app
-PWA lifecycle assumptions.
+Manifest, service-worker, icon, offline-cache, push, and Home Screen install
+surfaces are unsupported. The browser shell must remain a live same-origin
+client for the host-native backend.
 
 Web Cockpit syncs server-authoritative Cockpit projections, not browser-owned
 task records. `GET /api/cockpit` returns the latest backend projection, but it
@@ -583,8 +581,8 @@ rather than duplicated lifecycle policy. Browser `resume` remains
 ### `ajax-web::slices::install`
 
 Owns the browser shell. It serves the HTML shell, client JavaScript,
-stylesheet, optional manifest, optional service worker, and icons. Home Screen
-installation is experimental and must not complicate the reliable Safari path.
+and stylesheet. It must not serve a web manifest, service worker, install icon,
+or offline cache surface.
 
 ### `ajax-web::slices::pane`
 
@@ -689,12 +687,12 @@ Cockpit is the operator surface over the JSON-backed command boundary.
 `ajax-web` owns browser interaction and rendering. Native Cockpit and Web
 Cockpit are sibling presentation adapters over shared core projections and
 actions; neither surface owns task truth. `ajax-tui` must not know about HTTP,
-TLS, service workers, browser manifests, or static web assets.
+TLS, browser shell assets, or static web assets.
 
 Web Cockpit serves HTTPS so browsers treat it as a secure context. On first run
 it generates a self-signed certificate and persists it beside the state
 database; the operator trusts it once on the browser device. HTTPS support does
-not imply Home Screen PWA installation or notification support.
+not imply Home Screen installation, service-worker, or notification support.
 
 Native Cockpit starts `ajax-cli web` by default and keeps it alive for the
 Cockpit session. `ajax-cli` starts Web Cockpit on port `8787` with the stable

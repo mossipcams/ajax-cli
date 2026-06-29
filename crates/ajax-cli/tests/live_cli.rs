@@ -618,7 +618,6 @@ fn live_new_execute_records_task_and_persists_it_to_sqlite_state() {
                 "qualified_handle": "web/fix-login",
                 "title": "Fix Login!",
                 "lifecycle_status": "Active",
-                "status_label": "running",
                 "runtime_observation_error": null,
                 "needs_attention": false,
                 "live_status": null

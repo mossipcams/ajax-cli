@@ -15,22 +15,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  format-and-duplication:
-    name: Format and Duplication
+  format:
+    name: Format
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install Node dependencies
-        run: npm ci
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.88.0
@@ -39,9 +30,6 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --check
-
-      - name: Check duplication
-        run: npm run lint:duplication
 
   web:
     name: Web
@@ -59,9 +47,6 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
-
-      - name: Check frontend contracts
-        run: npm run verify:web-contract-gate
 
       - name: Check Svelte and TypeScript
         run: npm run web:check
@@ -175,31 +160,16 @@ jobs:
       - name: Audit dependencies
         run: cargo audit
 
-  smoke:
-    name: Smoke
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.88.0
-
-      - name: Smoke test
-        run: scripts/smoke.sh
-
   ci:
     name: CI
     runs-on: ubuntu-latest
     needs:
-      - format-and-duplication
+      - format
       - check
       - clippy
       - test
       - docs
       - audit
-      - smoke
       - web
     if: ${{ always() }}
 

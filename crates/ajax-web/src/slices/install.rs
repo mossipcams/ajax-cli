@@ -1,11 +1,11 @@
-//! Installable PWA shell.
+//! Safari/browser shell.
 
 use crate::adapters::assets;
 
 pub use crate::adapters::assets::StaticAsset;
 
-pub fn pwa_shell() -> String {
-    assets::pwa_shell_html()
+pub fn browser_shell() -> String {
+    assets::browser_shell_html()
 }
 
 pub fn app_version() -> &'static str {
@@ -19,13 +19,12 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
 #[cfg(test)]
 mod tests {
     //! These tests verify the *serving contract* of the bundled Svelte shell:
-    //! the static HTML mount point, the asset routes, the preserved visual
-    //! language, and the service-worker cleanup guarantees. The browser's
-    //! runtime behavior (rendering, routing, polling, confirmations, prompts)
-    //! is covered by the Vitest component/unit suite under `web/src`, so these
-    //! tests deliberately do not grep the minified bundle for implementation
-    //! detail — that coupling moved out with the legacy hand-written `app.js`.
-    use super::{app_version, pwa_shell, static_asset};
+    //! the static HTML mount point, the supported asset routes, and the
+    //! preserved visual language. The browser's runtime behavior (rendering,
+    //! routing, polling, confirmations, prompts) is covered by the Vitest
+    //! component/unit suite under `web/src`, so these tests deliberately do not
+    //! grep the minified bundle for implementation detail.
+    use super::{app_version, browser_shell, static_asset};
     use crate::adapters::assets as asset_adapter;
 
     #[test]
@@ -39,7 +38,7 @@ mod tests {
 
     #[test]
     fn shell_is_the_bundled_svelte_mount_point() {
-        let shell = pwa_shell();
+        let shell = browser_shell();
 
         assert!(shell.contains("<!doctype html>"));
         assert!(shell.contains("name=\"viewport\""));
@@ -52,15 +51,13 @@ mod tests {
         assert!(shell.contains("src=\"/app.js\""));
         assert!(shell.contains("href=\"/app.css\""));
         assert!(shell.contains("type=\"module\""));
-        assert!(shell.contains("href=\"/manifest.webmanifest\""));
-        assert!(shell.contains("href=\"/icons/icon-192.png\""));
         // Svelte mounts into this single node.
         assert!(shell.contains("id=\"app\""));
     }
 
     #[test]
     fn shell_no_longer_carries_the_legacy_imperative_dom() {
-        let shell = pwa_shell();
+        let shell = browser_shell();
         // The hand-built container shell is gone; everything below the mount
         // point is rendered client-side by Svelte components.
         for legacy in [
@@ -82,46 +79,28 @@ mod tests {
     }
 
     #[test]
-    fn manifest_is_served_as_an_installable_pwa_manifest() {
-        let manifest = static_asset("/manifest.webmanifest").unwrap();
-        assert_eq!(
-            manifest.content_type,
-            "application/manifest+json; charset=utf-8"
-        );
-        assert!(std::str::from_utf8(manifest.body)
-            .unwrap()
-            .contains("\"display\""));
-    }
-
-    #[test]
-    fn service_worker_is_a_self_unregistering_cleanup_only_worker() {
-        let worker = static_asset("/sw.js").unwrap();
-        assert_eq!(worker.content_type, "text/javascript; charset=utf-8");
-        let text = std::str::from_utf8(worker.body).unwrap();
-        assert!(text.contains("self.registration.unregister"));
-        assert!(!text.contains("addEventListener(\"fetch\""));
-        assert!(!text.contains("addEventListener(\"push\""));
-        assert!(!text.contains("notificationclick"));
-        assert!(!text.contains("showNotification"));
-        assert!(!text.contains("caches.open"));
-        assert!(!text.contains("IndexedDB"));
-    }
-
-    #[test]
-    fn icons_are_served_as_png_from_the_bundle() {
+    fn retired_pwa_install_assets_are_absent() {
+        let shell = browser_shell();
+        for retired in [
+            "href=\"/manifest.webmanifest\"",
+            "rel=\"apple-touch-icon\"",
+            "href=\"/icons/icon-192.png\"",
+            "apple-mobile-web-app-capable",
+        ] {
+            assert!(
+                !shell.contains(retired),
+                "browser shell should not advertise retired install asset: {retired}"
+            );
+        }
         for path in [
+            "/manifest.webmanifest",
+            "/sw.js",
             "/icons/icon-192.png",
             "/icons/icon-512.png",
             "/icons/icon-maskable-512.png",
             "/icons/apple-touch-icon.png",
         ] {
-            let icon = static_asset(path).unwrap_or_else(|| panic!("missing icon route: {path}"));
-            assert_eq!(icon.content_type, "image/png", "{path}");
-            assert!(
-                icon.body
-                    .starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-                "{path} is not a PNG"
-            );
+            assert!(static_asset(path).is_none(), "{path} should be absent");
         }
     }
 

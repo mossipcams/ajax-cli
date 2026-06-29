@@ -7,7 +7,7 @@
 // Run via `npm run web:build:check`. Exits non-zero on any violation.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -22,6 +22,14 @@ function check(condition, message) {
 execFileSync("npm", ["run", "web:build"], { cwd: repoRoot, stdio: "inherit" });
 
 for (const name of ["index.html", "app.js", "app.css"]) {
+  const assetPath = join(distDir, name);
+  if (!existsSync(assetPath)) continue;
+  const contents = readFileSync(assetPath, "utf8");
+  const normalized = contents.replace(/[ \t]+$/gm, "");
+  if (contents !== normalized) writeFileSync(assetPath, normalized);
+}
+
+for (const name of ["index.html", "app.js", "app.css"]) {
   check(existsSync(join(distDir, name)), `missing dist/${name}`);
 }
 
@@ -32,8 +40,12 @@ if (existsSync(join(distDir, "index.html"))) {
     "built index.html dropped the __AJAX_APP_VERSION__ placeholder",
   );
   check(
-    html.includes('href="/manifest.webmanifest"'),
-    "built index.html dropped the manifest link",
+    !html.includes('href="/manifest.webmanifest"'),
+    "built index.html should not advertise a web manifest",
+  );
+  check(
+    !html.includes('rel="apple-touch-icon"'),
+    "built index.html should not advertise Home Screen icons",
   );
   const scripts = html.match(/<script[^>]*(?<![a-z-])src=/g) ?? [];
   check(scripts.length === 1, `expected one local script, found ${scripts.length}`);

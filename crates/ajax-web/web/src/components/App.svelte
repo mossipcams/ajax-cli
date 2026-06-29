@@ -4,7 +4,6 @@
   import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
   import { ApiError, fetchCockpit, fetchDetail, fetchVersion } from "../api";
   import { REFRESH_INTERVAL_MS, VERSION_POLL_MS } from "../polling";
-  import { unregisterExistingServiceWorkers } from "../diagnostics";
   import ConnectionStatus from "./ConnectionStatus.svelte";
   import ResultPanel from "./ResultPanel.svelte";
   import TaskList from "./TaskList.svelte";
@@ -100,7 +99,6 @@
 
   // Cockpit polling — mount once; the interval callback is not a tracked read.
   $effect(() => {
-    unregisterExistingServiceWorkers();
     void loadCockpit();
     const idleHandle = whenIdle(() => void checkVersion());
     const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);

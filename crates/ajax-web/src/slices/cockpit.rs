@@ -2,7 +2,7 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, LiveStatusKind, TmuxStatus},
+    models::{AgentAttempt, GitStatus, LifecycleStatus, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
 };
@@ -82,56 +82,6 @@ fn repo_of_handle(qualified_handle: &str) -> String {
         .unwrap_or_else(|| qualified_handle.to_string())
 }
 
-/// Presentation-ready operator guidance for the task detail view. This replaces
-/// the workflow copy the legacy browser invented from `live_status_kind` —
-/// including its dead `primary.status === "supported"` assumption, which never
-/// matched because `WebAction` has no `status` field.
-fn browser_next_step(kind: Option<&LiveStatusKind>, actions: &[WebAction]) -> String {
-    match kind {
-        Some(LiveStatusKind::WaitingForApproval) => {
-            "Clear the approval request, then let the task continue.".to_string()
-        }
-        Some(LiveStatusKind::WaitingForInput) => {
-            "Open the terminal to reply directly to the agent.".to_string()
-        }
-        Some(LiveStatusKind::CiFailed) => {
-            "Inspect the failing check and run Fix CI if you want Ajax to remediate it.".to_string()
-        }
-        Some(LiveStatusKind::MergeConflict) => {
-            "Run Resolve conflicts to repair the branch before reviewing or shipping.".to_string()
-        }
-        _ => match actions.first() {
-            Some(action) => format!(
-                "Use {} when you're ready to move this task forward.",
-                action_label(action)
-            ),
-            None => {
-                "Monitor the task health and use the action drawer when intervention is needed."
-                    .to_string()
-            }
-        },
-    }
-}
-
-/// Mirror the legacy browser `actionLabel`: prefer the server label, then the
-/// remediation display names, otherwise title-case the action id.
-fn action_label(action: &WebAction) -> String {
-    if let Some(label) = &action.label {
-        return label.clone();
-    }
-    match action.action.as_str() {
-        "fix-ci" => "Fix CI".to_string(),
-        "resolve-merge-conflicts" => "Resolve conflicts".to_string(),
-        other => {
-            let mut chars = other.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        }
-    }
-}
-
 #[derive(Serialize)]
 pub struct BrowserTaskDetail {
     pub qualified_handle: String,
@@ -150,7 +100,6 @@ pub struct BrowserTaskDetail {
     pub actions: Vec<WebAction>,
     pub live_status_kind: Option<String>,
     pub live_status_summary: Option<String>,
-    pub next_step: Option<String>,
     pub agent_activity: Option<String>,
     pub git: Option<GitStatus>,
     pub tmux: Option<TmuxStatus>,
@@ -191,10 +140,6 @@ pub fn browser_task_detail_view<R: Registry>(
         .map(|live| format!("{:?}", live.kind));
     let live_status_summary = task.live_status.as_ref().map(|live| live.summary.clone());
     let agent_activity = live_status_summary.clone();
-    let next_step = Some(browser_next_step(
-        task.live_status.as_ref().map(|live| &live.kind),
-        &actions,
-    ));
 
     Some(BrowserTaskDetail {
         qualified_handle: task.qualified_handle(),
@@ -213,7 +158,6 @@ pub fn browser_task_detail_view<R: Registry>(
         actions,
         live_status_kind,
         live_status_summary,
-        next_step,
         agent_activity,
         git: task.git_status.clone(),
         tmux: task.tmux_status.clone(),
@@ -568,7 +512,7 @@ pub(crate) mod tests {
             .find(|state| state.action == FIX_CI)
             .expect("fix-ci button");
 
-        assert_eq!(fix_ci.label.as_deref(), Some("Fix CI"));
+        assert_eq!(fix_ci.label, "Fix CI");
         assert!(browser.actions.iter().any(|action| action.action == FIX_CI));
     }
 
@@ -592,12 +536,13 @@ pub(crate) mod tests {
         };
 
         let browser = browser_task_card(&card);
-        let states: Vec<(&str, bool, bool)> = browser
+        let states: Vec<(&str, &str, bool, bool)> = browser
             .actions
             .iter()
             .map(|state| {
                 (
                     state.action.as_str(),
+                    state.label.as_str(),
                     state.destructive,
                     state.confirmation_required,
                 )
@@ -606,7 +551,10 @@ pub(crate) mod tests {
 
         assert_eq!(
             states,
-            vec![("review", false, false), ("drop", true, true),]
+            vec![
+                ("review", "Review", false, false),
+                ("drop", "Drop", true, true),
+            ]
         );
     }
 
@@ -632,7 +580,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn browser_detail_exposes_repo_and_presentation_guidance() {
+    fn browser_detail_exposes_repo_and_server_actions() {
         let mut registry = InMemoryRegistry::default();
         let mut task = Task::new(
             TaskId::new("web/fix-login"),
@@ -657,45 +605,9 @@ pub(crate) mod tests {
         let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
         assert_eq!(detail.repo, "web");
-        // Operator guidance is presentation-ready text owned by Rust, not copy
-        // the browser invents from `live_status_kind`.
-        assert_eq!(
-            detail.next_step.as_deref(),
-            Some("Clear the approval request, then let the task continue.")
-        );
-    }
-
-    #[test]
-    fn browser_detail_guidance_uses_primary_action_label_by_default() {
-        let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
-        task.lifecycle_status = LifecycleStatus::Reviewable;
-        registry.create_task(task).unwrap();
-        let context = CommandContext::new(Config::default(), registry);
-
-        let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
-
-        // With actions but no special live-status kind, guidance names the first
-        // action. (Replaces the dead `primary.status === "supported"` JS check.)
         assert!(
             !detail.actions.is_empty(),
-            "Reviewable task must expose at least one action"
-        );
-        assert!(
-            detail.next_step.as_deref().unwrap().starts_with("Use "),
-            "expected action-led guidance, got {:?}",
-            detail.next_step
+            "detail should expose server-provided actions"
         );
     }
 

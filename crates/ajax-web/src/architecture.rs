@@ -118,7 +118,7 @@ mod tests {
         let file = RustFile::from_content(
             "src/adapters/http.rs",
             "ajax-web::adapters::http",
-            "use crate::slices::install::pwa_shell;",
+            "use crate::slices::install::browser_shell;",
         );
         let rule = MustNotDependOnRule::new(
             "ajax-web::adapters::http".to_string(),

@@ -64,9 +64,11 @@ describe("task-detail fixture", () => {
     expect(typeof d.last_activity_unix_secs).toBe("number");
   });
 
-  it("next_step is a string when guidance is available", () => {
+  it("actions carry server-provided labels", () => {
     const d = assertDetail(taskDetail);
-    expect(typeof d.next_step).toBe("string");
+    for (const action of d.actions) {
+      expect(action.label.length).toBeGreaterThan(0);
+    }
   });
 
   it("agent_attempts is an array of attempts", () => {

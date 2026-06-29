@@ -27,11 +27,13 @@
       "actions": [
         {
           "action": "ship",
+          "label": "Ship",
           "destructive": false,
           "confirmation_required": false
         },
         {
           "action": "drop",
+          "label": "Drop",
           "destructive": true,
           "confirmation_required": true
         }
@@ -44,7 +46,7 @@
         "task_id": "web/fix-login",
         "task_handle": "web/fix-login",
         "severity": 1,
-        "reason": "Waiting for approval",
+        "reason": "waiting_for_approval",
         "action": "Resume"
       }
     ]

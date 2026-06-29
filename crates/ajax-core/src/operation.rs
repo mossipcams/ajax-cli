@@ -91,18 +91,7 @@ pub fn task_operation_eligibility(task: &Task, operation: TaskOperation) -> Oper
 fn missing_substrate_blocks_operation(task: &Task, operation: TaskOperation) -> bool {
     match operation {
         TaskOperation::Check | TaskOperation::Diff | TaskOperation::Remove => false,
-        TaskOperation::Merge => {
-            task.has_side_flag(SideFlag::WorktreeMissing)
-                || task.has_side_flag(SideFlag::BranchMissing)
-                || task
-                    .git_status
-                    .as_ref()
-                    .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
-                || task
-                    .live_status
-                    .as_ref()
-                    .is_some_and(|live| live.kind == crate::models::LiveStatusKind::WorktreeMissing)
-        }
+        TaskOperation::Merge => task.has_missing_git_substrate(),
         _ => task.has_missing_substrate(),
     }
 }

@@ -319,10 +319,8 @@ Every pull request must pass the strongest applicable checks from `Required Vali
 
 ### PR Title Expectations
 
-Every PR title must align with Release Please PR title expectations. Use a
-conventional commit style title such as `feat: ...`, `fix: ...`, or
-`chore: ...` so Release Please can infer the release impact and changelog entry
-correctly.
+Every PR title must use a conventional commit style such as `feat: ...`,
+`fix: ...`, or `chore: ...` so release impact stays explicit.
 
 This applies when creating, updating, renaming, or reviewing any PR. If an
 existing PR title does not follow this convention, update it before reporting the
@@ -397,7 +395,7 @@ rg "search text"
 rg "TODO|FIXME"
 rg "Result<|anyhow|thiserror"
 rg --files
-rg --files | rg '(^|/)(Cargo.toml|package.json|AGENTS.md|CLAUDE.md)$'
+rg --files | rg '(^|/)(Cargo.toml|package.json|AGENTS.md)$'
 rg --files | rg '(^|/)(crates|scripts|tests)/'
 ```
 

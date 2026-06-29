@@ -74,12 +74,7 @@ pub(crate) fn render_ui(frame: &mut Frame, app: &App) {
 }
 
 pub(crate) fn task_status_text(card: &TaskCard) -> String {
-    let status = match card.status {
-        TaskStatus::Running => "Running",
-        TaskStatus::Waiting => "Waiting",
-        TaskStatus::Idle => "Idle",
-        TaskStatus::Error => "Error",
-    };
+    let status = card.status.as_str();
     card.status_explanation
         .as_deref()
         .map(|explanation| format!("{status} - {explanation}"))
