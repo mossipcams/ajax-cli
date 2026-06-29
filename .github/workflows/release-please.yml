@@ -1,0 +1,65 @@
+name: Release Please
+
+"on":
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release token
+        id: token
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ -n "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "token=${RELEASE_PLEASE_TOKEN}" >> "$GITHUB_OUTPUT"
+          else
+            echo "token=${GITHUB_TOKEN}" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Missing RELEASE_PLEASE_TOKEN::Falling back to github.token. Release Please PRs created with this token may not trigger downstream CI in the same way as PAT/App tokens."
+          fi
+
+      - name: Run Release Please
+        id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          token: ${{ steps.token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+      # The "simple" release type bumps crates/ajax-cli/Cargo.toml but does not
+      # touch Cargo.lock, so the open release PR would fail the `--locked` CI
+      # checks. Re-lock the workspace member version on the release PR branch
+      # and push it back. `cargo update --workspace` only re-locks workspace
+      # members (a one-line change for ajax-cli), leaving dependencies pinned.
+      # headBranchName comes from release-please's own PR output (a branch name
+      # it generates), not from untrusted event data.
+      - name: Check out release PR branch
+        if: ${{ steps.release.outputs.pr }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          token: ${{ steps.token.outputs.token }}
+
+      - name: Sync Cargo.lock with bumped version
+        if: ${{ steps.release.outputs.pr }}
+        run: |
+          cargo update --workspace
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.lock
+            git commit -m "chore: sync Cargo.lock for release"
+            git push
+          fi
