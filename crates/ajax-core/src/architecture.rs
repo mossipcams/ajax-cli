@@ -96,6 +96,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn commands_module_does_not_own_external_command_execution_loop() {
+        let source = std::fs::read_to_string("src/commands.rs").unwrap();
+
+        assert!(
+            !source.contains("for command in &plan.commands {"),
+            "commands.rs should not own the external command execution loop"
+        );
+        if source.contains("pub fn execute_plan(") {
+            assert!(
+                source.contains("task_operations::kernel::execute_external_plan"),
+                "execute_plan should only remain as a thin compatibility wrapper"
+            );
+        }
+    }
+
+    #[test]
+    fn check_and_merge_do_not_mutate_tasks_through_raw_registry_access() {
+        for file in ["src/commands/check.rs", "src/commands/merge.rs"] {
+            let source = std::fs::read_to_string(file).unwrap();
+            assert!(
+                !source.contains(".get_task_mut("),
+                "{file} should mutate task lifecycle through typed helpers instead of raw registry access"
+            );
+        }
+    }
+
     fn forbidden_paths_for_slices(slices: &[&str]) -> Vec<String> {
         slices
             .iter()

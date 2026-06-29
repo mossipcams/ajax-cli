@@ -140,7 +140,9 @@ pub mod start {
 
         commands::mark_task_opened(context, &task.qualified_handle())?;
         let open_plan = commands::open_task_plan(context, &task.qualified_handle(), open_mode)?;
-        outputs.extend(commands::execute_plan(&open_plan, true, runner)?);
+        outputs.extend(crate::task_operations::kernel::execute_external_plan(
+            &open_plan, true, runner,
+        )?);
 
         let task = context.registry.get_task(&task.id).cloned().unwrap_or(task);
 

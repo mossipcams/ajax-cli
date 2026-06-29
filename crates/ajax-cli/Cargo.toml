@@ -28,3 +28,7 @@ nix = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "time"], optional = true }
+
+[dev-dependencies]
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }

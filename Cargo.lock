@@ -19,11 +19,13 @@ dependencies = [
  "ajax-supervisor",
  "ajax-tui",
  "ajax-web",
+ "axum",
  "clap",
  "nix",
  "serde",
  "serde_json",
  "tokio",
+ "tower",
 ]
 
 [[package]]

@@ -1,9 +1,8 @@
 use super::lookup::find_task;
+use super::task_state;
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::CommandSpec,
-    live::LiveStatusKind,
-    models::{LifecycleStatus, LiveObservation, SideFlag},
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
 };
@@ -45,13 +44,8 @@ pub fn mark_task_check_started<R: Registry>(
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
-    if let Some(task) = context.registry.get_task_mut(&task.id) {
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::TestsRunning,
-            "check running",
-        ));
-        task.remove_side_flag(SideFlag::TestsFailed);
-    }
+    task_state::mark_task_check_started(&mut context.registry, &task.id)
+        .map_err(CommandError::Registry)?;
     Ok(())
 }
 
@@ -62,23 +56,13 @@ pub fn mark_task_check_succeeded<R: Registry>(
     let task = find_task(context, qualified_handle)?.clone();
     if matches!(
         task.lifecycle_status,
-        LifecycleStatus::Active | LifecycleStatus::Waiting
+        crate::models::LifecycleStatus::Active | crate::models::LifecycleStatus::Waiting
     ) {
-        context
-            .registry
-            .update_lifecycle(&task.id, LifecycleStatus::Reviewable)
+        task_state::update_check_lifecycle(&mut context.registry, &task.id)
             .map_err(CommandError::Registry)?;
     }
-    if let Some(task) = context.registry.get_task_mut(&task.id) {
-        task.remove_side_flag(SideFlag::TestsFailed);
-        if task
-            .live_status
-            .as_ref()
-            .is_some_and(|status| status.kind == LiveStatusKind::TestsRunning)
-        {
-            task.live_status = None;
-        }
-    }
+    task_state::mark_task_check_succeeded(&mut context.registry, &task.id)
+        .map_err(CommandError::Registry)?;
     Ok(())
 }
 
@@ -87,12 +71,7 @@ pub fn mark_task_check_failed<R: Registry>(
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
-    if let Some(task) = context.registry.get_task_mut(&task.id) {
-        task.add_side_flag(SideFlag::TestsFailed);
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
-            "check failed",
-        ));
-    }
+    task_state::mark_task_check_failed(&mut context.registry, &task.id)
+        .map_err(CommandError::Registry)?;
     Ok(())
 }

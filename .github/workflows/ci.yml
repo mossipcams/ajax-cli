@@ -54,6 +54,9 @@ jobs:
       - name: Test frontend
         run: npm run web:test -- --run
 
+      - name: Check built web assets
+        run: npm run web:build:check
+
       - name: Install Playwright browser
         run: npx playwright install --with-deps chromium
 
