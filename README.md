@@ -359,3 +359,6 @@ cargo test --doc
 npm run web:check
 npm run web:test -- --run
 ```
+
+Releases are managed by Release Please. If set, `RELEASE_PLEASE_TOKEN` is used;
+otherwise the workflow falls back to `github.token` so releases still run.
