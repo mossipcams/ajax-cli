@@ -35,7 +35,7 @@ pub(crate) type HttpResponse = runtime::Response;
 
 #[cfg(test)]
 pub(crate) fn render_mobile_shell() -> String {
-    web_install::pwa_shell()
+    web_install::browser_shell()
 }
 
 #[cfg(test)]
@@ -341,7 +341,8 @@ mod tests {
         // inbox, task rows, settings, etc. are rendered client-side.
         assert!(html.contains("id=\"app\""));
         assert!(html.contains("type=\"module\""));
-        assert!(html.contains("href=\"/manifest.webmanifest\""));
+        assert!(!html.contains("href=\"/manifest.webmanifest\""));
+        assert!(!html.contains("apple-mobile-web-app-capable"));
         for legacy in [
             "id=\"inbox\"",
             "id=\"repos\"",
@@ -404,43 +405,20 @@ mod tests {
     }
 
     #[test]
-    fn http_router_serves_web_manifest() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let manifest = handle_http_request("GET", "/manifest.webmanifest", "", &context).unwrap();
-        assert_eq!(manifest.status_code, 200);
-        assert_eq!(
-            manifest.content_type,
-            "application/manifest+json; charset=utf-8"
-        );
-
-        let value: serde_json::Value = serde_json::from_slice(&manifest.body).unwrap();
-        assert!(value["name"].is_string());
-        assert_eq!(value["display"], "standalone");
-        assert!(value["start_url"].is_string());
-        assert!(value["icons"]
-            .as_array()
-            .is_some_and(|icons| !icons.is_empty()));
-    }
-
-    #[test]
-    fn http_router_serves_app_icons() {
+    fn http_router_does_not_serve_retired_pwa_install_assets() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         for path in [
+            "/manifest.webmanifest",
+            "/sw.js",
             "/icons/icon-192.png",
             "/icons/icon-512.png",
             "/icons/icon-maskable-512.png",
             "/icons/apple-touch-icon.png",
         ] {
-            let icon = handle_http_request("GET", path, "", &context).unwrap();
-            assert_eq!(icon.status_code, 200, "{path}");
-            assert_eq!(icon.content_type, "image/png", "{path}");
-            assert!(
-                icon.body
-                    .starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
-                "{path} is not a PNG"
-            );
+            let response = handle_http_request("GET", path, "", &context).unwrap();
+            assert_eq!(response.status_code, 404, "{path}");
+            assert_eq!(response.content_type, "text/plain; charset=utf-8", "{path}");
         }
     }
 
@@ -462,35 +440,16 @@ mod tests {
     }
 
     #[test]
-    fn service_worker_and_app_are_push_free() {
+    fn app_script_is_worker_and_push_free() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
-        let sw_text = String::from_utf8_lossy(&sw.body);
-        assert!(sw_text.contains("self.registration.unregister"));
-        assert!(!sw_text.contains("showNotification"));
-        assert!(!sw_text.contains("notificationclick"));
-        assert!(!sw_text.contains("addEventListener(\"push\""));
 
         let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
         let app_text = String::from_utf8_lossy(&app.body);
+        assert!(!app_text.contains("serviceWorker"));
         assert!(!app_text.contains("pushManager.subscribe"));
         assert!(!app_text.contains("/api/push/config"));
         assert!(!app_text.contains("/api/push/subscribe"));
         assert!(app_text.contains("/answer"));
-    }
-
-    #[test]
-    fn http_router_serves_cleanup_service_worker_and_app_does_not_register_it() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let sw = handle_http_request("GET", "/sw.js", "", &context).unwrap();
-        assert_eq!(sw.status_code, 200);
-        assert_eq!(sw.content_type, "text/javascript; charset=utf-8");
-        assert!(!sw.body.is_empty());
-
-        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
-        assert!(!String::from_utf8_lossy(&app.body).contains("serviceWorker.register"));
     }
 
     #[test]

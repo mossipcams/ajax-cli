@@ -519,7 +519,7 @@ mod tests {
         let pane = lines(
             "─ Worked for 7m 39s ─────────────
              › Write tests for @filename
-             gpt-5.4 high · ~/.ajax-dev/worktrees/x/release-please",
+             gpt-5.4 high · ~/.ajax-dev/worktrees/x/fix-login",
         );
         let prompt = CodexAdapter.parse(&pane).expect("composer");
 

@@ -773,7 +773,7 @@ mod tests {
 
         let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-        assert!(content.contains("Waiting - waiting"), "{content}");
+        assert!(content.contains("Waiting - Waiting"), "{content}");
         assert!(!content.contains("blocked"), "{content}");
         assert!(!content.contains("needs input"), "{content}");
         assert!(!content.contains("LiveStatus"), "{content}");
@@ -1880,7 +1880,7 @@ mod tests {
         let content = render_to_string(80, 30, &app);
 
         assert!(content.contains("web/fix-login"));
-        assert!(content.contains("Waiting - waiting"));
+        assert!(content.contains("Waiting - Waiting"));
         assert!(!content.contains("blocked"));
         assert!(!content.contains("> web"));
     }

@@ -16,7 +16,7 @@ const cockpit: BrowserCockpitView = {
       status_explanation: "CI failed",
       actions: [
         { action: "fix-ci", label: "Fix CI", destructive: false, confirmation_required: false },
-        { action: "drop", destructive: true, confirmation_required: true },
+        { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
       ],
     },
     {

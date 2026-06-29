@@ -76,8 +76,6 @@ pub struct TaskSummary {
     #[serde(skip_serializing)]
     pub status_explanation: Option<String>,
     #[serde(default)]
-    pub status_label: String,
-    #[serde(default)]
     pub runtime_observation_error: Option<String>,
     pub needs_attention: bool,
     pub live_status: Option<LiveObservation>,
@@ -278,7 +276,6 @@ mod tests {
                 lifecycle_status: "active".to_string(),
                 status: crate::ui_state::TaskStatus::Waiting,
                 status_explanation: Some("Waiting for approval".to_string()),
-                status_label: "waiting for approval".to_string(),
                 runtime_observation_error: None,
                 needs_attention: false,
                 live_status: Some(LiveObservation::new(
@@ -351,7 +348,6 @@ mod tests {
                     "qualified_handle": "web/fix-login",
                     "title": "Fix login",
                     "lifecycle_status": "active",
-                    "status_label": "waiting for approval",
                     "runtime_observation_error": null,
                     "needs_attention": false,
                     "live_status": {

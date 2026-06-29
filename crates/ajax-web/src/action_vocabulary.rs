@@ -5,8 +5,7 @@ use ajax_core::{models::OperatorAction, output::TaskCard};
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct WebAction {
     pub action: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
+    pub label: String,
     pub destructive: bool,
     pub confirmation_required: bool,
 }
@@ -17,16 +16,27 @@ pub fn web_action(action: OperatorAction) -> Option<WebAction> {
     }
     Some(WebAction {
         action: action.as_str().to_string(),
-        label: None,
+        label: operator_action_label(action).to_string(),
         destructive: action == OperatorAction::Drop,
         confirmation_required: action == OperatorAction::Drop,
     })
 }
 
+fn operator_action_label(action: OperatorAction) -> &'static str {
+    match action {
+        OperatorAction::Start => "Start",
+        OperatorAction::Resume => "Resume",
+        OperatorAction::Review => "Review",
+        OperatorAction::Ship => "Ship",
+        OperatorAction::Drop => "Drop",
+        OperatorAction::Repair => "Repair",
+    }
+}
+
 pub fn remediation_action_state(option: &ajax_core::remediation::RemediationOption) -> WebAction {
     WebAction {
         action: option.id.clone(),
-        label: Some(option.label.clone()),
+        label: option.label.clone(),
         destructive: false,
         confirmation_required: false,
     }
@@ -91,6 +101,7 @@ mod tests {
         let state = web_action(OperatorAction::Review).unwrap();
 
         assert_eq!(state.action, "review");
+        assert_eq!(state.label, "Review");
         assert!(supported_web_action(OperatorAction::Review));
     }
 
@@ -138,7 +149,7 @@ mod tests {
             .find(|state| state.action == FIX_CI)
             .expect("fix-ci action");
 
-        assert_eq!(fix_ci.label.as_deref(), Some("Fix CI"));
+        assert_eq!(fix_ci.label, "Fix CI");
         assert!(supported_browser_action(FIX_CI));
     }
 

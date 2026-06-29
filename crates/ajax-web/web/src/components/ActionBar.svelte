@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { BrowserCockpitView, WebAction } from "../types";
-  import { actionLabel } from "../state";
   import { CONFIRM_TIMEOUT_MS } from "../polling";
   import { postOperation, requestId } from "../api";
 
@@ -35,8 +34,8 @@
 
   function label(action: WebAction): string {
     if (pendingAction === action.action) return "Tap to confirm";
-    if (runningAction === action.action) return `${actionLabel(action)} …`;
-    return actionLabel(action);
+    if (runningAction === action.action) return `${action.label} …`;
+    return action.label;
   }
 
   async function run(action: WebAction) {
@@ -49,7 +48,7 @@
       });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {
-        onResult?.(`${actionLabel(action)} completed`, result.response.output, false);
+        onResult?.(`${action.label} completed`, result.response.output, false);
         onMutated?.();
       } else {
         onResult?.(

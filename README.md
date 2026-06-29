@@ -72,11 +72,10 @@ stores it beside the state database (`web-tls-cert.pem`); Safari will warn the
 first time. On iOS, open `web-tls-cert.pem`, install the profile, then enable
 full trust under Settings, General, About, Certificate Trust Settings.
 
-Recommended on iPhone: use a normal Safari tab. Home Screen PWA mode is
-experimental and not recommended for operations because iOS lifecycle and cache
-behavior can leave the installed app unable to reach the backend even when
-Safari works. A native app is only a future option if the browser path stops
-being sufficient.
+Recommended on iPhone: use a normal Safari tab. Web Cockpit no longer ships a
+manifest, service worker, or Home Screen icon surface; the supported browser
+path is the live Safari shell. A native app is only a future option if the
+browser path stops being sufficient.
 
 From Safari you can see every repo's tasks, use the attention inbox, and run
 browser-capable operations such as `review`, `ship`, `repair`, and `drop`. The
@@ -237,16 +236,6 @@ Before changing machines or testing a state migration, export a backup:
 ajax-cli state export --output ~/ajax-state-backup.json
 ```
 
-Run the deterministic local smoke workflow before release-sensitive changes:
-
-```sh
-scripts/smoke.sh
-```
-
-The smoke workflow uses strict fake `git`, `tmux`, and agent tools to validate
-the full happy-path journey, state export behavior, and a partial-failure
-recovery path where Ajax keeps the task visible with attention.
-
 ## Native Rust Cockpit
 
 Cockpit is the primary Ajax operator experience and native Rust cockpit. Render
@@ -367,10 +356,6 @@ cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-features --test-threads=1
 cargo test --doc
-npm run lint:duplication
+npm run web:check
+npm run web:test -- --run
 ```
-
-Use `scripts/smoke.sh` for the deterministic end-to-end smoke workflow.
-
-Releases are managed by Release Please. If set, `RELEASE_PLEASE_TOKEN` is used;
-otherwise the workflow falls back to `github.token` so releases still run.

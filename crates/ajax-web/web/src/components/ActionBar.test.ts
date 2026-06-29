@@ -4,8 +4,18 @@ import ActionBar from "./ActionBar.svelte";
 import * as api from "../api";
 import type { WebAction } from "../types";
 
-const review: WebAction = { action: "review", destructive: false, confirmation_required: false };
-const drop: WebAction = { action: "drop", destructive: true, confirmation_required: true };
+const review: WebAction = {
+  action: "review",
+  label: "Review",
+  destructive: false,
+  confirmation_required: false,
+};
+const drop: WebAction = {
+  action: "drop",
+  label: "Drop",
+  destructive: true,
+  confirmation_required: true,
+};
 
 describe("ActionBar", () => {
   beforeEach(() => vi.useFakeTimers());

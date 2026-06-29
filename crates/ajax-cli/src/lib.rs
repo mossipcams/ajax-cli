@@ -1,8 +1,6 @@
 mod agent_runtime;
 #[cfg(feature = "interactive")]
 mod agent_status_cache;
-#[cfg(feature = "interactive")]
-mod bgtmux;
 mod cli;
 #[cfg(feature = "interactive")]
 mod cockpit_actions;
@@ -54,15 +52,6 @@ use context::{
 use execution_dispatch::{render_matches_mut, render_matches_mut_with_paths};
 use snapshot_dispatch::render_matches_with_paths;
 use std::{ffi::OsStr, io::Write};
-
-#[cfg(feature = "interactive")]
-pub fn run_bgtmux_to_writer(
-    args: impl IntoIterator<Item = impl Into<std::ffi::OsString> + Clone>,
-    writer: &mut impl Write,
-) -> Result<(), CliError> {
-    let mut runner = task_session::PtyTaskSessionRunner;
-    bgtmux::run_bgtmux_with_runner(args, writer, &mut runner)
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliError {

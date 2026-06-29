@@ -68,7 +68,6 @@ const DETAIL_FIXTURE = {
   ],
   live_status_kind: null,
   live_status_summary: null,
-  next_step: "Open the PR and ship it.",
   agent_activity: null,
   git: { unpushed_commits: 1 },
   tmux: null,
@@ -156,7 +155,7 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
 test("task detail panels and action buttons are styled", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(page.getByText("Open the PR and ship it.")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
 
   // Primary action (first action) is the filled teal button.
   const primary = page.locator(".action.primary").first();

@@ -228,13 +228,10 @@ where
 {
     let session_state = state.clone();
     Router::new()
-        .route("/", get(axum_pwa_shell::<C, B>))
-        .route("/index.html", get(axum_pwa_shell::<C, B>))
+        .route("/", get(axum_browser_shell::<C, B>))
+        .route("/index.html", get(axum_browser_shell::<C, B>))
         .route("/app.css", get(axum_app_css))
         .route("/app.js", get(axum_app_js))
-        .route("/manifest.webmanifest", get(axum_manifest))
-        .route("/sw.js", get(axum_service_worker))
-        .route("/icons/{*path}", get(axum_icon))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
@@ -357,8 +354,8 @@ fn resolve_bind_address(host: &str, port: u16) -> Result<SocketAddr, WebError> {
         })
 }
 
-async fn axum_pwa_shell<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
-    let mut response = html_response(install::pwa_shell().into_bytes());
+async fn axum_browser_shell<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse {
+    let mut response = html_response(install::browser_shell().into_bytes());
     state
         .browser_session
         .apply_set_cookie(response.headers_mut());
@@ -403,18 +400,6 @@ async fn axum_app_css() -> AxumResponse {
 
 async fn axum_app_js() -> AxumResponse {
     static_asset_response("/app.js")
-}
-
-async fn axum_manifest() -> AxumResponse {
-    static_asset_response("/manifest.webmanifest")
-}
-
-async fn axum_service_worker() -> AxumResponse {
-    static_asset_response("/sw.js")
-}
-
-async fn axum_icon(AxumPath(path): AxumPath<String>) -> AxumResponse {
-    static_asset_response(&format!("/icons/{path}"))
 }
 
 async fn axum_health() -> AxumResponse {
@@ -948,7 +933,7 @@ pub fn route<R: Registry>(
         ("GET", "/") => Ok(Response {
             status_code: 200,
             content_type: "text/html; charset=utf-8",
-            body: install::pwa_shell().into_bytes(),
+            body: install::browser_shell().into_bytes(),
         }),
         ("GET", "/api/cockpit") => Ok(Response {
             status_code: 200,
@@ -1645,6 +1630,32 @@ mod tests {
         assert!(!std::str::from_utf8(&missing_api_body)
             .unwrap()
             .contains("Ajax Cockpit"));
+
+        for path in [
+            "/manifest.webmanifest",
+            "/sw.js",
+            "/icons/icon-192.png",
+            "/icons/icon-512.png",
+            "/icons/icon-maskable-512.png",
+            "/icons/apple-touch-icon.png",
+        ] {
+            let retired_asset = app
+                .clone()
+                .oneshot(
+                    AxumRequest::builder()
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(retired_asset.status(), StatusCode::NOT_FOUND, "{path}");
+            assert_eq!(
+                retired_asset.headers()["content-type"],
+                "text/plain; charset=utf-8",
+                "{path}"
+            );
+        }
 
         let missing_asset = app
             .oneshot(

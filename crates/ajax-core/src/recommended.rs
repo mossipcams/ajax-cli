@@ -197,13 +197,7 @@ pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
 }
 
 fn has_only_shell_substrate_gap(task: &Task) -> bool {
-    !task.has_side_flag(SideFlag::WorktreeMissing)
-        && !task.has_side_flag(SideFlag::BranchMissing)
-        && !task.runtime_projection.health.is_git_substrate_gap()
-        && !task
-            .live_status
-            .as_ref()
-            .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
+    !task.has_missing_git_substrate()
 }
 
 fn task_is_known_invalid(task: &Task) -> bool {

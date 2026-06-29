@@ -48,6 +48,9 @@ function assertAction(value: unknown): WebAction {
   if (!isObject(value) || typeof value.action !== "string") {
     throw new IncompatibleResponseError("action missing string `action` id");
   }
+  if (typeof value.label !== "string") {
+    throw new IncompatibleResponseError("action.label is not a string");
+  }
   if (typeof value.destructive !== "boolean") {
     throw new IncompatibleResponseError("action.destructive is not a boolean");
   }

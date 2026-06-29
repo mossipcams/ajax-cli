@@ -21,7 +21,7 @@ pub fn merge_safety(task: &Task) -> SafetyReport {
         };
     };
 
-    if !git_status.worktree_exists || task.has_side_flag(SideFlag::WorktreeMissing) {
+    if task.has_missing_worktree() {
         mark(
             &mut classification,
             SafetyClassification::Blocked,
@@ -30,7 +30,7 @@ pub fn merge_safety(task: &Task) -> SafetyReport {
         );
     }
 
-    if !git_status.branch_exists || task.has_side_flag(SideFlag::BranchMissing) {
+    if task.has_missing_branch() {
         mark(
             &mut classification,
             SafetyClassification::Blocked,
@@ -83,7 +83,7 @@ pub fn cleanup_safety(task: &Task) -> SafetyReport {
         };
     };
 
-    if !git_status.worktree_exists || task.has_side_flag(SideFlag::WorktreeMissing) {
+    if task.has_missing_worktree() {
         mark(
             &mut classification,
             SafetyClassification::Blocked,
@@ -92,7 +92,7 @@ pub fn cleanup_safety(task: &Task) -> SafetyReport {
         );
     }
 
-    if !git_status.branch_exists || task.has_side_flag(SideFlag::BranchMissing) {
+    if task.has_missing_branch() {
         mark(
             &mut classification,
             SafetyClassification::Blocked,

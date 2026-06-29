@@ -20,10 +20,9 @@ function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
     agent_status: "Idle",
     status: "waiting",
     status_explanation: "Ready for review",
-    actions: [{ action: "review", destructive: false, confirmation_required: false }],
+    actions: [{ action: "review", label: "Review", destructive: false, confirmation_required: false }],
     live_status_kind: "WaitingForApproval",
     live_status_summary: "waiting",
-    next_step: "Clear the approval request, then let the task continue.",
     annotations: [],
     created_unix_secs: 0,
     last_activity_unix_secs: 0,
@@ -33,14 +32,11 @@ function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
 }
 
 describe("TaskDetail", () => {
-  it("renders the canonical headline status and Rust-provided guidance", () => {
+  it("renders the canonical headline status", () => {
     vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const { getByText, container } = render(TaskDetail, { props: { detail: detail() } });
     expect(container.querySelector(".interact-pill")?.textContent).toContain("Waiting");
     expect(getByText("Ready for review")).toBeInTheDocument();
-    expect(
-      getByText("Clear the approval request, then let the task continue."),
-    ).toBeInTheDocument();
   });
 
   it("renders the ordered actions without inferring them", () => {

@@ -29,13 +29,6 @@ export async function diagnosticFetch(path: string): Promise<DiagnosticCheck> {
   }
 }
 
-export function isStandalonePwa(): boolean {
-  return (
-    window.matchMedia?.("(display-mode: standalone)").matches === true ||
-    (window.navigator as { standalone?: boolean }).standalone === true
-  );
-}
-
 export async function buildDiagnosticsReport(
   detailHandle?: string | null,
 ): Promise<Record<string, unknown>> {
@@ -52,11 +45,10 @@ export async function buildDiagnosticsReport(
     document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ?? null;
 
   return {
-    browser_mode: isStandalonePwa() ? "standalone" : "Safari/browser",
+    browser_mode: "Safari/browser",
     backend_url: window.location.origin,
     navigator_onLine: navigator.onLine,
     app_version: loadedAppVersion,
-    service_worker_controller: Boolean(navigator.serviceWorker?.controller),
     location: window.location.href,
     checks,
   };
@@ -73,16 +65,4 @@ export async function copyText(text: string): Promise<boolean> {
     // NotAllowedError when backgrounded on iOS, SecurityError in some contexts.
   }
   return false;
-}
-
-/** Unregister any leftover service worker from old PWA installs. The new client
- * never registers one; this only cleans up the past. */
-export function unregisterExistingServiceWorkers(): void {
-  if (!("serviceWorker" in navigator)) return;
-  navigator.serviceWorker
-    .getRegistrations()
-    .then((registrations) => Promise.all(registrations.map((r) => r.unregister())))
-    .catch(() => {
-      /* cleanup is best-effort */
-    });
 }

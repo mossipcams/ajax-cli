@@ -119,7 +119,7 @@ pub fn spawn_monitor(
         cancel_rx.clone(),
     ));
     let join = tokio::spawn(async move {
-        let (_watcher, watcher_forwarder) = start_watcher(&config, &raw_events)?;
+        let (watcher, watcher_forwarder) = start_watcher(&config, &raw_events)?;
         if config.git_snapshots == GitSnapshotPolicy::OnStartAndExit {
             let worktree_path = config.worktree_path.as_ref().ok_or_else(|| {
                 SupervisorError::Process("worktree path is required for git snapshots".to_string())
@@ -160,7 +160,12 @@ pub fn spawn_monitor(
         }
 
         let status_code = result?;
-        drop(watcher_forwarder);
+        drop(watcher);
+        if let Some(watcher_forwarder) = watcher_forwarder {
+            watcher_forwarder
+                .await
+                .map_err(|error| SupervisorError::Process(error.to_string()))?;
+        }
         Ok(MonitorExit { status_code })
     });
 

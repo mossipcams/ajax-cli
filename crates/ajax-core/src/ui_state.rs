@@ -13,10 +13,10 @@ pub enum TaskStatus {
 impl TaskStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Running => "running",
-            Self::Waiting => "waiting",
-            Self::Idle => "idle",
-            Self::Error => "error",
+            Self::Running => "Running",
+            Self::Waiting => "Waiting",
+            Self::Idle => "Idle",
+            Self::Error => "Error",
         }
     }
 }

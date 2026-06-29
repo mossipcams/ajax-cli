@@ -354,12 +354,38 @@ impl Task {
     }
 
     pub fn has_missing_substrate(&self) -> bool {
-        self.side_flags().any(SideFlag::is_missing_substrate)
+        self.has_missing_git_substrate()
+            || self.side_flags().any(SideFlag::is_missing_substrate)
             || self.runtime_projection.health.is_missing_substrate()
             || self
                 .live_status
                 .as_ref()
                 .is_some_and(|live_status| live_status.kind.is_missing_substrate())
+    }
+
+    pub fn has_missing_worktree(&self) -> bool {
+        self.has_side_flag(SideFlag::WorktreeMissing)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.worktree_exists)
+            || self.runtime_projection.health == RuntimeHealth::MissingWorktree
+            || self
+                .live_status
+                .as_ref()
+                .is_some_and(|live| live.kind == LiveStatusKind::WorktreeMissing)
+    }
+
+    pub fn has_missing_branch(&self) -> bool {
+        self.has_side_flag(SideFlag::BranchMissing)
+            || self
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.branch_exists)
+    }
+
+    pub fn has_missing_git_substrate(&self) -> bool {
+        self.has_missing_worktree() || self.has_missing_branch()
     }
 
     pub fn apply_git_status(&mut self, status: GitStatus) {

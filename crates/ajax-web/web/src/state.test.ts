@@ -6,12 +6,10 @@ import {
   sortCards,
   applyPaneDelta,
   isConfirmExpired,
-  actionLabel,
   statusMeta,
   severityBucket,
-  titleCase,
 } from "./state";
-import type { BrowserTaskCard, WebAction } from "./types";
+import type { BrowserTaskCard } from "./types";
 
 function card(handle: string, status: BrowserTaskCard["status"]): BrowserTaskCard {
   return {
@@ -103,35 +101,6 @@ describe("isConfirmExpired", () => {
   it("expires once now passes the deadline", () => {
     expect(isConfirmExpired({ expiresAt: 1000 }, 999)).toBe(false);
     expect(isConfirmExpired({ expiresAt: 1000 }, 1001)).toBe(true);
-  });
-});
-
-describe("titleCase", () => {
-  it("capitalises the first character", () => {
-    expect(titleCase("review")).toBe("Review");
-    expect(titleCase("fix-ci")).toBe("Fix-ci");
-  });
-  it("returns an empty string unchanged", () => {
-    expect(titleCase("")).toBe("");
-  });
-});
-
-describe("actionLabel", () => {
-  function act(action: string, label?: string): WebAction {
-    return { action, label, destructive: false, confirmation_required: false };
-  }
-
-  it("prefers the server-provided label", () => {
-    expect(actionLabel(act("review", "Review PR"))).toBe("Review PR");
-  });
-
-  it("uses the hard-coded override map for known ids", () => {
-    expect(actionLabel(act("fix-ci"))).toBe("Fix CI");
-    expect(actionLabel(act("resolve-merge-conflicts"))).toBe("Resolve conflicts");
-  });
-
-  it("falls back to title-cased action id", () => {
-    expect(actionLabel(act("ship"))).toBe("Ship");
   });
 });
 

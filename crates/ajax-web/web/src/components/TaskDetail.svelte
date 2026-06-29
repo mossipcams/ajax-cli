@@ -36,7 +36,6 @@
     {#if detail.actions.length}
       <section class="next-action">
         <div class="interact-card-label">Next action</div>
-        {#if detail.next_step}<p class="next-action-hint">{detail.next_step}</p>{/if}
         <ActionBar
           actions={detail.actions}
           handle={detail.qualified_handle}
@@ -218,13 +217,6 @@
     background: var(--paper);
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
-  }
-
-  .next-action-hint {
-    margin: 8px 0 12px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--ink-soft);
   }
 
   /* META DETAILS ---------------------------------------------------------- */
