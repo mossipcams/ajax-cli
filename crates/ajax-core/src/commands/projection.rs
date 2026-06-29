@@ -225,7 +225,13 @@ mod tests {
 
         assert_eq!(card.annotations.len(), 1);
         assert_eq!(card.annotations[0].kind, AnnotationKind::Reviewable);
-        assert_eq!(card.primary_action, OperatorAction::Review);
+        assert!(
+            card.available_actions.contains(&card.primary_action),
+            "primary action {:?} must be in available_actions {:?}",
+            card.primary_action,
+            card.available_actions
+        );
+        assert_eq!(card.primary_action, OperatorAction::Resume);
     }
 
     #[test]
@@ -238,7 +244,7 @@ mod tests {
         let projection = cockpit_projection(tasks.as_slice(), summary());
 
         assert_eq!(projection.cards[0].annotations.len(), 1);
-        assert_eq!(projection.next.unwrap().action, OperatorAction::Review);
+        assert_eq!(projection.next.unwrap().action, OperatorAction::Resume);
     }
 
     #[test]
@@ -417,7 +423,13 @@ mod tests {
         let card = task_card(&task);
 
         assert_eq!(card.status_explanation.as_deref(), Some("Ready for review"));
-        assert_eq!(card.primary_action, OperatorAction::Review);
+        assert!(
+            card.available_actions.contains(&card.primary_action),
+            "primary action {:?} must be in available_actions {:?}",
+            card.primary_action,
+            card.available_actions
+        );
+        assert_eq!(card.primary_action, OperatorAction::Resume);
         assert!(card
             .annotations
             .iter()
