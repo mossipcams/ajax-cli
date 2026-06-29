@@ -2921,7 +2921,7 @@ mod tests {
     }
 
     #[test]
-    fn get_task_detail_returns_404_for_unknown_handle() {
+    fn get_task_detail_returns_text_404_for_unknown_handle() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let response = route(
@@ -2935,6 +2935,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 404);
+        assert_eq!(response.content_type, "text/plain; charset=utf-8");
+        assert_eq!(String::from_utf8_lossy(&response.body), "task not found");
+    }
+
+    #[test]
+    fn unknown_in_memory_api_path_stays_generic_404() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+
+        let response = route(
+            Request {
+                method: "GET",
+                path: "/api/missing",
+                body: "",
+            },
+            &context,
+        )
+        .unwrap();
+
+        assert_eq!(response.status_code, 404);
+        assert_eq!(response.content_type, "text/plain; charset=utf-8");
+        assert_eq!(String::from_utf8_lossy(&response.body), "not found");
     }
 
     #[test]
@@ -3182,6 +3203,67 @@ mod tests {
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body["stale"], true);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn runtime_tests_do_not_compare_axum_against_old_router() {
+        let source = include_str!("runtime.rs");
+
+        for marker in [
+            concat!(
+                "stale_answer_responses_match_between_axum_and_",
+                "leg",
+                "acy"
+            ),
+            concat!("leg", "acy_", "response"),
+            concat!("leg", "acy_", "context"),
+            concat!("leg", "acy_", "runner"),
+            concat!("leg", "acy_", "bridge"),
+            concat!("leg", "acy_", "dir"),
+        ] {
+            assert!(
+                !source.contains(marker),
+                "runtime tests should not preserve old-router marker {marker}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn axum_answer_endpoint_returns_conflict_for_stale_fingerprint() {
+        let state = super::WebAppState::new(
+            answer_task_context(),
+            PaneRunner {
+                response: Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: "Run `cargo test`? [y/n]\n".to_string(),
+                    stderr: String::new(),
+                }),
+                run_count: 0,
+            },
+            TestBridge::default(),
+            scratch_dir("axum-answer-stale"),
+        );
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let response = app
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"answer":"approve","fingerprint":"stale","request_id":"r1"}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], false);
+        assert!(json["error"].is_string());
+        assert_eq!(json["stale"], true);
     }
 
     #[test]
