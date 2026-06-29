@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.6...ajax-cli-v0.22.7) (2026-06-29)
+
+
+### Bug Fixes
+
+* ensure recommended primary action is in available actions ([#227](https://github.com/mossipcams/ajax-cli/issues/227)) ([f86417e](https://github.com/mossipcams/ajax-cli/commit/f86417ea560fd122e52deb0674281281140ebde8))
+
+
+### Code Refactoring
+
+* extract task_operations into file-backed modules ([#226](https://github.com/mossipcams/ajax-cli/issues/226)) ([04cabac](https://github.com/mossipcams/ajax-cli/commit/04cabac16007fdeb81650f94d48ed536e16fb5f0))
+
 ## [0.22.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.5...ajax-cli-v0.22.6) (2026-06-29)
 
 
