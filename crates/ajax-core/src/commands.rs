@@ -6,6 +6,7 @@ mod merge;
 mod new_task;
 mod open;
 mod projection;
+mod task_state;
 mod teardown;
 mod trunk;
 
@@ -21,8 +22,8 @@ pub use new_task::{
     is_agent_send_keys_command, is_git_worktree_add_command, is_worktrunk_new_session_command,
     mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
     mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
-    start_provisioning_step_for_command, task_from_new_request, NewTaskRequest,
-    StartPlanObservation, StartProvisioningStep,
+    start_provisioning_step_for_command, start_task_identity, task_from_new_request,
+    NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
 pub use teardown::{
@@ -459,30 +460,7 @@ pub fn execute_plan(
     confirmed: bool,
     runner: &mut impl CommandRunner,
 ) -> Result<Vec<CommandOutput>, CommandError> {
-    if !plan.blocked_reasons.is_empty() {
-        return Err(CommandError::PlanBlocked(plan.blocked_reasons.clone()));
-    }
-
-    if plan.requires_confirmation && !confirmed {
-        return Err(CommandError::ConfirmationRequired);
-    }
-
-    let mut outputs = Vec::new();
-
-    for command in &plan.commands {
-        let output = runner.run(command).map_err(CommandError::CommandRun)?;
-        if output.status_code != 0 {
-            return Err(CommandError::CommandRun(CommandRunError::NonZeroExit {
-                program: command.program.clone(),
-                status_code: output.status_code,
-                stderr: output.stderr,
-                cwd: command.cwd.clone(),
-            }));
-        }
-        outputs.push(output);
-    }
-
-    Ok(outputs)
+    crate::task_operations::kernel::execute_external_plan(plan, confirmed, runner)
 }
 
 #[cfg(test)]

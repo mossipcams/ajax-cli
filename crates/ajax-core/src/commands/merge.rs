@@ -1,13 +1,13 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
     adapters::GitAdapter,
-    live::LiveStatusKind,
-    models::{LifecycleStatus, LiveObservation, SideFlag, Task},
+    models::{LifecycleStatus, SideFlag, Task},
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     registry::Registry,
 };
 
 use super::lookup::find_task;
+use super::task_state;
 
 pub fn merge_task_plan<R: Registry>(
     context: &CommandContext<R>,
@@ -49,18 +49,10 @@ pub fn mark_task_merged<R: Registry>(
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
-    context
-        .registry
-        .update_lifecycle(&task.id, LifecycleStatus::Merged)
+    task_state::update_merge_lifecycle(&mut context.registry, &task.id)
         .map_err(CommandError::Registry)?;
-    if let Some(task) = context.registry.get_task_mut(&task.id) {
-        task.remove_side_flag(SideFlag::Conflicted);
-        if task.live_status.as_ref().is_some_and(|status| {
-            status.kind == LiveStatusKind::CommandFailed && status.summary == "merge failed"
-        }) {
-            task.live_status = None;
-        }
-    }
+    task_state::mark_task_merged(&mut context.registry, &task.id)
+        .map_err(CommandError::Registry)?;
     Ok(())
 }
 
@@ -70,15 +62,8 @@ pub fn mark_task_merge_failed<R: Registry>(
     conflicted: bool,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
-    if let Some(task) = context.registry.get_task_mut(&task.id) {
-        if conflicted {
-            task.add_side_flag(SideFlag::Conflicted);
-        }
-        task.live_status = Some(LiveObservation::new(
-            LiveStatusKind::CommandFailed,
-            "merge failed",
-        ));
-    }
+    task_state::mark_task_merge_failed(&mut context.registry, &task.id, conflicted)
+        .map_err(CommandError::Registry)?;
     Ok(())
 }
 

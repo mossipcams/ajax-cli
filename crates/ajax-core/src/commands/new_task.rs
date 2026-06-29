@@ -10,8 +10,6 @@ use crate::{
     registry::{Registry, RegistryError},
 };
 use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -181,6 +179,10 @@ pub fn task_from_new_request<R: Registry>(
     })?;
 
     Ok(task)
+}
+
+pub fn start_task_identity(repo: &str, title: &str) -> TaskId {
+    TaskId::new(format!("{repo}/{}", slugify_title(title)))
 }
 
 pub fn record_new_task<R: Registry>(
@@ -406,9 +408,12 @@ fn rooted_repo_dir(repo_name: &str, repo_path: &Path) -> String {
 }
 
 fn short_path_hash(path: &Path) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    (hasher.finish() & 0xffff_ffff) as u32
+    let mut hash = 0x811c_9dc5u32;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 fn command_line(command: &CommandSpec) -> String {
@@ -545,6 +550,25 @@ mod tests {
             })
             .map(|command| command.args[3].as_str())
             .expect("expected tmux send-keys command")
+    }
+
+    #[test]
+    fn rooted_repo_dir_hash_is_stable_for_known_path() {
+        let path = Path::new("/Users/matt/projects/web");
+        let first = super::rooted_repo_dir("web", path);
+        let second = super::rooted_repo_dir("web", path);
+
+        assert_eq!(first, "web-8ac1d219");
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn start_task_identity_uses_core_slug_rules() {
+        let first = super::start_task_identity("web", "Fix login");
+        let second = super::start_task_identity("web", "Fix login!");
+
+        assert_eq!(first, crate::models::TaskId::new("web/fix-login"));
+        assert_eq!(second, first);
     }
 
     #[test]

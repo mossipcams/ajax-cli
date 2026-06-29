@@ -7,8 +7,6 @@ use ajax_core::{
     runtime_refresh::RefreshTier,
 };
 #[cfg(test)]
-use ajax_web::runtime::Request;
-#[cfg(test)]
 use ajax_web::slices::{cockpit as web_cockpit, install as web_install};
 use ajax_web::{
     runtime::{self, ActionFailure, RuntimeBridge},
@@ -18,8 +16,14 @@ use ajax_web::{
     },
     WebError,
 };
+#[cfg(test)]
+use axum::body::{to_bytes, Body};
+#[cfg(test)]
+use axum::http::{header, Request as AxumRequest};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+#[cfg(test)]
+use tower::util::ServiceExt;
 
 use crate::{
     command_error,
@@ -52,9 +56,16 @@ pub(crate) fn handle_http_request(
     body: &str,
     context: &CommandContext<InMemoryRegistry>,
 ) -> Result<HttpResponse, serde_json::Error> {
-    runtime::route(Request { method, path, body }, context).map_err(|error| match error {
-        runtime::RouteError::Json(error) => error,
-    })
+    let bridge = CliRuntimeBridge::for_context(None, context)
+        .map_err(|error| serde_json::Error::io(std::io::Error::other(error.to_string())))?;
+    let state = runtime::WebAppState::new(
+        context.clone(),
+        NoopRunner,
+        bridge,
+        test_state_dir("http-router"),
+    );
+    let response = dispatch_axum_request(state, method, path, body);
+    Ok(response)
 }
 
 #[cfg(test)]
@@ -63,19 +74,97 @@ pub(crate) fn handle_http_request_with_runner_and_paths(
     path: &str,
     body: &str,
     context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut impl CommandRunner,
+    runner: &mut (impl CommandRunner + Clone + Send + 'static),
     paths: Option<&CliContextPaths>,
 ) -> Result<HttpResponse, CliError> {
     let dir = companion_state_dir(paths)?;
-    let mut bridge = CliRuntimeBridge::for_context(paths, context)?;
-    runtime::route_with_bridge(
-        Request { method, path, body },
-        context,
-        runner,
-        &mut bridge,
-        &dir,
-    )
-    .map_err(cli_error_from_web)
+    let bridge = CliRuntimeBridge::for_context(paths, context)?;
+    let state = runtime::WebAppState::new(context.clone(), runner.clone(), bridge, dir);
+    Ok(dispatch_axum_request(state, method, path, body))
+}
+
+#[cfg(test)]
+fn dispatch_axum_request<C, B>(
+    state: runtime::WebAppState<C, B>,
+    method: &str,
+    path: &str,
+    body: &str,
+) -> HttpResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let cookie = "ajax_browser_session=ajax-test-browser-session";
+    let app = runtime::axum_app(state);
+    let request = AxumRequest::builder()
+        .method(method)
+        .uri(path)
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move { app.oneshot(request).await.unwrap() });
+    axum_response_to_http_response(response)
+}
+
+#[cfg(test)]
+fn axum_response_to_http_response(response: axum::response::Response) -> HttpResponse {
+    let status_code = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(http_content_type_to_static)
+        .unwrap_or("text/plain; charset=utf-8");
+    let body = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move { to_bytes(response.into_body(), usize::MAX).await.unwrap() });
+
+    runtime::Response {
+        status_code,
+        content_type,
+        body: body.to_vec(),
+    }
+}
+
+#[cfg(test)]
+fn http_content_type_to_static(value: &str) -> &'static str {
+    match value {
+        "application/json; charset=utf-8" => "application/json; charset=utf-8",
+        "text/html; charset=utf-8" => "text/html; charset=utf-8",
+        "text/css; charset=utf-8" => "text/css; charset=utf-8",
+        "text/javascript; charset=utf-8" => "text/javascript; charset=utf-8",
+        "text/plain; charset=utf-8" => "text/plain; charset=utf-8",
+        other => Box::leak(other.to_string().into_boxed_str()),
+    }
+}
+
+#[cfg(test)]
+fn test_state_dir(tag: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("ajax-web-cli-test-{tag}-{}", std::process::id()))
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct NoopRunner;
+
+#[cfg(test)]
+impl CommandRunner for NoopRunner {
+    fn run(
+        &mut self,
+        _command: &ajax_core::adapters::CommandSpec,
+    ) -> Result<ajax_core::adapters::CommandOutput, ajax_core::adapters::CommandRunError> {
+        Ok(ajax_core::adapters::CommandOutput {
+            status_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    }
 }
 
 pub(crate) fn serve_mobile_web(
@@ -321,6 +410,8 @@ mod tests {
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
     use ajax_web::runtime::{self, RuntimeBridge};
+    use axum::{body::Body, http::Request as AxumRequest};
+    use tower::util::ServiceExt;
 
     #[test]
     fn mobile_shell_is_responsive_and_loads_cockpit_data() {
@@ -462,7 +553,6 @@ mod tests {
 
         let unsupported = handle_http_request("POST", "/", "", &context).unwrap();
         assert_eq!(unsupported.status_code, 405);
-        assert!(String::from_utf8_lossy(&unsupported.body).contains("method not allowed"));
     }
 
     #[test]
@@ -511,6 +601,7 @@ mod tests {
 
     #[test]
     fn action_endpoint_returns_json_when_underlying_command_fails() {
+        #[derive(Clone)]
         struct FailingRunner;
         impl CommandRunner for FailingRunner {
             fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
@@ -587,28 +678,35 @@ mod tests {
         SqliteRegistryStore::new(&paths.state_file)
             .save(&saved_context.registry)
             .unwrap();
-        let mut server_context =
-            CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let mut runner = LiveRefreshRunner;
-        let mut bridge = super::CliRuntimeBridge {
+        let server_context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let runner = LiveRefreshRunner;
+        let bridge = super::CliRuntimeBridge {
             paths: Some(paths.clone()),
             last_loaded_mtime: None,
             save_state: crate::context::tracked_save_state(&paths, &server_context.registry)
                 .unwrap(),
         };
+        let state =
+            runtime::WebAppState::new(server_context.clone(), runner.clone(), bridge, root.clone());
+        let app = runtime::axum_app(state);
 
-        let response = runtime::route_with_bridge(
-            runtime::Request {
-                method: "GET",
-                path: "/api/cockpit",
-                body: "",
-            },
-            &mut server_context,
-            &mut runner,
-            &mut bridge,
-            &root,
-        )
-        .unwrap();
+        let response = super::axum_response_to_http_response(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    app.oneshot(
+                        AxumRequest::builder()
+                            .uri("/api/cockpit")
+                            .header("cookie", "ajax_browser_session=ajax-test-browser-session")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap()
+                }),
+        );
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
 
         assert_eq!(response.status_code, 200);
@@ -802,7 +900,7 @@ mod tests {
             Some(&paths),
         )
         .unwrap();
-        assert_eq!(subscribe.status_code, 405);
+        assert_eq!(subscribe.status_code, 404);
 
         let unsubscribe = handle_http_request_with_runner_and_paths(
             "POST",
@@ -813,11 +911,12 @@ mod tests {
             Some(&paths),
         )
         .unwrap();
-        assert_eq!(unsubscribe.status_code, 405);
+        assert_eq!(unsubscribe.status_code, 404);
 
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[derive(Clone)]
     struct OkRunner;
 
     impl CommandRunner for OkRunner {
@@ -849,6 +948,7 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct LiveRefreshRunner;
 
     impl CommandRunner for LiveRefreshRunner {

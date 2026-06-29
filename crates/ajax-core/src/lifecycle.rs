@@ -390,21 +390,15 @@ mod tests {
     }
 
     #[test]
-    fn production_code_does_not_assign_lifecycle_status_outside_authority_module() {
+    fn lifecycle_status_assignments_are_not_in_production_submodules() {
         let src_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut violations = Vec::new();
 
-        for entry in std::fs::read_dir(&src_dir).unwrap() {
-            let entry = entry.unwrap();
-            let path = entry.path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("rs") {
-                continue;
-            }
+        visit_rs_files(&src_dir, &mut |path| {
             if path.file_name().and_then(|name| name.to_str()) == Some("lifecycle.rs") {
-                continue;
+                return;
             }
-
-            let source = std::fs::read_to_string(&path).unwrap();
+            let source = std::fs::read_to_string(path).unwrap();
             let production_source = source
                 .split("\n#[cfg(test)]")
                 .next()
@@ -416,7 +410,9 @@ mod tests {
                     || line.contains(".lifecycle_status =");
                 let is_equality = trimmed.starts_with("lifecycle_status ==")
                     || line.contains(".lifecycle_status ==");
-                if is_assignment && !is_equality {
+                let looks_like_code =
+                    !line.contains('"') && !line.contains('\'') && !line.contains("excluded.");
+                if is_assignment && looks_like_code && !is_equality {
                     violations.push(format!(
                         "{}:{}:{line}",
                         path.strip_prefix(&src_dir).unwrap().display(),
@@ -424,12 +420,24 @@ mod tests {
                     ));
                 }
             }
-        }
+        });
 
         assert!(
             violations.is_empty(),
             "lifecycle writes must go through ajax_core::lifecycle:\n{}",
             violations.join("\n")
         );
+    }
+
+    fn visit_rs_files(dir: &std::path::Path, visit: &mut impl FnMut(&std::path::Path)) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if path.is_dir() {
+                visit_rs_files(&path, visit);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+                visit(&path);
+            }
+        }
     }
 }

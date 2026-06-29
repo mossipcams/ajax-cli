@@ -87,6 +87,19 @@ fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
 }
 
 #[test]
+fn ci_web_job_runs_web_build_check() {
+    let workflow = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml"),
+    )
+    .unwrap();
+
+    assert!(
+        workflow.contains("npm run web:build:check"),
+        "CI web job should run the web build freshness check"
+    );
+}
+
+#[test]
 fn execution_dispatch_module_routes_mutating_commands() {
     let mut context = sample_context();
     let mut runner = RecordingCommandRunner::default();

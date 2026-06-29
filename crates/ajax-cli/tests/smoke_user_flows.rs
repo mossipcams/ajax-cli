@@ -1,9 +1,7 @@
 use serde_json::Value;
 use std::{
-    collections::hash_map::DefaultHasher,
     ffi::OsStr,
     fs,
-    hash::{Hash, Hasher},
     io::{Read, Write},
     os::fd::AsFd,
     os::unix::fs::PermissionsExt,
@@ -377,9 +375,12 @@ fn rooted_repo_dir(repo_name: &str, repo_path: &Path) -> String {
 }
 
 fn short_path_hash(path: &Path) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    path.hash(&mut hasher);
-    (hasher.finish() & 0xffff_ffff) as u32
+    let mut hash = 0x811c_9dc5u32;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    hash
 }
 
 const FAKE_GIT: &str = r#"#!/usr/bin/env bash
