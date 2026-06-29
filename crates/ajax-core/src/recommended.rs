@@ -30,10 +30,15 @@ pub fn operator_action(task: &Task) -> OperatorActionPlan {
         .iter()
         .min_by_key(|annotation| annotation.severity);
     let available_actions = available_operator_actions(task);
-    let action = primary_annotation
+    let candidate = primary_annotation
         .map(|annotation| annotation.suggests)
         .filter(|action| available_actions.contains(action))
         .unwrap_or_else(|| fallback_operator_action(task));
+    let action = if available_actions.contains(&candidate) {
+        candidate
+    } else {
+        available_actions.first().copied().unwrap_or(candidate)
+    };
     let reason = primary_annotation
         .map(annotation_reason)
         .unwrap_or_else(|| fallback_operator_reason(task).to_string());
@@ -460,5 +465,22 @@ mod tests {
 
         assert_eq!(plan.action, OperatorAction::Resume);
         assert_eq!(plan.reason, "needs_input");
+    }
+
+    #[test]
+    fn primary_action_is_always_in_available_actions_for_dirty_reviewable_task() {
+        let mut t = clean_reviewable_task("dirty");
+        if let Some(git_status) = t.git_status.as_mut() {
+            git_status.dirty = true;
+        }
+
+        let plan = operator_action(&t);
+
+        assert!(
+            plan.available_actions.contains(&plan.action),
+            "primary action {:?} must be in available_actions {:?}",
+            plan.action,
+            plan.available_actions
+        );
     }
 }
