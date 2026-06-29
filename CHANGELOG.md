@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.3...ajax-cli-v0.22.4) (2026-06-29)
+
+
+### Bug Fixes
+
+* sharpen ajax operator loop ([#220](https://github.com/mossipcams/ajax-cli/issues/220)) ([dc63907](https://github.com/mossipcams/ajax-cli/commit/dc639072eff1c8dbeaf03ac7144b3462edcd7aa2))
+
 ## [0.22.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.2...ajax-cli-v0.22.3) (2026-06-27)
 
 
