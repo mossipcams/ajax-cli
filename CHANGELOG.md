@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.22.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.5...ajax-cli-v0.22.6) (2026-06-29)
+
+
+### Bug Fixes
+
+* remove legacy web router and stabilize smoke hashes ([#224](https://github.com/mossipcams/ajax-cli/issues/224)) ([f12025c](https://github.com/mossipcams/ajax-cli/commit/f12025c7b5aeb27fd99550b9d6bf4f7b4ad24799))
+
 ## [0.22.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.4...ajax-cli-v0.22.5) (2026-06-29)
 
 
