@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   checkHealth,
   postAnswer,
+  postTaskInput,
   postOperation,
   restartServer,
   startTask,
@@ -333,6 +334,34 @@ describe("postAnswer status mapping", () => {
   });
 });
 
+describe("postTaskInput status mapping", () => {
+  it("maps 409 to a conflict error", async () => {
+    mockFetch(() => json({ ok: false, error: "missing tmux" }, 409));
+    await expect(
+      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
+    ).rejects.toMatchObject({ kind: "conflict" });
+  });
+
+  it("maps 429 to a rate-limit error", async () => {
+    mockFetch(() => json({ ok: false, error: "too many inputs" }, 429));
+    await expect(
+      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
+    ).rejects.toMatchObject({ kind: "rate-limit" });
+  });
+
+  it("maps generic 400 and 500 to http errors", async () => {
+    mockFetch(() => json({ ok: false, error: "text is required" }, 400));
+    await expect(
+      postTaskInput("web/x", { text: " ", submit: true, request_id: "r" }),
+    ).rejects.toMatchObject({ kind: "http", status: 400 });
+
+    mockFetch(() => json({ ok: false, error: "command failed" }, 500));
+    await expect(
+      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
+    ).rejects.toMatchObject({ kind: "http", status: 500 });
+  });
+});
+
 describe("postOperation", () => {
   it("returns the refreshed cockpit projection on success", async () => {
     mockFetch(() =>
@@ -440,6 +469,11 @@ describe("POST transport options", () => {
       fingerprint: "fingerprint",
       request_id: "answer-request",
     };
+    const inputRequest = {
+      text: "continue with the plan",
+      submit: true,
+      request_id: "input-request",
+    };
     mockFetch((input) => {
       const path = String(input);
       if (path === "/api/operations") {
@@ -451,6 +485,9 @@ describe("POST transport options", () => {
       if (path === "/api/tasks/web%2Fx/answer") {
         return Promise.resolve(json({ sequence_hint: 2 }));
       }
+      if (path === "/api/tasks/web%2Fx/input") {
+        return Promise.resolve(json({ sequence_hint: 3 }));
+      }
       if (path === "/api/server/restart") {
         return Promise.resolve(json({ ok: true, restarting: true }));
       }
@@ -460,6 +497,7 @@ describe("POST transport options", () => {
     await postOperation(operationRequest);
     await startTask(startRequest);
     await postAnswer("web/x", answerRequest);
+    await postTaskInput("web/x", inputRequest);
     await restartServer();
 
     expect(fetch).toHaveBeenCalledWith("/api/operations", {
@@ -482,6 +520,13 @@ describe("POST transport options", () => {
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(answerRequest),
+    });
+    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx/input", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      cache: "no-store",
+      credentials: "same-origin",
+      body: JSON.stringify(inputRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/restart", {
       method: "POST",

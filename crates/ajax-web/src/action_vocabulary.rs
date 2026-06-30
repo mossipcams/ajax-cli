@@ -67,6 +67,7 @@ pub fn supported_web_action(action: OperatorAction) -> bool {
             | OperatorAction::Ship
             | OperatorAction::Repair
             | OperatorAction::Drop
+            | OperatorAction::Resume
     )
 }
 
@@ -89,11 +90,12 @@ mod tests {
     };
 
     #[test]
-    fn resume_action_needs_terminal_in_web_cockpit() {
-        let state = web_action(OperatorAction::Resume);
+    fn resume_action_is_supported_in_web_cockpit() {
+        let state = web_action(OperatorAction::Resume).unwrap();
 
-        assert_eq!(state, None);
-        assert!(!supported_web_action(OperatorAction::Resume));
+        assert_eq!(state.action, "resume");
+        assert_eq!(state.label, "Resume");
+        assert!(supported_web_action(OperatorAction::Resume));
     }
 
     #[test]
@@ -106,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn browser_action_states_do_not_surface_resume_or_sync_in_web_cockpit() {
+    fn browser_action_states_surface_resume_but_not_sync_in_web_cockpit() {
         let card = TaskCard {
             id: TaskId::new("web/fix-login"),
             qualified_handle: "web/fix-login".to_string(),
@@ -122,9 +124,10 @@ mod tests {
 
         let states = browser_actions(&card);
 
-        assert!(!states.iter().any(|state| state.action == "resume"));
-        assert!(!states.iter().any(|state| state.action == "sync"));
+        assert!(states.iter().any(|state| state.action == "resume"));
         assert!(states.iter().any(|state| state.action == "review"));
+        assert!(!states.iter().any(|state| state.action == "sync"));
+        assert!(supported_browser_action("resume"));
         assert!(!supported_browser_action("sync"));
     }
 

@@ -469,7 +469,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|action| action.action.as_str())
                 .collect::<Vec<_>>(),
-            ["review", "ship"]
+            ["resume", "review", "ship"]
         );
     }
 
@@ -552,6 +552,7 @@ pub(crate) mod tests {
         assert_eq!(
             states,
             vec![
+                ("resume", "Resume", false, false),
                 ("review", "Review", false, false),
                 ("drop", "Drop", true, true),
             ]

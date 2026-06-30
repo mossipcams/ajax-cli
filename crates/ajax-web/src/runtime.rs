@@ -657,6 +657,9 @@ where
     if let Some(task_handle) = handle.strip_suffix("/answer") {
         return axum_task_answer::<C, B>(State(state), task_handle.to_string(), body).await;
     }
+    if let Some(task_handle) = handle.strip_suffix("/input") {
+        return axum_task_input::<C, B>(State(state), task_handle.to_string(), body).await;
+    }
     json_value_response(
         404,
         serde_json::json!({ "ok": false, "error": "not found" }),
@@ -742,6 +745,75 @@ where
             json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
         }
         Err(crate::slices::pane::TaskAnswerError::Command(message)) => {
+            json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
+        }
+    }
+}
+
+async fn axum_task_input<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let request: crate::slices::pane::TaskInputRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("json parse failed: {error}"),
+                }),
+            );
+        }
+    };
+
+    let mut guard = state
+        .shared
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let WebSharedState {
+        context,
+        pane_sequences,
+        pane_inputs,
+        runner,
+        ..
+    } = &mut *guard;
+
+    match crate::slices::pane::send_task_input(
+        context,
+        runner,
+        pane_sequences,
+        pane_inputs,
+        &handle,
+        request,
+        Instant::now(),
+    ) {
+        Ok(response) => {
+            guard.revision = guard.revision.saturating_add(1);
+            guard.cockpit_cache = None;
+            json_value_response(200, serde_json::to_value(response).unwrap_or_default())
+        }
+        Err(crate::slices::pane::TaskInputError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::pane::TaskInputError::SessionMissing) => json_value_response(
+            409,
+            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+        ),
+        Err(crate::slices::pane::TaskInputError::RateLimited) => json_value_response(
+            429,
+            serde_json::json!({ "ok": false, "error": "too many inputs" }),
+        ),
+        Err(crate::slices::pane::TaskInputError::InvalidRequest(message)) => {
+            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
+        }
+        Err(crate::slices::pane::TaskInputError::Command(message)) => {
             json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
         }
     }
@@ -1048,7 +1120,6 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
         return None;
     }
     let message = match operator_action {
-        OperatorAction::Resume => "resume requires native cockpit".to_string(),
         OperatorAction::Start => {
             "start uses the dedicated Web Cockpit new-task operation".to_string()
         }
@@ -1206,6 +1277,74 @@ mod tests {
             request: crate::slices::operate::StartTaskRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut OkRunner,
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.start_count += 1;
+            let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(entered) = self.start_entered.as_ref() {
+                entered.notify_one();
+            }
+            if start_call_index == 0 {
+                if let Some(start_release) = self.start_release.as_ref() {
+                    let (lock, cvar) = &**start_release;
+                    let mut released = lock
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    while !*released {
+                        released = cvar
+                            .wait(released)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    }
+                }
+            }
+            self.start = Some(request);
+            self.start_result.clone()
+        }
+    }
+
+    impl RuntimeBridge<ajax_core::adapters::RecordingCommandRunner> for TestBridge {
+        fn refresh_cockpit(
+            &mut self,
+            context: &mut CommandContext<InMemoryRegistry>,
+            runner: &mut ajax_core::adapters::RecordingCommandRunner,
+            tier: RefreshTier,
+        ) -> Result<bool, crate::WebError> {
+            refresh_cockpit_with_optional_delay(self, context, runner, tier)
+        }
+
+        fn execute_operate(
+            &mut self,
+            request: OperateRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut ajax_core::adapters::RecordingCommandRunner,
+        ) -> Result<OperateOutcome, ActionFailure> {
+            self.operate_count += 1;
+            let operate_call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(entered) = self.operate_entered.as_ref() {
+                entered.notify_one();
+            }
+            if operate_call_index == 0 {
+                if let Some(operate_release) = self.operate_release.as_ref() {
+                    let (lock, cvar) = &**operate_release;
+                    let mut released = lock
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    while !*released {
+                        released = cvar
+                            .wait(released)
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    }
+                }
+            }
+            std::thread::sleep(self.operate_delay);
+            self.operate = Some(request);
+            self.operate_result.clone()
+        }
+
+        fn execute_start_task(
+            &mut self,
+            request: crate::slices::operate::StartTaskRequest,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut ajax_core::adapters::RecordingCommandRunner,
         ) -> Result<OperateOutcome, ActionFailure> {
             self.start_count += 1;
             let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
@@ -1605,6 +1744,7 @@ mod tests {
             ("GET", "/api/tasks/web%2Ffix-login"),
             ("GET", "/api/tasks/web%2Ffix-login/pane"),
             ("POST", "/api/tasks/web%2Ffix-login/answer"),
+            ("POST", "/api/tasks/web%2Ffix-login/input"),
         ] {
             assert_eq!(
                 super::api_access_policy(method, path),
@@ -3707,7 +3847,7 @@ mod tests {
     }
 
     #[test]
-    fn action_endpoint_keeps_native_only_actions_out_of_bridge() {
+    fn action_endpoint_keeps_start_out_of_bridge() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let runner = OkRunner;
         let bridge = TestBridge::default();
@@ -3718,7 +3858,7 @@ mod tests {
             state.clone(),
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"resume"}"#,
+            r#"{"task_handle":"web/fix-login","action":"start"}"#,
         );
 
         assert_eq!(response.status_code, 409);
@@ -3731,6 +3871,59 @@ mod tests {
                 .operate,
             None
         );
+    }
+
+    #[test]
+    fn input_endpoint_sends_text_to_task_session() {
+        use ajax_core::adapters::RecordingCommandRunner;
+
+        let context = answer_task_context();
+        let runner = RecordingCommandRunner::default();
+        let bridge = TestBridge::default();
+        let dir = scratch_dir("input");
+
+        let state = super::WebAppState::new(context, runner, bridge, dir);
+        let response = run_axum_request(
+            state.clone(),
+            "POST",
+            "/api/tasks/web/fix-login/input",
+            r#"{"text":"continue with the plan","submit":true,"request_id":"input-1"}"#,
+        );
+
+        assert_eq!(response.status_code, 200);
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert!(body["sequence_hint"].is_number());
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let commands = guard.runner.commands();
+        let send = commands
+            .iter()
+            .find(|command| command.args.first().map(String::as_str) == Some("send-keys"))
+            .expect("send-keys issued");
+        assert!(send.args.contains(&"continue with the plan".to_string()));
+        assert!(send.args.contains(&"Enter".to_string()));
+    }
+
+    #[test]
+    fn input_endpoint_rejects_whitespace_text_with_bad_request() {
+        use ajax_core::adapters::RecordingCommandRunner;
+
+        let context = answer_task_context();
+        let runner = RecordingCommandRunner::default();
+        let bridge = TestBridge::default();
+        let dir = scratch_dir("input-blank");
+
+        let state = super::WebAppState::new(context, runner, bridge, dir);
+        let response = run_axum_request(
+            state,
+            "POST",
+            "/api/tasks/web/fix-login/input",
+            r#"{"text":"   ","submit":true,"request_id":"input-1"}"#,
+        );
+
+        assert_eq!(response.status_code, 400);
     }
 
     #[test]

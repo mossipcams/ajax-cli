@@ -70,4 +70,68 @@ describe("PanePanel", () => {
       ),
     );
   });
+
+  it("shows a composer for WaitingForInput and sends free-form text", async () => {
+    vi.spyOn(api, "fetchPane").mockResolvedValue(
+      snapshot({ kind: "WaitingForInput", answerable: false, prompt: "What should I do next?" }),
+    );
+    const postTaskInput = vi.spyOn(api, "postTaskInput").mockResolvedValue({ sequence_hint: 2 });
+    const onResult = vi.fn();
+    const { findByPlaceholderText, findByText, getByText } = render(PanePanel, {
+      props: { handle: "web/fix-login", detail, onResult },
+    });
+
+    const textarea = await findByPlaceholderText("Type a reply for the agent");
+    await fireEvent.input(textarea, { target: { value: "write the tests" } });
+    await fireEvent.click(getByText("Send"));
+
+    await vi.waitFor(() =>
+      expect(postTaskInput).toHaveBeenCalledWith("web/fix-login", {
+        text: "write the tests",
+        submit: true,
+        request_id: expect.any(String),
+      }),
+    );
+    expect(await findByText("Send")).toBeInTheDocument();
+  });
+
+  it("does not send whitespace-only free-form input", async () => {
+    vi.spyOn(api, "fetchPane").mockResolvedValue(
+      snapshot({ kind: "WaitingForInput", answerable: false, prompt: "What should I do next?" }),
+    );
+    const postTaskInput = vi.spyOn(api, "postTaskInput").mockResolvedValue({ sequence_hint: 2 });
+    const { findByPlaceholderText, findByText } = render(PanePanel, {
+      props: { handle: "web/fix-login", detail },
+    });
+
+    const textarea = await findByPlaceholderText("Type a reply for the agent");
+    await fireEvent.input(textarea, { target: { value: "   " } });
+    const send = await findByText("Send");
+    expect(send).toBeDisabled();
+    await fireEvent.click(send);
+    expect(postTaskInput).not.toHaveBeenCalled();
+  });
+
+  it("maps a 429 input rate limit to the slow-down message", async () => {
+    vi.spyOn(api, "fetchPane").mockResolvedValue(
+      snapshot({ kind: "WaitingForInput", answerable: false, prompt: "What should I do next?" }),
+    );
+    vi.spyOn(api, "postTaskInput").mockRejectedValue(new api.ApiError("rate-limit", "429", 429));
+    const onResult = vi.fn();
+    const { findByPlaceholderText, getByText } = render(PanePanel, {
+      props: { handle: "web/fix-login", detail, onResult },
+    });
+
+    const textarea = await findByPlaceholderText("Type a reply for the agent");
+    await fireEvent.input(textarea, { target: { value: "continue" } });
+    await fireEvent.click(getByText("Send"));
+
+    await vi.waitFor(() =>
+      expect(onResult).toHaveBeenCalledWith(
+        "Slow down — too many actions in a short window",
+        null,
+        true,
+      ),
+    );
+  });
 });

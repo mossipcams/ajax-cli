@@ -137,6 +137,7 @@ mod tests {
             "/api/operations",
             "/api/server/restart",
             "/answer",
+            "/input",
             "#/settings",
             "request_id",
             "no-store",
