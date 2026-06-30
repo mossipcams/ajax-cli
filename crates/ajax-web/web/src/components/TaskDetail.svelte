@@ -27,13 +27,13 @@
   });
 </script>
 
-<div class="task-detail">
-  <div class="detail-header">
+<div class="task-detail is-terminal-first">
+  <div class="detail-header" data-mobile-chrome="header">
     <button type="button" class="back" onclick={() => onBack?.()}>← Back</button>
     <h1 class="detail-title">{detail.title || detail.qualified_handle}</h1>
   </div>
 
-  <section class="interact-panel">
+  <section class="interact-panel" data-mobile-chrome="actions">
     <div class="interact-state is-hero">
       <span class="interact-pill tone-{meta.tone}">{meta.label}</span>
       {#if detail.status_explanation}
@@ -55,7 +55,9 @@
     {/if}
   </section>
 
-  <TerminalPanel handle={detail.qualified_handle} />
+  <div class="terminal-primary" data-mobile-primary="terminal">
+    <TerminalPanel handle={detail.qualified_handle} />
+  </div>
 
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>
@@ -309,9 +311,18 @@
   /* Mobile: tighten chrome so the full-screen terminal (see .task-detail rules
      in styles.css) gets maximum height. */
   @media (max-width: 767px) {
-    .detail-header { margin-bottom: 10px; }
-    .next-action { margin-top: 10px; padding: 10px 12px; }
+    .detail-header { margin-bottom: 6px; }
+    .detail-header .back { min-height: 34px; padding: 5px 12px; }
+    .detail-title { font-size: 18px; line-height: 1.15; }
+    .interact-state { margin-bottom: 6px; }
+    .interact-state.is-hero { margin-bottom: 6px; padding-bottom: 0; }
+    .next-action { margin-top: 6px; padding: 0; }
     .meta-details { margin-top: 10px; padding-top: 10px; }
+    .terminal-primary {
+      display: flex;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
   }
 
   @media (max-width: 380px) {
