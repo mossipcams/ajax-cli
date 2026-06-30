@@ -163,15 +163,23 @@
       }
 
       if (data === "\x7f") {
-        const source = zerolag.removeChar();
-        if (source === "flushed") {
-          socket.send(JSON.stringify({ type: "input", data }));
-        }
+        // Raw tmux/TUI attach: every keystroke is sent immediately, so the
+        // remote PTY owns line editing. removeChar() only keeps the latency
+        // overlay in sync — the backspace itself must always reach the PTY,
+        // otherwise the deleted character lives on in the real buffer.
+        zerolag.removeChar();
+        socket.send(JSON.stringify({ type: "input", data }));
         return;
       }
 
+      // Printable keystrokes are sent to the PTY immediately (raw attach), so
+      // the zero-lag overlay tracks them as "flushed" — in flight, echo not yet
+      // received — rather than "pending" (locally held, unsent). The output
+      // handler's clearFlushed() wipes them the moment the echo lands, so the
+      // overlay never accumulates text that already lives in the real buffer.
       if (data.length === 1 && data.charCodeAt(0) >= 32) {
-        zerolag.addChar(data);
+        const { count, text } = zerolag.getFlushed();
+        zerolag.setFlushed(count + 1, text + data);
       }
 
       socket.send(JSON.stringify({ type: "input", data }));
