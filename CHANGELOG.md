@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.27.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.26.2...ajax-cli-v0.27.0) (2026-06-30)
+
+
+### Features
+
+* **web:** full-screen mobile terminal with keyboard-aware viewport ([#247](https://github.com/mossipcams/ajax-cli/issues/247)) ([9a26cb8](https://github.com/mossipcams/ajax-cli/commit/9a26cb88601f7ec2fc7cdb557ec7fea24bbdf9c6))
+
 ## [0.26.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.26.1...ajax-cli-v0.26.2) (2026-06-30)
 
 
