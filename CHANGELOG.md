@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.25.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.25.0...ajax-cli-v0.25.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **web:** repair terminal delete key and zero-lag overlay tracking ([#239](https://github.com/mossipcams/ajax-cli/issues/239)) ([9de77e2](https://github.com/mossipcams/ajax-cli/commit/9de77e2a07fb97f46175db54eff99c1982d9855f))
+
 ## [0.25.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.24.0...ajax-cli-v0.25.0) (2026-06-30)
 
 
