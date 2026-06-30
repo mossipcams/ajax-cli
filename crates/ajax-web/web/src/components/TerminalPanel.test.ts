@@ -162,6 +162,20 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("decodes Blob websocket messages before writing to the terminal", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    const payload = JSON.stringify({ type: "output", data: btoa("blob ready") });
+
+    socket?.emit("message", {
+      data: new Blob([payload], { type: "application/json" }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("blob ready");
+    });
+  });
+
   it("sends terminal input as JSON frames", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
@@ -308,6 +322,28 @@ describe("TerminalPanel", () => {
     await waitFor(() => {
       expect(fit).toHaveBeenCalled();
       expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      );
+    });
+  });
+
+  it("runs a second post-layout resize after the socket opens", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    fit.mockClear();
+    socket!.send.mockClear();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(fit.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(socket?.send).toHaveBeenCalledTimes(2);
+      expect(socket?.send).toHaveBeenNthCalledWith(
+        1,
+        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      );
+      expect(socket?.send).toHaveBeenNthCalledWith(
+        2,
         JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
       );
     });
