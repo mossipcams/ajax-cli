@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.24.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.23.0...ajax-cli-v0.24.0) (2026-06-30)
+
+
+### Features
+
+* add authenticated web task terminal bridge ([#234](https://github.com/mossipcams/ajax-cli/issues/234)) ([bde33d8](https://github.com/mossipcams/ajax-cli/commit/bde33d8952f37707cc8a3c7608cf6b1817937dda))
+
 ## [0.23.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.8...ajax-cli-v0.23.0) (2026-06-30)
 
 
