@@ -25,7 +25,8 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("xterm-zerolag-input", () => ({
   ZerolagInputAddon: class MockZerolagInputAddon {
-    addChar = vi.fn();
+    getFlushed = vi.fn(() => ({ count: 0, text: "" }));
+    setFlushed = vi.fn();
     removeChar = vi.fn();
     clear = vi.fn();
     clearFlushed = vi.fn();

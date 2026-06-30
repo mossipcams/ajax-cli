@@ -8,8 +8,14 @@ let onDataHandler: ((data: string) => void) | undefined;
 const fit = vi.fn();
 const fitDispose = vi.fn();
 const zerolagDispose = vi.fn();
-const addChar = vi.fn();
-const removeChar = vi.fn<() => "pending" | "flushed" | false>(() => "pending");
+let flushedCount = 0;
+let flushedText = "";
+const getFlushed = vi.fn(() => ({ count: flushedCount, text: flushedText }));
+const setFlushed = vi.fn((count: number, text: string) => {
+  flushedCount = count;
+  flushedText = text;
+});
+const removeChar = vi.fn<() => "pending" | "flushed" | false>(() => "flushed");
 const clear = vi.fn();
 const clearFlushed = vi.fn();
 const rerender = vi.fn();
@@ -45,7 +51,8 @@ vi.mock("@xterm/addon-fit", () => ({
 
 vi.mock("xterm-zerolag-input", () => ({
   ZerolagInputAddon: class MockZerolagInputAddon {
-    addChar = addChar;
+    getFlushed = getFlushed;
+    setFlushed = setFlushed;
     removeChar = removeChar;
     clear = clear;
     clearFlushed = clearFlushed;
@@ -90,6 +97,8 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
+  flushedCount = 0;
+  flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
   vi.stubGlobal(
@@ -159,10 +168,27 @@ describe("TerminalPanel", () => {
     onDataHandler?.("a");
 
     await waitFor(() => {
-      expect(addChar).toHaveBeenCalledWith("a");
+      // Sent immediately, so the char is tracked as flushed (awaiting echo),
+      // not pending — the overlay clears when the echo lands.
+      expect(setFlushed).toHaveBeenCalledWith(1, "a");
       expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "a" }),
       );
+    });
+  });
+
+  it("accumulates flushed overlay text across successive keystrokes", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    setFlushed.mockClear();
+
+    onDataHandler?.("h");
+    onDataHandler?.("i");
+
+    await waitFor(() => {
+      expect(setFlushed).toHaveBeenNthCalledWith(1, 1, "h");
+      expect(setFlushed).toHaveBeenNthCalledWith(2, 2, "hi");
     });
   });
 
@@ -181,7 +207,7 @@ describe("TerminalPanel", () => {
     });
   });
 
-  it("follows zerolag removeChar when backspace is pressed", async () => {
+  it("always forwards backspace to the PTY and syncs the overlay", async () => {
     removeChar.mockReturnValueOnce("flushed");
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
@@ -197,7 +223,11 @@ describe("TerminalPanel", () => {
     });
   });
 
-  it("does not send backspace when zerolag reports pending-only removal", async () => {
+  it("forwards backspace even when zerolag reports a pending-only removal", async () => {
+    // Raw tmux attach sends every keystroke immediately, so the typed
+    // characters live in the real PTY buffer even though zerolag still
+    // tracks them as "pending". Backspace must reach the PTY regardless,
+    // otherwise the iOS soft-keyboard delete erases only the overlay.
     removeChar.mockReturnValueOnce("pending");
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
@@ -207,7 +237,7 @@ describe("TerminalPanel", () => {
 
     await waitFor(() => {
       expect(removeChar).toHaveBeenCalled();
-      expect(socket?.send).not.toHaveBeenCalledWith(
+      expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "\x7f" }),
       );
     });
@@ -219,7 +249,7 @@ describe("TerminalPanel", () => {
 
     await waitFor(() => {
       expect(ZerolagInputAddon).toBeDefined();
-      expect(addChar).toBeDefined();
+      expect(setFlushed).toBeDefined();
     });
   });
 
