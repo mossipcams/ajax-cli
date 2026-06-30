@@ -558,6 +558,17 @@ main {
     touch-action: manipulation;
   }
 
+  /* While a task terminal overlay is open, freeze the document so iOS cannot
+     rubber-band or chain-scroll the page behind it (the "scroll fighting").
+     The .ajax-task-open class is toggled by TaskDetail; scoped to mobile so
+     desktop page scrolling and dashboard pull-to-refresh are untouched. */
+  html.ajax-task-open,
+  html.ajax-task-open body {
+    overflow: hidden;
+    overscroll-behavior: none;
+    height: 100%;
+  }
+
   .task-detail {
     position: fixed;
     inset: 0;
@@ -568,6 +579,7 @@ main {
       env(safe-area-inset-bottom) calc(16px + env(safe-area-inset-left));
     background: var(--paper);
     overflow: hidden;
+    overscroll-behavior: none;
   }
 
   /* Let the terminal shrink to fit above the keyboard rather than overflow. */
@@ -577,15 +589,37 @@ main {
     min-height: 0;
   }
 
-  /* Compact the status/action chrome so the terminal owns the screen. */
+  /* Terminal-first: strip the status/action card down to a minimal strip so the
+     terminal owns the screen. Border/background/padding removed; the redundant
+     summary line and "Next action" label are hidden (still in the DOM for a11y
+     and tests). */
   .interact-panel {
-    margin-top: 12px;
-    padding: 12px;
+    margin-top: 8px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
   }
 
   .interact-state.is-hero {
-    margin-bottom: 10px;
-    padding-bottom: 10px;
+    margin-bottom: 8px;
+    padding-bottom: 0;
+    border-bottom: none;
+  }
+
+  .interact-state.is-hero .interact-summary {
+    display: none;
+  }
+
+  .next-action {
+    margin-top: 8px;
+    padding: 0;
+    background: transparent;
+    border: none;
+  }
+
+  .next-action .interact-card-label {
+    display: none;
   }
 }
 

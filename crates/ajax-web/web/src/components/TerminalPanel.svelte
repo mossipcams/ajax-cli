@@ -252,6 +252,12 @@
     }
   }
 
+  @media (max-width: 767px) {
+    .terminal-panel {
+      margin-top: 8px;
+    }
+  }
+
   .terminal-host {
     flex: 1 1 auto;
     min-height: 0;

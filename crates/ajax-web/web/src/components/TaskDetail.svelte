@@ -17,6 +17,14 @@
 
   let meta = $derived(statusMeta(detail.status));
   let metaOpen = $state(false);
+
+  // Lock document scroll while the (mobile) full-screen terminal overlay is
+  // mounted so iOS can't rubber-band / chain-scroll the page behind it. The
+  // lock CSS is mobile-only, so desktop is unaffected.
+  $effect(() => {
+    document.documentElement.classList.add("ajax-task-open");
+    return () => document.documentElement.classList.remove("ajax-task-open");
+  });
 </script>
 
 <div class="task-detail">
