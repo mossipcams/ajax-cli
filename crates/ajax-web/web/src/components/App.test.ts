@@ -80,6 +80,17 @@ describe("App shell", () => {
     expect(container.querySelector("main")).toBeInTheDocument();
   });
 
+  it("syncs --app-height from the visual viewport on mount", () => {
+    vi.stubGlobal("visualViewport", {
+      height: 712,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    document.documentElement.style.removeProperty("--app-height");
+    render(App);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("712px");
+  });
+
   it("shows the dashboard outlet by default", () => {
     const { container } = render(App);
     expect(container.querySelector("[data-outlet='dashboard']")).toBeInTheDocument();

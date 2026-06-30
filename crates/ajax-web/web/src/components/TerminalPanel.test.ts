@@ -3,6 +3,7 @@ import { render, waitFor } from "@testing-library/svelte";
 import TerminalPanel from "./TerminalPanel.svelte";
 
 const write = vi.fn();
+const scrollToBottom = vi.fn();
 const dispose = vi.fn();
 let onDataHandler: ((data: string) => void) | undefined;
 const fit = vi.fn();
@@ -31,6 +32,7 @@ vi.mock("@xterm/xterm", () => ({
     loadAddon = vi.fn();
     open = vi.fn();
     write = write;
+    scrollToBottom = scrollToBottom;
     dispose = dispose;
     focus = focus;
     onData = vi.fn((handler: (data: string) => void) => {
@@ -274,6 +276,24 @@ describe("TerminalPanel", () => {
       expect(dispose).toHaveBeenCalled();
       expect(zerolagDispose).toHaveBeenCalled();
     });
+  });
+
+  it("keeps the newest output in view after writes and viewport resizes", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    scrollToBottom.mockClear();
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("hi") }),
+    } as MessageEvent);
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+
+    // A keyboard-driven viewport shrink refits the terminal; the cursor row must
+    // not be stranded above the fold afterwards.
+    scrollToBottom.mockClear();
+    dispatchVisualViewport("resize");
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
   });
 
   it("refits and sends a resize frame when the visual viewport changes", async () => {

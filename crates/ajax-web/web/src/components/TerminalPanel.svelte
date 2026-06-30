@@ -36,7 +36,7 @@
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: 13,
+      fontSize: 14,
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",
@@ -91,6 +91,9 @@
       refitFrame = requestAnimationFrame(() => {
         fitAddon.fit();
         sendResize();
+        // A viewport shrink (keyboard open) refits to fewer rows; keep the
+        // cursor/newest output visible rather than stranded above the fold.
+        term.scrollToBottom();
       });
     };
 
@@ -123,6 +126,7 @@
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
           const decoded = outputDecoder.decode(bytes, { stream: true });
           term.write(decoded);
+          term.scrollToBottom();
           zerolag.clearFlushed();
           zerolag.rerender();
         } else if (payload.type === "error" && "error" in payload && payload.error) {
@@ -130,6 +134,7 @@
         }
       } catch {
         term.write(String(event.data));
+        term.scrollToBottom();
         zerolag.clearFlushed();
         zerolag.rerender();
       }
@@ -232,8 +237,8 @@
   .terminal-panel {
     display: flex;
     flex-direction: column;
-    min-height: 360px;
-    height: 75dvh;
+    flex: 1 1 auto;
+    min-height: 0;
     margin-top: 16px;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
@@ -295,5 +300,9 @@
 
   :global(.terminal-panel .xterm-viewport) {
     overflow-y: auto;
+    /* iOS momentum scrolling; contain so terminal-history scroll never chains
+       out to the page (the root cause of the old "scrolling fights" bug). */
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 </style>
