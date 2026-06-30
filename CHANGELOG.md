@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.27.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.0...ajax-cli-v0.27.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **web:** stop forced auto-scroll from blocking terminal scrollback ([#249](https://github.com/mossipcams/ajax-cli/issues/249)) ([58e6e9c](https://github.com/mossipcams/ajax-cli/commit/58e6e9c53051f81be6c6b258de7fa4ee40b808ca))
+
 ## [0.27.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.26.2...ajax-cli-v0.27.0) (2026-06-30)
 
 
