@@ -441,12 +441,15 @@ Cockpit. It may shape responses for browser ergonomics, but it must not own task
 lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
-Web Cockpit is a first-class browser operator surface, but it is intentionally a
-dashboard rather than a terminal mirror. Native Cockpit and Web Cockpit consume
-shared Cockpit projections and task-operation contracts; neither surface owns
-task truth. The browser experience should lead with task state, required
-decisions, and next actions, while raw pane text stays secondary and
-collapsible.
+Web Cockpit is a first-class browser operator surface that is dashboard-first,
+with an authenticated terminal bridge for existing Ajax task tmux sessions.
+Native Cockpit and Web Cockpit consume shared Cockpit projections and
+task-operation contracts; neither surface owns task truth. The browser
+experience should lead with task state, required decisions, and next actions,
+then open an embedded xterm terminal for the selected task. The browser submits
+only an Ajax task handle; `ajax-web` resolves that handle to the registered
+`tmux_session` and attaches to the fixed `worktrunk` target. Raw pane snapshots
+remain a secondary fallback for guarded approvals and diagnostics.
 
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
@@ -574,9 +577,9 @@ separate `primary_action` contract.
 Owns browser-submitted operator actions. It accepts browser action requests,
 checks browser capability limits, delegates valid work to the existing core task
 operations, and returns the refreshed Cockpit projection. Unsupported
-capabilities, such as terminal attach, return typed adapter capability outcomes
-rather than duplicated lifecycle policy. Browser `resume` remains
-`needs_terminal` until a terminal bridge exists.
+capabilities return typed adapter capability outcomes rather than duplicated
+lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
+when the operator needs full interactive attach.
 
 ### `ajax-web::slices::install`
 
@@ -597,8 +600,24 @@ command, the answerable choices, and a fingerprint. Browser approval actions
 post a typed answer plus that fingerprint; `answer_task_prompt` re-captures the
 live pane, rejects stale answers, resolves the operator intent through the agent
 adapter, and only then delivers `send-keys`, with per-task de-duplication and
-rate limiting inside the adapter boundary. Free-form browser input is outside
-the dashboard scope and remains a terminal escalation path.
+rate limiting inside the adapter boundary. Free-form browser input and full
+interactive attach use the task terminal bridge; pane approval remains the
+guarded dashboard path for structured prompts.
+
+### `ajax-web::slices::terminal`
+
+Owns task-handle-to-terminal attach planning for the browser terminal bridge.
+The slice resolves a qualified Ajax task handle to the registered
+`tmux_session` and fixed `worktrunk` window target. It does not accept raw
+tmux session names from the browser and does not own task lifecycle or registry
+truth.
+
+### `ajax-web::adapters::terminal_pty`
+
+Owns the PTY/tmux attach mechanism behind the protected task terminal
+WebSocket route. It builds attach commands only from registered task evidence,
+forwards terminal I/O over bounded WebSocket frames, and closes the PTY when
+the browser socket disconnects.
 
 ### `ajax-web::runtime`
 

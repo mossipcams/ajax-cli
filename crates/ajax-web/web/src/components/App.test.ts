@@ -4,6 +4,36 @@ import App from "./App.svelte";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class MockTerminal {
+    cols = 80;
+    rows = 24;
+    loadAddon = vi.fn();
+    open = vi.fn();
+    write = vi.fn();
+    dispose = vi.fn();
+    onData = vi.fn();
+  },
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class MockFitAddon {
+    fit = vi.fn();
+    dispose = vi.fn();
+  },
+}));
+
+vi.mock("xterm-zerolag-input", () => ({
+  ZerolagInputAddon: class MockZerolagInputAddon {
+    addChar = vi.fn();
+    removeChar = vi.fn();
+    clear = vi.fn();
+    clearFlushed = vi.fn();
+    rerender = vi.fn();
+    dispose = vi.fn();
+  },
+}));
+
 function setHash(hash: string) {
   window.location.hash = hash;
   window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -20,6 +50,19 @@ function jsonResponse(body: unknown, status = 200) {
 describe("App shell", () => {
   beforeEach(() => {
     window.location.hash = "";
+    vi.stubGlobal("WebSocket", class {
+      readyState = 1;
+      close() {}
+      addEventListener() {}
+      send() {}
+    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class MockResizeObserver {
+        observe = vi.fn();
+        disconnect = vi.fn();
+      },
+    );
   });
 
   afterEach(() => {
@@ -66,6 +109,30 @@ describe("App shell", () => {
     const { findByTestId } = render(App);
     setHash("#/t/web%2Ffix-login");
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
+  });
+
+  it("mounts the task terminal panel after detail loads", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+    vi.stubGlobal("WebSocket", class {
+      readyState = 1;
+      close() {}
+      addEventListener() {}
+      send() {}
+    });
+
+    const { findByTestId } = render(App);
+    setHash("#/t/web%2Ffix-login");
+
+    expect(await findByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
   it("defers the version check until the browser is idle", async () => {

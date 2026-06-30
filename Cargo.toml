@@ -16,7 +16,9 @@ license = "MIT"
 repository = "https://github.com/mossipcams/ajax-cli"
 
 [workspace.dependencies]
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+base64 = { version = "0.22", features = ["std"] }
+portable-pty = "0.9"
 clap = "4.5"
 crossterm = "0.29"
 getrandom = "0.3"

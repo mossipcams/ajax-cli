@@ -529,6 +529,22 @@ main {
   margin-bottom: 8px;
 }
 
+.task-detail .terminal-panel,
+.task-detail [data-testid="task-terminal-panel"] {
+  flex: 1 1 auto;
+  min-height: 280px;
+}
+
+.task-detail {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 148px);
+}
+
+.task-detail .task-terminal-viewport {
+  min-height: 240px;
+}
+
 /* BOTTOM NAV -------------------------------------------------------------- */
 .bottom-nav {
   position: fixed;

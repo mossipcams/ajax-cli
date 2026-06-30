@@ -6,8 +6,11 @@ use ajax_core::{
 };
 use axum::{
     body::Bytes,
-    extract::{Path as AxumPath, Query, Request as AxumRequest, State},
-    http::Uri,
+    extract::{
+        ws::WebSocketUpgrade, FromRequestParts, Path as AxumPath, Query, Request as AxumRequest,
+        State,
+    },
+    http::{header, Uri},
     middleware::{from_fn_with_state, Next},
     response::Response as AxumResponse,
     routing::{get, post},
@@ -634,15 +637,70 @@ async fn axum_task_get<C, B>(
     State(state): State<WebAppState<C, B>>,
     AxumPath(handle): AxumPath<String>,
     Query(query): Query<PaneQuery>,
+    req: AxumRequest,
 ) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
+    if let Some(task_handle) = handle.strip_suffix("/terminal") {
+        return axum_task_terminal(State(state), task_handle.to_string(), req).await;
+    }
     if let Some(task_handle) = handle.strip_suffix("/pane") {
         return axum_task_pane::<C, B>(State(state), task_handle.to_string(), Query(query)).await;
     }
     axum_task_detail::<C, B>(State(state), handle).await
+}
+
+async fn axum_task_terminal<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    req: AxumRequest,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    if !req
+        .headers()
+        .get(header::UPGRADE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.eq_ignore_ascii_case("websocket"))
+    {
+        return text_axum_response(400, "websocket upgrade required");
+    }
+
+    let plan = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match crate::slices::terminal::prepare_task_terminal(&guard.context, &handle) {
+            Ok(plan) => plan,
+            Err(crate::slices::terminal::TerminalRouteError::TaskNotFound) => {
+                return json_value_response(
+                    404,
+                    serde_json::json!({ "ok": false, "error": "task not found" }),
+                );
+            }
+            Err(crate::slices::terminal::TerminalRouteError::SessionMissing) => {
+                return json_value_response(
+                    409,
+                    serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+                );
+            }
+        }
+    };
+
+    let (mut parts, body) = req.into_parts();
+    let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
+        Ok(upgrade) => upgrade,
+        Err(_) => return text_axum_response(400, "websocket upgrade required"),
+    };
+    let _ = body;
+    upgrade.on_upgrade(move |socket| async move {
+        crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
+    })
 }
 
 async fn axum_task_post<C, B>(
@@ -1743,6 +1801,7 @@ mod tests {
             ("POST", "/api/tasks"),
             ("GET", "/api/tasks/web%2Ffix-login"),
             ("GET", "/api/tasks/web%2Ffix-login/pane"),
+            ("GET", "/api/tasks/web%2Ffix-login/terminal"),
             ("POST", "/api/tasks/web%2Ffix-login/answer"),
             ("POST", "/api/tasks/web%2Ffix-login/input"),
         ] {
@@ -3458,6 +3517,63 @@ mod tests {
         assert_eq!(body["qualified_handle"], "web/fix-login");
         assert_eq!(body["title"], "Fix login");
         assert_eq!(body["branch"], "ajax/fix-login");
+    }
+
+    #[test]
+    fn axum_task_terminal_requires_browser_session_cookie() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("terminal-auth"),
+        );
+        let app = super::axum_app(state);
+
+        let response = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                app.oneshot(
+                    AxumRequest::builder()
+                        .method("GET")
+                        .uri("/api/tasks/web%2Ffix-login/terminal")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+            });
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn axum_task_terminal_rejects_non_upgrade_requests() {
+        let state = super::WebAppState::new(
+            context_with_task(),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("terminal-upgrade"),
+        );
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+
+        let response = app
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/tasks/web%2Ffix-login/terminal")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "websocket upgrade required"
+        );
     }
 
     #[test]
