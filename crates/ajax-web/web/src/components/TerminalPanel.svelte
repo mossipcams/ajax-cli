@@ -28,6 +28,7 @@
     });
     const fitAddon = new FitAddon();
     const zerolag = new ZerolagInputAddon();
+    const outputDecoder = new TextDecoder();
     term.loadAddon(fitAddon);
     term.loadAddon(zerolag);
 
@@ -69,7 +70,9 @@
       try {
         const payload = JSON.parse(String(event.data)) as { type?: string; data?: string };
         if (payload.type === "output" && payload.data) {
-          const decoded = atob(payload.data);
+          const binary = atob(payload.data);
+          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+          const decoded = outputDecoder.decode(bytes, { stream: true });
           term.write(decoded);
           zerolag.clearFlushed();
           zerolag.rerender();

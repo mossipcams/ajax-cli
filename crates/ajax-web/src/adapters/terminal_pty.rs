@@ -2,7 +2,7 @@
 
 use crate::slices::terminal::TerminalAttachPlan;
 use axum::extract::ws::{Message, WebSocket};
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
 use serde::Deserialize;
 use std::{
     io::{Read, Write},
@@ -15,6 +15,26 @@ use tokio::sync::mpsc;
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
+
+trait TerminalChild {
+    fn kill_child(&mut self) -> std::io::Result<()>;
+    fn wait_child(&mut self) -> std::io::Result<()>;
+}
+
+impl TerminalChild for Box<dyn Child + Send + Sync> {
+    fn kill_child(&mut self) -> std::io::Result<()> {
+        self.kill()
+    }
+
+    fn wait_child(&mut self) -> std::io::Result<()> {
+        self.wait().map(|_| ())
+    }
+}
+
+fn cleanup_spawned_child<C: TerminalChild>(mut child: C) {
+    let _ = child.kill_child();
+    let _ = child.wait_child();
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmuxAttachCommandPlan {
@@ -38,7 +58,7 @@ pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCo
 struct TerminalInputFrame {
     #[serde(rename = "type")]
     frame_type: String,
-    data: String,
+    data: Option<String>,
     #[serde(default)]
     cols: u16,
     #[serde(default)]
@@ -83,7 +103,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         command.arg(arg);
     }
 
-    let mut child = match pty_pair.slave.spawn_command(command) {
+    let child = match pty_pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
             let _ = socket
@@ -104,6 +124,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     let mut reader = match pty_pair.master.try_clone_reader() {
         Ok(reader) => reader,
         Err(error) => {
+            cleanup_spawned_child(child);
             let _ = socket
                 .send(Message::Text(
                     serde_json::json!({
@@ -121,6 +142,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     let mut writer = match pty_pair.master.take_writer() {
         Ok(writer) => writer,
         Err(error) => {
+            cleanup_spawned_child(child);
             let _ = socket
                 .send(Message::Text(
                     serde_json::json!({
@@ -212,8 +234,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     }
 
     running.store(false, Ordering::Relaxed);
-    let _ = child.kill();
-    let _ = child.wait();
+    cleanup_spawned_child(child);
     let _ = socket.send(Message::Close(None)).await;
 }
 
@@ -228,13 +249,16 @@ fn handle_input_frame(
 
     match frame.frame_type.as_str() {
         "input" => {
-            if frame.data.len() > MAX_INPUT_FRAME_BYTES {
+            let data = frame.data.ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "input frame missing data")
+            })?;
+            if data.len() > MAX_INPUT_FRAME_BYTES {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     "input frame too large",
                 ));
             }
-            writer.write_all(frame.data.as_bytes())?;
+            writer.write_all(data.as_bytes())?;
             writer.flush()?;
             Ok(None)
         }
@@ -251,6 +275,7 @@ fn handle_input_frame(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn tmux_attach_command_plan_uses_registered_session_and_worktrunk_target() {
@@ -292,5 +317,47 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("evil-handle")));
+    }
+
+    #[test]
+    fn handle_input_frame_accepts_resize_without_data() {
+        let mut writer: Box<dyn Write + Send> = Box::new(Vec::<u8>::new());
+
+        let size = handle_input_frame(r#"{"type":"resize","cols":132,"rows":40}"#, &mut writer)
+            .expect("resize frame should parse")
+            .expect("resize frame should return a pty size");
+
+        assert_eq!(size.cols, 132);
+        assert_eq!(size.rows, 40);
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct CleanupRecorder {
+        killed: Arc<Mutex<bool>>,
+        waited: Arc<Mutex<bool>>,
+    }
+
+    impl TerminalChild for CleanupRecorder {
+        fn kill_child(&mut self) -> std::io::Result<()> {
+            *self.killed.lock().unwrap() = true;
+            Ok(())
+        }
+
+        fn wait_child(&mut self) -> std::io::Result<()> {
+            *self.waited.lock().unwrap() = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cleanup_spawned_child_kills_and_waits() {
+        let child = CleanupRecorder::default();
+        let killed = Arc::clone(&child.killed);
+        let waited = Arc::clone(&child.waited);
+
+        cleanup_spawned_child(child);
+
+        assert!(*killed.lock().unwrap());
+        assert!(*waited.lock().unwrap());
     }
 }

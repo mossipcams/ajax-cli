@@ -114,6 +114,21 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("decodes UTF-8 output frames before writing to the terminal", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    const bytes = new TextEncoder().encode("λ ready");
+    const encoded = btoa(String.fromCharCode(...bytes));
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: encoded }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("λ ready");
+    });
+  });
+
   it("sends terminal input as JSON frames", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
