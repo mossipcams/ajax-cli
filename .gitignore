@@ -1,5 +1,6 @@
 /target/
 graphify-out/
+.serena/
 .ajax-dev-web/
 node_modules/
 __pycache__/

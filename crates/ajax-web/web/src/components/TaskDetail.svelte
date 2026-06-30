@@ -298,6 +298,14 @@
     outline: none;
   }
 
+  /* Mobile: tighten chrome so the full-screen terminal (see .task-detail rules
+     in styles.css) gets maximum height. */
+  @media (max-width: 767px) {
+    .detail-header { margin-bottom: 10px; }
+    .next-action { margin-top: 10px; padding: 10px 12px; }
+    .meta-details { margin-top: 10px; padding-top: 10px; }
+  }
+
   @media (max-width: 380px) {
     .detail-title { font-size: 19px; }
     .detail-grid { grid-template-columns: 92px 1fr; }

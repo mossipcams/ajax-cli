@@ -545,6 +545,50 @@ main {
   min-height: 240px;
 }
 
+/* MOBILE TASK VIEW — terminal-first full-screen takeover.
+   The detail view becomes a fixed flex column sized to the visible band
+   (--app-height tracks visualViewport, set by viewport.ts). The terminal is the
+   only scroll container; when the keyboard opens the column shrinks above it so
+   the cursor row and control-key bar stay visible. Desktop (>=768px) keeps the
+   inline panel untouched. */
+@media (max-width: 767px) {
+  /* Kill the 300ms double-tap delay / double-tap zoom (iOS ignores
+     user-scalable=no; pinch is handled in viewport.ts). */
+  html {
+    touch-action: manipulation;
+  }
+
+  .task-detail {
+    position: fixed;
+    inset: 0;
+    z-index: 30; /* above .cockpit-chrome (10) and .bottom-nav (20) */
+    height: var(--app-height, 100dvh);
+    min-height: 0;
+    padding: env(safe-area-inset-top) calc(16px + env(safe-area-inset-right))
+      env(safe-area-inset-bottom) calc(16px + env(safe-area-inset-left));
+    background: var(--paper);
+    overflow: hidden;
+  }
+
+  /* Let the terminal shrink to fit above the keyboard rather than overflow. */
+  .task-detail .terminal-panel,
+  .task-detail [data-testid="task-terminal-panel"],
+  .task-detail .task-terminal-viewport {
+    min-height: 0;
+  }
+
+  /* Compact the status/action chrome so the terminal owns the screen. */
+  .interact-panel {
+    margin-top: 12px;
+    padding: 12px;
+  }
+
+  .interact-state.is-hero {
+    margin-bottom: 10px;
+    padding-bottom: 10px;
+  }
+}
+
 /* BOTTOM NAV -------------------------------------------------------------- */
 .bottom-nav {
   position: fixed;
