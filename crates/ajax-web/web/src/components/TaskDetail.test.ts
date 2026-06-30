@@ -1,8 +1,54 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import TaskDetail from "./TaskDetail.svelte";
 import * as api from "../api";
 import type { BrowserTaskDetail } from "../types";
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class MockTerminal {
+    cols = 80;
+    rows = 24;
+    loadAddon = vi.fn();
+    open = vi.fn();
+    write = vi.fn();
+    dispose = vi.fn();
+    onData = vi.fn();
+  },
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class MockFitAddon {
+    fit = vi.fn();
+    dispose = vi.fn();
+  },
+}));
+
+vi.mock("xterm-zerolag-input", () => ({
+  ZerolagInputAddon: class MockZerolagInputAddon {
+    addChar = vi.fn();
+    removeChar = vi.fn();
+    clear = vi.fn();
+    clearFlushed = vi.fn();
+    rerender = vi.fn();
+    dispose = vi.fn();
+  },
+}));
+
+beforeEach(() => {
+  vi.stubGlobal("WebSocket", class {
+    readyState = 1;
+    close() {}
+    addEventListener() {}
+    send() {}
+  });
+  vi.stubGlobal(
+    "ResizeObserver",
+    class MockResizeObserver {
+      observe = vi.fn();
+      disconnect = vi.fn();
+    },
+  );
+});
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -43,6 +89,12 @@ describe("TaskDetail", () => {
     vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const { getByText } = render(TaskDetail, { props: { detail: detail() } });
     expect(getByText("Review")).toBeInTheDocument();
+  });
+
+  it("renders the task terminal panel for the qualified handle", () => {
+    vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
+    const { getByTestId } = render(TaskDetail, { props: { detail: detail() } });
+    expect(getByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
   it("fires onBack from the back control", async () => {

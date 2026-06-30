@@ -4,3 +4,4 @@ pub mod cockpit;
 pub mod install;
 pub mod operate;
 pub mod pane;
+pub mod terminal;

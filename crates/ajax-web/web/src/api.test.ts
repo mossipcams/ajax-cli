@@ -10,6 +10,8 @@ import {
   fetchDetail,
   fetchPane,
   fetchVersion,
+  openTaskTerminalSocket,
+  taskTerminalWebSocketUrl,
 } from "./api";
 
 type FetchMock = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> | Response;
@@ -535,5 +537,48 @@ describe("POST transport options", () => {
       credentials: "same-origin",
       body: JSON.stringify({}),
     });
+  });
+});
+
+describe("task terminal socket helpers", () => {
+  it("builds an encoded terminal websocket URL", () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        protocol: "https:",
+        host: "ajax.local:8787",
+      },
+    });
+
+    expect(taskTerminalWebSocketUrl("web/fix-login")).toBe(
+      "wss://ajax.local:8787/api/tasks/web%2Ffix-login/terminal",
+    );
+  });
+
+  it("uses ws for plain http pages", () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        protocol: "http:",
+        host: "localhost:8788",
+      },
+    });
+
+    expect(taskTerminalWebSocketUrl("web/fix-login")).toBe(
+      "ws://localhost:8788/api/tasks/web%2Ffix-login/terminal",
+    );
+  });
+
+  it("opens a websocket at the task terminal URL", () => {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        protocol: "https:",
+        host: "ajax.local:8787",
+      },
+    });
+    const socket = openTaskTerminalSocket("web/fix-login");
+    expect(socket.url).toBe("wss://ajax.local:8787/api/tasks/web%2Ffix-login/terminal");
+    socket.close();
   });
 });

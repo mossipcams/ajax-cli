@@ -12,6 +12,8 @@ workspace = true
 [dependencies]
 ajax-core = { path = "../ajax-core", version = "0.11.0" }
 axum = { workspace = true }
+base64 = { workspace = true }
+portable-pty = { workspace = true }
 getrandom = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }

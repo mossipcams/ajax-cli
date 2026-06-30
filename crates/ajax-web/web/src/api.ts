@@ -298,3 +298,12 @@ export async function restartServer(): Promise<OperationResponse> {
   }
   return payload;
 }
+
+export function taskTerminalWebSocketUrl(handle: string): string {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/terminal`;
+}
+
+export function openTaskTerminalSocket(handle: string): WebSocket {
+  return new WebSocket(taskTerminalWebSocketUrl(handle));
+}
