@@ -3,7 +3,6 @@
   import { statusMeta } from "../state";
   import { copyText } from "../diagnostics";
   import ActionBar from "./ActionBar.svelte";
-  import PanePanel from "./PanePanel.svelte";
   import TerminalPanel from "./TerminalPanel.svelte";
 
   interface Props {
@@ -49,11 +48,6 @@
   </section>
 
   <TerminalPanel handle={detail.qualified_handle} />
-
-  <details class="pane-fallback">
-    <summary>Pane fallback</summary>
-    <PanePanel handle={detail.qualified_handle} {detail} {onResult} />
-  </details>
 
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>
@@ -223,21 +217,6 @@
     background: var(--paper);
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
-  }
-
-  .pane-fallback {
-    margin-top: 12px;
-    border-top: 1px solid var(--rule);
-    padding-top: 12px;
-  }
-
-  .pane-fallback summary {
-    cursor: pointer;
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: var(--label-tracking);
-    text-transform: uppercase;
-    color: var(--ink-muted);
   }
 
   /* META DETAILS ---------------------------------------------------------- */

@@ -1,14 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   checkHealth,
-  postAnswer,
-  postTaskInput,
   postOperation,
   restartServer,
   startTask,
   fetchCockpit,
   fetchDetail,
-  fetchPane,
   fetchVersion,
   openTaskTerminalSocket,
   taskTerminalWebSocketUrl,
@@ -57,14 +54,6 @@ const validDetail = {
   agent_attempts: [],
 };
 
-const validPane = {
-  sequence: 1,
-  lines: ["ready"],
-  truncated: false,
-  tmux_exists: true,
-  state: null,
-};
-
 describe("fetchCockpit", () => {
   it("returns a validated cockpit on success", async () => {
     mockFetch(() => json(validCockpit));
@@ -91,7 +80,6 @@ describe("GET transport options", () => {
       if (path === "/api/version") return Promise.resolve(json({ version: "test" }));
       if (path === "/api/health") return Promise.resolve(json({ ok: true }));
       if (path === "/api/tasks/web%2Fx") return Promise.resolve(json(validDetail));
-      if (path === "/api/tasks/web%2Fx/pane?since=0") return Promise.resolve(json(validPane));
       return Promise.reject(new Error(`unexpected fetch: ${path}`));
     });
 
@@ -99,7 +87,6 @@ describe("GET transport options", () => {
     await fetchVersion();
     await checkHealth();
     await fetchDetail("web/x");
-    await fetchPane("web/x", 0);
 
     expect(fetch).toHaveBeenCalledWith("/api/cockpit", {
       cache: "no-store",
@@ -114,10 +101,6 @@ describe("GET transport options", () => {
       credentials: "same-origin",
     });
     expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx", {
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx/pane?since=0", {
       cache: "no-store",
       credentials: "same-origin",
     });
@@ -313,57 +296,6 @@ describe("browser session renewal", () => {
   });
 });
 
-describe("postAnswer status mapping", () => {
-  it("maps 409 to a conflict error", async () => {
-    mockFetch(() => json({ ok: false, error: "stale" }, 409));
-    await expect(
-      postAnswer("web/x", { answer: "approve", fingerprint: "f", request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "conflict" });
-  });
-
-  it("maps 422 to a terminal-escalation error", async () => {
-    mockFetch(() => json({ ok: false, error: "terminal required" }, 422));
-    await expect(
-      postAnswer("web/x", { answer: "deny", fingerprint: "f", request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "terminal" });
-  });
-
-  it("maps 429 to a rate-limit error", async () => {
-    mockFetch(() => json({ ok: false, error: "too many inputs" }, 429));
-    await expect(
-      postAnswer("web/x", { answer: "approve", fingerprint: "f", request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "rate-limit" });
-  });
-});
-
-describe("postTaskInput status mapping", () => {
-  it("maps 409 to a conflict error", async () => {
-    mockFetch(() => json({ ok: false, error: "missing tmux" }, 409));
-    await expect(
-      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "conflict" });
-  });
-
-  it("maps 429 to a rate-limit error", async () => {
-    mockFetch(() => json({ ok: false, error: "too many inputs" }, 429));
-    await expect(
-      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "rate-limit" });
-  });
-
-  it("maps generic 400 and 500 to http errors", async () => {
-    mockFetch(() => json({ ok: false, error: "text is required" }, 400));
-    await expect(
-      postTaskInput("web/x", { text: " ", submit: true, request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "http", status: 400 });
-
-    mockFetch(() => json({ ok: false, error: "command failed" }, 500));
-    await expect(
-      postTaskInput("web/x", { text: "continue", submit: true, request_id: "r" }),
-    ).rejects.toMatchObject({ kind: "http", status: 500 });
-  });
-});
-
 describe("postOperation", () => {
   it("returns the refreshed cockpit projection on success", async () => {
     mockFetch(() =>
@@ -466,16 +398,6 @@ describe("POST transport options", () => {
       agent: "codex",
       request_id: "start-request",
     };
-    const answerRequest = {
-      answer: "approve" as const,
-      fingerprint: "fingerprint",
-      request_id: "answer-request",
-    };
-    const inputRequest = {
-      text: "continue with the plan",
-      submit: true,
-      request_id: "input-request",
-    };
     mockFetch((input) => {
       const path = String(input);
       if (path === "/api/operations") {
@@ -483,12 +405,6 @@ describe("POST transport options", () => {
       }
       if (path === "/api/tasks") {
         return Promise.resolve(json({ ok: true, state_changed: true, cockpit: validCockpit }));
-      }
-      if (path === "/api/tasks/web%2Fx/answer") {
-        return Promise.resolve(json({ sequence_hint: 2 }));
-      }
-      if (path === "/api/tasks/web%2Fx/input") {
-        return Promise.resolve(json({ sequence_hint: 3 }));
       }
       if (path === "/api/server/restart") {
         return Promise.resolve(json({ ok: true, restarting: true }));
@@ -498,8 +414,6 @@ describe("POST transport options", () => {
 
     await postOperation(operationRequest);
     await startTask(startRequest);
-    await postAnswer("web/x", answerRequest);
-    await postTaskInput("web/x", inputRequest);
     await restartServer();
 
     expect(fetch).toHaveBeenCalledWith("/api/operations", {
@@ -515,20 +429,6 @@ describe("POST transport options", () => {
       cache: "no-store",
       credentials: "same-origin",
       body: JSON.stringify(startRequest),
-    });
-    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx/answer", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      credentials: "same-origin",
-      body: JSON.stringify(answerRequest),
-    });
-    expect(fetch).toHaveBeenCalledWith("/api/tasks/web%2Fx/input", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      cache: "no-store",
-      credentials: "same-origin",
-      body: JSON.stringify(inputRequest),
     });
     expect(fetch).toHaveBeenCalledWith("/api/server/restart", {
       method: "POST",

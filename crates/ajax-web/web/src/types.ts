@@ -17,9 +17,6 @@ export type ConnectionState =
 /** Hash-route kinds. */
 export type RouteKind = "dashboard" | "project" | "task" | "settings";
 
-/** Structured prompt answer intent. */
-export type AnswerIntent = "approve" | "deny";
-
 export interface WebAction {
   action: string;
   label: string;
@@ -110,52 +107,6 @@ export interface BrowserTaskDetail {
   agent_attempts: BrowserAgentAttempt[];
 }
 
-/** Pane-state kinds (a subset of Rust `LiveStatusKind`, stringly serialized). */
-export type PaneStateKind =
-  | "WaitingForApproval"
-  | "WaitingForInput"
-  | "AgentRunning"
-  | "Done"
-  | "Idle"
-  | string;
-
-export interface BrowserPaneChoice {
-  index: number;
-  label: string;
-  role: "affirm" | "deny" | "neutral";
-}
-
-export interface BrowserPaneState {
-  kind: PaneStateKind;
-  summary?: string;
-  command?: string | null;
-  prompt?: string | null;
-  choices?: BrowserPaneChoice[];
-  confidence?: "high" | "low";
-  fingerprint?: string | null;
-  answerable: boolean;
-}
-
-export interface BrowserPaneSnapshot {
-  sequence: number;
-  lines: string[];
-  truncated?: boolean;
-  tmux_exists: boolean;
-  state: BrowserPaneState | null;
-}
-
-export interface TaskAnswerRequest {
-  answer: AnswerIntent;
-  fingerprint: string;
-  request_id: string;
-}
-
-export interface TaskInputRequest {
-  text: string;
-  submit: boolean;
-  request_id: string;
-}
-
 export interface StartTaskRequest {
   repo: string;
   title: string;
@@ -178,10 +129,6 @@ export interface OperationResponse {
   output?: string | null;
   error?: string | null;
   restarting?: boolean;
-}
-
-export interface TaskInputResponse {
-  sequence_hint: number;
 }
 
 export interface VersionResponse {

@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import TaskDetail from "./TaskDetail.svelte";
-import * as api from "../api";
 import type { BrowserTaskDetail } from "../types";
 
 vi.mock("@xterm/xterm", () => ({
@@ -79,26 +78,22 @@ function detail(overrides: Partial<BrowserTaskDetail> = {}): BrowserTaskDetail {
 
 describe("TaskDetail", () => {
   it("renders the canonical headline status", () => {
-    vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const { getByText, container } = render(TaskDetail, { props: { detail: detail() } });
     expect(container.querySelector(".interact-pill")?.textContent).toContain("Waiting");
     expect(getByText("Ready for review")).toBeInTheDocument();
   });
 
   it("renders the ordered actions without inferring them", () => {
-    vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const { getByText } = render(TaskDetail, { props: { detail: detail() } });
     expect(getByText("Review")).toBeInTheDocument();
   });
 
   it("renders the task terminal panel for the qualified handle", () => {
-    vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const { getByTestId } = render(TaskDetail, { props: { detail: detail() } });
     expect(getByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
   it("fires onBack from the back control", async () => {
-    vi.spyOn(api, "fetchPane").mockResolvedValue({ kind: "missing" });
     const onBack = vi.fn();
     const { getByText } = render(TaskDetail, { props: { detail: detail(), onBack } });
     await fireEvent.click(getByText("← Back"));

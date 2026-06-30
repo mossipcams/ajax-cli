@@ -7,20 +7,14 @@ import {
   assertCockpit,
   assertDetail,
   assertOperationResponse,
-  assertPaneSnapshot,
-  assertTaskInputResponse,
 } from "./contracts";
 import { RESTART_POLL_MS, RESTART_TIMEOUT_MS } from "./polling";
 import type {
   BrowserCockpitView,
-  BrowserPaneSnapshot,
   BrowserTaskDetail,
   OperationRequest,
   OperationResponse,
   StartTaskRequest,
-  TaskAnswerRequest,
-  TaskInputRequest,
-  TaskInputResponse,
   VersionResponse,
 } from "./types";
 
@@ -167,28 +161,6 @@ export async function fetchVersion(): Promise<VersionResponse> {
   return value as VersionResponse;
 }
 
-export type PaneResult =
-  | { kind: "ok"; snapshot: BrowserPaneSnapshot }
-  | { kind: "conflict"; snapshot: BrowserPaneSnapshot }
-  | { kind: "missing" };
-
-/** Pane deltas have bespoke status handling: 404 means the endpoint/task is
- * gone (degrade silently), 409 carries a conflict payload (e.g. tmux missing). */
-export async function fetchPane(handle: string, since: number): Promise<PaneResult> {
-  const response = await fetchProtectedWithSessionRenewal(
-    `/api/tasks/${encodeURIComponent(handle)}/pane?since=${since}`,
-    GET_OPTIONS,
-  );
-  if (response.status === 404) return { kind: "missing" };
-  if (response.status === 409) {
-    return { kind: "conflict", snapshot: assertPaneSnapshot(await readJson(response)) };
-  }
-  if (!response.ok) {
-    throw new ApiError(classifyStatus(response.status), `HTTP ${response.status}`, response.status);
-  }
-  return { kind: "ok", snapshot: assertPaneSnapshot(await readJson(response)) };
-}
-
 async function postJson(path: string, body: unknown): Promise<{ response: Response; payload: unknown }> {
   const response = await fetchProtectedWithSessionRenewal(path, {
     method: "POST",
@@ -241,30 +213,6 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
     response: payload,
     error: new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload),
   };
-}
-
-export async function postAnswer(handle: string, req: TaskAnswerRequest): Promise<TaskInputResponse> {
-  const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/answer`, req);
-  if (!response.ok) {
-    throw new ApiError(
-      classifyStatus(response.status),
-      errorMessage(payload, `HTTP ${response.status}`),
-      response.status,
-    );
-  }
-  return assertTaskInputResponse(payload);
-}
-
-export async function postTaskInput(handle: string, req: TaskInputRequest): Promise<TaskInputResponse> {
-  const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/input`, req);
-  if (!response.ok) {
-    throw new ApiError(
-      classifyStatus(response.status),
-      errorMessage(payload, `HTTP ${response.status}`),
-      response.status,
-    );
-  }
-  return assertTaskInputResponse(payload);
 }
 
 export async function checkHealth(): Promise<boolean> {

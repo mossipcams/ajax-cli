@@ -136,8 +136,6 @@ mod tests {
             "/api/cockpit",
             "/api/operations",
             "/api/server/restart",
-            "/answer",
-            "/input",
             "#/settings",
             "request_id",
             "no-store",
@@ -151,5 +149,9 @@ mod tests {
         assert!(!script.contains("serviceWorker.register"));
         assert!(!script.contains("pushManager.subscribe"));
         assert!(!script.contains("/api/push"));
+        // The legacy polling pane bridge was removed in favor of the live
+        // terminal websocket; its endpoints must not survive in the bundle.
+        assert!(!script.contains("/answer"));
+        assert!(!script.contains("/input"));
     }
 }
