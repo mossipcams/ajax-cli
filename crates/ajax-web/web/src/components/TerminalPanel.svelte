@@ -64,6 +64,16 @@
       requestAnimationFrame(() => fitAddon.fit());
     }
 
+    // Auto-follow new output only while the user is at the bottom of the
+    // scrollback. A tmux-attached session redraws constantly (status bar,
+    // idle prompt refresh), and unconditionally calling scrollToBottom() on
+    // every output frame yanked the view back down the instant a user tried
+    // to scroll up — scrolling looked completely broken.
+    let pinnedToBottom = true;
+    term.onScroll(() => {
+      pinnedToBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+    });
+
     const socket = openTaskTerminalSocket(handle);
 
     const sendResize = () => {
@@ -144,7 +154,7 @@
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
           const decoded = outputDecoder.decode(bytes, { stream: true });
           term.write(decoded);
-          term.scrollToBottom();
+          if (pinnedToBottom) term.scrollToBottom();
           zerolag.clearFlushed();
           zerolag.rerender();
         } else if (payload.type === "error" && "error" in payload && payload.error) {
@@ -152,7 +162,7 @@
         }
       } catch {
         term.write(data);
-        term.scrollToBottom();
+        if (pinnedToBottom) term.scrollToBottom();
         zerolag.clearFlushed();
         zerolag.rerender();
       }

@@ -8,11 +8,14 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
+    buffer = { active: { viewportY: 0, baseY: 0 } };
     loadAddon = vi.fn();
     open = vi.fn();
     write = vi.fn();
     dispose = vi.fn();
     onData = vi.fn();
+    onScroll = vi.fn();
+    scrollToBottom = vi.fn();
   },
 }));
 
