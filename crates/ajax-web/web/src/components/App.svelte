@@ -13,6 +13,7 @@
   import Skeleton from "./Skeleton.svelte";
   import { pullToRefresh } from "../gestures/pullToRefreshAction";
   import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
+  import { initViewport } from "../viewport";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -99,6 +100,7 @@
 
   // Cockpit polling — mount once; the interval callback is not a tracked read.
   $effect(() => {
+    const disposeViewport = initViewport();
     void loadCockpit();
     const idleHandle = whenIdle(() => void checkVersion());
     const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);
@@ -113,6 +115,7 @@
     window.addEventListener("pageshow", onResume);
     document.addEventListener("visibilitychange", onResume);
     return () => {
+      disposeViewport();
       cancelIdle(idleHandle);
       clearInterval(cockpitTimer);
       clearInterval(versionTimer);
