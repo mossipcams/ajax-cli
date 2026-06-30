@@ -4069,4 +4069,95 @@ mod tests {
         );
         assert_eq!(unsubscribe.status_code, 404);
     }
+
+    #[tokio::test]
+    async fn push_path_does_not_start_nested_runtime() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("push-runtime"),
+        );
+        let session_cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+
+        let config = app
+            .clone()
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/push/config")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("push config request should complete");
+        assert_eq!(config.status(), StatusCode::NOT_FOUND);
+
+        let subscribe = app
+            .clone()
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/push/subscribe")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .expect("push subscribe request should complete");
+        assert_eq!(subscribe.status(), StatusCode::NOT_FOUND);
+
+        let unsubscribe = app
+            .oneshot(
+                authenticated_request(&session_cookie, "/api/push/unsubscribe")
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"endpoint":"https://push.example/x"}"#))
+                    .unwrap(),
+            )
+            .await
+            .expect("push unsubscribe request should complete");
+        assert_eq!(unsubscribe.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn server_health_remains_responsive_after_terminal_disconnect_cleanup() {
+        let state = super::WebAppState::new(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("terminal-cleanup-health"),
+        );
+        let app = super::axum_app(state);
+
+        let cleanup = tokio::spawn(async move {
+            crate::adapters::terminal_pty::simulate_terminal_disconnect_cleanup_for_tests(
+                Duration::from_millis(50),
+            )
+            .await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let health_started = std::time::Instant::now();
+        let health = app
+            .oneshot(
+                AxumRequest::builder()
+                    .uri("/api/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .expect("health request should complete");
+        let health_elapsed = health_started.elapsed();
+
+        assert_eq!(health.status(), StatusCode::OK);
+        assert!(
+            health_elapsed < Duration::from_millis(150),
+            "health took {health_elapsed:?} while terminal cleanup was in flight"
+        );
+
+        cleanup.await.expect("terminal cleanup should finish");
+    }
 }
