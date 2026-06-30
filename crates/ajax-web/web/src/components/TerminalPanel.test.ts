@@ -14,17 +14,25 @@ const clear = vi.fn();
 const clearFlushed = vi.fn();
 const rerender = vi.fn();
 
+const focus = vi.fn();
+let lastTextarea: HTMLTextAreaElement | undefined;
+
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
+    textarea = document.createElement("textarea");
     loadAddon = vi.fn();
     open = vi.fn();
     write = write;
     dispose = dispose;
+    focus = focus;
     onData = vi.fn((handler: (data: string) => void) => {
       onDataHandler = handler;
     });
+    constructor() {
+      lastTextarea = this.textarea;
+    }
   },
 }));
 
@@ -72,9 +80,17 @@ class MockWebSocket {
   }
 }
 
+const vvListeners: Record<string, Array<() => void>> = {};
+
+function dispatchVisualViewport(type: string) {
+  for (const handler of vvListeners[type] ?? []) handler();
+}
+
 beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
+  lastTextarea = undefined;
+  for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
   vi.stubGlobal(
     "ResizeObserver",
@@ -83,6 +99,12 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
+  vi.stubGlobal("visualViewport", {
+    addEventListener: (type: string, handler: () => void) => {
+      (vvListeners[type] ??= []).push(handler);
+    },
+    removeEventListener: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -221,6 +243,62 @@ describe("TerminalPanel", () => {
       expect(socket?.close).toHaveBeenCalled();
       expect(dispose).toHaveBeenCalled();
       expect(zerolagDispose).toHaveBeenCalled();
+    });
+  });
+
+  it("refits and sends a resize frame when the visual viewport changes", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    fit.mockClear();
+    socket!.send.mockClear();
+
+    dispatchVisualViewport("resize");
+
+    await waitFor(() => {
+      expect(fit).toHaveBeenCalled();
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      );
+    });
+  });
+
+  it("sends an Escape byte when the Esc key is tapped", async () => {
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Esc" }).click();
+
+    await waitFor(() => {
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b" }),
+      );
+    });
+  });
+
+  it("folds the next letter into a control code after Ctrl is armed", async () => {
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Ctrl" }).click();
+    onDataHandler?.("c");
+
+    await waitFor(() => {
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x03" }),
+      );
+    });
+  });
+
+  it("disables autocorrect/autocapitalize on the xterm input", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect(lastTextarea?.getAttribute("autocapitalize")).toBe("off");
+      expect(lastTextarea?.getAttribute("autocorrect")).toBe("off");
+      expect(lastTextarea?.getAttribute("spellcheck")).toBe("false");
     });
   });
 });

@@ -14,6 +14,23 @@
 
   let container: HTMLDivElement | undefined = $state();
   let status = $state("connecting");
+  let ctrlArmed = $state(false);
+
+  // Assigned inside onMount so the key bar can reach the live socket/terminal.
+  let sendKey: (data: string) => void = () => {};
+  let focusTerm: () => void = () => {};
+
+  // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
+  // modifier folded into the next typed letter by the onData handler below.
+  const CONTROL_KEYS = [
+    { label: "Esc", data: "\x1b" },
+    { label: "Tab", data: "\t" },
+    { label: "⌃C", data: "\x03" },
+    { label: "←", data: "\x1b[D" },
+    { label: "↑", data: "\x1b[A" },
+    { label: "↓", data: "\x1b[B" },
+    { label: "→", data: "\x1b[C" },
+  ];
 
   onMount(() => {
     const term = new Terminal({
@@ -34,7 +51,17 @@
 
     if (container) {
       term.open(container);
-      fitAddon.fit();
+      // Harden the hidden textarea xterm owns so mobile keyboards don't corrupt
+      // terminal input with autocorrect/autocapitalize.
+      const input = term.textarea;
+      if (input) {
+        input.setAttribute("autocapitalize", "off");
+        input.setAttribute("autocorrect", "off");
+        input.setAttribute("autocomplete", "off");
+        input.setAttribute("spellcheck", "false");
+      }
+      // Defer the first fit until layout settles so the PTY gets real dimensions.
+      requestAnimationFrame(() => fitAddon.fit());
     }
 
     const socket = openTaskTerminalSocket(handle);
@@ -50,20 +77,42 @@
       );
     };
 
+    sendKey = (data: string) => {
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "input", data }));
+    };
+    focusTerm = () => term.focus();
+
+    // Coalesce refits triggered by container, window, orientation, and the
+    // on-screen keyboard (visualViewport) into one rAF.
+    let refitFrame = 0;
+    const scheduleRefit = () => {
+      if (refitFrame) cancelAnimationFrame(refitFrame);
+      refitFrame = requestAnimationFrame(() => {
+        fitAddon.fit();
+        sendResize();
+      });
+    };
+
     const resizeObserver =
-      typeof ResizeObserver !== "undefined"
-        ? new ResizeObserver(() => {
-            fitAddon.fit();
-            sendResize();
-          })
-        : null;
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleRefit) : null;
     if (container && resizeObserver) {
       resizeObserver.observe(container);
     }
 
+    window.addEventListener("resize", scheduleRefit);
+    window.addEventListener("orientationchange", scheduleRefit);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", scheduleRefit);
+    viewport?.addEventListener("scroll", scheduleRefit);
+
     socket.addEventListener("open", () => {
       status = "connected";
-      sendResize();
+      requestAnimationFrame(() => {
+        fitAddon.fit();
+        sendResize();
+        term.focus();
+      });
     });
 
     socket.addEventListener("message", (event) => {
@@ -97,6 +146,16 @@
     term.onData((data) => {
       if (socket.readyState !== WebSocket.OPEN) return;
 
+      // Sticky Ctrl from the key bar: fold the next letter into its control code.
+      if (ctrlArmed && data.length === 1) {
+        ctrlArmed = false;
+        const code = data.toLowerCase().charCodeAt(0);
+        if (code >= 97 && code <= 122) {
+          socket.send(JSON.stringify({ type: "input", data: String.fromCharCode(code - 96) }));
+          return;
+        }
+      }
+
       if (data === "\r") {
         zerolag.clear();
         socket.send(JSON.stringify({ type: "input", data }));
@@ -119,7 +178,12 @@
     });
 
     return () => {
+      if (refitFrame) cancelAnimationFrame(refitFrame);
       resizeObserver?.disconnect();
+      window.removeEventListener("resize", scheduleRefit);
+      window.removeEventListener("orientationchange", scheduleRefit);
+      viewport?.removeEventListener("resize", scheduleRefit);
+      viewport?.removeEventListener("scroll", scheduleRefit);
       socket.close();
       zerolag.dispose();
       term.dispose();
@@ -129,6 +193,28 @@
 
 <section class="terminal-panel" data-testid="task-terminal-panel" aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}></div>
+  <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
+    {#each CONTROL_KEYS as key (key.label)}
+      <button
+        type="button"
+        class="terminal-key"
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          sendKey(key.data);
+          focusTerm();
+        }}>{key.label}</button>
+    {/each}
+    <button
+      type="button"
+      class="terminal-key"
+      class:is-armed={ctrlArmed}
+      aria-pressed={ctrlArmed}
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => {
+        ctrlArmed = !ctrlArmed;
+        focusTerm();
+      }}>Ctrl</button>
+  </div>
   {#if status !== "connected"}
     <div class="terminal-status" data-testid="terminal-status">{status}</div>
   {/if}
@@ -138,8 +224,8 @@
   .terminal-panel {
     display: flex;
     flex-direction: column;
-    min-height: 280px;
-    height: min(58vh, 520px);
+    min-height: 360px;
+    height: 75dvh;
     margin-top: 16px;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
@@ -147,10 +233,43 @@
     overflow: hidden;
   }
 
+  @media (min-width: 768px) {
+    .terminal-panel {
+      height: min(58vh, 560px);
+    }
+  }
+
   .terminal-host {
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
+  }
+
+  .terminal-keys {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 6px 8px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper);
+  }
+
+  .terminal-key {
+    flex: none;
+    min-width: 44px;
+    min-height: 40px;
+    padding: 6px 10px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+
+  .terminal-key.is-armed {
+    background: var(--teal-deep);
+    border-color: var(--teal);
   }
 
   .terminal-status {
