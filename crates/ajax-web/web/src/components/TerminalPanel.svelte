@@ -83,6 +83,51 @@
     };
     focusTerm = () => term.focus();
 
+    let touchStart: { x: number; y: number } | null = null;
+    let touchDragDeltaY = 0;
+    let touchDragSuppressUntil = 0;
+    const touchPoint = (event: TouchEvent): { x: number; y: number } | null => {
+      const touch = event.touches.item?.(0) ?? event.touches[0];
+      return touch ? { x: touch.clientX, y: touch.clientY } : null;
+    };
+    const markTouchDrag = () => {
+      touchDragSuppressUntil = Date.now() + 700;
+    };
+    const isSgrMouseReport = (data: string) => /^\x1b\[<\d+;\d+;\d+[mM]$/.test(data);
+    const shouldSuppressMouseReport = (data: string) =>
+      Date.now() < touchDragSuppressUntil && isSgrMouseReport(data);
+    const onTouchStart = (event: TouchEvent) => {
+      touchStart = touchPoint(event);
+      touchDragDeltaY = 0;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!touchStart) return;
+      const point = touchPoint(event);
+      if (!point) return;
+      const dx = point.x - touchStart.x;
+      const dy = point.y - touchStart.y;
+      if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx) * 1.2) {
+        touchDragDeltaY = dy;
+        markTouchDrag();
+      }
+    };
+    const onTouchEnd = () => {
+      if (Math.abs(touchDragDeltaY) > 48 && socket.readyState === WebSocket.OPEN) {
+        socket.send(
+          JSON.stringify({
+            type: "input",
+            data: touchDragDeltaY > 0 ? "\x1b[5~" : "\x1b[6~",
+          }),
+        );
+      }
+      touchStart = null;
+      touchDragDeltaY = 0;
+    };
+    container?.addEventListener("touchstart", onTouchStart, { passive: true });
+    container?.addEventListener("touchmove", onTouchMove, { passive: true });
+    container?.addEventListener("touchend", onTouchEnd);
+    container?.addEventListener("touchcancel", onTouchEnd);
+
     // Coalesce refits triggered by container, window, orientation, and the
     // on-screen keyboard (visualViewport) into one rAF.
     let refitFrame = 0;
@@ -168,6 +213,7 @@
 
     term.onData((data) => {
       if (socket.readyState !== WebSocket.OPEN) return;
+      if (shouldSuppressMouseReport(data)) return;
 
       // Sticky Ctrl from the key bar: fold the next letter into its control code.
       if (ctrlArmed && data.length === 1) {
@@ -215,6 +261,10 @@
       window.removeEventListener("orientationchange", scheduleRefit);
       viewport?.removeEventListener("resize", scheduleRefit);
       viewport?.removeEventListener("scroll", scheduleRefit);
+      container?.removeEventListener("touchstart", onTouchStart);
+      container?.removeEventListener("touchmove", onTouchMove);
+      container?.removeEventListener("touchend", onTouchEnd);
+      container?.removeEventListener("touchcancel", onTouchEnd);
       socket.close();
       zerolag.dispose();
       term.dispose();

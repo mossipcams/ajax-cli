@@ -23,6 +23,7 @@ const rerender = vi.fn();
 
 const focus = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
+let lastOpenedContainer: HTMLElement | undefined;
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
@@ -30,7 +31,12 @@ vi.mock("@xterm/xterm", () => ({
     rows = 24;
     textarea = document.createElement("textarea");
     loadAddon = vi.fn();
-    open = vi.fn();
+    open = vi.fn((container: HTMLElement) => {
+      lastOpenedContainer = container;
+      const xterm = document.createElement("div");
+      xterm.className = "xterm";
+      container.append(xterm);
+    });
     write = write;
     scrollToBottom = scrollToBottom;
     dispose = dispose;
@@ -95,10 +101,19 @@ function dispatchVisualViewport(type: string) {
   for (const handler of vvListeners[type] ?? []) handler();
 }
 
+function touchEvent(type: string, clientX: number, clientY: number): Event {
+  const event = new Event(type, { cancelable: true, bubbles: true });
+  Object.defineProperty(event, "touches", {
+    value: [{ identifier: 1, clientX, clientY }],
+  });
+  return event;
+}
+
 beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
+  lastOpenedContainer = undefined;
   flushedCount = 0;
   flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
@@ -189,6 +204,56 @@ describe("TerminalPanel", () => {
       expect(setFlushed).toHaveBeenCalledWith(1, "a");
       expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "a" }),
+      );
+    });
+  });
+
+  it("suppresses touch-drag SGR mouse reports instead of sending them to the PTY", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    socket!.send.mockClear();
+
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchstart", 20, 180));
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchmove", 20, 90));
+
+    onDataHandler?.("\x1b[<0;20;13M");
+    onDataHandler?.("\x1b[<32;20;15M");
+    onDataHandler?.("\x1b[<0;20;13m");
+
+    await waitFor(() => {
+      expect(socket?.send).not.toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[<0;20;13M" }),
+      );
+      expect(socket?.send).not.toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[<32;20;15M" }),
+      );
+      expect(socket?.send).not.toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[<0;20;13m" }),
+      );
+    });
+  });
+
+  it("maps deliberate vertical touch drags to PageUp and PageDown", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    socket!.send.mockClear();
+
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchstart", 20, 90));
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchmove", 20, 180));
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchend", 20, 180));
+
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchstart", 20, 180));
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchmove", 20, 90));
+    lastOpenedContainer?.dispatchEvent(touchEvent("touchend", 20, 90));
+
+    await waitFor(() => {
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[5~" }),
+      );
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[6~" }),
       );
     });
   });

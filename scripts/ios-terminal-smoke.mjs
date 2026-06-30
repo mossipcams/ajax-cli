@@ -130,6 +130,37 @@ const scrollTerminalHistoryBy = async (y) => {
   }, y);
 };
 
+const dragTerminalBy = async (deltaY) => {
+  const xtermBox = await page.locator(".xterm").boundingBox();
+  assert(xtermBox, "xterm has no bounding box");
+  const x = xtermBox.x + xtermBox.width / 2;
+  const startY = xtermBox.y + xtermBox.height / 2;
+  await page.evaluate(
+    ({ clientX, fromY, toY }) => {
+      const target = document.querySelector(".task-terminal-viewport");
+      if (!target) throw new Error("terminal viewport missing");
+      const dispatch = (type, touches) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: touches });
+        target.dispatchEvent(event);
+      };
+      dispatch("touchstart", [{ identifier: 1, clientX, clientY: fromY }]);
+      dispatch("touchmove", [{ identifier: 1, clientX, clientY: toY }]);
+      dispatch("touchend", []);
+    },
+    { clientX: x, fromY: startY, toY: startY + deltaY },
+  );
+};
+
+const inputPayloads = () =>
+  websocketEvents
+    .filter((event) => event.startsWith("sent "))
+    .map((event) => event.slice("sent ".length))
+    .filter((payload) => payload.includes('"type":"input"'));
+
+const hasRawMouseReportInput = (payload) =>
+  /"data":"\\u001b\\[<\\d+;\\d+;\\d+[mM]"/.test(payload);
+
 try {
   await page.goto(baseUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
   await page.waitForTimeout(3_000);
@@ -178,10 +209,27 @@ try {
   );
 
   await scrollTerminalHistoryBy(-900);
+  const beforeDragInputs = inputPayloads().length;
+  await dragTerminalBy(120);
+  await page.waitForTimeout(500);
+  await dragTerminalBy(-120);
   await page.waitForTimeout(500);
   await shot("03-terminal-history-scroll");
   const historyMetrics = await metrics();
   assert((historyMetrics.root.scrollTop ?? 0) === 0, "terminal history scroll moved the page");
+  const dragInputs = inputPayloads().slice(beforeDragInputs);
+  assert(
+    dragInputs.some((payload) => payload.includes('"data":"\\u001b[5~"')),
+    "terminal drag down did not send PageUp",
+  );
+  assert(
+    dragInputs.some((payload) => payload.includes('"data":"\\u001b[6~"')),
+    "terminal drag up did not send PageDown",
+  );
+  assert(
+    !dragInputs.some(hasRawMouseReportInput),
+    `terminal drag sent raw mouse report input: ${dragInputs.join("; ")}`,
+  );
 
   const xtermBox = await page.locator(".xterm").boundingBox();
   assert(xtermBox, "xterm has no bounding box");
