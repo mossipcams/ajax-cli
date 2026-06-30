@@ -10,8 +10,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use tokio::sync::mpsc;
+use tracing::warn;
+
+const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
@@ -34,6 +38,29 @@ impl TerminalChild for Box<dyn Child + Send + Sync> {
 fn cleanup_spawned_child<C: TerminalChild>(mut child: C) {
     let _ = child.kill_child();
     let _ = child.wait_child();
+}
+
+async fn cleanup_spawned_child_async<C: TerminalChild + Send + 'static>(child: C) {
+    cleanup_spawned_child_async_with_timeout(child, TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT).await;
+}
+
+async fn cleanup_spawned_child_async_with_timeout<C: TerminalChild + Send + 'static>(
+    child: C,
+    wait_timeout: Duration,
+) {
+    let wait_task = tokio::task::spawn_blocking(move || cleanup_spawned_child(child));
+    match tokio::time::timeout(wait_timeout, wait_task).await {
+        Ok(Ok(())) => {}
+        Ok(Err(join_error)) => {
+            warn!("terminal child cleanup task failed: {join_error}");
+        }
+        Err(_) => {
+            warn!(
+                "terminal child cleanup timed out after {:?}; continuing websocket close",
+                wait_timeout
+            );
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -124,7 +151,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     let mut reader = match pty_pair.master.try_clone_reader() {
         Ok(reader) => reader,
         Err(error) => {
-            cleanup_spawned_child(child);
+            cleanup_spawned_child_async(child).await;
             let _ = socket
                 .send(Message::Text(
                     serde_json::json!({
@@ -142,7 +169,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     let mut writer = match pty_pair.master.take_writer() {
         Ok(writer) => writer,
         Err(error) => {
-            cleanup_spawned_child(child);
+            cleanup_spawned_child_async(child).await;
             let _ = socket
                 .send(Message::Text(
                     serde_json::json!({
@@ -234,7 +261,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     }
 
     running.store(false, Ordering::Relaxed);
-    cleanup_spawned_child(child);
+    cleanup_spawned_child_async(child).await;
     let _ = socket.send(Message::Close(None)).await;
 }
 
@@ -270,6 +297,40 @@ fn handle_input_frame(
         })),
         _ => Ok(None),
     }
+}
+
+#[cfg(test)]
+pub(crate) async fn simulate_terminal_disconnect_cleanup_for_tests(wait_timeout: Duration) {
+    #[derive(Clone, Debug)]
+    struct Child {
+        killed: Arc<std::sync::Mutex<bool>>,
+        wait_gate: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl Default for Child {
+        fn default() -> Self {
+            let (_, receiver) = std::sync::mpsc::channel();
+            Self {
+                killed: Arc::new(std::sync::Mutex::new(false)),
+                wait_gate: Arc::new(std::sync::Mutex::new(receiver)),
+            }
+        }
+    }
+
+    impl TerminalChild for Child {
+        fn kill_child(&mut self) -> std::io::Result<()> {
+            *self.killed.lock().unwrap() = true;
+            Ok(())
+        }
+
+        fn wait_child(&mut self) -> std::io::Result<()> {
+            let receiver = self.wait_gate.lock().unwrap();
+            let _ = receiver.recv();
+            Ok(())
+        }
+    }
+
+    cleanup_spawned_child_async_with_timeout(Child::default(), wait_timeout).await;
 }
 
 #[cfg(test)]
@@ -359,5 +420,102 @@ mod tests {
 
         assert!(*killed.lock().unwrap());
         assert!(*waited.lock().unwrap());
+    }
+
+    #[derive(Clone, Debug)]
+    struct BlockingWaitChild {
+        killed: Arc<Mutex<bool>>,
+        release_rx: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl TerminalChild for BlockingWaitChild {
+        fn kill_child(&mut self) -> std::io::Result<()> {
+            *self.killed.lock().unwrap() = true;
+            Ok(())
+        }
+
+        fn wait_child(&mut self) -> std::io::Result<()> {
+            let receiver = self.release_rx.lock().unwrap();
+            let _ = receiver.recv();
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn terminal_cleanup_runs_wait_on_blocking_task() {
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let child = BlockingWaitChild {
+            killed: Arc::new(Mutex::new(false)),
+            release_rx: Arc::new(Mutex::new(release_rx)),
+        };
+        let killed = Arc::clone(&child.killed);
+        let progress = Arc::new(AtomicBool::new(false));
+        let progress_for_task = Arc::clone(&progress);
+
+        let cleanup = tokio::spawn(async move {
+            cleanup_spawned_child_async(child).await;
+        });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::spawn(async move {
+            progress_for_task.store(true, Ordering::Relaxed);
+        })
+        .await
+        .expect("concurrent async task should run while cleanup waits");
+
+        assert!(
+            progress.load(Ordering::Relaxed),
+            "tokio worker should stay responsive while child wait runs on a blocking thread"
+        );
+        assert!(*killed.lock().unwrap());
+
+        release_tx.send(()).expect("release blocked child wait");
+        cleanup.await.expect("cleanup task should finish");
+    }
+
+    #[derive(Clone, Debug)]
+    struct NeverCompletingWaitChild {
+        killed: Arc<Mutex<bool>>,
+        wait_gate: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
+    }
+
+    impl Default for NeverCompletingWaitChild {
+        fn default() -> Self {
+            let (_, receiver) = std::sync::mpsc::channel();
+            Self {
+                killed: Arc::new(Mutex::new(false)),
+                wait_gate: Arc::new(Mutex::new(receiver)),
+            }
+        }
+    }
+
+    impl TerminalChild for NeverCompletingWaitChild {
+        fn kill_child(&mut self) -> std::io::Result<()> {
+            *self.killed.lock().unwrap() = true;
+            Ok(())
+        }
+
+        fn wait_child(&mut self) -> std::io::Result<()> {
+            let receiver = self.wait_gate.lock().unwrap();
+            let _ = receiver.recv();
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_cleanup_does_not_wait_forever_after_kill() {
+        let child = NeverCompletingWaitChild::default();
+        let killed = Arc::clone(&child.killed);
+        let timeout = Duration::from_millis(50);
+
+        let started = std::time::Instant::now();
+        cleanup_spawned_child_async_with_timeout(child, timeout).await;
+        let elapsed = started.elapsed();
+
+        assert!(*killed.lock().unwrap());
+        assert!(
+            elapsed < Duration::from_millis(250),
+            "cleanup should time out instead of waiting forever, took {elapsed:?}"
+        );
     }
 }
