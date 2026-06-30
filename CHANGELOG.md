@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.25.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.24.0...ajax-cli-v0.25.0) (2026-06-30)
+
+
+### Features
+
+* overhaul web task terminal for mobile and remove pane fallback ([#238](https://github.com/mossipcams/ajax-cli/issues/238)) ([f517ec7](https://github.com/mossipcams/ajax-cli/commit/f517ec75e663995079eaef2d61a9d2dbcad1cb99))
+
+
+### Bug Fixes
+
+* prevent web server wedge from blocking terminal PTY cleanup ([#236](https://github.com/mossipcams/ajax-cli/issues/236)) ([9b96229](https://github.com/mossipcams/ajax-cli/commit/9b962290c1bf2ba349bb1508aba8da2895e118ce))
+
 ## [0.24.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.23.0...ajax-cli-v0.24.0) (2026-06-30)
 
 
