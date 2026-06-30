@@ -808,12 +808,8 @@ where
     let response = state.run_optimistic(
         Some(&request_id),
         "cockpit state changed while task start was running",
-        |context, runner, bridge| match handle_start_task_request(
-            &serde_json::to_string(&request).unwrap_or_default(),
-            context,
-            runner,
-            bridge,
-        ) {
+        |context, runner, bridge| match handle_start_task_request(request, context, runner, bridge)
+        {
             Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
             Err(error) => response_from_web_error(error, Some(&request_id)),
         },
@@ -897,12 +893,7 @@ where
     let response = state.run_optimistic(
         request_id.as_deref(),
         "cockpit state changed while operation was running",
-        |context, runner, bridge| match handle_action_request(
-            &serde_json::to_string(&request).unwrap_or_default(),
-            context,
-            runner,
-            bridge,
-        ) {
+        |context, runner, bridge| match handle_action_request(request, context, runner, bridge) {
             Ok(response) => operation_response_with_request_id(response, request_id.as_deref()),
             Err(error) => response_from_web_error(error, request_id.as_deref()),
         },
@@ -999,14 +990,11 @@ fn handle_refreshed_cockpit_request<C: CommandRunner>(
 }
 
 fn handle_action_request<C: CommandRunner>(
-    body: &str,
+    request: MobileActionRequest,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
-    let request: MobileActionRequest = serde_json::from_str(body)
-        .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
-
     if let Some(failure) = unsupported_operate_action(&request.action) {
         return operation_error_response(failure, context);
     }
@@ -1073,13 +1061,11 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
 }
 
 fn handle_start_task_request<C: CommandRunner>(
-    body: &str,
+    request: crate::slices::operate::StartTaskRequest,
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
 ) -> Result<Response, WebError> {
-    let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)
-        .map_err(|error| WebError::JsonSerialization(error.to_string()))?;
     match bridge.execute_start_task(request, context, runner) {
         Ok(outcome) => operation_success_response(outcome, context),
         Err(error) => operation_error_response(error, context),
@@ -3570,6 +3556,38 @@ mod tests {
         assert_eq!(response.status_code, 409);
         let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(body["stale"], true);
+    }
+
+    #[test]
+    fn operation_helpers_accept_typed_requests_without_json_roundtrip() {
+        let production_source = include_str!("runtime.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap_or_default();
+
+        assert!(
+            !production_source.contains("serde_json::to_string(&request).unwrap_or_default()"),
+            "operation routes should not serialize typed requests back to JSON for internal helpers"
+        );
+        assert!(
+            !production_source
+                .contains("fn handle_action_request<C: CommandRunner>(\n    body: &str,"),
+            "handle_action_request should accept MobileActionRequest directly"
+        );
+        assert!(
+            !production_source
+                .contains("fn handle_start_task_request<C: CommandRunner>(\n    body: &str,"),
+            "handle_start_task_request should accept StartTaskRequest directly"
+        );
+        assert!(
+            !production_source
+                .contains("let request: MobileActionRequest = serde_json::from_str(body)"),
+            "action helper should not reparse MobileActionRequest from JSON"
+        );
+        assert!(
+            !production_source.contains("let request: crate::slices::operate::StartTaskRequest = serde_json::from_str(body)"),
+            "start helper should not reparse StartTaskRequest from JSON"
+        );
     }
 
     #[test]

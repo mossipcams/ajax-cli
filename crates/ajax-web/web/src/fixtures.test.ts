@@ -51,6 +51,22 @@ describe("cockpit fixture", () => {
       expect(handles.has(item.task_handle)).toBe(true);
     }
   });
+
+  it("omits deleted or ghost task records from the cockpit projection", () => {
+    const view = assertCockpit(cockpit);
+    const cardHandles = new Set(view.cards.map((card) => card.qualified_handle));
+
+    for (const card of view.cards) {
+      expect(card.qualified_handle.length).toBeGreaterThan(0);
+      expect(card.title.length).toBeGreaterThan(0);
+      expect(card.qualified_handle).not.toMatch(/removed|ghost|deleted/i);
+    }
+
+    for (const item of view.inbox.items) {
+      expect(cardHandles.has(item.task_handle)).toBe(true);
+      expect(item.task_handle).not.toMatch(/removed|ghost|deleted/i);
+    }
+  });
 });
 
 describe("task-detail fixture", () => {
