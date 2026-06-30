@@ -371,6 +371,55 @@ describe("postOperation", () => {
       }),
     ).rejects.toMatchObject({ kind: "incompatible" });
   });
+
+  it("preserves server request_id and error detail on non-2xx responses", async () => {
+    mockFetch(() =>
+      json(
+        {
+          ok: false,
+          request_id: "operate-request-409",
+          error: "operation already in progress",
+          state_changed: false,
+        },
+        409,
+      ),
+    );
+    const result = await postOperation({
+      task_handle: "web/x",
+      action: "review",
+      request_id: "operate-request-409",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.response.request_id).toBe("operate-request-409");
+    expect(result.response.error).toBe("operation already in progress");
+    expect(result.error?.message).toBe("operation already in progress");
+    expect(result.error?.body?.request_id).toBe("operate-request-409");
+    expect(result.error?.kind).toBe("conflict");
+  });
+
+  it("preserves server request_id and error detail when start-task conflicts", async () => {
+    mockFetch(() =>
+      json(
+        {
+          ok: false,
+          request_id: "start-request-409",
+          error: "task start already in progress",
+        },
+        409,
+      ),
+    );
+    const result = await startTask({
+      repo: "web",
+      title: "Fix x",
+      agent: "codex",
+      request_id: "start-request-409",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.response.request_id).toBe("start-request-409");
+    expect(result.response.error).toBe("task start already in progress");
+    expect(result.error?.body?.request_id).toBe("start-request-409");
+    expect(result.error?.message).toBe("task start already in progress");
+  });
 });
 
 describe("POST transport options", () => {

@@ -55,6 +55,7 @@ pub fn new_task_plan_with_observation<R: Registry>(
     request: NewTaskRequest,
     observation: &StartPlanObservation,
 ) -> Result<CommandPlan, CommandError> {
+    validate_managed_repo_name(&request.repo)?;
     let Some(repo) = context
         .config
         .repos
@@ -142,6 +143,7 @@ pub fn task_from_new_request<R: Registry>(
     context: &CommandContext<R>,
     request: &NewTaskRequest,
 ) -> Result<Task, CommandError> {
+    validate_managed_repo_name(&request.repo)?;
     let Some(repo) = context
         .config
         .repos
@@ -515,6 +517,15 @@ fn agent_from_name(name: &str) -> AgentClient {
     }
 }
 
+fn validate_managed_repo_name(repo: &str) -> Result<(), CommandError> {
+    if repo.is_empty() || repo.contains('/') || repo.contains('\\') || repo.contains("..") {
+        return Err(CommandError::PlanBlocked(vec![format!(
+            "invalid repo name: {repo}"
+        )]));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -569,6 +580,67 @@ mod tests {
 
         assert_eq!(first, crate::models::TaskId::new("web/fix-login"));
         assert_eq!(second, first);
+    }
+
+    #[test]
+    fn unknown_agent_is_preserved_for_execution_but_classified_other() {
+        let context = context();
+        let plan = new_task_plan(
+            &context,
+            NewTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "custom-agent-cli".to_string(),
+            },
+        )
+        .unwrap();
+
+        let launch = agent_send_keys_line(&plan);
+        assert!(launch.ends_with("-- custom-agent-cli"));
+        assert_eq!(
+            task_from_new_request(
+                &context,
+                &NewTaskRequest {
+                    repo: "web".to_string(),
+                    title: "Fix login".to_string(),
+                    agent: "custom-agent-cli".to_string(),
+                }
+            )
+            .unwrap()
+            .selected_agent,
+            crate::models::AgentClient::Other
+        );
+    }
+
+    #[test]
+    fn punctuation_only_title_uses_deterministic_fallback_id() {
+        let first = super::start_task_identity("web", "!!!");
+        let second = super::start_task_identity("web", "!!!");
+
+        assert_eq!(first, crate::models::TaskId::new("web/task"));
+        assert_eq!(second, first);
+    }
+
+    #[test]
+    fn repo_name_cannot_escape_managed_namespace() {
+        let context = context();
+        for repo in ["../escape", "web/evil", r"web\evil", ".."] {
+            let error = new_task_plan(
+                &context,
+                NewTaskRequest {
+                    repo: repo.to_string(),
+                    title: "Fix login".to_string(),
+                    agent: "codex".to_string(),
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                crate::commands::CommandError::PlanBlocked(vec![format!(
+                    "invalid repo name: {repo}"
+                )])
+            );
+        }
     }
 
     #[test]
