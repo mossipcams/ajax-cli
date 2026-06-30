@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.26.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.26.0...ajax-cli-v0.26.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **web:** lock document scroll and shrink chrome for full-screen mobile terminal ([#243](https://github.com/mossipcams/ajax-cli/issues/243)) ([3c64715](https://github.com/mossipcams/ajax-cli/commit/3c64715e891b649c890a56af31d890d7d9e0a9aa))
+
 ## [0.26.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.25.1...ajax-cli-v0.26.0) (2026-06-30)
 
 
