@@ -540,8 +540,10 @@ mod tests {
         assert!(!app_text.contains("pushManager.subscribe"));
         assert!(!app_text.contains("/api/push/config"));
         assert!(!app_text.contains("/api/push/subscribe"));
-        assert!(app_text.contains("/answer"));
-        assert!(app_text.contains("/input"));
+        // The legacy polling pane bridge (/answer, /input, /pane) was removed in
+        // favor of the live terminal websocket; the bundle must not reference it.
+        assert!(!app_text.contains("/answer"));
+        assert!(!app_text.contains("/input"));
     }
 
     #[test]

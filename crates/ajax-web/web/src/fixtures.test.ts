@@ -7,12 +7,10 @@ import {
   assertCockpit,
   assertDetail,
   assertOperationResponse,
-  assertPaneSnapshot,
 } from "./contracts";
 
 import cockpit from "./fixtures/cockpit.json";
 import taskDetail from "./fixtures/task-detail.json";
-import pane from "./fixtures/pane.json";
 import operation from "./fixtures/operation.json";
 
 describe("cockpit fixture", () => {
@@ -91,21 +89,6 @@ describe("task-detail fixture", () => {
     const d = assertDetail(taskDetail);
     expect(Array.isArray(d.agent_attempts)).toBe(true);
     expect(d.agent_attempts[0].started_unix_secs).toBeTypeOf("number");
-  });
-});
-
-describe("pane fixture", () => {
-  it("passes boundary guard without throwing", () => {
-    const snap = assertPaneSnapshot(pane);
-    expect(snap.sequence).toBe(7);
-    expect(snap.lines).toHaveLength(3);
-  });
-
-  it("state fingerprint is a non-empty string for answerable prompts", () => {
-    const snap = assertPaneSnapshot(pane);
-    expect(snap.state?.answerable).toBe(true);
-    expect(typeof snap.state?.fingerprint).toBe("string");
-    expect((snap.state?.fingerprint?.length ?? 0) > 0).toBe(true);
   });
 });
 

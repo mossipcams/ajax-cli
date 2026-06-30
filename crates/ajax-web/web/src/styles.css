@@ -510,7 +510,7 @@ main {
   cursor: not-allowed;
 }
 
-/* INTERACT PANEL shell (TaskDetail + PanePanel) --------------------------- */
+/* INTERACT PANEL shell (TaskDetail) -------------------------------------- */
 .interact-panel {
   margin-top: var(--space-5);
   padding: var(--space-4);

@@ -5,10 +5,8 @@
 
 import type {
   BrowserCockpitView,
-  BrowserPaneSnapshot,
   BrowserTaskDetail,
   OperationResponse,
-  TaskInputResponse,
   TaskStatus,
   WebAction,
 } from "./types";
@@ -82,60 +80,6 @@ export function assertCockpit(value: unknown): BrowserCockpitView {
   return value as unknown as BrowserCockpitView;
 }
 
-export function assertPaneSnapshot(value: unknown): BrowserPaneSnapshot {
-  if (!isObject(value)) {
-    throw new IncompatibleResponseError("pane snapshot is not an object");
-  }
-  if (typeof value.sequence !== "number") {
-    throw new IncompatibleResponseError("pane.sequence is not a number");
-  }
-  if (!Array.isArray(value.lines) || value.lines.some((line) => typeof line !== "string")) {
-    throw new IncompatibleResponseError("pane.lines is not an array of strings");
-  }
-  if (typeof value.truncated !== "boolean") {
-    throw new IncompatibleResponseError("pane.truncated is not a boolean");
-  }
-  if (typeof value.tmux_exists !== "boolean") {
-    throw new IncompatibleResponseError("pane.tmux_exists is not a boolean");
-  }
-  if (value.state !== null) {
-    if (!isObject(value.state)) {
-      throw new IncompatibleResponseError("pane.state is not an object or null");
-    }
-    if (typeof value.state.kind !== "string" || typeof value.state.summary !== "string") {
-      throw new IncompatibleResponseError("pane.state identity fields are invalid");
-    }
-    if (!isNullableString(value.state.command) || !isNullableString(value.state.prompt)) {
-      throw new IncompatibleResponseError("pane.state command or prompt is invalid");
-    }
-    if (!Array.isArray(value.state.choices)) {
-      throw new IncompatibleResponseError("pane.state.choices is not an array");
-    }
-    for (const choice of value.state.choices) {
-      if (
-        !isObject(choice) ||
-        typeof choice.index !== "number" ||
-        typeof choice.label !== "string" ||
-        !["affirm", "deny", "neutral"].includes(String(choice.role))
-      ) {
-        throw new IncompatibleResponseError("pane choice is malformed");
-      }
-    }
-    if (
-      value.state.confidence !== undefined &&
-      value.state.confidence !== "high" &&
-      value.state.confidence !== "low"
-    ) {
-      throw new IncompatibleResponseError("pane.state.confidence is invalid");
-    }
-    assertOptionalNullableString(value.state, "fingerprint");
-    if (typeof value.state.answerable !== "boolean") {
-      throw new IncompatibleResponseError("pane.state.answerable is not a boolean");
-    }
-  }
-  return value as unknown as BrowserPaneSnapshot;
-}
-
 export function assertDetail(value: unknown): BrowserTaskDetail {
   if (!isObject(value)) {
     throw new IncompatibleResponseError("task detail is not an object");
@@ -178,11 +122,4 @@ export function assertOperationResponse(value: unknown): OperationResponse {
     assertCockpit(value.cockpit);
   }
   return value as unknown as OperationResponse;
-}
-
-export function assertTaskInputResponse(value: unknown): TaskInputResponse {
-  if (!isObject(value) || typeof value.sequence_hint !== "number") {
-    throw new IncompatibleResponseError("task input response is malformed");
-  }
-  return value as unknown as TaskInputResponse;
 }

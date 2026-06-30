@@ -4,7 +4,6 @@ import {
   statusRank,
   filterByProject,
   sortCards,
-  applyPaneDelta,
   isConfirmExpired,
   statusMeta,
   severityBucket,
@@ -55,45 +54,6 @@ describe("filterByProject", () => {
     expect(filterByProject(cards, "web").map((c) => c.qualified_handle)).toEqual([
       "web/a",
     ]);
-  });
-});
-
-describe("applyPaneDelta", () => {
-  it("appends new lines and advances the sequence", () => {
-    const next = applyPaneDelta(
-      { sequence: 0, lines: ["a"] },
-      { sequence: 1, lines: ["b", "c"] },
-      24,
-    );
-    expect(next).toEqual({ sequence: 1, lines: ["a", "b", "c"] });
-  });
-
-  it("bounds the buffer to the max line count", () => {
-    const next = applyPaneDelta(
-      { sequence: 0, lines: ["a", "b"] },
-      { sequence: 1, lines: ["c", "d"] },
-      3,
-    );
-    expect(next.lines).toEqual(["b", "c", "d"]);
-  });
-
-  it("preserves lines on an unchanged delta", () => {
-    const next = applyPaneDelta(
-      { sequence: 5, lines: ["a", "b"] },
-      { sequence: 5, lines: [] },
-      24,
-    );
-    expect(next.lines).toEqual(["a", "b"]);
-    expect(next.sequence).toBe(5);
-  });
-
-  it("ignores a stale delta with an older sequence", () => {
-    const next = applyPaneDelta(
-      { sequence: 5, lines: ["a"] },
-      { sequence: 3, lines: ["old"] },
-      24,
-    );
-    expect(next).toEqual({ sequence: 5, lines: ["a"] });
   });
 });
 

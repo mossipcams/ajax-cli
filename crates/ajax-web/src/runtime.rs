@@ -7,8 +7,7 @@ use ajax_core::{
 use axum::{
     body::Bytes,
     extract::{
-        ws::WebSocketUpgrade, FromRequestParts, Path as AxumPath, Query, Request as AxumRequest,
-        State,
+        ws::WebSocketUpgrade, FromRequestParts, Path as AxumPath, Request as AxumRequest, State,
     },
     http::{header, Uri},
     middleware::{from_fn_with_state, Next},
@@ -56,8 +55,6 @@ pub struct WebAppState<C, B> {
 
 struct WebSharedState<C, B> {
     context: CommandContext<InMemoryRegistry>,
-    pane_sequences: crate::slices::pane::PaneSequenceState,
-    pane_inputs: crate::slices::pane::PaneInputState,
     runner: C,
     bridge: B,
     revision: u64,
@@ -145,8 +142,6 @@ impl<C, B> WebAppState<C, B> {
         Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
-                pane_sequences: crate::slices::pane::PaneSequenceState::default(),
-                pane_inputs: crate::slices::pane::PaneInputState::default(),
                 runner,
                 bridge,
                 revision: 0,
@@ -169,8 +164,6 @@ impl<C, B> WebAppState<C, B> {
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
-                pane_sequences: crate::slices::pane::PaneSequenceState::default(),
-                pane_inputs: crate::slices::pane::PaneInputState::default(),
                 runner,
                 bridge,
                 revision: 0,
@@ -267,10 +260,7 @@ where
         .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
-        .route(
-            "/api/tasks/{*handle}",
-            get(axum_task_get::<C, B>).post(axum_task_post::<C, B>),
-        )
+        .route("/api/tasks/{*handle}", get(axum_task_get::<C, B>))
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .fallback(axum_fallback)
@@ -541,102 +531,9 @@ where
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
-struct PaneQuery {
-    since: Option<u64>,
-}
-
-async fn axum_task_pane<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    handle: String,
-    Query(query): Query<PaneQuery>,
-) -> AxumResponse
-where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
-{
-    let prepared = {
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        crate::slices::pane::prepare_browser_task_pane_view(
-            &guard.context,
-            &guard.pane_sequences,
-            &handle,
-            query.since,
-        )
-    };
-
-    let prepared = match prepared {
-        Ok(outcome) => outcome,
-        Err(crate::slices::pane::PaneRouteError::TaskNotFound) => {
-            return json_value_response(
-                404,
-                serde_json::json!({ "ok": false, "error": "task not found" }),
-            );
-        }
-        Err(crate::slices::pane::PaneRouteError::SessionMissing) => {
-            return json_value_response(
-                409,
-                serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
-            );
-        }
-        Err(crate::slices::pane::PaneRouteError::Command(message)) => {
-            return json_value_response(500, serde_json::json!({ "ok": false, "error": message }));
-        }
-    };
-
-    let pane = match prepared {
-        crate::slices::pane::PanePrepareOutcome::Ready(snapshot) => snapshot,
-        crate::slices::pane::PanePrepareOutcome::Capture(work) => {
-            let mut runner = {
-                let guard = state
-                    .shared
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard.runner.clone()
-            };
-            let snapshot = match crate::slices::pane::capture_browser_task_pane(&mut runner, &work)
-            {
-                Ok(snapshot) => snapshot,
-                Err(crate::slices::pane::PaneRouteError::SessionMissing) => {
-                    return json_value_response(
-                        409,
-                        serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
-                    );
-                }
-                Err(crate::slices::pane::PaneRouteError::Command(message)) => {
-                    return json_value_response(
-                        500,
-                        serde_json::json!({ "ok": false, "error": message }),
-                    );
-                }
-                Err(crate::slices::pane::PaneRouteError::TaskNotFound) => {
-                    unreachable!("pane capture work is only prepared for existing tasks")
-                }
-            };
-            let mut guard = state
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            crate::slices::pane::commit_browser_task_pane_view(
-                &mut guard.pane_sequences,
-                &handle,
-                query.since,
-                work.previous_sequence,
-                snapshot,
-            )
-        }
-    };
-
-    json_value_response(200, serde_json::to_value(pane).unwrap_or_default())
-}
-
 async fn axum_task_get<C, B>(
     State(state): State<WebAppState<C, B>>,
     AxumPath(handle): AxumPath<String>,
-    Query(query): Query<PaneQuery>,
     req: AxumRequest,
 ) -> AxumResponse
 where
@@ -645,9 +542,6 @@ where
 {
     if let Some(task_handle) = handle.strip_suffix("/terminal") {
         return axum_task_terminal(State(state), task_handle.to_string(), req).await;
-    }
-    if let Some(task_handle) = handle.strip_suffix("/pane") {
-        return axum_task_pane::<C, B>(State(state), task_handle.to_string(), Query(query)).await;
     }
     axum_task_detail::<C, B>(State(state), handle).await
 }
@@ -686,7 +580,7 @@ where
             Err(crate::slices::terminal::TerminalRouteError::SessionMissing) => {
                 return json_value_response(
                     409,
-                    serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
+                    serde_json::json!({ "ok": false, "error": "tmux session missing" }),
                 );
             }
         }
@@ -701,180 +595,6 @@ where
     upgrade.on_upgrade(move |socket| async move {
         crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
     })
-}
-
-async fn axum_task_post<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    AxumPath(handle): AxumPath<String>,
-    body: Bytes,
-) -> AxumResponse
-where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
-{
-    if let Some(task_handle) = handle.strip_suffix("/answer") {
-        return axum_task_answer::<C, B>(State(state), task_handle.to_string(), body).await;
-    }
-    if let Some(task_handle) = handle.strip_suffix("/input") {
-        return axum_task_input::<C, B>(State(state), task_handle.to_string(), body).await;
-    }
-    json_value_response(
-        404,
-        serde_json::json!({ "ok": false, "error": "not found" }),
-    )
-}
-
-async fn axum_task_answer<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    handle: String,
-    body: Bytes,
-) -> AxumResponse
-where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
-{
-    let request: crate::slices::pane::TaskAnswerRequest = match serde_json::from_slice(&body) {
-        Ok(request) => request,
-        Err(error) => {
-            return json_value_response(
-                400,
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("json parse failed: {error}"),
-                }),
-            );
-        }
-    };
-
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        pane_sequences,
-        pane_inputs,
-        runner,
-        ..
-    } = &mut *guard;
-
-    match crate::slices::pane::answer_task_prompt(
-        context,
-        runner,
-        pane_sequences,
-        pane_inputs,
-        &handle,
-        request,
-        Instant::now(),
-    ) {
-        Ok(response) => {
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
-            json_value_response(200, serde_json::to_value(response).unwrap_or_default())
-        }
-        Err(crate::slices::pane::TaskAnswerError::TaskNotFound) => json_value_response(
-            404,
-            serde_json::json!({ "ok": false, "error": "task not found" }),
-        ),
-        Err(crate::slices::pane::TaskAnswerError::SessionMissing) => json_value_response(
-            409,
-            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
-        ),
-        Err(crate::slices::pane::TaskAnswerError::Stale) => json_value_response(
-            409,
-            serde_json::json!({
-                "ok": false,
-                "error": "prompt changed since you answered",
-                "stale": true,
-            }),
-        ),
-        Err(crate::slices::pane::TaskAnswerError::NotAnswerable) => json_value_response(
-            422,
-            serde_json::json!({
-                "ok": false,
-                "error": "this prompt cannot be answered from the browser; open the terminal",
-            }),
-        ),
-        Err(crate::slices::pane::TaskAnswerError::RateLimited) => json_value_response(
-            429,
-            serde_json::json!({ "ok": false, "error": "too many inputs" }),
-        ),
-        Err(crate::slices::pane::TaskAnswerError::InvalidRequest(message)) => {
-            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
-        }
-        Err(crate::slices::pane::TaskAnswerError::Command(message)) => {
-            json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
-        }
-    }
-}
-
-async fn axum_task_input<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    handle: String,
-    body: Bytes,
-) -> AxumResponse
-where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
-{
-    let request: crate::slices::pane::TaskInputRequest = match serde_json::from_slice(&body) {
-        Ok(request) => request,
-        Err(error) => {
-            return json_value_response(
-                400,
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("json parse failed: {error}"),
-                }),
-            );
-        }
-    };
-
-    let mut guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let WebSharedState {
-        context,
-        pane_sequences,
-        pane_inputs,
-        runner,
-        ..
-    } = &mut *guard;
-
-    match crate::slices::pane::send_task_input(
-        context,
-        runner,
-        pane_sequences,
-        pane_inputs,
-        &handle,
-        request,
-        Instant::now(),
-    ) {
-        Ok(response) => {
-            guard.revision = guard.revision.saturating_add(1);
-            guard.cockpit_cache = None;
-            json_value_response(200, serde_json::to_value(response).unwrap_or_default())
-        }
-        Err(crate::slices::pane::TaskInputError::TaskNotFound) => json_value_response(
-            404,
-            serde_json::json!({ "ok": false, "error": "task not found" }),
-        ),
-        Err(crate::slices::pane::TaskInputError::SessionMissing) => json_value_response(
-            409,
-            serde_json::to_value(missing_tmux_payload()).unwrap_or_default(),
-        ),
-        Err(crate::slices::pane::TaskInputError::RateLimited) => json_value_response(
-            429,
-            serde_json::json!({ "ok": false, "error": "too many inputs" }),
-        ),
-        Err(crate::slices::pane::TaskInputError::InvalidRequest(message)) => {
-            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
-        }
-        Err(crate::slices::pane::TaskInputError::Command(message)) => {
-            json_value_response(500, serde_json::json!({ "ok": false, "error": message }))
-        }
-    }
 }
 
 async fn axum_start_task<C, B>(
@@ -1094,16 +814,6 @@ struct MobileActionRequest {
     request_id: Option<String>,
     task_handle: String,
     action: String,
-}
-
-fn missing_tmux_payload() -> crate::slices::pane::BrowserPaneSnapshot {
-    crate::slices::pane::BrowserPaneSnapshot {
-        sequence: 0,
-        lines: Vec::new(),
-        truncated: false,
-        tmux_exists: false,
-        state: None,
-    }
 }
 
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
@@ -1427,176 +1137,8 @@ mod tests {
         }
     }
 
-    impl RuntimeBridge<SlowPaneRunner> for TestBridge {
-        fn refresh_cockpit(
-            &mut self,
-            context: &mut CommandContext<InMemoryRegistry>,
-            runner: &mut SlowPaneRunner,
-            tier: RefreshTier,
-        ) -> Result<bool, crate::WebError> {
-            refresh_cockpit_with_optional_delay(self, context, runner, tier)
-        }
-
-        fn execute_operate(
-            &mut self,
-            request: OperateRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut SlowPaneRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.operate_count += 1;
-            let operate_call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.operate_entered.as_ref() {
-                entered.notify_one();
-            }
-            if operate_call_index == 0 {
-                if let Some(operate_release) = self.operate_release.as_ref() {
-                    let (lock, cvar) = &**operate_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            std::thread::sleep(self.operate_delay);
-            self.operate = Some(request);
-            self.operate_result.clone()
-        }
-
-        fn execute_start_task(
-            &mut self,
-            request: crate::slices::operate::StartTaskRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut SlowPaneRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.start_count += 1;
-            let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.start_entered.as_ref() {
-                entered.notify_one();
-            }
-            if start_call_index == 0 {
-                if let Some(start_release) = self.start_release.as_ref() {
-                    let (lock, cvar) = &**start_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            self.start = Some(request);
-            self.start_result.clone()
-        }
-    }
-
-    impl RuntimeBridge<PaneRunner> for TestBridge {
-        fn refresh_cockpit(
-            &mut self,
-            context: &mut CommandContext<InMemoryRegistry>,
-            runner: &mut PaneRunner,
-            tier: RefreshTier,
-        ) -> Result<bool, crate::WebError> {
-            refresh_cockpit_with_optional_delay(self, context, runner, tier)
-        }
-
-        fn execute_operate(
-            &mut self,
-            request: OperateRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut PaneRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.operate_count += 1;
-            let operate_call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.operate_entered.as_ref() {
-                entered.notify_one();
-            }
-            if operate_call_index == 0 {
-                if let Some(operate_release) = self.operate_release.as_ref() {
-                    let (lock, cvar) = &**operate_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            std::thread::sleep(self.operate_delay);
-            self.operate = Some(request);
-            self.operate_result.clone()
-        }
-
-        fn execute_start_task(
-            &mut self,
-            request: crate::slices::operate::StartTaskRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut PaneRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.start_count += 1;
-            let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.start_entered.as_ref() {
-                entered.notify_one();
-            }
-            if start_call_index == 0 {
-                if let Some(start_release) = self.start_release.as_ref() {
-                    let (lock, cvar) = &**start_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            self.start = Some(request);
-            self.start_result.clone()
-        }
-    }
-
     #[derive(Clone, Copy, Default)]
     struct OkRunner;
-
-    #[derive(Clone)]
-    struct SlowPaneRunner {
-        delay: Duration,
-    }
-
-    impl Default for SlowPaneRunner {
-        fn default() -> Self {
-            Self {
-                delay: Duration::from_millis(400),
-            }
-        }
-    }
-
-    impl CommandRunner for SlowPaneRunner {
-        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            if command.args.first().map(String::as_str) == Some("capture-pane") {
-                std::thread::sleep(self.delay);
-            }
-            Ok(CommandOutput {
-                status_code: 0,
-                stdout: "agent running\n".to_string(),
-                stderr: String::new(),
-            })
-        }
-    }
-
-    #[derive(Clone)]
-    struct PaneRunner {
-        response: Result<CommandOutput, CommandRunError>,
-        run_count: usize,
-    }
 
     impl CommandRunner for OkRunner {
         fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
@@ -1605,13 +1147,6 @@ mod tests {
                 stdout: String::new(),
                 stderr: String::new(),
             })
-        }
-    }
-
-    impl CommandRunner for PaneRunner {
-        fn run(&mut self, _command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-            self.run_count += 1;
-            self.response.clone()
         }
     }
 
@@ -1800,10 +1335,7 @@ mod tests {
             ("POST", "/api/operations"),
             ("POST", "/api/tasks"),
             ("GET", "/api/tasks/web%2Ffix-login"),
-            ("GET", "/api/tasks/web%2Ffix-login/pane"),
             ("GET", "/api/tasks/web%2Ffix-login/terminal"),
-            ("POST", "/api/tasks/web%2Ffix-login/answer"),
-            ("POST", "/api/tasks/web%2Ffix-login/input"),
         ] {
             assert_eq!(
                 super::api_access_policy(method, path),
@@ -2533,121 +2065,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn answer_endpoint_returns_unprocessable_entity_for_non_answerable_prompt() {
-        let state = super::WebAppState::new(
-            answer_task_context(),
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: "› Write tests for @filename\ngpt-5.4 high · ~/.ajax-dev/x\n"
-                        .to_string(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
-            },
-            TestBridge::default(),
-            scratch_dir("axum-answer-422"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-        let fingerprint = ajax_core::agent_prompt::parse_prompt(
-            ajax_core::models::AgentClient::Codex,
-            &[
-                "› Write tests for @filename".to_string(),
-                "gpt-5.4 high · ~/.ajax-dev/x".to_string(),
-            ],
-        )
-        .expect("prompt")
-        .fingerprint;
-
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(format!(
-                        r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-422"}}"#
-                    )))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["ok"], false);
-        assert!(json["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("open the terminal"));
-    }
-
-    #[tokio::test]
-    async fn answer_endpoint_returns_rate_limited_when_input_budget_is_exhausted() {
-        let state = super::WebAppState::new(
-            answer_task_context(),
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: "Run `cargo test`? [y/n]\n".to_string(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
-            },
-            TestBridge::default(),
-            scratch_dir("axum-answer-429"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-        let fingerprint = ajax_core::agent_prompt::parse_prompt(
-            ajax_core::models::AgentClient::Codex,
-            &["Run `cargo test`? [y/n]".to_string()],
-        )
-        .expect("prompt")
-        .fingerprint;
-
-        for index in 0..10 {
-            let response = app
-                .clone()
-                .oneshot(
-                    authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(format!(
-                            r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-{index}"}}"#
-                        )))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
-        }
-
-        let limited = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(format!(
-                        r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r-429"}}"#
-                    )))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
-        let body = to_bytes(limited.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["ok"], false);
-        assert!(json["error"]
-            .as_str()
-            .unwrap_or_default()
-            .contains("too many inputs"));
-    }
-
-    #[tokio::test]
     async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
         let state = super::WebAppState::new(
             context_with_task(),
@@ -3293,93 +2710,6 @@ mod tests {
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn axum_health_stays_responsive_during_slow_pane_capture() {
-        let state = super::WebAppState::new(
-            context_with_task(),
-            SlowPaneRunner::default(),
-            TestBridge::default(),
-            scratch_dir("axum-health-pane"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-
-        let slow_app = app.clone();
-        let slow_cookie = session_cookie.clone();
-        let pane = tokio::spawn(async move {
-            slow_app
-                .oneshot(
-                    authenticated_request(&slow_cookie, "/api/tasks/web/fix-login/pane")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        });
-
-        let health_started = std::time::Instant::now();
-        let health = app
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/health")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let health_elapsed = health_started.elapsed();
-
-        assert_eq!(health.status(), StatusCode::OK);
-        assert!(
-            health_elapsed < Duration::from_millis(150),
-            "health took {health_elapsed:?} while pane capture was in flight"
-        );
-        assert_eq!(pane.await.unwrap().status(), StatusCode::OK);
-    }
-
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn axum_task_detail_stays_responsive_during_slow_pane_capture() {
-        let state = super::WebAppState::new(
-            context_with_task(),
-            SlowPaneRunner::default(),
-            TestBridge::default(),
-            scratch_dir("axum-detail-pane"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-
-        let slow_app = app.clone();
-        let slow_cookie = session_cookie.clone();
-        let pane = tokio::spawn(async move {
-            slow_app
-                .oneshot(
-                    authenticated_request(&slow_cookie, "/api/tasks/web/fix-login/pane")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        });
-
-        let detail_started = std::time::Instant::now();
-        let detail = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks/web/fix-login")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        let detail_elapsed = detail_started.elapsed();
-
-        assert_eq!(detail.status(), StatusCode::OK);
-        assert!(
-            detail_elapsed < Duration::from_millis(150),
-            "task detail took {detail_elapsed:?} while pane capture was in flight"
-        );
-        assert_eq!(pane.await.unwrap().status(), StatusCode::OK);
-    }
-
     #[test]
     fn runtime_routes_to_vertical_slices() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -3615,206 +2945,6 @@ mod tests {
     }
 
     #[test]
-    fn get_task_pane_returns_snapshot_for_existing_handle() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
-        let runner = PaneRunner {
-            response: Ok(CommandOutput {
-                status_code: 0,
-                stdout: "agent running\n".to_string(),
-                stderr: String::new(),
-            }),
-            run_count: 0,
-        };
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("pane");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(state, "GET", "/api/tasks/web/fix-login/pane?since=0", "");
-
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["tmux_exists"], true);
-        assert_eq!(body["sequence"], 1);
-        assert_eq!(body["lines"], serde_json::json!(["agent running"]));
-    }
-
-    #[test]
-    fn get_task_pane_returns_conflict_when_tmux_session_is_missing() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
-        let runner = PaneRunner {
-            response: Err(CommandRunError::NonZeroExit {
-                program: "tmux".to_string(),
-                status_code: 1,
-                stderr: "can't find session".to_string(),
-                cwd: None,
-            }),
-            run_count: 0,
-        };
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("pane-missing-session");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(state, "GET", "/api/tasks/web/fix-login/pane?since=0", "");
-
-        assert_eq!(response.status_code, 409);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["tmux_exists"], false);
-        assert_eq!(body["sequence"], 0);
-    }
-
-    #[test]
-    fn get_task_pane_returns_404_for_unknown_handle() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = PaneRunner {
-            response: Ok(CommandOutput {
-                status_code: 0,
-                stdout: "agent running\n".to_string(),
-                stderr: String::new(),
-            }),
-            run_count: 0,
-        };
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("pane-missing-task");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(state, "GET", "/api/tasks/web/missing/pane?since=0", "");
-
-        assert_eq!(response.status_code, 404);
-    }
-
-    fn answer_task_context() -> CommandContext<InMemoryRegistry> {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
-
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        CommandContext::new(config, registry)
-    }
-
-    #[test]
-    fn answer_endpoint_sends_keys_for_matching_fingerprint() {
-        let context = answer_task_context();
-        let runner = PaneRunner {
-            response: Ok(CommandOutput {
-                status_code: 0,
-                stdout: "Run `cargo test`? [y/n]\n".to_string(),
-                stderr: String::new(),
-            }),
-            run_count: 0,
-        };
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("answer");
-        let fingerprint = ajax_core::agent_prompt::parse_prompt(
-            ajax_core::models::AgentClient::Codex,
-            &["Run `cargo test`? [y/n]".to_string()],
-        )
-        .unwrap()
-        .fingerprint;
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state,
-            "POST",
-            "/api/tasks/web/fix-login/answer",
-            &format!(r#"{{"answer":"approve","fingerprint":"{fingerprint}","request_id":"r1"}}"#),
-        );
-
-        assert_eq!(response.status_code, 200);
-    }
-
-    #[test]
-    fn answer_endpoint_returns_conflict_for_stale_fingerprint() {
-        let context = answer_task_context();
-        let runner = PaneRunner {
-            response: Ok(CommandOutput {
-                status_code: 0,
-                stdout: "Run `cargo test`? [y/n]\n".to_string(),
-                stderr: String::new(),
-            }),
-            run_count: 0,
-        };
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("answer-stale");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state,
-            "POST",
-            "/api/tasks/web/fix-login/answer",
-            r#"{"answer":"approve","fingerprint":"stale","request_id":"r1"}"#,
-        );
-
-        assert_eq!(response.status_code, 409);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["stale"], true);
-    }
-
-    #[test]
     fn operation_helpers_accept_typed_requests_without_json_roundtrip() {
         let production_source = include_str!("runtime.rs")
             .split("#[cfg(test)]")
@@ -3889,44 +3019,6 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn axum_answer_endpoint_returns_conflict_for_stale_fingerprint() {
-        let state = super::WebAppState::new(
-            answer_task_context(),
-            PaneRunner {
-                response: Ok(CommandOutput {
-                    status_code: 0,
-                    stdout: "Run `cargo test`? [y/n]\n".to_string(),
-                    stderr: String::new(),
-                }),
-                run_count: 0,
-            },
-            TestBridge::default(),
-            scratch_dir("axum-answer-stale"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks/web/fix-login/answer")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"answer":"approve","fingerprint":"stale","request_id":"r1"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["ok"], false);
-        assert!(json["error"].is_string());
-        assert_eq!(json["stale"], true);
-    }
-
     #[test]
     fn post_tasks_endpoint_delegates_to_start_bridge_method() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
@@ -3987,59 +3079,6 @@ mod tests {
                 .operate,
             None
         );
-    }
-
-    #[test]
-    fn input_endpoint_sends_text_to_task_session() {
-        use ajax_core::adapters::RecordingCommandRunner;
-
-        let context = answer_task_context();
-        let runner = RecordingCommandRunner::default();
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("input");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state.clone(),
-            "POST",
-            "/api/tasks/web/fix-login/input",
-            r#"{"text":"continue with the plan","submit":true,"request_id":"input-1"}"#,
-        );
-
-        assert_eq!(response.status_code, 200);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert!(body["sequence_hint"].is_number());
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let commands = guard.runner.commands();
-        let send = commands
-            .iter()
-            .find(|command| command.args.first().map(String::as_str) == Some("send-keys"))
-            .expect("send-keys issued");
-        assert!(send.args.contains(&"continue with the plan".to_string()));
-        assert!(send.args.contains(&"Enter".to_string()));
-    }
-
-    #[test]
-    fn input_endpoint_rejects_whitespace_text_with_bad_request() {
-        use ajax_core::adapters::RecordingCommandRunner;
-
-        let context = answer_task_context();
-        let runner = RecordingCommandRunner::default();
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("input-blank");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state,
-            "POST",
-            "/api/tasks/web/fix-login/input",
-            r#"{"text":"   ","submit":true,"request_id":"input-1"}"#,
-        );
-
-        assert_eq!(response.status_code, 400);
     }
 
     #[test]

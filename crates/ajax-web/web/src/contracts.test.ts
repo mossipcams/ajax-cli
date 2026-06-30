@@ -3,7 +3,6 @@ import {
   IncompatibleResponseError,
   assertCockpit,
   assertOperationResponse,
-  assertPaneSnapshot,
   isTaskStatus,
 } from "./contracts";
 
@@ -60,31 +59,6 @@ describe("assertCockpit", () => {
       ],
     };
     expect(() => assertCockpit(bad)).toThrow(IncompatibleResponseError);
-  });
-});
-
-describe("assertPaneSnapshot", () => {
-  it("accepts a valid snapshot", () => {
-    const snap = assertPaneSnapshot({
-      sequence: 3,
-      lines: ["a"],
-      truncated: false,
-      tmux_exists: true,
-      state: null,
-    });
-    expect(snap.sequence).toBe(3);
-  });
-
-  it("rejects a non-numeric sequence", () => {
-    expect(() =>
-      assertPaneSnapshot({
-        sequence: "3",
-        lines: [],
-        truncated: false,
-        tmux_exists: true,
-        state: null,
-      }),
-    ).toThrow(IncompatibleResponseError);
   });
 });
 

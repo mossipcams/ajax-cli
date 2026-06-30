@@ -60,38 +60,6 @@ export function sortCards(cards: BrowserTaskCard[]): BrowserTaskCard[] {
     );
 }
 
-export interface PaneBuffer {
-  sequence: number;
-  lines: string[];
-}
-
-export interface PaneDelta {
-  sequence?: number;
-  lines?: string[];
-}
-
-/**
- * Merge a pane delta into the bounded display buffer. Mirrors the legacy
- * `loadPane` buffering: append only on a strictly newer sequence with lines,
- * preserve lines on an unchanged delta, ignore stale (older) deltas.
- */
-export function applyPaneDelta(
-  current: PaneBuffer,
-  delta: PaneDelta,
-  max: number,
-): PaneBuffer {
-  const incomingSeq = typeof delta.sequence === "number" ? delta.sequence : current.sequence;
-  const hasNewLines = Array.isArray(delta.lines) && delta.lines.length > 0;
-  if (incomingSeq > current.sequence && hasNewLines) {
-    const lines = current.lines.concat(delta.lines as string[]).slice(-max);
-    return { sequence: incomingSeq, lines };
-  }
-  if (incomingSeq >= current.sequence) {
-    return { sequence: incomingSeq, lines: current.lines };
-  }
-  return current;
-}
-
 export function isConfirmExpired(entry: { expiresAt: number }, now: number): boolean {
   return now > entry.expiresAt;
 }
