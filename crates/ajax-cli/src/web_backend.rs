@@ -541,6 +541,7 @@ mod tests {
         assert!(!app_text.contains("/api/push/config"));
         assert!(!app_text.contains("/api/push/subscribe"));
         assert!(app_text.contains("/answer"));
+        assert!(app_text.contains("/input"));
     }
 
     #[test]
@@ -556,14 +557,14 @@ mod tests {
     }
 
     #[test]
-    fn action_endpoint_guards_resume_for_native_cockpit() {
+    fn action_endpoint_guards_start_for_dedicated_new_task_flow() {
         let mut context = reviewable_context();
         let mut runner = OkRunner;
 
         let response = handle_http_request_with_runner_and_paths(
             "POST",
             "/api/actions",
-            r#"{"task_handle":"web/fix-login","action":"resume"}"#,
+            r#"{"task_handle":"web/fix-login","action":"start"}"#,
             &mut context,
             &mut runner,
             None,
@@ -571,7 +572,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status_code, 409);
-        assert!(String::from_utf8_lossy(&response.body).contains("resume requires native cockpit"));
+        assert!(String::from_utf8_lossy(&response.body)
+            .contains("start uses the dedicated Web Cockpit new-task operation"));
     }
 
     #[test]

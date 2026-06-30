@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import type { BrowserPaneState, BrowserTaskDetail } from "../types";
-  import { ApiError, fetchPane, postAnswer, requestId } from "../api";
+  import { ApiError, fetchPane, postAnswer, postTaskInput, requestId } from "../api";
   import { applyPaneDelta, type PaneBuffer } from "../state";
   import { MAX_LOG_ENTRIES, paneInterval } from "../polling";
   import { copyText } from "../diagnostics";
@@ -19,10 +19,13 @@
   let tmuxExists = $state<boolean>(true);
   let terminalOpen = $state<boolean>(false);
   let submitting = $state(false);
+  let composerText = $state("");
+  let sendingInput = $state(false);
 
   let tmuxMissing = $derived(tmuxExists === false);
   let kind = $derived(paneState?.kind ?? detail.live_status_kind ?? null);
   let canAnswer = $derived(Boolean(paneState?.answerable && paneState?.fingerprint));
+  let canSendInput = $derived(Boolean(!tmuxMissing && detail.tmux_session && composerText.trim()));
   let lines = $derived(buffer.lines.length ? buffer.lines : []);
 
   // Poll the pane on a state-aware cadence, resetting the buffer whenever the
@@ -96,6 +99,33 @@
     }
   }
 
+  async function sendInput() {
+    const text = composerText.trim();
+    if (!text || !detail.tmux_session) {
+      return;
+    }
+    sendingInput = true;
+    try {
+      await postTaskInput(handle, { text, submit: true, request_id: requestId() });
+      composerText = "";
+      onResult?.("Reply sent to the task session", null, false);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.kind === "conflict") {
+          onResult?.("The task session is unavailable — sync the task to recover", null, true);
+        } else if (error.kind === "rate-limit") {
+          onResult?.("Slow down — too many actions in a short window", null, true);
+        } else {
+          onResult?.("Could not send reply", null, true);
+        }
+        return;
+      }
+      onResult?.("Could not send reply — network error", null, true);
+    } finally {
+      sendingInput = false;
+    }
+  }
+
   async function copyAttach() {
     if (detail.tmux_session) await copyText(`tmux attach -t ${detail.tmux_session}`);
   }
@@ -129,7 +159,27 @@
     <section class="needs-block">
       <div class="interact-card-label">Needs from you</div>
       {#if paneState?.prompt}<p class="interact-card-body">{paneState.prompt}</p>{/if}
-      <p class="interact-hint">Open the terminal below for free-form replies.</p>
+      {#if !tmuxMissing && detail.tmux_session}
+        <div class="interact-composer">
+          <textarea
+            class="interact-composer-input"
+            placeholder="Type a reply for the agent"
+            bind:value={composerText}
+            disabled={sendingInput}
+            rows="3"
+          ></textarea>
+          <button
+            type="button"
+            class="pill is-primary"
+            disabled={sendingInput || !canSendInput}
+            onclick={sendInput}
+          >
+            Send
+          </button>
+        </div>
+      {:else}
+        <p class="interact-hint">Open the terminal below for free-form replies.</p>
+      {/if}
     </section>
   {/if}
 
@@ -219,6 +269,30 @@
     gap: 8px;
     margin-top: 12px;
     flex-wrap: wrap;
+  }
+
+  .interact-composer {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .interact-composer-input {
+    width: 100%;
+    min-height: 88px;
+    padding: 10px 12px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+
+  .interact-composer-input:disabled {
+    opacity: 0.7;
   }
 
   .interact-hint {

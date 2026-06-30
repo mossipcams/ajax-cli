@@ -150,6 +150,12 @@ export interface TaskAnswerRequest {
   request_id: string;
 }
 
+export interface TaskInputRequest {
+  text: string;
+  submit: boolean;
+  request_id: string;
+}
+
 export interface StartTaskRequest {
   repo: string;
   title: string;

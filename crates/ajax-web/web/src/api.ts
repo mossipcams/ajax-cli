@@ -19,6 +19,7 @@ import type {
   OperationResponse,
   StartTaskRequest,
   TaskAnswerRequest,
+  TaskInputRequest,
   TaskInputResponse,
   VersionResponse,
 } from "./types";
@@ -244,6 +245,18 @@ export async function startTask(req: StartTaskRequest): Promise<MutationResult> 
 
 export async function postAnswer(handle: string, req: TaskAnswerRequest): Promise<TaskInputResponse> {
   const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/answer`, req);
+  if (!response.ok) {
+    throw new ApiError(
+      classifyStatus(response.status),
+      errorMessage(payload, `HTTP ${response.status}`),
+      response.status,
+    );
+  }
+  return assertTaskInputResponse(payload);
+}
+
+export async function postTaskInput(handle: string, req: TaskInputRequest): Promise<TaskInputResponse> {
+  const { response, payload } = await postJson(`/api/tasks/${encodeURIComponent(handle)}/input`, req);
   if (!response.ok) {
     throw new ApiError(
       classifyStatus(response.status),

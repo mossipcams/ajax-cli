@@ -63,13 +63,13 @@ pub fn operate<R: Registry>(
 
     match action {
         OperatorAction::Drop => execute_drop(context, runner, &request.task_handle, true),
-        OperatorAction::Resume => Err(OperateError::UnsupportedCapability(
-            "resume requires native cockpit",
-        )),
         OperatorAction::Start => Err(OperateError::UnsupportedCapability(
             "start uses the dedicated Web Cockpit new-task operation",
         )),
-        OperatorAction::Review | OperatorAction::Ship | OperatorAction::Repair => {
+        OperatorAction::Review
+        | OperatorAction::Ship
+        | OperatorAction::Repair
+        | OperatorAction::Resume => {
             let kind = task_command_kind(action)?;
             execute_task_command(context, runner, kind, &request.task_handle)
         }
@@ -387,10 +387,10 @@ mod tests {
     }
 
     #[test]
-    fn operate_slice_rejects_resume_in_favor_of_sync() {
+    fn operate_slice_delegates_resume_to_core_operation_without_attach() {
         let mut context = context_with_reviewable_task();
         let mut runner = RecordingCommandRunner::default();
-        let error = operate(
+        let outcome = operate(
             &mut context,
             &mut runner,
             OperateRequest {
@@ -398,13 +398,16 @@ mod tests {
                 action: "resume".to_string(),
             },
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(
-            error,
-            OperateError::UnsupportedCapability("resume requires native cockpit")
+        assert!(outcome.state_changed);
+        assert!(
+            !runner
+                .commands()
+                .iter()
+                .any(|command| command.mode == ajax_core::adapters::CommandMode::InheritStdio),
+            "resume must not attach to the task terminal"
         );
-        assert!(runner.commands().is_empty());
     }
 
     #[test]

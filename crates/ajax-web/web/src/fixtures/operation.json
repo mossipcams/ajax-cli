@@ -30,6 +30,12 @@
         "status_explanation": "Waiting for approval",
         "actions": [
           {
+            "action": "resume",
+            "label": "Resume",
+            "destructive": false,
+            "confirmation_required": false
+          },
+          {
             "action": "ship",
             "label": "Ship",
             "destructive": false,

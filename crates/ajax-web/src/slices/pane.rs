@@ -329,6 +329,146 @@ pub struct TaskAnswerRequest {
     pub request_id: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct TaskInputRequest {
+    pub text: String,
+    #[serde(default = "default_submit")]
+    pub submit: bool,
+    pub request_id: String,
+}
+
+fn default_submit() -> bool {
+    true
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum TaskInputError {
+    TaskNotFound,
+    SessionMissing,
+    RateLimited,
+    InvalidRequest(String),
+    Command(String),
+}
+
+enum PrepareInputOutcome {
+    Cached(TaskInputResponse),
+    Ready { dedup_key: String },
+}
+
+fn prepare_task_input<R: Registry>(
+    context: &CommandContext<R>,
+    inputs: &mut PaneInputState,
+    qualified_handle: &str,
+    request_id: &str,
+    now: Instant,
+) -> Result<PrepareInputOutcome, TaskInputError> {
+    if request_id.trim().is_empty() {
+        return Err(TaskInputError::InvalidRequest(
+            "request_id is required".to_string(),
+        ));
+    }
+
+    prune_expired_inputs(inputs, now);
+    let dedup_key = format!("{qualified_handle}\u{1f}{request_id}");
+    if let Some(cached) = inputs.dedup.get(&dedup_key) {
+        return Ok(PrepareInputOutcome::Cached(cached.response.clone()));
+    }
+
+    if context
+        .registry
+        .list_tasks()
+        .into_iter()
+        .all(|task| task.qualified_handle() != qualified_handle)
+    {
+        return Err(TaskInputError::TaskNotFound);
+    }
+
+    {
+        let recent = inputs
+            .recent
+            .entry(qualified_handle.to_string())
+            .or_default();
+        while recent
+            .front()
+            .is_some_and(|instant| now.duration_since(*instant) > INPUT_RATE_WINDOW)
+        {
+            recent.pop_front();
+        }
+        if recent.len() >= INPUT_RATE_LIMIT {
+            return Err(TaskInputError::RateLimited);
+        }
+    }
+
+    Ok(PrepareInputOutcome::Ready { dedup_key })
+}
+
+fn finalize_task_input(
+    inputs: &mut PaneInputState,
+    dedup_key: &str,
+    qualified_handle: &str,
+    response: TaskInputResponse,
+    now: Instant,
+) {
+    inputs
+        .recent
+        .entry(qualified_handle.to_string())
+        .or_default()
+        .push_back(now);
+    inputs.dedup.insert(
+        dedup_key.to_string(),
+        CachedInputResponse {
+            stored_at: now,
+            response: response.clone(),
+        },
+    );
+}
+
+pub fn send_task_input<R: Registry>(
+    context: &CommandContext<R>,
+    runner: &mut impl CommandRunner,
+    sequences: &PaneSequenceState,
+    inputs: &mut PaneInputState,
+    qualified_handle: &str,
+    request: TaskInputRequest,
+    now: Instant,
+) -> Result<TaskInputResponse, TaskInputError> {
+    if request.text.trim().is_empty() {
+        return Err(TaskInputError::InvalidRequest(
+            "text is required".to_string(),
+        ));
+    }
+
+    match prepare_task_input(context, inputs, qualified_handle, &request.request_id, now)? {
+        PrepareInputOutcome::Cached(response) => Ok(response),
+        PrepareInputOutcome::Ready { dedup_key } => {
+            let task = context
+                .registry
+                .list_tasks()
+                .into_iter()
+                .find(|task| task.qualified_handle() == qualified_handle)
+                .ok_or(TaskInputError::TaskNotFound)?;
+
+            let text = request.text.trim();
+            core_pane::send_keys(runner, &task.tmux_session, text, request.submit)
+                .map_err(map_input_pane_error)?;
+
+            let response = TaskInputResponse {
+                sequence_hint: sequences.sequence_for(qualified_handle),
+            };
+            finalize_task_input(inputs, &dedup_key, qualified_handle, response.clone(), now);
+            Ok(response)
+        }
+    }
+}
+
+fn map_input_pane_error(error: core_pane::PaneError) -> TaskInputError {
+    match error {
+        core_pane::PaneError::SessionMissing => TaskInputError::SessionMissing,
+        core_pane::PaneError::InvalidKeys(message) => TaskInputError::InvalidRequest(message),
+        core_pane::PaneError::CommandRun(inner) => TaskInputError::Command(inner.to_string()),
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAnswerError {
     TaskNotFound,
@@ -364,72 +504,56 @@ pub fn answer_task_prompt<R: Registry>(
         ));
     }
 
-    prune_expired_inputs(inputs, now);
-    let dedup_key = format!("{qualified_handle}\u{1f}{}", request.request_id);
-    if let Some(cached) = inputs.dedup.get(&dedup_key) {
-        return Ok(cached.response.clone());
-    }
-
-    let task = context
-        .registry
-        .list_tasks()
-        .into_iter()
-        .find(|task| task.qualified_handle() == qualified_handle)
-        .ok_or(TaskAnswerError::TaskNotFound)?;
-
+    match prepare_task_input(context, inputs, qualified_handle, &request.request_id, now)
+        .map_err(map_prepare_answer_error)?
     {
-        let recent = inputs
-            .recent
-            .entry(qualified_handle.to_string())
-            .or_default();
-        while recent
-            .front()
-            .is_some_and(|instant| now.duration_since(*instant) > INPUT_RATE_WINDOW)
-        {
-            recent.pop_front();
-        }
-        if recent.len() >= INPUT_RATE_LIMIT {
-            return Err(TaskAnswerError::RateLimited);
-        }
-    }
+        PrepareInputOutcome::Cached(response) => Ok(response),
+        PrepareInputOutcome::Ready { dedup_key } => {
+            let task = context
+                .registry
+                .list_tasks()
+                .into_iter()
+                .find(|task| task.qualified_handle() == qualified_handle)
+                .ok_or(TaskAnswerError::TaskNotFound)?;
 
-    // Re-capture the live prompt and verify it is still the one the operator
-    // answered. A mismatch (or a vanished prompt) means the answer is stale.
-    let prompt = core_pane::capture_prompt(runner, &task.tmux_session, task.selected_agent)
-        .map_err(map_answer_pane_error)?
-        .ok_or(TaskAnswerError::Stale)?;
-    if prompt.fingerprint != request.fingerprint {
-        return Err(TaskAnswerError::Stale);
-    }
-
-    let keys = adapter_for(task.selected_agent)
-        .answer_keys(&prompt, &request.answer)
-        .map_err(|error| match error {
-            AnswerError::NotAnswerable => TaskAnswerError::NotAnswerable,
-            AnswerError::UnknownChoice => {
-                TaskAnswerError::InvalidRequest("unknown choice".to_string())
+            // Re-capture the live prompt and verify it is still the one the operator
+            // answered. A mismatch (or a vanished prompt) means the answer is stale.
+            let prompt = core_pane::capture_prompt(runner, &task.tmux_session, task.selected_agent)
+                .map_err(map_answer_pane_error)?
+                .ok_or(TaskAnswerError::Stale)?;
+            if prompt.fingerprint != request.fingerprint {
+                return Err(TaskAnswerError::Stale);
             }
-        })?;
 
-    core_pane::send_keys(runner, &task.tmux_session, &keys.keys, keys.submit)
-        .map_err(map_answer_pane_error)?;
+            let keys = adapter_for(task.selected_agent)
+                .answer_keys(&prompt, &request.answer)
+                .map_err(|error| match error {
+                    AnswerError::NotAnswerable => TaskAnswerError::NotAnswerable,
+                    AnswerError::UnknownChoice => {
+                        TaskAnswerError::InvalidRequest("unknown choice".to_string())
+                    }
+                })?;
 
-    inputs
-        .recent
-        .entry(qualified_handle.to_string())
-        .or_default()
-        .push_back(now);
-    let response = TaskInputResponse {
-        sequence_hint: sequences.sequence_for(qualified_handle),
-    };
-    inputs.dedup.insert(
-        dedup_key,
-        CachedInputResponse {
-            stored_at: now,
-            response: response.clone(),
-        },
-    );
-    Ok(response)
+            core_pane::send_keys(runner, &task.tmux_session, &keys.keys, keys.submit)
+                .map_err(map_answer_pane_error)?;
+
+            let response = TaskInputResponse {
+                sequence_hint: sequences.sequence_for(qualified_handle),
+            };
+            finalize_task_input(inputs, &dedup_key, qualified_handle, response.clone(), now);
+            Ok(response)
+        }
+    }
+}
+
+fn map_prepare_answer_error(error: TaskInputError) -> TaskAnswerError {
+    match error {
+        TaskInputError::TaskNotFound => TaskAnswerError::TaskNotFound,
+        TaskInputError::RateLimited => TaskAnswerError::RateLimited,
+        TaskInputError::InvalidRequest(message) => TaskAnswerError::InvalidRequest(message),
+        TaskInputError::SessionMissing => TaskAnswerError::SessionMissing,
+        TaskInputError::Command(message) => TaskAnswerError::Command(message),
+    }
 }
 
 fn map_answer_pane_error(error: core_pane::PaneError) -> TaskAnswerError {
@@ -619,7 +743,10 @@ mod tests {
         assert_eq!(error, PaneRouteError::SessionMissing);
     }
 
-    use super::{answer_task_prompt, PaneInputState, TaskAnswerError, TaskAnswerRequest};
+    use super::{
+        answer_task_prompt, send_task_input, PaneInputState, TaskAnswerError, TaskAnswerRequest,
+        TaskInputError, TaskInputRequest,
+    };
     use ajax_core::agent_prompt::OperatorAnswer;
     use std::time::Instant;
 
@@ -829,6 +956,149 @@ mod tests {
         .unwrap_err();
 
         assert_eq!(error, TaskAnswerError::RateLimited);
+    }
+
+    fn task_input_request(text: &str, request_id: &str) -> TaskInputRequest {
+        TaskInputRequest {
+            text: text.to_string(),
+            submit: true,
+            request_id: request_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn task_input_sends_literal_text_to_task_session() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: String::new(),
+            commands: Vec::new(),
+        };
+
+        send_task_input(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            task_input_request("write the tests", "req-1"),
+            Instant::now(),
+        )
+        .expect("input accepted");
+
+        let send = runner
+            .commands
+            .iter()
+            .find(|command| command.args.first().map(String::as_str) == Some("send-keys"))
+            .expect("send-keys issued");
+        assert!(send
+            .args
+            .contains(&"ajax-web-fix-login:worktrunk".to_string()));
+        assert!(send.args.contains(&"write the tests".to_string()));
+        assert!(send.args.contains(&"Enter".to_string()));
+    }
+
+    #[test]
+    fn task_input_rejects_empty_text_without_sending_keys() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: String::new(),
+            commands: Vec::new(),
+        };
+
+        let error = send_task_input(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            task_input_request("   ", "req-1"),
+            Instant::now(),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            TaskInputError::InvalidRequest("text is required".to_string())
+        );
+        assert!(
+            !runner
+                .commands
+                .iter()
+                .any(|command| command.args.first().map(String::as_str) == Some("send-keys")),
+            "no keys may be sent for blank text"
+        );
+    }
+
+    #[test]
+    fn task_input_dedups_repeated_request_id() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: String::new(),
+            commands: Vec::new(),
+        };
+
+        for _ in 0..2 {
+            send_task_input(
+                &context,
+                &mut runner,
+                &sequences,
+                &mut inputs,
+                "web/fix-login",
+                task_input_request("write the tests", "req-1"),
+                Instant::now(),
+            )
+            .expect("accepted");
+        }
+
+        let send_count = runner
+            .commands
+            .iter()
+            .filter(|command| command.args.first().map(String::as_str) == Some("send-keys"))
+            .count();
+        assert_eq!(send_count, 1, "the repeat request_id must not resend keys");
+    }
+
+    #[test]
+    fn task_input_rate_limits_with_shared_budget() {
+        let context = context_with_task();
+        let sequences = PaneSequenceState::default();
+        let mut inputs = PaneInputState::default();
+        let mut runner = RecordingRunner {
+            pane: String::new(),
+            commands: Vec::new(),
+        };
+
+        for index in 0..super::INPUT_RATE_LIMIT {
+            send_task_input(
+                &context,
+                &mut runner,
+                &sequences,
+                &mut inputs,
+                "web/fix-login",
+                task_input_request("write the tests", &format!("req-{index}")),
+                Instant::now(),
+            )
+            .expect("accepted");
+        }
+
+        let error = send_task_input(
+            &context,
+            &mut runner,
+            &sequences,
+            &mut inputs,
+            "web/fix-login",
+            task_input_request("write the tests", "req-rate"),
+            Instant::now(),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, TaskInputError::RateLimited);
     }
 
     #[test]
