@@ -97,6 +97,11 @@
       });
     };
 
+    const schedulePostLayoutRefit = () => {
+      scheduleRefit();
+      requestAnimationFrame(scheduleRefit);
+    };
+
     const resizeObserver =
       typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleRefit) : null;
     if (container && resizeObserver) {
@@ -111,16 +116,29 @@
 
     socket.addEventListener("open", () => {
       status = "connected";
-      requestAnimationFrame(() => {
-        fitAddon.fit();
-        sendResize();
-        term.focus();
-      });
+      schedulePostLayoutRefit();
+      requestAnimationFrame(() => term.focus());
     });
 
-    socket.addEventListener("message", (event) => {
+    const readMessageData = async (data: unknown): Promise<string> => {
+      if (typeof data === "string") return data;
+      if (data instanceof Blob) {
+        if ("text" in data && typeof data.text === "function") return data.text();
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
+          reader.addEventListener("error", () => reject(reader.error));
+          reader.readAsText(data);
+        });
+      }
+      if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+      return String(data);
+    };
+
+    socket.addEventListener("message", async (event) => {
+      const data = await readMessageData(event.data);
       try {
-        const payload = JSON.parse(String(event.data)) as { type?: string; data?: string };
+        const payload = JSON.parse(data) as { type?: string; data?: string };
         if (payload.type === "output" && payload.data) {
           const binary = atob(payload.data);
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
@@ -133,7 +151,7 @@
           status = String(payload.error);
         }
       } catch {
-        term.write(String(event.data));
+        term.write(data);
         term.scrollToBottom();
         zerolag.clearFlushed();
         zerolag.rerender();
@@ -302,13 +320,24 @@
 
   :global(.terminal-panel .xterm) {
     height: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
   :global(.terminal-panel .xterm-viewport) {
+    max-width: 100%;
     overflow-y: auto;
     /* iOS momentum scrolling; contain so terminal-history scroll never chains
        out to the page (the root cause of the old "scrolling fights" bug). */
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+  }
+
+  :global(.terminal-panel .xterm-screen),
+  :global(.terminal-panel .xterm-rows),
+  :global(.terminal-panel .xterm-link-layer),
+  :global(.terminal-panel .xterm-selection-layer),
+  :global(.terminal-panel .xterm-text-layer) {
+    max-width: 100%;
   }
 </style>

@@ -94,6 +94,15 @@ describe("TaskDetail", () => {
     expect(getByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
+  it("exposes mobile terminal-first layout hooks", () => {
+    const { container } = render(TaskDetail, { props: { detail: detail() } });
+
+    expect(container.querySelector(".task-detail.is-terminal-first")).toBeInTheDocument();
+    expect(container.querySelector("[data-mobile-chrome='header']")).toBeInTheDocument();
+    expect(container.querySelector("[data-mobile-chrome='actions']")).toBeInTheDocument();
+    expect(container.querySelector("[data-mobile-primary='terminal']")).toBeInTheDocument();
+  });
+
   it("fires onBack from the back control", async () => {
     const onBack = vi.fn();
     const { getByText } = render(TaskDetail, { props: { detail: detail(), onBack } });
