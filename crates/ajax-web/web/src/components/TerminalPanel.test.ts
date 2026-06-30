@@ -23,12 +23,15 @@ const rerender = vi.fn();
 
 const focus = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
+let onScrollHandler: ((viewportY: number) => void) | undefined;
+let bufferActive = { viewportY: 0, baseY: 0 };
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
     textarea = document.createElement("textarea");
+    buffer = { active: bufferActive };
     loadAddon = vi.fn();
     open = vi.fn();
     write = write;
@@ -37,6 +40,9 @@ vi.mock("@xterm/xterm", () => ({
     focus = focus;
     onData = vi.fn((handler: (data: string) => void) => {
       onDataHandler = handler;
+    });
+    onScroll = vi.fn((handler: (viewportY: number) => void) => {
+      onScrollHandler = handler;
     });
     constructor() {
       lastTextarea = this.textarea;
@@ -99,6 +105,9 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
+  onScrollHandler = undefined;
+  bufferActive.viewportY = 0;
+  bufferActive.baseY = 0;
   flushedCount = 0;
   flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
@@ -307,6 +316,41 @@ describe("TerminalPanel", () => {
     // not be stranded above the fold afterwards.
     scrollToBottom.mockClear();
     dispatchVisualViewport("resize");
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+  });
+
+  it("does not yank the view back down while the user has scrolled up", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    // Let the open-triggered post-layout refits (which unconditionally
+    // scroll to bottom) settle before simulating the user scrolling up.
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+
+    // Simulate the user scrolling away from the bottom of the scrollback.
+    bufferActive.baseY = 10;
+    bufferActive.viewportY = 3;
+    onScrollHandler?.(3);
+
+    scrollToBottom.mockClear();
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("status bar redraw") }),
+    } as MessageEvent);
+
+    await waitFor(() => expect(write).toHaveBeenCalledWith("status bar redraw"));
+    expect(scrollToBottom).not.toHaveBeenCalled();
+
+    // Once the user scrolls back to the bottom, auto-follow resumes.
+    bufferActive.viewportY = 10;
+    onScrollHandler?.(10);
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("more output") }),
+    } as MessageEvent);
+
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
   });
 
