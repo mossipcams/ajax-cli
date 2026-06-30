@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.23.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.8...ajax-cli-v0.23.0) (2026-06-30)
+
+
+### Features
+
+* enable web cockpit resume and free-form task input ([#232](https://github.com/mossipcams/ajax-cli/issues/232)) ([b01045b](https://github.com/mossipcams/ajax-cli/commit/b01045b8e68620691a61bedb9c84158ec90ca9d3))
+
 ## [0.22.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.22.7...ajax-cli-v0.22.8) (2026-06-30)
 
 
