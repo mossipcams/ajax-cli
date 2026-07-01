@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.29.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.0...ajax-cli-v0.29.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** mobile terminal polish — bigger text, no DOM scrollbar, taller terminal, smooth expand ([#280](https://github.com/mossipcams/ajax-cli/issues/280)) ([53337f9](https://github.com/mossipcams/ajax-cli/commit/53337f9cecc8d14b08828856cd32a25f718c29fb))
+
 ## [0.29.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.6...ajax-cli-v0.29.0) (2026-07-01)
 
 
