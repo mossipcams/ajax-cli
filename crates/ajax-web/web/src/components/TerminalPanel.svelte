@@ -16,10 +16,12 @@
   let container: HTMLDivElement | undefined = $state();
   let status = $state("connecting");
   let ctrlArmed = $state(false);
+  let hasUnseenOutput = $state(false);
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
   let focusTerm: () => void = () => {};
+  let jumpToBottom: () => void = () => {};
 
   // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
   // modifier folded into the next typed letter by the onData handler below.
@@ -37,7 +39,7 @@
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: 6,
+      fontSize: 10,
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",
@@ -73,18 +75,15 @@
     let pinnedToBottom = true;
     term.onScroll(() => {
       pinnedToBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+      if (pinnedToBottom) hasUnseenOutput = false;
     });
 
     // Touch-drag scrolling. xterm 6 ships VS Code's touch-gesture code but
     // never wires it up, and its `.xterm-screen` overlays the scrollable
-    // `.xterm-viewport`, so native touch scrolling never fires — the terminal
-    // was completely unscrollable on iOS. We translate vertical drags into
-    // synthetic wheel events dispatched at the xterm root (`term.element`),
-    // where xterm binds both its wheel handlers. This reuses xterm's own
-    // wheel logic: it forwards scroll to tmux when the pane is in mouse mode
-    // (our attach) or scrolls xterm's local scrollback otherwise. A stationary
-    // tap still focuses the textarea to type; only a drag scrolls, so scrolling
-    // no longer pops the iOS keyboard.
+    // `.xterm-viewport`, so native touch scrolling never fires. Ajax owns touch
+    // scrollback directly here instead of forwarding wheel events into tmux or
+    // the foreground terminal app. A stationary tap still focuses the textarea
+    // to type; only a drag scrolls, so scrolling no longer pops the iOS keyboard.
     const TOUCH_SCROLL_THRESHOLD_PX = 6;
     let touchActive = false;
     let touchLastY = 0;
@@ -95,19 +94,6 @@
       const height = viewport?.clientHeight ?? 0;
       // jsdom and pre-layout paints report 0; fall back to a sane line height.
       return height > 0 && term.rows > 0 ? height / term.rows : 18;
-    };
-
-    const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
-      term.element?.dispatchEvent(
-        new WheelEvent("wheel", {
-          deltaY,
-          deltaMode: WheelEvent.DOM_DELTA_LINE,
-          clientX,
-          clientY,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
     };
 
     const onTouchStart = (event: TouchEvent) => {
@@ -136,7 +122,7 @@
       if (event.cancelable) event.preventDefault();
       const step = notches > 0 ? 1 : -1;
       for (let i = 0; i < Math.abs(notches); i += 1) {
-        dispatchWheel(step, touch.clientX, touch.clientY);
+        term.scrollLines(step);
       }
     };
 
@@ -168,19 +154,36 @@
       socket.send(JSON.stringify({ type: "input", data }));
     };
     focusTerm = () => term.focus();
+    jumpToBottom = () => {
+      term.scrollToBottom();
+      hasUnseenOutput = false;
+      term.focus();
+    };
 
-    // Coalesce refits triggered by container, window, orientation, and the
-    // on-screen keyboard (visualViewport) into one rAF.
+    // Coalesce refits triggered by container, window, and orientation into one rAF.
     let refitFrame = 0;
+    let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
     const scheduleRefit = () => {
       if (refitFrame) cancelAnimationFrame(refitFrame);
       refitFrame = requestAnimationFrame(() => {
         fitAddon.fit();
         sendResize();
-        // A viewport shrink (keyboard open) refits to fewer rows; keep the
-        // cursor/newest output visible rather than stranded above the fold.
-        term.scrollToBottom();
+        if (pinnedToBottom) term.scrollToBottom();
       });
+    };
+
+    const scheduleViewportRefit = () => {
+      if (refitFrame) cancelAnimationFrame(refitFrame);
+      refitFrame = requestAnimationFrame(() => {
+        fitAddon.fit();
+        if (pinnedToBottom) term.scrollToBottom();
+      });
+
+      if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
+      viewportResizeTimer = setTimeout(() => {
+        sendResize();
+        viewportResizeTimer = undefined;
+      }, 300);
     };
 
     const schedulePostLayoutRefit = () => {
@@ -197,8 +200,8 @@
     window.addEventListener("resize", scheduleRefit);
     window.addEventListener("orientationchange", scheduleRefit);
     const viewport = window.visualViewport;
-    viewport?.addEventListener("resize", scheduleRefit);
-    viewport?.addEventListener("scroll", scheduleRefit);
+    viewport?.addEventListener("resize", scheduleViewportRefit);
+    viewport?.addEventListener("scroll", scheduleViewportRefit);
 
     socket.addEventListener("open", () => {
       status = "connected";
@@ -230,7 +233,11 @@
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
           const decoded = outputDecoder.decode(bytes, { stream: true });
           term.write(decoded);
-          if (pinnedToBottom) term.scrollToBottom();
+          if (pinnedToBottom) {
+            term.scrollToBottom();
+          } else {
+            hasUnseenOutput = true;
+          }
           zerolag.clearFlushed();
           zerolag.rerender();
         } else if (payload.type === "error" && "error" in payload && payload.error) {
@@ -238,7 +245,11 @@
         }
       } catch {
         term.write(data);
-        if (pinnedToBottom) term.scrollToBottom();
+        if (pinnedToBottom) {
+          term.scrollToBottom();
+        } else {
+          hasUnseenOutput = true;
+        }
         zerolag.clearFlushed();
         zerolag.rerender();
       }
@@ -296,11 +307,12 @@
 
     return () => {
       if (refitFrame) cancelAnimationFrame(refitFrame);
+      if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleRefit);
       window.removeEventListener("orientationchange", scheduleRefit);
-      viewport?.removeEventListener("resize", scheduleRefit);
-      viewport?.removeEventListener("scroll", scheduleRefit);
+      viewport?.removeEventListener("resize", scheduleViewportRefit);
+      viewport?.removeEventListener("scroll", scheduleViewportRefit);
       container?.removeEventListener("touchstart", onTouchStart);
       container?.removeEventListener("touchmove", onTouchMove);
       container?.removeEventListener("touchend", onTouchEnd);
@@ -314,6 +326,14 @@
 
 <section class="terminal-panel" data-testid="task-terminal-panel" aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}></div>
+  {#if hasUnseenOutput}
+    <button
+      type="button"
+      class="terminal-new-output"
+      onclick={() => {
+        jumpToBottom();
+      }}>New output ↓</button>
+  {/if}
   <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
     {#each CONTROL_KEYS as key (key.label)}
       <button
@@ -370,6 +390,19 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
+  }
+
+  .terminal-new-output {
+    align-self: center;
+    min-height: 36px;
+    margin: 0 8px 6px;
+    padding: 6px 12px;
+    border: 1px solid var(--teal);
+    border-radius: var(--radius-sm);
+    background: var(--teal-deep);
+    color: var(--paper);
+    font-size: 12px;
+    font-weight: 700;
   }
 
   .terminal-keys {

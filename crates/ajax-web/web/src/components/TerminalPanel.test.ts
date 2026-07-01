@@ -4,6 +4,7 @@ import TerminalPanel from "./TerminalPanel.svelte";
 
 const write = vi.fn();
 const scrollToBottom = vi.fn();
+const scrollLines = vi.fn();
 const dispose = vi.fn();
 let onDataHandler: ((data: string) => void) | undefined;
 const fit = vi.fn();
@@ -23,7 +24,7 @@ const rerender = vi.fn();
 
 const focus = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
-let lastElement: HTMLDivElement | undefined;
+let terminalOptions: unknown;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
 let bufferActive = { viewportY: 0, baseY: 0 };
 
@@ -38,6 +39,7 @@ vi.mock("@xterm/xterm", () => ({
     open = vi.fn();
     write = write;
     scrollToBottom = scrollToBottom;
+    scrollLines = scrollLines;
     dispose = dispose;
     focus = focus;
     onData = vi.fn((handler: (data: string) => void) => {
@@ -46,9 +48,9 @@ vi.mock("@xterm/xterm", () => ({
     onScroll = vi.fn((handler: (viewportY: number) => void) => {
       onScrollHandler = handler;
     });
-    constructor() {
+    constructor(options: unknown) {
+      terminalOptions = options;
       lastTextarea = this.textarea;
-      lastElement = this.element;
     }
   },
 }));
@@ -108,10 +110,11 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
-  lastElement = undefined;
+  terminalOptions = undefined;
   onScrollHandler = undefined;
   bufferActive.viewportY = 0;
   bufferActive.baseY = 0;
+  scrollLines.mockClear();
   flushedCount = 0;
   flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
@@ -358,21 +361,86 @@ describe("TerminalPanel", () => {
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
   });
 
-  it("refits and sends a resize frame when the visual viewport changes", async () => {
+  it("shows a New output control while the user is scrolled away from bottom", async () => {
+    const { getByRole, queryByRole } = render(TerminalPanel, {
+      props: { handle: "web/fix-login" },
+    });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+
+    bufferActive.baseY = 10;
+    bufferActive.viewportY = 3;
+    onScrollHandler?.(3);
+
+    scrollToBottom.mockClear();
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("background update") }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("background update");
+      expect(getByRole("button", { name: "New output ↓" })).toBeInTheDocument();
+    });
+    expect(scrollToBottom).not.toHaveBeenCalled();
+
+    getByRole("button", { name: "New output ↓" }).click();
+
+    expect(scrollToBottom).toHaveBeenCalled();
+    expect(focus).toHaveBeenCalled();
+    await waitFor(() => {
+      expect(queryByRole("button", { name: "New output ↓" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("refits immediately but debounces server resize when the visual viewport changes", async () => {
+    vi.useFakeTimers();
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
     socket?.emit("open");
+    vi.advanceTimersByTime(50);
     fit.mockClear();
     socket!.send.mockClear();
 
     dispatchVisualViewport("resize");
 
-    await waitFor(() => {
-      expect(fit).toHaveBeenCalled();
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
-      );
-    });
+    vi.advanceTimersByTime(20);
+    expect(fit).toHaveBeenCalled();
+    expect(socket?.send).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(279);
+    expect(socket?.send).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(1);
+    expect(socket?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+    );
+    vi.useRealTimers();
+  });
+
+  it("does not scroll to bottom on viewport resize while the user is scrolled up", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+
+    bufferActive.baseY = 10;
+    bufferActive.viewportY = 3;
+    onScrollHandler?.(3);
+    scrollToBottom.mockClear();
+
+    dispatchVisualViewport("resize");
+    await waitFor(() => expect(fit).toHaveBeenCalled());
+
+    expect(scrollToBottom).not.toHaveBeenCalled();
   });
 
   it("runs a second post-layout resize after the socket opens", async () => {
@@ -436,6 +504,14 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("uses a readable mobile terminal font size", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect(terminalOptions).toMatchObject({ fontSize: 10 });
+    });
+  });
+
   function makeTouch(type: string, clientY: number): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
     Object.defineProperty(event, "touches", {
@@ -444,11 +520,9 @@ describe("TerminalPanel", () => {
     return event;
   }
 
-  it("translates a touch drag into wheel events on the xterm element", async () => {
+  it("scrolls local terminal scrollback on touch drag", async () => {
     const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
-    const wheelEvents: WheelEvent[] = [];
-    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
 
     // Drag the finger up ~60px. With no rendered viewport the cell height falls
     // back to 18px, so that is 3 wheel notches toward the newest output.
@@ -456,9 +530,8 @@ describe("TerminalPanel", () => {
     const move = makeTouch("touchmove", 140);
     host.dispatchEvent(move);
 
-    expect(wheelEvents).toHaveLength(3);
-    expect(wheelEvents[0].deltaY).toBe(1);
-    expect(wheelEvents[0].deltaMode).toBe(WheelEvent.DOM_DELTA_LINE);
+    expect(scrollLines).toHaveBeenCalledWith(1);
+    expect(scrollLines).toHaveBeenCalledTimes(3);
     // A moved touch is a scroll, not a tap: default is prevented so iOS does
     // not synthesize the click that would pop the keyboard.
     expect(move.defaultPrevented).toBe(true);
@@ -467,27 +540,23 @@ describe("TerminalPanel", () => {
   it("scrolls back into history when the finger drags downward", async () => {
     const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
-    const wheelEvents: WheelEvent[] = [];
-    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
 
     host.dispatchEvent(makeTouch("touchstart", 100));
     host.dispatchEvent(makeTouch("touchmove", 160));
 
-    expect(wheelEvents.length).toBeGreaterThan(0);
-    expect(wheelEvents.every((event) => event.deltaY === -1)).toBe(true);
+    expect(scrollLines).toHaveBeenCalledWith(-1);
+    expect(scrollLines.mock.calls.length).toBeGreaterThan(0);
   });
 
   it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
     const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
-    const wheelEvents: WheelEvent[] = [];
-    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     const move = makeTouch("touchmove", 198); // 2px jitter, below the threshold
     host.dispatchEvent(move);
 
-    expect(wheelEvents).toHaveLength(0);
+    expect(scrollLines).not.toHaveBeenCalled();
     expect(move.defaultPrevented).toBe(false);
   });
 });
