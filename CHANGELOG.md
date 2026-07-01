@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.28.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.6...ajax-cli-v0.28.0) (2026-07-01)
+
+
+### Features
+
+* **web:** refactor mobile terminal experience ([#263](https://github.com/mossipcams/ajax-cli/issues/263)) ([08bba40](https://github.com/mossipcams/ajax-cli/commit/08bba4066c2a7521e26e20b3a7f8c2db1f3e987d))
+
+
+### Bug Fixes
+
+* intercept terminal scroll gestures ([#261](https://github.com/mossipcams/ajax-cli/issues/261)) ([a5d4542](https://github.com/mossipcams/ajax-cli/commit/a5d45428516b88dc2c9d695b7780a7a71898d26e))
+
 ## [0.27.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.5...ajax-cli-v0.27.6) (2026-07-01)
 
 
