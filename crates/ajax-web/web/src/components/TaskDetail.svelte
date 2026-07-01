@@ -312,13 +312,15 @@
      in styles.css) gets maximum height. Includes landscape phones (coarse
      pointer, short viewport) that exceed the width breakpoint. */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    .detail-header { margin-bottom: 6px; }
-    .detail-header .back { min-height: 34px; padding: 5px 12px; }
+    .detail-header { margin-bottom: 4px; }
+    .detail-header .back { min-height: 32px; padding: 4px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; }
-    .interact-state { margin-bottom: 6px; }
-    .interact-state.is-hero { margin-bottom: 6px; padding-bottom: 0; }
-    .next-action { margin-top: 6px; padding: 0; }
-    .meta-details { margin-top: 10px; padding-top: 10px; }
+    .interact-state { margin-bottom: 4px; }
+    .interact-state.is-hero { margin-bottom: 4px; padding-bottom: 0; }
+    .next-action { margin-top: 4px; padding: 0; }
+    /* The mobile task view is a fixed-height band; this disclosure sits below
+       the terminal and eats rows. Its facts remain available on desktop. */
+    .meta-details { display: none; }
     .terminal-primary {
       display: flex;
       flex: 1 1 auto;

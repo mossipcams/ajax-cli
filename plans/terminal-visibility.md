@@ -237,6 +237,75 @@ so paging through long scrollback takes many deliberate drags.
   - `npm run web:test -- --run`
 - Report results, including anything that failed.
 
+## Round 2 — post-device feedback (2026-07-01)
+
+On-device findings after PR #278: fullscreen toggle is janky, the terminal
+is too short, the default text is too small, and a "massive" scrollbar
+overlays the text.
+
+Diagnosis:
+- The scrollbar is xterm 6's built-in VS Code DOM scrollbar
+  (`SmoothScrollableElement`, `verticalScrollbarSize` defaults to 14px) —
+  ~3 columns wide on a phone and visible almost constantly because tmux
+  redraws keep triggering scroll activity. Ajax owns all touch scroll
+  gestures, so on mobile it is purely decorative.
+- The 10px mobile default font predates the 80-column floor; its original
+  purpose (maximize columns to reduce wrapping) is obsolete.
+- The ⛶ expand handler calls `focusTerm()`, which pops the iOS keyboard —
+  and with the keyboard open the grid refit is deliberately frozen
+  (lockstep fix), so the newly expanded area doesn't refit until the
+  keyboard closes. The normal expand refit also waits behind the 300ms
+  debounce.
+- The mobile task view still spends ~100px on the status/action chrome and
+  the "Task details" disclosure below the terminal.
+
+Additional named test file for Round 2 (approval covers editing it):
+- `crates/ajax-web/web/src/components/TaskDetail.test.ts` (only if its
+  rendering assertions are affected by the chrome collapse)
+
+### Task R1 — Raise the mobile default font to 13px
+
+- Revise the existing "uses a readable font size on a mobile viewport"
+  test in `TerminalRawView.test.ts` to expect 13 (the 10px value being
+  pinned was a column-count lever the 80-col floor made obsolete; the
+  user reports it is too small).
+- Implement: `MOBILE_FONT_SIZE = 13`. Pinch persistence still overrides.
+- Verify: `npm run web:test -- --run TerminalRawView`.
+
+### Task R2 — Hide the xterm DOM scrollbar on touch devices
+
+- Failing test (`TerminalRawView.test.ts`): source-shape assertion that a
+  coarse-pointer media rule hides `.xterm-scrollable-element > .scrollbar`
+  within the terminal panel.
+- Implement: scoped `:global` CSS in `TerminalRawView.svelte` under
+  `@media (pointer: coarse)`. Desktop keeps the scrollbar (usable there).
+- Verify: `npm run web:test -- --run TerminalRawView`.
+
+### Task R3 — Smooth expand toggle
+
+- Failing tests (`TerminalRawView.test.ts`): activating ⛶ must NOT focus
+  the terminal (no keyboard pop), and with the socket open it must send
+  the post-layout resize through the immediate path (no 300ms debounce
+  wait).
+- Implement: drop `focusTerm()` from the expand handler; call the
+  post-layout refit (assigned in onMount) after toggling.
+- Verify: `npm run web:test -- --run TerminalRawView`.
+
+### Task R4 — Give the terminal more height on mobile
+
+- Collapse remaining chrome in the mobile task view: hide the "Task
+  details" disclosure (its facts stay available on desktop), tighten the
+  status/action rows, and slim the control-key bar (32px keys).
+- Tests: revise the mobile CSS source-shape assertions in
+  `TerminalRawView.test.ts` (key bar sizing); adjust
+  `TaskDetail.test.ts` only if existing rendering assertions break.
+- Verify: `npm run web:test -- --run` (full web suite).
+
+### Task R5 — Rebuild bundle and full validation
+
+- `npm run web:build`, then the full Required Validation set, then commit
+  and push to the open PR #278.
+
 ## Out of scope
 
 - No snapshot/composer terminal mode (explicitly barred by AGENTS.md).

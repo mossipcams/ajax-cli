@@ -46,6 +46,7 @@
   let requestReconnect: () => void = () => {};
   let requestPaste: () => void = () => {};
   let blurTerm: () => void = () => {};
+  let refitAfterLayout: () => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -111,15 +112,12 @@
     return controlModify(data);
   };
 
-  // On an iPhone-width viewport the render area is only ~338px, so the font
-  // size is really a column-count lever: at 12px FitAddon yields ~46 columns,
-  // which is far below the ~80 the hosted Claude Code / tmux TUI assumes, so
-  // nearly every line wrapped mid-path and the output looked broken. 10px trades
-  // a little cell height for ~55 columns — still legible on a retina phone, with
-  // markedly less wrapping. Desktop keeps a slightly larger, comfortable cell.
+  // The 80-column PTY floor means the font is no longer a column-count lever
+  // (narrow viewports pan instead of wrapping), so mobile gets the same
+  // comfortable cell as desktop. Pinch-to-zoom persists any override.
   // Prefer the media query; fall back to touch capability where matchMedia is
   // unavailable.
-  const MOBILE_FONT_SIZE = 10;
+  const MOBILE_FONT_SIZE = 13;
   const DESKTOP_FONT_SIZE = 13;
   // Portrait phones match on width; a landscape phone is wider than the
   // breakpoint but still a phone (coarse pointer, short viewport), so it gets
@@ -540,6 +538,10 @@
       scheduleImmediateRefit();
       requestAnimationFrame(scheduleImmediateRefit);
     };
+    // Discrete layout jumps (the ⛶ expand toggle) refit through the immediate
+    // path: waiting out the debounce leaves the grid misfit in the new space
+    // for a visible beat.
+    refitAfterLayout = schedulePostLayoutRefit;
 
     const resizeObserver =
       typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleDebouncedRefit) : null;
@@ -780,7 +782,7 @@
       onmousedown={(event) => event.preventDefault()}
       onclick={() => {
         setExpanded(!expanded);
-        focusTerm();
+        refitAfterLayout();
       }}>⛶</button>
   </div>
   {#if status !== "connected" || statusDetail}
@@ -831,12 +833,12 @@
 
     .terminal-keys {
       gap: 4px;
-      padding: 4px 6px;
+      padding: 3px 4px;
     }
 
     .terminal-key {
-      min-height: 36px;
-      padding: 4px 8px;
+      min-height: 32px;
+      padding: 2px 8px;
       font-size: 12px;
     }
   }
@@ -986,4 +988,15 @@
      the renderer sizes them to cols × cellWidth, and with the 80-column floor
      they legitimately exceed the host width. The host's overflow:hidden +
      scrollLeft pan owns the clipping instead. */
+
+  /* xterm 6 renders VS Code's 14px DOM scrollbar inside the terminal. On a
+     phone it overlaps ~3 columns of text and flickers visible on every tmux
+     redraw, while touch scrolling is entirely Ajax-owned (scrollLines) — so
+     it is pure noise there. Desktop keeps it: it is proportionate and
+     mouse-draggable. */
+  @media (pointer: coarse) {
+    :global(.terminal-panel .xterm-scrollable-element > .scrollbar) {
+      display: none;
+    }
+  }
 </style>

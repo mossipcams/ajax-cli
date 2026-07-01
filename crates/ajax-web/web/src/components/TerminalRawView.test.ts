@@ -890,6 +890,43 @@ describe("TerminalPanel", () => {
     expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
   });
 
+  it("does not focus the terminal when toggling expand, so the keyboard stays put", async () => {
+    // focusTerm() here popped the iOS keyboard mid-toggle — and an open
+    // keyboard freezes the grid refit (PTY lockstep), so the expanded area
+    // stayed misfit until the keyboard closed. Expand must never focus.
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    focus.mockClear();
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+
+    expect(focus).not.toHaveBeenCalled();
+  });
+
+  it("refits through the immediate path when expand is toggled", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 55, rows: 30 };
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    vi.advanceTimersByTime(400); // settle the open-path refits
+    socket!.send.mockClear();
+
+    proposedDimensions = { cols: 55, rows: 60 }; // the expanded panel is taller
+    getByRole("button", { name: "Expand terminal" }).click();
+    // Two animation frames, far below the 300ms debounce window.
+    vi.advanceTimersByTime(50);
+
+    const resizeFrames = socket!.send.mock.calls
+      .map((call) => JSON.parse(call[0] as string))
+      .filter((frame) => frame.type === "resize");
+    expect(resizeFrames).toContainEqual({ type: "resize", cols: 80, rows: 60 });
+    vi.useRealTimers();
+  });
+
   it("disables autocorrect/autocapitalize on the xterm input", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
@@ -901,6 +938,8 @@ describe("TerminalPanel", () => {
   });
 
   it("uses a readable font size on a mobile viewport", async () => {
+    // 13px matches desktop: the old 10px default was a column-count lever
+    // that the 80-column PTY floor made obsolete.
     vi.stubGlobal(
       "matchMedia",
       vi.fn((query: string) => ({
@@ -913,7 +952,7 @@ describe("TerminalPanel", () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
-      expect((terminalOptions as { fontSize: number }).fontSize).toBe(10);
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
     });
   });
 
@@ -938,7 +977,7 @@ describe("TerminalPanel", () => {
       // One combined query covers portrait width and landscape phone shape.
       expect(seenQuery).toContain("max-width: 767px");
       expect(seenQuery).toContain("(pointer: coarse) and (max-height: 500px)");
-      expect((terminalOptions as { fontSize: number }).fontSize).toBe(10);
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
     });
   });
 
@@ -1231,14 +1270,27 @@ describe("TerminalPanel", () => {
     expect(mobileCss).toContain(".terminal-host");
     expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
-    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*4px 6px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*36px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*4px 8px/);
+    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*3px 4px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*32px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*2px 8px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*12px/);
 
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*40px/);
     expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
+  });
+
+  it("hides the xterm DOM scrollbar on touch devices", () => {
+    // xterm 6 renders VS Code's 14px DOM scrollbar; on a phone it overlaps
+    // ~3 columns of text and flickers on every tmux redraw, while every touch
+    // scroll gesture is already Ajax-owned — so it must not render there.
+    const coarseBlock = terminalRawViewSource.match(
+      /@media \(pointer: coarse\) \{([\s\S]*?)\n  \}/,
+    );
+    expect(coarseBlock).not.toBeNull();
+    const coarseCss = coarseBlock![1];
+    expect(coarseCss).toContain(".xterm-scrollable-element > .scrollbar");
+    expect(coarseCss).toMatch(/display:\s*none/);
   });
 
   it("intercepts wheel scroll from xterm child layers into local scrollback", async () => {
