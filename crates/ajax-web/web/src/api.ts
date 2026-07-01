@@ -255,3 +255,34 @@ export function taskTerminalWebSocketUrl(handle: string): string {
 export function openTaskTerminalSocket(handle: string): WebSocket {
   return new WebSocket(taskTerminalWebSocketUrl(handle));
 }
+
+/** Send free text (optionally with Enter) or an allowed control token to a
+ * task's tmux pane without opening the raw terminal socket. */
+export async function sendTaskKeys(
+  handle: string,
+  text: string,
+  submit: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const { response, payload } = await postJson(
+    `/api/tasks/${encodeURIComponent(handle)}/keys`,
+    { text, submit },
+  );
+  if (response.ok) return { ok: true };
+  return { ok: false, error: errorMessage(payload, `HTTP ${response.status}`) };
+}
+
+export interface TaskPaneSnapshot {
+  sequence_changed: boolean;
+  lines: string[];
+  truncated: boolean;
+  sequence: string;
+  summary: string | null;
+}
+
+/** Capture the current pane for the read-only viewer. Pass the previous
+ * `sequence` as `since` so an unchanged pane returns no lines. */
+export async function fetchTaskSnapshot(handle: string, since?: string): Promise<TaskPaneSnapshot> {
+  const query = since ? `?since=${encodeURIComponent(since)}` : "";
+  const value = await getJson(`/api/tasks/${encodeURIComponent(handle)}/snapshot${query}`);
+  return value as TaskPaneSnapshot;
+}
