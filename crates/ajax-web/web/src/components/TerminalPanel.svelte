@@ -24,7 +24,9 @@
   let jumpToBottom: () => void = () => {};
 
   // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
-  // modifier folded into the next typed letter by the onData handler below.
+  // modifier folded into the next key — from the keyboard OR this bar — by
+  // consumeCtrl below. It auto-expires so a forgotten arm can't silently
+  // corrupt a later keystroke.
   const CONTROL_KEYS = [
     { label: "Esc", data: "\x1b" },
     { label: "Tab", data: "\t" },
@@ -34,6 +36,49 @@
     { label: "↓", data: "\x1b[B" },
     { label: "→", data: "\x1b[C" },
   ];
+
+  // A sticky modifier the user forgot they armed would mangle the next thing
+  // they type minutes later, so it auto-disarms after a short window.
+  const CTRL_ARM_TIMEOUT_MS = 4000;
+  let ctrlTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const disarmCtrl = () => {
+    ctrlArmed = false;
+    if (ctrlTimer) {
+      clearTimeout(ctrlTimer);
+      ctrlTimer = undefined;
+    }
+  };
+
+  const toggleCtrl = () => {
+    if (ctrlArmed) {
+      disarmCtrl();
+      return;
+    }
+    ctrlArmed = true;
+    if (ctrlTimer) clearTimeout(ctrlTimer);
+    ctrlTimer = setTimeout(disarmCtrl, CTRL_ARM_TIMEOUT_MS);
+  };
+
+  // Fold Ctrl into a key: letters become their control code, cursor keys become
+  // the CSI form with the Ctrl modifier (param 5); anything else passes through.
+  const controlModify = (data: string): string => {
+    if (data.length === 1) {
+      const code = data.toLowerCase().charCodeAt(0);
+      if (code >= 97 && code <= 122) return String.fromCharCode(code - 96);
+    }
+    const cursor = /^\x1b\[([ABCD])$/.exec(data);
+    if (cursor) return `\x1b[1;5${cursor[1]}`;
+    return data;
+  };
+
+  // Apply an armed Ctrl to the next key from either input surface, consuming
+  // the arm so it never affects a second key.
+  const consumeCtrl = (data: string): string => {
+    if (!ctrlArmed) return data;
+    disarmCtrl();
+    return controlModify(data);
+  };
 
   // A phone-sized viewport needs a much larger cell than a desktop pane: 10px
   // was an unreadable squint on a Retina display and forced needless column
@@ -299,14 +344,11 @@
     term.onData((data) => {
       if (socket.readyState !== WebSocket.OPEN) return;
 
-      // Sticky Ctrl from the key bar: fold the next letter into its control code.
-      if (ctrlArmed && data.length === 1) {
-        ctrlArmed = false;
-        const code = data.toLowerCase().charCodeAt(0);
-        if (code >= 97 && code <= 122) {
-          socket.send(JSON.stringify({ type: "input", data: String.fromCharCode(code - 96) }));
-          return;
-        }
+      // Sticky Ctrl: fold it into this key (letter → control code, cursor key →
+      // Ctrl-modified CSI) and consume the arm.
+      if (ctrlArmed) {
+        socket.send(JSON.stringify({ type: "input", data: consumeCtrl(data) }));
+        return;
       }
 
       if (data === "\r") {
@@ -341,6 +383,7 @@
     return () => {
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
+      if (ctrlTimer) clearTimeout(ctrlTimer);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
@@ -374,7 +417,7 @@
         class="terminal-key"
         onmousedown={(event) => event.preventDefault()}
         onclick={() => {
-          sendKey(key.data);
+          sendKey(consumeCtrl(key.data));
           focusTerm();
         }}>{key.label}</button>
     {/each}
@@ -385,9 +428,9 @@
       aria-pressed={ctrlArmed}
       onmousedown={(event) => event.preventDefault()}
       onclick={() => {
-        ctrlArmed = !ctrlArmed;
+        toggleCtrl();
         focusTerm();
-      }}>Ctrl</button>
+      }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
   </div>
   {#if status !== "connected"}
     <div class="terminal-status" data-testid="terminal-status">{status}</div>
@@ -463,6 +506,29 @@
   .terminal-key.is-armed {
     background: var(--teal-deep);
     border-color: var(--teal);
+    color: var(--paper);
+    animation: terminal-key-pulse 1s ease-in-out infinite;
+  }
+
+  /* Signals the armed modifier is live and temporary (it auto-expires). */
+  @keyframes terminal-key-pulse {
+    0%,
+    100% {
+      box-shadow: 0 0 0 0 rgba(82, 160, 149, 0.6);
+    }
+    50% {
+      box-shadow: 0 0 0 3px rgba(82, 160, 149, 0);
+    }
+  }
+
+  .terminal-key-armed-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-left: 5px;
+    border-radius: 50%;
+    background: var(--paper);
+    vertical-align: middle;
   }
 
   .terminal-status {

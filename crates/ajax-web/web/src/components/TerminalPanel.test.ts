@@ -547,6 +547,44 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("auto-disarms sticky Ctrl after the timeout so a later key is unmodified", async () => {
+    vi.useFakeTimers();
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: /Ctrl/ }).click();
+    vi.advanceTimersByTime(4000);
+
+    onDataHandler?.("c");
+
+    // The arm expired, so "c" is sent literally, not folded to \x03.
+    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "c" }));
+    expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\x03" }));
+    vi.useRealTimers();
+  });
+
+  it("applies an armed Ctrl to a control-bar cursor key, then disarms", async () => {
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: /Ctrl/ }).click();
+    getByRole("button", { name: "←" }).click();
+
+    // Ctrl+← becomes the Ctrl-modified CSI cursor sequence.
+    await waitFor(() => {
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\x1b[1;5D" }),
+      );
+    });
+
+    // The arm was consumed: a following key is unmodified.
+    socket!.send.mockClear();
+    onDataHandler?.("x");
+    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
+  });
+
   it("disables autocorrect/autocapitalize on the xterm input", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
