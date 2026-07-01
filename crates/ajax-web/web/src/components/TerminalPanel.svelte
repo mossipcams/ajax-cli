@@ -35,11 +35,24 @@
     { label: "→", data: "\x1b[C" },
   ];
 
+  // A phone-sized viewport needs a much larger cell than a desktop pane: 10px
+  // was an unreadable squint on a Retina display and forced needless column
+  // pressure. Prefer the media query; fall back to touch capability where
+  // matchMedia is unavailable.
+  const MOBILE_FONT_SIZE = 14;
+  const DESKTOP_FONT_SIZE = 13;
+  const isMobileViewport = (): boolean => {
+    if (typeof window.matchMedia === "function") {
+      return window.matchMedia("(max-width: 767px)").matches;
+    }
+    return (navigator.maxTouchPoints ?? 0) > 0;
+  };
+
   onMount(() => {
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: 10,
+      fontSize: isMobileViewport() ? MOBILE_FONT_SIZE : DESKTOP_FONT_SIZE,
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",

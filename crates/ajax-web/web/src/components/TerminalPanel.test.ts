@@ -557,11 +557,37 @@ describe("TerminalPanel", () => {
     });
   });
 
-  it("uses a readable mobile terminal font size", async () => {
+  it("uses a readable font size on a mobile viewport", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query.includes("max-width: 767px"),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
-      expect(terminalOptions).toMatchObject({ fontSize: 10 });
+      expect((terminalOptions as { fontSize: number }).fontSize).toBeGreaterThanOrEqual(14);
+    });
+  });
+
+  it("uses a compact font size on a desktop viewport", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect((terminalOptions as { fontSize: number }).fontSize).toBeLessThan(14);
     });
   });
 
