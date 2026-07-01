@@ -81,6 +81,108 @@ pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCo
     }
 }
 
+/// A single tmux invocation used to stand up or tear down the isolated client
+/// session. Kept as a plain data plan so the wiring is unit-testable without a
+/// live tmux server.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TmuxCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl TmuxCommand {
+    fn new<const N: usize>(args: [&str; N]) -> Self {
+        TmuxCommand {
+            program: "tmux".to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+        }
+    }
+}
+
+/// Attach a mobile client to its *own* grouped tmux session instead of the
+/// shared task session.
+///
+/// `tmux attach-session` sizes a window to the smallest attached client, so a
+/// phone in portrait would shrink the agent window for every other client and
+/// SIGWINCH-storm the pane on each keyboard open/close. A grouped session
+/// (`new-session -t <shared>`) shares the shared session's window set but keeps
+/// an independent size, so the phone can be tiny without disturbing anyone. The
+/// ephemeral session is killed on disconnect.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IsolatedAttachPlan {
+    /// The ephemeral grouped session name, e.g. `ajax-web-fix-login-m1a2b3c4`.
+    pub ephemeral_session: String,
+    /// Commands to run before attaching (create the grouped session).
+    pub setup: Vec<TmuxCommand>,
+    /// The attach command spawned inside the outer PTY.
+    pub attach: TmuxAttachCommandPlan,
+    /// Commands to run on disconnect (remove the grouped session).
+    pub teardown: Vec<TmuxCommand>,
+}
+
+/// Prefix that marks a session as an ephemeral per-client grouped session.
+/// The reaper uses this to distinguish them from real task sessions.
+pub const EPHEMERAL_SESSION_INFIX: &str = "-m";
+
+pub fn build_isolated_attach_plan(plan: &TerminalAttachPlan) -> IsolatedAttachPlan {
+    build_isolated_attach_plan_with_token(plan, &random_session_token())
+}
+
+fn build_isolated_attach_plan_with_token(
+    plan: &TerminalAttachPlan,
+    token: &str,
+) -> IsolatedAttachPlan {
+    let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
+    // Reuse the shared attach builder against the ephemeral session so the
+    // "never attach through the browser handle" and worktrunk-window guarantees
+    // are preserved for the isolated client too.
+    let ephemeral_plan = TerminalAttachPlan {
+        qualified_handle: plan.qualified_handle.clone(),
+        tmux_session: ephemeral.clone(),
+        worktrunk_window: plan.worktrunk_window.clone(),
+    };
+    IsolatedAttachPlan {
+        setup: vec![TmuxCommand::new([
+            "new-session",
+            "-d",
+            "-s",
+            &ephemeral,
+            "-t",
+            &plan.tmux_session,
+        ])],
+        attach: build_tmux_attach_command_plan(&ephemeral_plan),
+        teardown: vec![TmuxCommand::new(["kill-session", "-t", &ephemeral])],
+        ephemeral_session: ephemeral,
+    }
+}
+
+/// 12 lowercase-hex chars of randomness for the ephemeral session suffix.
+fn random_session_token() -> String {
+    let mut bytes = [0_u8; 6];
+    // A failed RNG here only weakens uniqueness of a short-lived session name;
+    // fall back to a time-derived token rather than aborting the attach.
+    if getrandom::fill(&mut bytes).is_err() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0);
+        bytes.copy_from_slice(&nanos.to_le_bytes()[..6]);
+    }
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut token = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        token.push(HEX[(byte >> 4) as usize] as char);
+        token.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    token
+}
+
+fn run_tmux_command_blocking(command: &TmuxCommand) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(&command.program)
+        .args(&command.args)
+        .output()
+}
+
 #[derive(Debug, Deserialize)]
 struct TerminalInputFrame {
     #[serde(rename = "type")]
@@ -100,7 +202,48 @@ struct TerminalOutputFrame<'a> {
 }
 
 pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAttachPlan) {
-    let command_plan = build_tmux_attach_command_plan(&plan);
+    let isolated = build_isolated_attach_plan(&plan);
+
+    // Stand up the isolated grouped session before attaching so the phone's
+    // dimensions never shrink the shared window for other clients. If this
+    // fails the shared session is likely gone; report and bail rather than
+    // attaching to nothing.
+    for command in &isolated.setup {
+        match run_tmux_command_blocking(command) {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let _ = socket
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "type": "error",
+                            "error": format!("failed to create terminal session: {}", stderr.trim()),
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await;
+                let _ = socket.send(Message::Close(None)).await;
+                return;
+            }
+            Err(error) => {
+                let _ = socket
+                    .send(Message::Text(
+                        serde_json::json!({
+                            "type": "error",
+                            "error": format!("failed to create terminal session: {error}"),
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await;
+                let _ = socket.send(Message::Close(None)).await;
+                return;
+            }
+        }
+    }
+
+    let command_plan = isolated.attach.clone();
     let pty_system = native_pty_system();
     let pty_pair = match pty_system.openpty(PtySize {
         rows: 24,
@@ -262,6 +405,18 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
 
     running.store(false, Ordering::Relaxed);
     cleanup_spawned_child_async(child).await;
+
+    // Remove the ephemeral grouped session now that the client is gone. Killing
+    // a grouped session detaches only this client and never destroys the shared
+    // session's windows unless it was the last member.
+    let teardown = isolated.teardown.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        for command in &teardown {
+            let _ = run_tmux_command_blocking(command);
+        }
+    })
+    .await;
+
     let _ = socket.send(Message::Close(None)).await;
 }
 
@@ -378,6 +533,95 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("evil-handle")));
+    }
+
+    #[test]
+    fn isolated_attach_plan_creates_grouped_session_then_attaches() {
+        let plan = TerminalAttachPlan {
+            qualified_handle: "web/fix-login".to_string(),
+            tmux_session: "ajax-web-fix-login".to_string(),
+            worktrunk_window: "worktrunk".to_string(),
+        };
+
+        let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
+        let ephemeral = "ajax-web-fix-login-m1a2b3c";
+
+        assert_eq!(isolated.ephemeral_session, ephemeral);
+        // A grouped session shares the shared session's windows but keeps an
+        // independent size, so the phone never shrinks the shared window.
+        assert_eq!(
+            isolated.setup,
+            vec![TmuxCommand {
+                program: "tmux".to_string(),
+                args: vec![
+                    "new-session".to_string(),
+                    "-d".to_string(),
+                    "-s".to_string(),
+                    ephemeral.to_string(),
+                    "-t".to_string(),
+                    "ajax-web-fix-login".to_string(),
+                ],
+            }]
+        );
+        // Attach targets the ephemeral session's worktrunk window, never the
+        // browser handle and never the shared session directly.
+        assert_eq!(
+            isolated.attach.args,
+            vec![
+                "attach-session".to_string(),
+                "-t".to_string(),
+                format!("{ephemeral}:worktrunk"),
+            ]
+        );
+        assert!(!isolated
+            .attach
+            .args
+            .iter()
+            .any(|arg| arg == "ajax-web-fix-login:worktrunk"));
+        assert!(!isolated
+            .attach
+            .args
+            .iter()
+            .any(|arg| arg.contains("web/fix-login")));
+    }
+
+    #[test]
+    fn isolated_attach_cleanup_kills_ephemeral_session() {
+        let plan = TerminalAttachPlan {
+            qualified_handle: "web/fix-login".to_string(),
+            tmux_session: "ajax-web-fix-login".to_string(),
+            worktrunk_window: "worktrunk".to_string(),
+        };
+
+        let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
+
+        assert_eq!(
+            isolated.teardown,
+            vec![TmuxCommand {
+                program: "tmux".to_string(),
+                args: vec![
+                    "kill-session".to_string(),
+                    "-t".to_string(),
+                    "ajax-web-fix-login-m1a2b3c".to_string(),
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn isolated_attach_sessions_are_unique_per_call_and_never_the_shared_session() {
+        let plan = TerminalAttachPlan {
+            qualified_handle: "web/fix-login".to_string(),
+            tmux_session: "ajax-web-fix-login".to_string(),
+            worktrunk_window: "worktrunk".to_string(),
+        };
+
+        let first = build_isolated_attach_plan(&plan).ephemeral_session;
+        let second = build_isolated_attach_plan(&plan).ephemeral_session;
+
+        assert_ne!(first, second);
+        assert_ne!(first, "ajax-web-fix-login");
+        assert!(first.starts_with("ajax-web-fix-login-m"));
     }
 
     #[test]
