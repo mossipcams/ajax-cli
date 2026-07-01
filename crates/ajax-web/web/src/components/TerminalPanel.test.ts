@@ -23,6 +23,7 @@ const rerender = vi.fn();
 
 const focus = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
+let lastElement: HTMLDivElement | undefined;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
 let bufferActive = { viewportY: 0, baseY: 0 };
 
@@ -31,6 +32,7 @@ vi.mock("@xterm/xterm", () => ({
     cols = 80;
     rows = 24;
     textarea = document.createElement("textarea");
+    element = document.createElement("div");
     buffer = { active: bufferActive };
     loadAddon = vi.fn();
     open = vi.fn();
@@ -46,6 +48,7 @@ vi.mock("@xterm/xterm", () => ({
     });
     constructor() {
       lastTextarea = this.textarea;
+      lastElement = this.element;
     }
   },
 }));
@@ -105,6 +108,7 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
+  lastElement = undefined;
   onScrollHandler = undefined;
   bufferActive.viewportY = 0;
   bufferActive.baseY = 0;
@@ -430,5 +434,60 @@ describe("TerminalPanel", () => {
       expect(lastTextarea?.getAttribute("autocorrect")).toBe("off");
       expect(lastTextarea?.getAttribute("spellcheck")).toBe("false");
     });
+  });
+
+  function makeTouch(type: string, clientY: number): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "touches", {
+      value: [{ clientX: 10, clientY }],
+    });
+    return event;
+  }
+
+  it("translates a touch drag into wheel events on the xterm element", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const wheelEvents: WheelEvent[] = [];
+    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
+
+    // Drag the finger up ~60px. With no rendered viewport the cell height falls
+    // back to 18px, so that is 3 wheel notches toward the newest output.
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 140);
+    host.dispatchEvent(move);
+
+    expect(wheelEvents).toHaveLength(3);
+    expect(wheelEvents[0].deltaY).toBe(1);
+    expect(wheelEvents[0].deltaMode).toBe(WheelEvent.DOM_DELTA_LINE);
+    // A moved touch is a scroll, not a tap: default is prevented so iOS does
+    // not synthesize the click that would pop the keyboard.
+    expect(move.defaultPrevented).toBe(true);
+  });
+
+  it("scrolls back into history when the finger drags downward", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const wheelEvents: WheelEvent[] = [];
+    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
+
+    host.dispatchEvent(makeTouch("touchstart", 100));
+    host.dispatchEvent(makeTouch("touchmove", 160));
+
+    expect(wheelEvents.length).toBeGreaterThan(0);
+    expect(wheelEvents.every((event) => event.deltaY === -1)).toBe(true);
+  });
+
+  it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const wheelEvents: WheelEvent[] = [];
+    lastElement?.addEventListener("wheel", (event) => wheelEvents.push(event as WheelEvent));
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 198); // 2px jitter, below the threshold
+    host.dispatchEvent(move);
+
+    expect(wheelEvents).toHaveLength(0);
+    expect(move.defaultPrevented).toBe(false);
   });
 });
