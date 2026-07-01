@@ -78,12 +78,9 @@
       if (pinnedToBottom) hasUnseenOutput = false;
     });
 
-    // Touch-drag scrolling. xterm 6 ships VS Code's touch-gesture code but
-    // never wires it up, and its `.xterm-screen` overlays the scrollable
-    // `.xterm-viewport`, so native touch scrolling never fires. Ajax owns touch
-    // scrollback directly here instead of forwarding wheel events into tmux or
-    // the foreground terminal app. A stationary tap still focuses the textarea
-    // to type; only a drag scrolls, so scrolling no longer pops the iOS keyboard.
+    // Wheel/touch scrolling always uses Ajax-owned xterm scrollback. Capture
+    // before xterm layers can handle the gesture, and never forward scroll
+    // intent into tmux or the foreground terminal app.
     const TOUCH_SCROLL_THRESHOLD_PX = 6;
     let touchActive = false;
     let touchLastY = 0;
@@ -94,6 +91,13 @@
       const height = viewport?.clientHeight ?? 0;
       // jsdom and pre-layout paints report 0; fall back to a sane line height.
       return height > 0 && term.rows > 0 ? height / term.rows : 18;
+    };
+
+    const scrollLocalLines = (lines: number) => {
+      const step = lines > 0 ? 1 : -1;
+      for (let i = 0; i < Math.abs(lines); i += 1) {
+        term.scrollLines(step);
+      }
     };
 
     const onTouchStart = (event: TouchEvent) => {
@@ -120,10 +124,7 @@
       // A moved touch is a scroll, not a tap: stop the page from rubber-banding
       // and stop iOS from synthesizing the click that would open the keyboard.
       if (event.cancelable) event.preventDefault();
-      const step = notches > 0 ? 1 : -1;
-      for (let i = 0; i < Math.abs(notches); i += 1) {
-        term.scrollLines(step);
-      }
+      scrollLocalLines(notches);
     };
 
     const onTouchEnd = () => {
@@ -131,10 +132,27 @@
       touchAccumPx = 0;
     };
 
-    container?.addEventListener("touchstart", onTouchStart, { passive: true });
-    container?.addEventListener("touchmove", onTouchMove, { passive: false });
-    container?.addEventListener("touchend", onTouchEnd, { passive: true });
-    container?.addEventListener("touchcancel", onTouchEnd, { passive: true });
+    const onWheel = (event: WheelEvent) => {
+      const lineDelta =
+        event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
+          ? Math.trunc(event.deltaY / cellHeightPx())
+          : Math.trunc(event.deltaY);
+      if (lineDelta === 0) return;
+
+      if (event.cancelable) event.preventDefault();
+      scrollLocalLines(lineDelta);
+    };
+
+    const touchStartOptions: AddEventListenerOptions = { passive: true, capture: true };
+    const touchMoveOptions: AddEventListenerOptions = { passive: false, capture: true };
+    const scrollEndOptions: AddEventListenerOptions = { passive: true, capture: true };
+    const wheelOptions: AddEventListenerOptions = { passive: false, capture: true };
+
+    container?.addEventListener("touchstart", onTouchStart, touchStartOptions);
+    container?.addEventListener("touchmove", onTouchMove, touchMoveOptions);
+    container?.addEventListener("touchend", onTouchEnd, scrollEndOptions);
+    container?.addEventListener("touchcancel", onTouchEnd, scrollEndOptions);
+    container?.addEventListener("wheel", onWheel, wheelOptions);
 
     const socket = openTaskTerminalSocket(handle);
 
@@ -313,10 +331,11 @@
       window.removeEventListener("orientationchange", scheduleRefit);
       viewport?.removeEventListener("resize", scheduleViewportRefit);
       viewport?.removeEventListener("scroll", scheduleViewportRefit);
-      container?.removeEventListener("touchstart", onTouchStart);
-      container?.removeEventListener("touchmove", onTouchMove);
-      container?.removeEventListener("touchend", onTouchEnd);
-      container?.removeEventListener("touchcancel", onTouchEnd);
+      container?.removeEventListener("touchstart", onTouchStart, touchStartOptions);
+      container?.removeEventListener("touchmove", onTouchMove, touchMoveOptions);
+      container?.removeEventListener("touchend", onTouchEnd, scrollEndOptions);
+      container?.removeEventListener("touchcancel", onTouchEnd, scrollEndOptions);
+      container?.removeEventListener("wheel", onWheel, wheelOptions);
       socket.close();
       zerolag.dispose();
       term.dispose();

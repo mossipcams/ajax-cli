@@ -520,6 +520,13 @@ describe("TerminalPanel", () => {
     return event;
   }
 
+  function appendXtermLayer(host: HTMLElement): HTMLElement {
+    const layer = document.createElement("div");
+    layer.className = "xterm-screen";
+    host.appendChild(layer);
+    return layer;
+  }
+
   it("scrolls local terminal scrollback on touch drag", async () => {
     const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
@@ -558,5 +565,39 @@ describe("TerminalPanel", () => {
 
     expect(scrollLines).not.toHaveBeenCalled();
     expect(move.defaultPrevented).toBe(false);
+  });
+
+  it("captures touch drags from xterm child layers before they can be swallowed", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const layer = appendXtermLayer(host);
+    layer.addEventListener("touchmove", (event) => event.stopPropagation());
+
+    layer.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 140);
+    layer.dispatchEvent(move);
+
+    expect(scrollLines).toHaveBeenCalledWith(1);
+    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(move.defaultPrevented).toBe(true);
+  });
+
+  it("intercepts wheel scroll from xterm child layers into local scrollback", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const layer = appendXtermLayer(host);
+    layer.addEventListener("wheel", (event) => event.stopPropagation());
+
+    const wheel = new WheelEvent("wheel", {
+      deltaY: 3,
+      deltaMode: WheelEvent.DOM_DELTA_LINE,
+      bubbles: true,
+      cancelable: true,
+    });
+    layer.dispatchEvent(wheel);
+
+    expect(scrollLines).toHaveBeenCalledWith(1);
+    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(wheel.defaultPrevented).toBe(true);
   });
 });
