@@ -260,7 +260,10 @@ where
         .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
-        .route("/api/tasks/{*handle}", get(axum_task_get::<C, B>))
+        .route(
+            "/api/tasks/{*handle}",
+            get(axum_task_get::<C, B>).post(axum_task_post::<C, B>),
+        )
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .fallback(axum_fallback)
@@ -285,6 +288,10 @@ where
         .enable_all()
         .build()
         .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
+
+    // Kill any ephemeral per-client terminal sessions left behind by a bridge
+    // that crashed before it could tear its own session down.
+    crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
         let tls_config = tls::tls_server_config(&identity)?;
@@ -543,6 +550,14 @@ where
     if let Some(task_handle) = handle.strip_suffix("/terminal") {
         return axum_task_terminal(State(state), task_handle.to_string(), req).await;
     }
+    if let Some(task_handle) = handle.strip_suffix("/snapshot") {
+        let since = req
+            .uri()
+            .query()
+            .and_then(|query| query_param(query, "since"))
+            .map(|value| value.to_string());
+        return axum_task_snapshot(State(state), task_handle.to_string(), since).await;
+    }
     axum_task_detail::<C, B>(State(state), handle).await
 }
 
@@ -595,6 +610,136 @@ where
     upgrade.on_upgrade(move |socket| async move {
         crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
     })
+}
+
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    })
+}
+
+async fn axum_task_snapshot<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    since: Option<String>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let (context, mut runner) = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (guard.context.clone(), guard.runner.clone())
+    };
+
+    match crate::slices::terminal::task_pane_snapshot(
+        &context,
+        &mut runner,
+        &handle,
+        since.as_deref(),
+        crate::slices::terminal::PANE_SNAPSHOT_LIMIT,
+    ) {
+        Ok(view) => json_value_response(200, serde_json::to_value(view).unwrap_or_default()),
+        Err(crate::slices::terminal::SnapshotRouteError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::terminal::SnapshotRouteError::SessionMissing) => json_value_response(
+            409,
+            serde_json::json!({ "ok": false, "error": "tmux session missing" }),
+        ),
+        Err(crate::slices::terminal::SnapshotRouteError::Command(message)) => json_value_response(
+            502,
+            serde_json::json!({ "ok": false, "error": format!("pane capture failed: {message}") }),
+        ),
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SendKeysRequest {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    submit: bool,
+}
+
+async fn axum_task_post<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    AxumPath(handle): AxumPath<String>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    if let Some(task_handle) = handle.strip_suffix("/keys") {
+        return axum_task_keys(State(state), task_handle.to_string(), body).await;
+    }
+    json_value_response(
+        404,
+        serde_json::json!({ "ok": false, "error": "not found" }),
+    )
+}
+
+async fn axum_task_keys<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let request: SendKeysRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({ "ok": false, "error": format!("json parse failed: {error}") }),
+            );
+        }
+    };
+
+    // Clone the context and runner so the tmux shell-out doesn't hold the shared
+    // lock (the runner is a stateless command executor).
+    let (context, mut runner) = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (guard.context.clone(), guard.runner.clone())
+    };
+
+    let outcome = crate::slices::terminal::send_task_keys(
+        &context,
+        &mut runner,
+        &handle,
+        &request.text,
+        request.submit,
+    );
+
+    match outcome {
+        Ok(()) => json_value_response(200, serde_json::json!({ "ok": true })),
+        Err(crate::slices::terminal::SendKeysRouteError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::terminal::SendKeysRouteError::SessionMissing) => json_value_response(
+            409,
+            serde_json::json!({ "ok": false, "error": "tmux session missing" }),
+        ),
+        Err(crate::slices::terminal::SendKeysRouteError::InvalidKeys(message)) => {
+            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
+        }
+        Err(crate::slices::terminal::SendKeysRouteError::Command(message)) => json_value_response(
+            502,
+            serde_json::json!({ "ok": false, "error": format!("send-keys failed: {message}") }),
+        ),
+    }
 }
 
 async fn axum_start_task<C, B>(
