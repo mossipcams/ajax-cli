@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/svelte";
+import { tick } from "svelte";
 import TerminalPanel from "./TerminalPanel.svelte";
 
 const write = vi.fn();
@@ -77,6 +78,7 @@ vi.mock("xterm-zerolag-input", () => ({
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
   static OPEN = 1;
+  static CLOSED = 3;
   readyState = MockWebSocket.OPEN;
   url: string;
   send = vi.fn();
@@ -516,6 +518,84 @@ describe("TerminalPanel", () => {
         JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
       );
     });
+  });
+
+  it("enters reconnecting and opens a new socket after the socket closes", async () => {
+    vi.useFakeTimers();
+    const { getByTestId } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+    first?.emit("open");
+
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close");
+    await tick();
+
+    expect(getByTestId("terminal-status").textContent).toContain("Reconnecting");
+    expect(MockWebSocket.instances).toHaveLength(1);
+
+    // First backoff is 1s.
+    vi.advanceTimersByTime(1000);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.useRealTimers();
+  });
+
+  it("reconnects immediately when the tab returns to the foreground", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+    first?.emit("open");
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close"); // now in reconnecting, waiting out backoff
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    // Foreground reconnect fires without waiting for the backoff timer.
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("backs off with a growing delay that resets after a successful open", async () => {
+    vi.useFakeTimers();
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    let sock = MockWebSocket.instances[0];
+    sock.emit("open");
+    sock.readyState = MockWebSocket.CLOSED;
+    sock.emit("close"); // schedule at 1s
+    vi.advanceTimersByTime(999);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(2);
+
+    // Second consecutive failure (no successful open) backs off to 2s.
+    sock = MockWebSocket.instances[1];
+    sock.readyState = MockWebSocket.CLOSED;
+    sock.emit("close");
+    vi.advanceTimersByTime(1999);
+    expect(MockWebSocket.instances).toHaveLength(2);
+    vi.advanceTimersByTime(1);
+    expect(MockWebSocket.instances).toHaveLength(3);
+
+    // A successful open resets the backoff: the next failure waits 1s again.
+    sock = MockWebSocket.instances[2];
+    sock.emit("open");
+    sock.readyState = MockWebSocket.CLOSED;
+    sock.emit("close");
+    vi.advanceTimersByTime(1000);
+    expect(MockWebSocket.instances).toHaveLength(4);
+    vi.useRealTimers();
+  });
+
+  it("offers a manual reconnect button that opens a new socket", async () => {
+    const { findByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+    first?.emit("open");
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close");
+
+    const button = await findByRole("button", { name: "Reconnect" });
+    button.click();
+
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
   });
 
   it("sends an Escape byte when the Esc key is tapped", async () => {

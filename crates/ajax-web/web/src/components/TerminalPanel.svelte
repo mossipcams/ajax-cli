@@ -14,7 +14,9 @@
   let { handle }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state();
-  let status = $state("connecting");
+  // One of: connecting | connected | reconnecting | disconnected.
+  let status = $state<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
+  let statusDetail = $state("");
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
 
@@ -22,6 +24,14 @@
   let sendKey: (data: string) => void = () => {};
   let focusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
+  let requestReconnect: () => void = () => {};
+
+  const STATUS_LABELS: Record<typeof status, string> = {
+    connecting: "Connecting…",
+    connected: "Connected",
+    reconnecting: "Reconnecting…",
+    disconnected: "Disconnected",
+  };
 
   // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
   // modifier folded into the next key — from the keyboard OR this bar — by
@@ -194,7 +204,18 @@
     container?.addEventListener("touchend", onTouchEnd, { passive: true });
     container?.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
-    const socket = openTaskTerminalSocket(handle);
+    // Reassigned on every (re)connect; the input/resize closures below read this
+    // binding live, so they always target the current socket.
+    let socket: WebSocket;
+
+    // Mobile Safari drops the WebSocket whenever it backgrounds the tab, and a
+    // failed tmux attach closes it too. A dead socket must recover on its own
+    // (capped backoff) and immediately on foreground, rather than stranding the
+    // user on a frozen pane with the word "closed".
+    let reconnectAttempts = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let disposed = false;
+    const RECONNECT_MAX_DELAY_MS = 15000;
 
     // The iOS keyboard animates the visual viewport shorter over several frames.
     // A tmux-attached client SIGWINCHes the shared window on every resize, so
@@ -281,12 +302,6 @@
     viewport?.addEventListener("resize", scheduleDebouncedRefit);
     viewport?.addEventListener("scroll", scheduleDebouncedRefit);
 
-    socket.addEventListener("open", () => {
-      status = "connected";
-      schedulePostLayoutRefit();
-      requestAnimationFrame(() => term.focus());
-    });
-
     const readMessageData = async (data: unknown): Promise<string> => {
       if (typeof data === "string") return data;
       if (data instanceof Blob) {
@@ -302,7 +317,7 @@
       return String(data);
     };
 
-    socket.addEventListener("message", async (event) => {
+    const onSocketMessage = async (event: MessageEvent) => {
       const data = await readMessageData(event.data);
       try {
         const payload = JSON.parse(data) as { type?: string; data?: string };
@@ -319,7 +334,7 @@
           zerolag.clearFlushed();
           zerolag.rerender();
         } else if (payload.type === "error" && "error" in payload && payload.error) {
-          status = String(payload.error);
+          statusDetail = String(payload.error);
         }
       } catch {
         term.write(data);
@@ -331,15 +346,68 @@
         zerolag.clearFlushed();
         zerolag.rerender();
       }
-    });
+    };
 
-    socket.addEventListener("error", () => {
-      status = "error";
-    });
+    const scheduleReconnect = () => {
+      if (disposed) return;
+      status = "reconnecting";
+      const delay = Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
+      reconnectAttempts += 1;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        if (!disposed) connect();
+      }, delay);
+    };
 
-    socket.addEventListener("close", () => {
-      status = "closed";
-    });
+    const reconnectNow = () => {
+      if (disposed) return;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = undefined;
+      }
+      reconnectAttempts = 0;
+      status = "connecting";
+      connect();
+    };
+
+    function connect() {
+      socket = openTaskTerminalSocket(handle);
+      socket.addEventListener("open", () => {
+        // A successful open resets the backoff. A fresh tmux attach repaints the
+        // pane and the resize-on-open makes tmux redraw at the real size, so no
+        // explicit refresh frame is needed on reconnect.
+        reconnectAttempts = 0;
+        statusDetail = "";
+        status = "connected";
+        schedulePostLayoutRefit();
+        requestAnimationFrame(() => term.focus());
+      });
+      socket.addEventListener("message", onSocketMessage);
+      // An error is followed by close; let the close handler own reconnect so we
+      // never schedule it twice.
+      socket.addEventListener("error", () => {});
+      socket.addEventListener("close", () => {
+        if (disposed) return;
+        scheduleReconnect();
+      });
+    }
+
+    // Reconnect immediately when the tab returns to the foreground instead of
+    // waiting out the backoff (mobile Safari kills the socket on background).
+    const onVisibility = () => {
+      if (
+        document.visibilityState === "visible" &&
+        (status === "reconnecting" || status === "disconnected")
+      ) {
+        reconnectNow();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // Exposed to the status banner's manual "Reconnect" button.
+    requestReconnect = reconnectNow;
+
+    connect();
 
     term.onData((data) => {
       if (socket.readyState !== WebSocket.OPEN) return;
@@ -381,9 +449,12 @@
     });
 
     return () => {
+      disposed = true;
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      document.removeEventListener("visibilitychange", onVisibility);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
@@ -433,7 +504,18 @@
       }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
   </div>
   {#if status !== "connected"}
-    <div class="terminal-status" data-testid="terminal-status">{status}</div>
+    <div class="terminal-status" data-testid="terminal-status">
+      <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
+      {#if statusDetail}
+        <span class="terminal-status-detail">{statusDetail}</span>
+      {/if}
+      {#if status === "reconnecting" || status === "disconnected"}
+        <button
+          type="button"
+          class="terminal-status-reconnect"
+          onclick={() => requestReconnect()}>Reconnect</button>
+      {/if}
+    </div>
   {/if}
 </section>
 
@@ -532,12 +614,40 @@
   }
 
   .terminal-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
     padding: 8px 12px;
     border-top: 1px solid var(--rule);
     font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-muted);
+  }
+
+  .terminal-status-detail {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  .terminal-status-reconnect {
+    flex: none;
+    min-height: 32px;
+    margin-left: auto;
+    padding: 4px 12px;
+    border: 1px solid var(--teal);
+    border-radius: var(--radius-sm);
+    background: var(--teal-deep);
+    color: var(--paper);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
   }
 
   :global(.terminal-panel .xterm) {
