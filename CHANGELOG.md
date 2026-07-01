@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.27.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.1...ajax-cli-v0.27.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** make the mobile terminal scrollable via touch drag ([#251](https://github.com/mossipcams/ajax-cli/issues/251)) ([db070a0](https://github.com/mossipcams/ajax-cli/commit/db070a03ebcc8aece8eb6ad02632af5c02bfb779))
+
 ## [0.27.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.0...ajax-cli-v0.27.1) (2026-06-30)
 
 
