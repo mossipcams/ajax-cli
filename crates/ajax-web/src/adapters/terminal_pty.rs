@@ -183,6 +183,55 @@ fn run_tmux_command_blocking(command: &TmuxCommand) -> std::io::Result<std::proc
         .output()
 }
 
+/// True when `name` looks like an ephemeral per-client grouped session
+/// (`<shared>-m<12 lowercase hex>`). Requires the full 12-hex token so real
+/// task sessions such as `ajax-web-main` are never matched.
+pub fn is_ephemeral_session_name(name: &str) -> bool {
+    match name.rfind(EPHEMERAL_SESSION_INFIX) {
+        Some(index) if index > 0 => {
+            let token = &name[index + EPHEMERAL_SESSION_INFIX.len()..];
+            token.len() == 12
+                && token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        }
+        _ => false,
+    }
+}
+
+/// Select the ephemeral grouped sessions to kill from a list of live session
+/// names. A crashed bridge can leave its per-client session behind; the web
+/// server reaps them on startup so they don't accumulate.
+pub fn ephemeral_sessions_to_reap(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| is_ephemeral_session_name(name))
+        .cloned()
+        .collect()
+}
+
+/// Best-effort: list tmux sessions and kill any orphaned ephemeral grouped
+/// sessions. Never fails the caller; if tmux is absent or has no server there
+/// is nothing to reap.
+pub fn reap_orphan_terminal_sessions() {
+    let listing = match run_tmux_command_blocking(&TmuxCommand::new([
+        "list-sessions",
+        "-F",
+        "#{session_name}",
+    ])) {
+        Ok(output) if output.status.success() => output.stdout,
+        _ => return,
+    };
+    let names: Vec<String> = String::from_utf8_lossy(&listing)
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    for session in ephemeral_sessions_to_reap(&names) {
+        let _ = run_tmux_command_blocking(&TmuxCommand::new(["kill-session", "-t", &session]));
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct TerminalInputFrame {
     #[serde(rename = "type")]
@@ -583,6 +632,22 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("web/fix-login")));
+    }
+
+    #[test]
+    fn reaper_targets_only_ephemeral_grouped_sessions() {
+        let names = vec![
+            "ajax-web-x".to_string(),
+            "ajax-web-x-m0123456789ab".to_string(),
+            "ajax-web-main".to_string(),
+            "other".to_string(),
+            // Wrong token length must not match a real session ending in -m...
+            "ajax-web-x-mabc".to_string(),
+        ];
+
+        let targets = ephemeral_sessions_to_reap(&names);
+
+        assert_eq!(targets, vec!["ajax-web-x-m0123456789ab".to_string()]);
     }
 
     #[test]

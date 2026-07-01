@@ -286,6 +286,10 @@ where
         .build()
         .map_err(|error| WebError::CommandFailed(format!("web runtime failed: {error}")))?;
 
+    // Kill any ephemeral per-client terminal sessions left behind by a bridge
+    // that crashed before it could tear its own session down.
+    crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
+
     runtime.block_on(async move {
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
