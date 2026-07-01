@@ -309,8 +309,9 @@
   }
 
   /* Mobile: tighten chrome so the full-screen terminal (see .task-detail rules
-     in styles.css) gets maximum height. */
-  @media (max-width: 767px) {
+     in styles.css) gets maximum height. Includes landscape phones (coarse
+     pointer, short viewport) that exceed the width breakpoint. */
+  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
     .detail-header { margin-bottom: 6px; }
     .detail-header .back { min-height: 34px; padding: 5px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; }

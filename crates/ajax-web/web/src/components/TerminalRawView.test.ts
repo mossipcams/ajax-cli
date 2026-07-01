@@ -27,10 +27,15 @@ const clearFlushed = vi.fn();
 const rerender = vi.fn();
 
 const focus = vi.fn();
+const blur = vi.fn();
+const paste = vi.fn();
+const resize = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
 let terminalOptions: unknown;
+let liveOptions: { fontSize?: number } | undefined;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
 let bufferActive = { viewportY: 0, baseY: 0 };
+let proposedDimensions: { cols: number; rows: number } | undefined;
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
@@ -46,14 +51,24 @@ vi.mock("@xterm/xterm", () => ({
     scrollLines = scrollLines;
     dispose = dispose;
     focus = focus;
+    blur = blur;
+    paste = paste;
+    resize = (cols: number, rows: number) => {
+      this.cols = cols;
+      this.rows = rows;
+      resize(cols, rows);
+    };
     onData = vi.fn((handler: (data: string) => void) => {
       onDataHandler = handler;
     });
     onScroll = vi.fn((handler: (viewportY: number) => void) => {
       onScrollHandler = handler;
     });
+    options: { fontSize?: number };
     constructor(options: unknown) {
       terminalOptions = options;
+      this.options = { fontSize: (options as { fontSize?: number }).fontSize };
+      liveOptions = this.options;
       lastTextarea = this.textarea;
     }
   },
@@ -63,6 +78,7 @@ vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = fit;
     dispose = fitDispose;
+    proposeDimensions = () => proposedDimensions;
   },
 }));
 
@@ -119,7 +135,13 @@ beforeEach(() => {
   onScrollHandler = undefined;
   bufferActive.viewportY = 0;
   bufferActive.baseY = 0;
+  proposedDimensions = undefined;
+  liveOptions = undefined;
+  paste.mockClear();
+  resize.mockClear();
   scrollLines.mockClear();
+  window.localStorage.clear();
+  delete (navigator as { clipboard?: unknown }).clipboard;
   flushedCount = 0;
   flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
@@ -449,7 +471,12 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
-  it("keeps fitting locally but withholds the server resize while the keyboard is open", async () => {
+  it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
+    // The server resize is withheld while the keyboard is open, so the local
+    // grid must not shrink either: a grid smaller than the PTY makes tmux
+    // cursor-address rows that no longer exist locally, and xterm clamps
+    // those writes to its bottom row — the TUI input box drifts up and
+    // overwrites the line below it.
     vi.useFakeTimers();
     Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
@@ -457,6 +484,7 @@ describe("TerminalPanel", () => {
     socket?.emit("open");
     vi.advanceTimersByTime(400); // let the open-path refits settle
     fit.mockClear();
+    resize.mockClear();
     socket!.send.mockClear();
 
     const resizeFrames = () =>
@@ -469,8 +497,31 @@ describe("TerminalPanel", () => {
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(500);
 
-    expect(fit).toHaveBeenCalled(); // local fit still runs
+    expect(fit).not.toHaveBeenCalled(); // grid untouched while open
+    expect(resize).not.toHaveBeenCalled();
     expect(resizeFrames()).toHaveLength(0); // no server resize while open
+    vi.useRealTimers();
+  });
+
+  it("anchors the visible crop to the canvas bottom while the keyboard is open", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    vi.advanceTimersByTime(400);
+
+    // The frozen grid is taller than the keyboard-shrunken host; the crop
+    // must show the bottom of the canvas (cursor/input row), not the top.
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    Object.defineProperty(host, "scrollHeight", { value: 800, configurable: true });
+    Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
+
+    (window.visualViewport as unknown as { height: number }).height = 400;
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(500);
+
+    expect(host.scrollTop).toBe(500);
     vi.useRealTimers();
   });
 
@@ -542,6 +593,50 @@ describe("TerminalPanel", () => {
         2,
         JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
       );
+    });
+  });
+
+  it("floors the PTY at 80 columns when the viewport proposes fewer", async () => {
+    proposedDimensions = { cols: 55, rows: 30 };
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(80, 30);
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 80, rows: 30 }),
+      );
+    });
+  });
+
+  it("keeps a wide fit proposal above the column floor untouched", async () => {
+    proposedDimensions = { cols: 120, rows: 40 };
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(120, 40);
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "resize", cols: 120, rows: 40 }),
+      );
+    });
+  });
+
+  it("falls back to a plain fit when no dimensions can be proposed", async () => {
+    proposedDimensions = undefined;
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    fit.mockClear();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(fit).toHaveBeenCalled();
+      expect(resize).not.toHaveBeenCalled();
     });
   });
 
@@ -651,6 +746,59 @@ describe("TerminalPanel", () => {
     expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
   });
 
+  it("offers a Hide keyboard key that blurs the terminal", async () => {
+    // iPhone keyboards have no dismiss key and the keyboard-open chrome
+    // collapse hides the Back button, so without this key the operator is
+    // trapped typing with a half-height terminal.
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Hide keyboard" }).click();
+
+    await waitFor(() => {
+      expect(blur).toHaveBeenCalled();
+    });
+  });
+
+  it("pastes clipboard text through the terminal paste path", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockResolvedValue("git push origin main") },
+      configurable: true,
+    });
+    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      // term.paste() honors bracketed-paste mode and flows through the
+      // existing onData → socket path, so the PTY receives it like any input.
+      expect(paste).toHaveBeenCalledWith("git push origin main");
+      expect(focus).toHaveBeenCalled();
+    });
+  });
+
+  it("surfaces a clipboard read failure instead of silently doing nothing", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    const { getByRole, getByTestId } = render(TerminalPanel, {
+      props: { handle: "web/fix-login" },
+    });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      expect(getByTestId("terminal-status").textContent).toContain("Clipboard");
+    });
+    expect(paste).not.toHaveBeenCalled();
+  });
+
   it("sends an Escape byte when the Esc key is tapped", async () => {
     const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
@@ -718,6 +866,30 @@ describe("TerminalPanel", () => {
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
   });
 
+  it("toggles an expanded terminal mode from the key bar", async () => {
+    const { getByRole, unmount } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const toggle = getByRole("button", { name: "Expand terminal" });
+
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+
+    toggle.click();
+    await tick();
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+
+    toggle.click();
+    await tick();
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+
+    // Leaving the task view while expanded must not leak the takeover class.
+    toggle.click();
+    await tick();
+    unmount();
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+  });
+
   it("disables autocorrect/autocapitalize on the xterm input", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
@@ -745,6 +917,31 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("treats a coarse-pointer landscape phone as mobile for font sizing", async () => {
+    let seenQuery = "";
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => {
+        seenQuery = query;
+        // A landscape iPhone: wider than 767px but coarse-pointer and short.
+        return {
+          matches: query.includes("pointer: coarse"),
+          media: query,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        };
+      }),
+    );
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      // One combined query covers portrait width and landscape phone shape.
+      expect(seenQuery).toContain("max-width: 767px");
+      expect(seenQuery).toContain("(pointer: coarse) and (max-height: 500px)");
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(10);
+    });
+  });
+
   it("uses a compact font size on a desktop viewport", async () => {
     vi.stubGlobal(
       "matchMedia",
@@ -762,12 +959,17 @@ describe("TerminalPanel", () => {
     });
   });
 
-  function makeTouch(type: string, clientY: number): Event {
+  function makeTouch(type: string, clientY: number, clientX = 10): Event {
     const event = new Event(type, { bubbles: true, cancelable: true });
     Object.defineProperty(event, "touches", {
-      value: [{ clientX: 10, clientY }],
+      value: [{ clientX, clientY }],
     });
     return event;
+  }
+
+  function sizeHostForPan(host: HTMLElement, scrollWidth = 480, clientWidth = 338) {
+    Object.defineProperty(host, "scrollWidth", { value: scrollWidth, configurable: true });
+    Object.defineProperty(host, "clientWidth", { value: clientWidth, configurable: true });
   }
 
   function appendXtermLayer(host: HTMLElement): HTMLElement {
@@ -803,6 +1005,159 @@ describe("TerminalPanel", () => {
 
     expect(scrollLines).toHaveBeenCalledWith(-1);
     expect(scrollLines.mock.calls.length).toBeGreaterThan(0);
+  });
+
+  it("pans the terminal horizontally on a sideways drag", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    sizeHostForPan(host);
+
+    // Finger moves left 60px with no vertical travel: the canvas pans right.
+    host.dispatchEvent(makeTouch("touchstart", 200, 200));
+    const move = makeTouch("touchmove", 200, 140);
+    host.dispatchEvent(move);
+
+    expect(host.scrollLeft).toBe(60);
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(move.defaultPrevented).toBe(true);
+  });
+
+  it("clamps the horizontal pan at the canvas edge", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    sizeHostForPan(host); // 480px canvas in a 338px viewport → max pan 142
+
+    host.dispatchEvent(makeTouch("touchstart", 200, 600));
+    host.dispatchEvent(makeTouch("touchmove", 200, 100));
+
+    expect(host.scrollLeft).toBe(142);
+
+    // Panning back past the left edge clamps at zero.
+    host.dispatchEvent(makeTouch("touchstart", 200, 100));
+    host.dispatchEvent(makeTouch("touchmove", 200, 600));
+
+    expect(host.scrollLeft).toBe(0);
+  });
+
+  it("does not pan horizontally during a vertical-only drag", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    sizeHostForPan(host);
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    host.dispatchEvent(makeTouch("touchmove", 140));
+
+    expect(scrollLines).toHaveBeenCalled();
+    expect(host.scrollLeft).toBe(0);
+  });
+
+  function makePinch(type: string, points: Array<{ x: number; y: number }>): Event {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "touches", {
+      value: points.map((point) => ({ clientX: point.x, clientY: point.y })),
+    });
+    return event;
+  }
+
+  it("applies a persisted font size on mount", async () => {
+    window.localStorage.setItem("ajax.terminal.fontSize", "16");
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(16);
+    });
+  });
+
+  it("ignores an out-of-range persisted font size and uses the default", async () => {
+    window.localStorage.setItem("ajax.terminal.fontSize", "999");
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
+    });
+  });
+
+  it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+
+    // Two fingers land 100px apart (base font 13), spread to 150px:
+    // 13 * 1.5 = 19.5 → rounds to 20, which is also the clamp ceiling.
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    const move = makePinch("touchmove", [
+      { x: 75, y: 100 },
+      { x: 225, y: 100 },
+    ]);
+    host.dispatchEvent(move);
+
+    expect(liveOptions?.fontSize).toBe(20);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("20");
+    expect(move.defaultPrevented).toBe(true);
+    // A pinch is never a scroll: the buffer must not move.
+    expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+
+    // 100px → 20px spread: 13 * 0.2 = 2.6 → clamped up to the 7px floor.
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 140, y: 100 },
+        { x: 160, y: 100 },
+      ]),
+    );
+
+    expect(liveOptions?.fontSize).toBe(7);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("7");
+  });
+
+  it("keeps scrolling with momentum after a fast drag is released", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+
+    // A fast upward drag (~60px) then release: the drag itself scrolls 3
+    // notches (18px fallback cell), and the fling must keep going afterwards.
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    host.dispatchEvent(makeTouch("touchmove", 140));
+    const dragCalls = scrollLines.mock.calls.length;
+    expect(dragCalls).toBeGreaterThan(0);
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+
+    await waitFor(() => {
+      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
+    });
+  });
+
+  it("cancels a running fling the moment a new touch lands", async () => {
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    host.dispatchEvent(makeTouch("touchmove", 140));
+    const dragCalls = scrollLines.mock.calls.length;
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await waitFor(() => {
+      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
+    });
+
+    // Finger down again: the fling stops dead so the user regains control.
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    const atCancel = scrollLines.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(scrollLines.mock.calls.length).toBe(atCancel);
   });
 
   it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
@@ -865,7 +1220,11 @@ describe("TerminalPanel", () => {
   });
 
   it("uses tighter mobile terminal chrome without changing desktop sizing", () => {
-    const mobileBlock = terminalRawViewSource.match(/@media \(max-width: 767px\) \{([\s\S]*?)\n  \}/);
+    // The mobile block covers portrait width AND landscape phones (coarse
+    // pointer, short viewport).
+    const mobileBlock = terminalRawViewSource.match(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
+    );
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 

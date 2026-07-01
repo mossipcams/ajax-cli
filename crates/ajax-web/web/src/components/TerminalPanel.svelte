@@ -25,13 +25,15 @@
     overflow: hidden;
   }
 
-  @media (min-width: 768px) {
+  /* Landscape phones (coarse pointer, short viewport) stay on the mobile
+     flex-fill layout even though they exceed the width breakpoint. */
+  @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
     .terminal-host-shell {
       height: min(58vh, 560px);
     }
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
     .terminal-host-shell {
       margin-top: 8px;
     }

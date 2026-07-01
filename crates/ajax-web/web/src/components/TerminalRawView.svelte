@@ -4,7 +4,15 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { ZerolagInputAddon } from "xterm-zerolag-input";
   import { openTaskTerminalSocket } from "../api";
-  import { wheelNotchesFromDrag } from "../terminalTouchScroll";
+  import { flingFrames, wheelNotchesFromDrag } from "../terminalTouchScroll";
+  import {
+    clampPan,
+    flooredCols,
+    pinchFontSize,
+    MAX_FONT_SIZE,
+    MIN_FONT_SIZE,
+    MIN_TERMINAL_COLS,
+  } from "../terminalGeometry";
   import "@xterm/xterm/css/xterm.css";
 
   interface Props {
@@ -19,12 +27,25 @@
   let statusDetail = $state("");
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
+  let expanded = $state(false);
+
+  // Expanded mode hands the terminal the whole screen: on mobile the class
+  // hides the task chrome (header/status/actions/details, see styles.css); on
+  // desktop it lifts the panel into a fixed full-viewport overlay. The class
+  // lives on <html> so page-level chrome outside this component can react.
+  const EXPANDED_CLASS = "terminal-expanded";
+  const setExpanded = (next: boolean) => {
+    expanded = next;
+    document.documentElement.classList.toggle(EXPANDED_CLASS, next);
+  };
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
   let focusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
+  let requestPaste: () => void = () => {};
+  let blurTerm: () => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -100,18 +121,48 @@
   // unavailable.
   const MOBILE_FONT_SIZE = 10;
   const DESKTOP_FONT_SIZE = 13;
+  // Portrait phones match on width; a landscape phone is wider than the
+  // breakpoint but still a phone (coarse pointer, short viewport), so it gets
+  // the same mobile treatment instead of falling into the desktop rules.
+  const MOBILE_MEDIA_QUERY = "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
   const isMobileViewport = (): boolean => {
     if (typeof window.matchMedia === "function") {
-      return window.matchMedia("(max-width: 767px)").matches;
+      return window.matchMedia(MOBILE_MEDIA_QUERY).matches;
     }
     return (navigator.maxTouchPoints ?? 0) > 0;
+  };
+
+  // Pinch-to-zoom persists the operator's legibility choice; a valid stored
+  // size wins over the per-device default. localStorage can throw (Safari
+  // private mode), so reads/writes are best-effort.
+  const FONT_SIZE_STORAGE_KEY = "ajax.terminal.fontSize";
+  const persistedFontSize = (): number | undefined => {
+    try {
+      const raw = window.localStorage.getItem(FONT_SIZE_STORAGE_KEY);
+      if (!raw) return undefined;
+      const parsed = Number.parseInt(raw, 10);
+      if (!Number.isFinite(parsed) || parsed < MIN_FONT_SIZE || parsed > MAX_FONT_SIZE) {
+        return undefined;
+      }
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  };
+  const persistFontSize = (size: number) => {
+    try {
+      window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size));
+    } catch {
+      // Best-effort: the session still uses the new size.
+    }
   };
 
   onMount(() => {
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: isMobileViewport() ? MOBILE_FONT_SIZE : DESKTOP_FONT_SIZE,
+      fontSize:
+        persistedFontSize() ?? (isMobileViewport() ? MOBILE_FONT_SIZE : DESKTOP_FONT_SIZE),
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",
@@ -157,6 +208,20 @@
     let touchActive = false;
     let touchLastY = 0;
     let touchAccumPx = 0;
+    let touchLastX = 0;
+    let touchAccumXPx = 0;
+
+    // Two-finger pinch adjusts the font size (the legibility ↔ visible-columns
+    // lever now that the PTY keeps an 80-column floor). The gesture scales
+    // from the size it started at, so a slow pinch can't compound drift.
+    let pinchStartDistance = 0;
+    let pinchBaseFontSize = 0;
+
+    const touchDistance = (touches: TouchList): number =>
+      Math.hypot(
+        touches[0].clientX - touches[1].clientX,
+        touches[0].clientY - touches[1].clientY,
+      );
 
     const cellHeightPx = (): number => {
       const viewport = container?.querySelector<HTMLElement>(".xterm-viewport");
@@ -172,22 +237,100 @@
       }
     };
 
+    // Momentum: a fast release keeps scrolling with decaying inertia (the
+    // synthetic scroll otherwise stops dead the instant the finger lifts).
+    // The frame sequence is precomputed by flingFrames; any new touch or
+    // wheel cancels it so the user always wins.
+    let flingHandle = 0;
+    let flingVelocity = 0; // px per ms, positive = toward newest output
+    let lastMoveTime = 0;
+    let touchScrolled = false;
+
+    const cancelFling = () => {
+      if (flingHandle) {
+        cancelAnimationFrame(flingHandle);
+        flingHandle = 0;
+      }
+    };
+
+    const startFling = (frames: number[]) => {
+      cancelFling();
+      let index = 0;
+      const step = () => {
+        if (index >= frames.length) {
+          flingHandle = 0;
+          return;
+        }
+        const lines = frames[index];
+        index += 1;
+        if (lines !== 0) scrollLocalLines(lines);
+        flingHandle = requestAnimationFrame(step);
+      };
+      flingHandle = requestAnimationFrame(step);
+    };
+
     const onTouchStart = (event: TouchEvent) => {
+      cancelFling();
+      if (event.touches.length === 2) {
+        touchActive = false;
+        pinchStartDistance = touchDistance(event.touches);
+        pinchBaseFontSize = term.options.fontSize ?? DESKTOP_FONT_SIZE;
+        return;
+      }
+      pinchStartDistance = 0;
       if (event.touches.length !== 1) {
         touchActive = false;
         return;
       }
       touchActive = true;
+      touchScrolled = false;
       touchAccumPx = 0;
+      touchAccumXPx = 0;
       touchLastY = event.touches[0].clientY;
+      touchLastX = event.touches[0].clientX;
+      flingVelocity = 0;
+      lastMoveTime = performance.now();
     };
 
     const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length === 2 && pinchStartDistance > 0) {
+        // Own the pinch so iOS can't page-zoom; font rounding means the
+        // terminal only re-renders when the size crosses a whole pixel.
+        if (event.cancelable) event.preventDefault();
+        const next = pinchFontSize(
+          pinchBaseFontSize,
+          pinchStartDistance,
+          touchDistance(event.touches),
+        );
+        if (next !== term.options.fontSize) {
+          term.options.fontSize = next;
+          persistFontSize(next);
+          scheduleDebouncedRefit();
+        }
+        return;
+      }
       if (!touchActive || event.touches.length !== 1) return;
       const touch = event.touches[0];
-      touchAccumPx += touchLastY - touch.clientY;
+      const dy = touchLastY - touch.clientY;
+      touchAccumPx += dy;
+      touchAccumXPx += touchLastX - touch.clientX;
       touchLastY = touch.clientY;
-      if (Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
+      touchLastX = touch.clientX;
+
+      // Release-velocity estimate for the momentum fling; low-passed so one
+      // jittery event can't spike it.
+      const now = performance.now();
+      const dtMs = Math.max(1, now - lastMoveTime);
+      lastMoveTime = now;
+      flingVelocity = 0.8 * (dy / dtMs) + 0.2 * flingVelocity;
+
+      if (
+        Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX &&
+        Math.abs(touchAccumXPx) < TOUCH_SCROLL_THRESHOLD_PX
+      ) {
+        return;
+      }
+      touchScrolled = true;
 
       // Past the threshold this is a scroll, not a tap, so own the gesture NOW —
       // before a full cell of movement accumulates. iOS Safari latches native
@@ -197,6 +340,17 @@
       // iOS from synthesizing the click that would pop the keyboard.
       if (event.cancelable) event.preventDefault();
 
+      // Horizontal component pans the 80-col canvas within the host; the host
+      // is overflow:hidden so only this handler ever moves it.
+      if (touchAccumXPx !== 0 && container) {
+        container.scrollLeft = clampPan(
+          container.scrollLeft + touchAccumXPx,
+          container.scrollWidth,
+          container.clientWidth,
+        );
+        touchAccumXPx = 0;
+      }
+
       const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, cellHeightPx());
       touchAccumPx = remainderPx;
       if (notches === 0) return;
@@ -204,11 +358,32 @@
     };
 
     const onTouchEnd = () => {
+      // Only a gesture that actually scrolled may fling; a tap with a few
+      // pixels of jitter must stay a tap.
+      if (touchActive && touchScrolled) {
+        const frames = flingFrames(flingVelocity, cellHeightPx());
+        if (frames.length) startFling(frames);
+      }
+      flingVelocity = 0;
       touchActive = false;
       touchAccumPx = 0;
+      touchAccumXPx = 0;
+      pinchStartDistance = 0;
+    };
+
+    // touchcancel means the system stole the gesture (e.g. an incoming call
+    // sheet); momentum from a stolen gesture would feel haunted, so reset
+    // without flinging.
+    const onTouchCancel = () => {
+      flingVelocity = 0;
+      touchActive = false;
+      touchAccumPx = 0;
+      touchAccumXPx = 0;
+      pinchStartDistance = 0;
     };
 
     const onWheel = (event: WheelEvent) => {
+      cancelFling();
       const lineDelta =
         event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
           ? Math.trunc(event.deltaY / cellHeightPx())
@@ -227,7 +402,7 @@
     container?.addEventListener("touchstart", onTouchStart, touchStartOptions);
     container?.addEventListener("touchmove", onTouchMove, touchMoveOptions);
     container?.addEventListener("touchend", onTouchEnd, scrollEndOptions);
-    container?.addEventListener("touchcancel", onTouchEnd, scrollEndOptions);
+    container?.addEventListener("touchcancel", onTouchCancel, scrollEndOptions);
     container?.addEventListener("wheel", onWheel, wheelOptions);
 
     // Reassigned on every (re)connect; the input/resize closures below read this
@@ -272,17 +447,67 @@
       socket.send(JSON.stringify({ type: "input", data }));
     };
     focusTerm = () => term.focus();
+    // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
+    // collapse hides the Back button; blurring xterm's textarea is the only
+    // way to hand the screen back to the full-height terminal.
+    blurTerm = () => term.blur();
     jumpToBottom = () => {
       term.scrollToBottom();
       hasUnseenOutput = false;
       term.focus();
     };
+    // iOS long-press paste doesn't reliably reach xterm's hidden textarea, so
+    // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
+    // mode and flows through the normal onData → socket path. Failures must be
+    // visible: silently doing nothing reads as a broken button.
+    requestPaste = () => {
+      const clipboard = navigator.clipboard;
+      if (!clipboard || typeof clipboard.readText !== "function") {
+        statusDetail = "Clipboard unavailable in this browser";
+        return;
+      }
+      clipboard
+        .readText()
+        .then((text) => {
+          if (text) term.paste(text);
+          statusDetail = "";
+          term.focus();
+        })
+        .catch(() => {
+          statusDetail = "Clipboard read failed — allow paste access and retry";
+        });
+    };
 
     let refitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
 
+    // Fit rows to the container but never let the PTY drop below 80 columns:
+    // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
+    // nearly every line. When the floor exceeds what fits, the canvas extends
+    // past the right edge and horizontal pan brings it into view.
     const fitNow = () => {
-      fitAddon.fit();
+      if (keyboardOpen()) {
+        // The server resize is withheld while the keyboard is open, so the
+        // local grid must not change either: a grid smaller than the PTY makes
+        // tmux cursor-address rows that no longer exist locally, and xterm
+        // clamps those writes to its bottom row — the TUI input box drifts up
+        // and overwrites the line below it. Keep grid == PTY and crop the
+        // taller canvas bottom-anchored so the cursor/input row stays visible
+        // above the keyboard.
+        if (container) {
+          container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        }
+        if (pinnedToBottom) term.scrollToBottom();
+        return;
+      }
+      if (container) container.scrollTop = 0;
+      const proposed = fitAddon.proposeDimensions();
+      if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
+        term.resize(flooredCols(proposed.cols, MIN_TERMINAL_COLS), proposed.rows);
+      } else {
+        // jsdom / pre-layout paints propose nothing; plain fit is the best guess.
+        fitAddon.fit();
+      }
       if (pinnedToBottom) term.scrollToBottom();
     };
 
@@ -481,6 +706,7 @@
 
     return () => {
       disposed = true;
+      setExpanded(false);
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
@@ -491,10 +717,11 @@
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
       viewport?.removeEventListener("resize", scheduleDebouncedRefit);
       viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
+      cancelFling();
       container?.removeEventListener("touchstart", onTouchStart, touchStartOptions);
       container?.removeEventListener("touchmove", onTouchMove, touchMoveOptions);
       container?.removeEventListener("touchend", onTouchEnd, scrollEndOptions);
-      container?.removeEventListener("touchcancel", onTouchEnd, scrollEndOptions);
+      container?.removeEventListener("touchcancel", onTouchCancel, scrollEndOptions);
       container?.removeEventListener("wheel", onWheel, wheelOptions);
       socket.close();
       zerolag.dispose();
@@ -534,8 +761,29 @@
         toggleCtrl();
         focusTerm();
       }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
+    <button
+      type="button"
+      class="terminal-key"
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => requestPaste()}>Paste</button>
+    <button
+      type="button"
+      class="terminal-key"
+      aria-label="Hide keyboard"
+      onclick={() => blurTerm()}>⌄</button>
+    <button
+      type="button"
+      class="terminal-key terminal-key-expand"
+      class:is-armed={expanded}
+      aria-label="Expand terminal"
+      aria-pressed={expanded}
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => {
+        setExpanded(!expanded);
+        focusTerm();
+      }}>⛶</button>
   </div>
-  {#if status !== "connected"}
+  {#if status !== "connected" || statusDetail}
     <div class="terminal-status" data-testid="terminal-status">
       <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
       {#if statusDetail}
@@ -564,13 +812,15 @@
     overflow: hidden;
   }
 
-  @media (min-width: 768px) {
+  /* A landscape phone exceeds the width breakpoint but must not get the
+     fixed desktop panel height — its takeover layout flex-fills instead. */
+  @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
     .terminal-panel {
       height: min(58vh, 560px);
     }
   }
 
-  @media (max-width: 767px) {
+  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
     .terminal-panel {
       margin-top: 8px;
     }
@@ -595,6 +845,11 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
+    /* The 80-column floor can make the xterm canvas wider than the phone
+       viewport. The host clips it and the touch handler pans it via
+       scrollLeft (programmatic scrolling works on overflow:hidden boxes);
+       nothing else may scroll this element. */
+    overflow: hidden;
     /* Ajax synthesizes 100% of scrolling from touch drags via
        term.scrollLines() (see the touchmove handler). Without touch-action:none
        iOS Safari latches a native pan in the first pixels of a vertical drag —
@@ -709,12 +964,10 @@
 
   :global(.terminal-panel .xterm) {
     height: 100%;
-    max-width: 100%;
     min-width: 0;
   }
 
   :global(.terminal-panel .xterm-viewport) {
-    max-width: 100%;
     /* Ajax owns 100% of scrollback: every touch and wheel gesture is
        intercepted and translated into term.scrollLines(). Native scrolling here
        is not just redundant — on iOS Safari the momentum-composited layer that
@@ -729,11 +982,8 @@
     touch-action: none;
   }
 
-  :global(.terminal-panel .xterm-screen),
-  :global(.terminal-panel .xterm-rows),
-  :global(.terminal-panel .xterm-link-layer),
-  :global(.terminal-panel .xterm-selection-layer),
-  :global(.terminal-panel .xterm-text-layer) {
-    max-width: 100%;
-  }
+  /* No max-width clamps on .xterm-screen/.xterm-rows or the render layers:
+     the renderer sizes them to cols × cellWidth, and with the 80-column floor
+     they legitimately exceed the host width. The host's overflow:hidden +
+     scrollLeft pan owns the clipping instead. */
 </style>

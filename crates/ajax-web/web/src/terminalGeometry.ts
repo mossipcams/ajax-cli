@@ -1,0 +1,66 @@
+/**
+ * Pure sizing math for the mobile terminal's wide-canvas mode.
+ *
+ * On a phone the viewport fits far fewer than the ~80 columns the hosted
+ * tmux/Claude Code TUI assumes, so instead of letting the PTY shrink (and the
+ * output wrap), the grid keeps a column floor and the canvas extends past the
+ * screen edge. These helpers own the column floor, the horizontal pan clamp,
+ * and the pinch-distance → font-size mapping so the gesture wiring in
+ * TerminalRawView stays thin and the math stays unit-testable.
+ */
+
+/** Never let the PTY drop below this many columns. */
+export const MIN_TERMINAL_COLS = 80;
+
+/** Pinch-zoom font bounds: below 7px text is unreadable, above 20px the
+ * 80-col canvas outgrows any phone gesture's usefulness. */
+export const MIN_FONT_SIZE = 7;
+export const MAX_FONT_SIZE = 20;
+
+/**
+ * Raise a fitted column proposal to the column floor. Invalid proposals
+ * (absent, non-finite, or non-positive — e.g. pre-layout fits) get the floor.
+ */
+export function flooredCols(proposedCols: number | undefined, minCols: number): number {
+  if (proposedCols === undefined || !Number.isFinite(proposedCols) || proposedCols <= 0) {
+    return minCols;
+  }
+  return Math.max(proposedCols, minCols);
+}
+
+/**
+ * Clamp a horizontal pan offset to the scrollable range
+ * `[0, max(0, contentPx - viewportPx)]`. Non-finite inputs return 0 so a
+ * bad measurement can never fling the canvas off-screen.
+ */
+export function clampPan(panPx: number, contentPx: number, viewportPx: number): number {
+  if (!Number.isFinite(panPx) || !Number.isFinite(contentPx) || !Number.isFinite(viewportPx)) {
+    return 0;
+  }
+  const maxPan = Math.max(0, contentPx - viewportPx);
+  return Math.min(Math.max(panPx, 0), maxPan);
+}
+
+/**
+ * Map a two-finger pinch to a font size: scale the size the gesture started
+ * at by the finger-distance ratio, rounded and clamped. Zero/non-finite
+ * distances (finger lift mid-gesture) leave the base size untouched.
+ */
+export function pinchFontSize(
+  baseFontSize: number,
+  startDistancePx: number,
+  currentDistancePx: number,
+  min: number = MIN_FONT_SIZE,
+  max: number = MAX_FONT_SIZE,
+): number {
+  if (
+    !Number.isFinite(startDistancePx) ||
+    !Number.isFinite(currentDistancePx) ||
+    startDistancePx <= 0 ||
+    currentDistancePx <= 0
+  ) {
+    return baseFontSize;
+  }
+  const scaled = Math.round(baseFontSize * (currentDistancePx / startDistancePx));
+  return Math.min(Math.max(scaled, min), max);
+}
