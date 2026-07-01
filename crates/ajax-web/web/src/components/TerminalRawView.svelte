@@ -90,10 +90,15 @@
     return controlModify(data);
   };
 
-  // iPhone-sized viewports need readable cells without wasting vertical space.
+  // On an iPhone-width viewport the render area is only ~338px, so the font
+  // size is really a column-count lever: at 12px FitAddon yields ~46 columns,
+  // which is far below the ~80 the hosted Claude Code / tmux TUI assumes, so
+  // nearly every line wrapped mid-path and the output looked broken. 10px trades
+  // a little cell height for ~55 columns — still legible on a retina phone, with
+  // markedly less wrapping. Desktop keeps a slightly larger, comfortable cell.
   // Prefer the media query; fall back to touch capability where matchMedia is
   // unavailable.
-  const MOBILE_FONT_SIZE = 12;
+  const MOBILE_FONT_SIZE = 10;
   const DESKTOP_FONT_SIZE = 13;
   const isMobileViewport = (): boolean => {
     if (typeof window.matchMedia === "function") {

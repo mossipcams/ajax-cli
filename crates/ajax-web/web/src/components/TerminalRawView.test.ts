@@ -741,7 +741,7 @@ describe("TerminalPanel", () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
-      expect((terminalOptions as { fontSize: number }).fontSize).toBe(12);
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(10);
     });
   });
 
