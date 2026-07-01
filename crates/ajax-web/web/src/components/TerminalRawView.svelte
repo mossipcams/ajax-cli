@@ -376,9 +376,14 @@
         // A successful open resets the backoff. A fresh tmux attach repaints the
         // pane and the resize-on-open makes tmux redraw at the real size, so no
         // explicit refresh frame is needed on reconnect.
+        const isReconnect = reconnectAttempts > 0;
         reconnectAttempts = 0;
         statusDetail = "";
         status = "connected";
+        // Keystrokes sent on the previous socket will never be echoed by this
+        // new one, so drop the local input overlay; otherwise those characters
+        // would linger as ghost text until the next output frame reconciled it.
+        if (isReconnect) zerolag.clear();
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term.focus());
       });

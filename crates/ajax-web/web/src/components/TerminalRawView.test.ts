@@ -585,6 +585,34 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
+  it("clears the local input overlay on reconnect so stale echoes don't linger", async () => {
+    vi.useFakeTimers();
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+    first?.emit("open");
+
+    clear.mockClear();
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close");
+    vi.advanceTimersByTime(1000);
+
+    const second = MockWebSocket.instances[1];
+    second?.emit("open");
+
+    expect(clear).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not clear the overlay on the very first connect", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+
+    clear.mockClear();
+    first?.emit("open");
+
+    expect(clear).not.toHaveBeenCalled();
+  });
+
   it("offers a manual reconnect button that opens a new socket", async () => {
     const { findByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
