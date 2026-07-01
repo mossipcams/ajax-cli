@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.27.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.4...ajax-cli-v0.27.5) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** shrink the terminal font to 6px ([#257](https://github.com/mossipcams/ajax-cli/issues/257)) ([7d08879](https://github.com/mossipcams/ajax-cli/commit/7d0887997e0c64d3f8542706aa19d48c303d239e))
+
 ## [0.27.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.3...ajax-cli-v0.27.4) (2026-07-01)
 
 
