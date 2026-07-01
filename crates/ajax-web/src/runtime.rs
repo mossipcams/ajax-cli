@@ -550,6 +550,14 @@ where
     if let Some(task_handle) = handle.strip_suffix("/terminal") {
         return axum_task_terminal(State(state), task_handle.to_string(), req).await;
     }
+    if let Some(task_handle) = handle.strip_suffix("/snapshot") {
+        let since = req
+            .uri()
+            .query()
+            .and_then(|query| query_param(query, "since"))
+            .map(|value| value.to_string());
+        return axum_task_snapshot(State(state), task_handle.to_string(), since).await;
+    }
     axum_task_detail::<C, B>(State(state), handle).await
 }
 
@@ -602,6 +610,53 @@ where
     upgrade.on_upgrade(move |socket| async move {
         crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
     })
+}
+
+fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|pair| {
+        let (name, value) = pair.split_once('=')?;
+        (name == key).then_some(value)
+    })
+}
+
+async fn axum_task_snapshot<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    since: Option<String>,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let (context, mut runner) = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (guard.context.clone(), guard.runner.clone())
+    };
+
+    match crate::slices::terminal::task_pane_snapshot(
+        &context,
+        &mut runner,
+        &handle,
+        since.as_deref(),
+        crate::slices::terminal::PANE_SNAPSHOT_LIMIT,
+    ) {
+        Ok(view) => json_value_response(200, serde_json::to_value(view).unwrap_or_default()),
+        Err(crate::slices::terminal::SnapshotRouteError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::terminal::SnapshotRouteError::SessionMissing) => json_value_response(
+            409,
+            serde_json::json!({ "ok": false, "error": "tmux session missing" }),
+        ),
+        Err(crate::slices::terminal::SnapshotRouteError::Command(message)) => json_value_response(
+            502,
+            serde_json::json!({ "ok": false, "error": format!("pane capture failed: {message}") }),
+        ),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
