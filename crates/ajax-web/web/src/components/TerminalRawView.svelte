@@ -189,13 +189,17 @@
       touchLastY = touch.clientY;
       if (Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
 
+      // Past the threshold this is a scroll, not a tap, so own the gesture NOW —
+      // before a full cell of movement accumulates. iOS Safari latches native
+      // momentum scrolling in the first pixels of a drag and can't be cancelled
+      // later; preventing default here (rather than only once a whole notch
+      // lands) stops that native scroll from racing our scrollLines() and stops
+      // iOS from synthesizing the click that would pop the keyboard.
+      if (event.cancelable) event.preventDefault();
+
       const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, cellHeightPx());
       touchAccumPx = remainderPx;
       if (notches === 0) return;
-
-      // A moved touch is a scroll, not a tap: stop the page from rubber-banding
-      // and stop iOS from synthesizing the click that would open the keyboard.
-      if (event.cancelable) event.preventDefault();
       scrollLocalLines(notches);
     };
 
@@ -701,10 +705,15 @@
 
   :global(.terminal-panel .xterm-viewport) {
     max-width: 100%;
-    overflow-y: auto;
-    /* iOS momentum scrolling; contain so terminal-history scroll never chains
-       out to the page (the root cause of the old "scrolling fights" bug). */
-    -webkit-overflow-scrolling: touch;
+    /* Ajax owns 100% of scrollback: every touch and wheel gesture is
+       intercepted and translated into term.scrollLines(). Native scrolling here
+       is not just redundant — on iOS Safari the momentum-composited layer that
+       -webkit-overflow-scrolling: touch created retained stale pixels when
+       xterm rewrote row text, so one drag would native-scroll the layer AND
+       scrollLines the buffer, desyncing them into duplicated/overwritten/
+       unreadable rows. Disable native scrolling entirely so only scrollLines
+       moves the view. */
+    overflow: hidden;
     overscroll-behavior: contain;
   }
 
