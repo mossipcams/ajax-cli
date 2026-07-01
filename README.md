@@ -80,17 +80,16 @@ browser path stops being sufficient.
 From Safari you can see every repo's tasks, use the attention inbox, and run
 browser-capable operations such as `review`, `ship`, `repair`, and `drop`. The
 main task view is dashboard-first: current status, required decision, best next
-action, and recent milestones are primary; live pane text is available only as
-secondary terminal details. Browser `resume` remains `needs_terminal` until the
-terminal bridge exists.
+action, and recent milestones are primary. When you open a task, the embedded
+raw xterm/tmux terminal is the default on mobile and desktop. Browser `resume`
+uses that authenticated terminal bridge for full interactive attach.
 
 When an agent stops at a recognized approval prompt, Web Cockpit shows guarded
 structured actions such as Approve and Deny. The browser sends a typed answer
 plus a fingerprint of the prompt the operator saw; the server re-captures the
-pane and rejects the answer if the agent has moved on. Anything Web Cockpit
-cannot safely structure — free-text composers, low-confidence prompts, or other
-terminal-only interactions — escalates to the terminal instead of offering a
-browser text box.
+pane and rejects the answer if the agent has moved on. Free-form input and other
+terminal-only interactions use the raw task terminal bridge instead of a browser
+composer or read-only snapshot viewer.
 
 Notifications are out of scope. Ajax Web Cockpit does not support Web Push,
 PushManager flows, Notification API prompts, VAPID keys, push subscriptions,

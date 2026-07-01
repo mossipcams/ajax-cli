@@ -156,6 +156,13 @@ Preserve crate boundaries:
 - `ajax-core`: models, policy, live status, and registry
 - `ajax-supervisor`: process supervision
 - `ajax-tui`: Cockpit screen state, input, layout, and rendering
+- `ajax-web`: browser Cockpit adapter, HTTP/WebSocket routing, and shell assets
+
+Web Cockpit task terminals are raw xterm/tmux-first on mobile and desktop.
+Preserve raw terminal hardening (reconnect, resize debounce, sticky Ctrl, scroll
+interception, readable mobile font). Do not reintroduce Live/snapshot/composer as
+the default terminal mode without explicit approval. Guarded pane snapshots and
+prompt-answer routes remain separate dashboard approval paths.
 
 ---
 
