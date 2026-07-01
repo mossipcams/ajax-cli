@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.28.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.5...ajax-cli-v0.28.6) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** strip scrollback-hostile PTY sequences before browser output ([#276](https://github.com/mossipcams/ajax-cli/issues/276)) ([d80779f](https://github.com/mossipcams/ajax-cli/commit/d80779faa67bd3432dbff6101b34a97d8fd812fe))
+
 ## [0.28.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.4...ajax-cli-v0.28.5) (2026-07-01)
 
 
