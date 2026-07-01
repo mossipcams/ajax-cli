@@ -19,6 +19,31 @@ const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
+const SCROLLBACK_HOSTILE_SEQUENCES: &[&[u8]] = &[
+    b"\x1b[?47h",
+    b"\x1b[?47l",
+    b"\x1b[?1047h",
+    b"\x1b[?1047l",
+    b"\x1b[?1049h",
+    b"\x1b[?1049l",
+    b"\x1b[?1000h",
+    b"\x1b[?1000l",
+    b"\x1b[?1001h",
+    b"\x1b[?1001l",
+    b"\x1b[?1002h",
+    b"\x1b[?1002l",
+    b"\x1b[?1003h",
+    b"\x1b[?1003l",
+    b"\x1b[?1004h",
+    b"\x1b[?1004l",
+    b"\x1b[?1005h",
+    b"\x1b[?1005l",
+    b"\x1b[?1006h",
+    b"\x1b[?1006l",
+    b"\x1b[?1007h",
+    b"\x1b[?1007l",
+    b"\x1b[3J",
+];
 
 trait TerminalChild {
     fn kill_child(&mut self) -> std::io::Result<()>;
@@ -250,6 +275,35 @@ struct TerminalOutputFrame<'a> {
     data: &'a str,
 }
 
+fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<u8> {
+    let mut buf = std::mem::take(carry);
+    buf.extend_from_slice(chunk);
+
+    let mut output = Vec::with_capacity(buf.len());
+    let mut index = 0;
+    while index < buf.len() {
+        let rest = &buf[index..];
+        if let Some(sequence) = SCROLLBACK_HOSTILE_SEQUENCES
+            .iter()
+            .find(|sequence| rest.starts_with(sequence))
+        {
+            index += sequence.len();
+            continue;
+        }
+        if SCROLLBACK_HOSTILE_SEQUENCES
+            .iter()
+            .any(|sequence| sequence.len() > rest.len() && sequence.starts_with(rest))
+        {
+            carry.extend_from_slice(rest);
+            return output;
+        }
+        output.push(buf[index]);
+        index += 1;
+    }
+
+    output
+}
+
 pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAttachPlan) {
     let isolated = build_isolated_attach_plan(&plan);
 
@@ -395,14 +449,21 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         }
     });
 
+    let mut scrollback_filter_carry = Vec::new();
+
     loop {
         tokio::select! {
             output = output_rx.recv() => {
                 match output {
                     Some(bytes) => {
+                        let filtered =
+                            filter_scrollback_hostile_sequences(&mut scrollback_filter_carry, &bytes);
+                        if filtered.is_empty() {
+                            continue;
+                        }
                         let encoded = base64::Engine::encode(
                             &base64::engine::general_purpose::STANDARD,
-                            bytes,
+                            &filtered,
                         );
                         let frame = TerminalOutputFrame {
                             frame_type: "output",
@@ -687,6 +748,47 @@ mod tests {
         assert_ne!(first, second);
         assert_ne!(first, "ajax-web-fix-login");
         assert!(first.starts_with("ajax-web-fix-login-m"));
+    }
+
+    #[test]
+    fn filter_scrollback_hostile_sequences_strips_targets_and_carries_split_sequences() {
+        let mut carry = Vec::new();
+        let output = filter_scrollback_hostile_sequences(
+            &mut carry,
+            b"\x1b[?1049h\x1b[55;1Hdialog\x1b[3J\x1b[?1006h\x1b[?1049l",
+        );
+        assert_eq!(output, b"\x1b[55;1Hdialog");
+        assert!(carry.is_empty());
+
+        let mut carry = Vec::new();
+        assert_eq!(
+            filter_scrollback_hostile_sequences(&mut carry, b"\x1b[2J\x1b[J\x1b[12;4Hhi"),
+            b"\x1b[2J\x1b[J\x1b[12;4Hhi"
+        );
+        assert!(carry.is_empty());
+
+        let mut carry = Vec::new();
+        assert_eq!(
+            filter_scrollback_hostile_sequences(&mut carry, b"pre\x1b[?104"),
+            b"pre"
+        );
+        assert!(!carry.is_empty());
+        assert_eq!(
+            filter_scrollback_hostile_sequences(&mut carry, b"9hpost"),
+            b"post"
+        );
+        assert!(carry.is_empty());
+
+        let mut carry = Vec::new();
+        assert_eq!(
+            filter_scrollback_hostile_sequences(&mut carry, b"\x1b[?104"),
+            b""
+        );
+        assert_eq!(
+            filter_scrollback_hostile_sequences(&mut carry, b"8hX"),
+            b"\x1b[?1048hX"
+        );
+        assert!(carry.is_empty());
     }
 
     #[test]
