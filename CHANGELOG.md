@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.28.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.0...ajax-cli-v0.28.1) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** raw-first task terminal on mobile and desktop ([#264](https://github.com/mossipcams/ajax-cli/issues/264)) ([6f4bdb7](https://github.com/mossipcams/ajax-cli/commit/6f4bdb742b009665c8c5ff7c4aed71c85e5ba762))
+
 ## [0.28.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.6...ajax-cli-v0.28.0) (2026-07-01)
 
 
