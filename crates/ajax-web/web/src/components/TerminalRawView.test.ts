@@ -194,6 +194,28 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("sends_clear_command_text_and_enter_over_the_raw_socket", async () => {
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    for (const char of "clear") {
+      onDataHandler?.(char);
+    }
+    onDataHandler?.("\r");
+
+    await waitFor(() => {
+      for (const char of "clear") {
+        expect(socket?.send).toHaveBeenCalledWith(
+          JSON.stringify({ type: "input", data: char }),
+        );
+      }
+      expect(socket?.send).toHaveBeenCalledWith(
+        JSON.stringify({ type: "input", data: "\r" }),
+      );
+    });
+  });
+
   it("sends terminal input as JSON frames", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];

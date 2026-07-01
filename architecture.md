@@ -442,14 +442,15 @@ lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
 Web Cockpit is a first-class browser operator surface that is dashboard-first,
-with an authenticated terminal bridge for existing Ajax task tmux sessions.
-Native Cockpit and Web Cockpit consume shared Cockpit projections and
+with an authenticated raw xterm/tmux terminal bridge for existing Ajax task tmux
+sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
-then open an embedded xterm terminal for the selected task. The browser submits
-only an Ajax task handle; `ajax-web` resolves that handle to the registered
-`tmux_session` and attaches to the fixed `worktrunk` target. Raw pane snapshots
-remain a secondary fallback for guarded approvals and diagnostics.
+then open the embedded raw terminal for the selected task on both mobile and
+desktop. The browser submits only an Ajax task handle; `ajax-web` resolves that
+handle to the registered `tmux_session` and attaches to the fixed `worktrunk`
+target. Guarded pane snapshots remain part of dashboard approval workflows, not
+the default mobile task terminal.
 
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
@@ -606,11 +607,13 @@ guarded dashboard path for structured prompts.
 
 ### `ajax-web::slices::terminal`
 
-Owns task-handle-to-terminal attach planning for the browser terminal bridge.
+Owns task-handle-to-terminal attach planning for the browser raw terminal bridge.
 The slice resolves a qualified Ajax task handle to the registered
 `tmux_session` and fixed `worktrunk` window target. It does not accept raw
 tmux session names from the browser and does not own task lifecycle or registry
-truth.
+truth. The browser task terminal is raw xterm/tmux-first on mobile and desktop;
+do not reintroduce Live/snapshot/composer as the default terminal mode without
+explicit approval.
 
 ### `ajax-web::adapters::terminal_pty`
 

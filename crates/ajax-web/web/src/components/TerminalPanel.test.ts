@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/svelte";
+import { render, waitFor, queryByRole } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalPanel from "./TerminalPanel.svelte";
 
@@ -86,52 +86,36 @@ afterEach(() => {
 });
 
 describe("TerminalPanel host", () => {
-  it("lands in the snapshot viewer on mobile and never opens the raw socket", async () => {
+  it("defaults_to_raw_terminal_on_mobile_and_opens_the_socket", async () => {
     stubMatchMedia(true);
 
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     await tick();
 
-    await waitFor(() => expect(fetchTaskSnapshot).toHaveBeenCalledWith("web/fix-login", undefined));
-    expect(openTaskTerminalSocket).not.toHaveBeenCalled();
+    await waitFor(() => expect(openTaskTerminalSocket).toHaveBeenCalledWith("web/fix-login"));
+    expect(fetchTaskSnapshot).not.toHaveBeenCalled();
+    expect(queryByRole(container, "tablist", { name: "Terminal mode" })).not.toBeInTheDocument();
   });
 
   it("defaults to the raw terminal on desktop and opens the socket", async () => {
     stubMatchMedia(false);
 
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     await tick();
 
     await waitFor(() => expect(openTaskTerminalSocket).toHaveBeenCalledWith("web/fix-login"));
+    expect(queryByRole(container, "tablist", { name: "Terminal mode" })).not.toBeInTheDocument();
   });
 
-  it("only opens the raw socket on mobile after an explicit opt-in", async () => {
+  it("does not render snapshot viewer or mode tabs on any viewport", async () => {
     stubMatchMedia(true);
 
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    await tick();
-    expect(openTaskTerminalSocket).not.toHaveBeenCalled();
-
-    getByRole("tab", { name: "Raw terminal" }).click();
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
     await tick();
 
-    await waitFor(() => expect(openTaskTerminalSocket).toHaveBeenCalledWith("web/fix-login"));
-  });
-
-  it("persists the chosen mode across mounts", async () => {
-    stubMatchMedia(true);
-
-    const first = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    await tick();
-    first.getByRole("tab", { name: "Raw terminal" }).click();
-    await tick();
-    first.unmount();
-
-    openTaskTerminalSocket.mockClear();
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    await tick();
-
-    // The saved "raw" choice sticks even though the viewport is mobile.
-    await waitFor(() => expect(openTaskTerminalSocket).toHaveBeenCalledWith("web/fix-login"));
+    expect(queryByRole(container, "tab", { name: "Live" })).not.toBeInTheDocument();
+    expect(queryByRole(container, "tab", { name: "Raw terminal" })).not.toBeInTheDocument();
+    expect(container.querySelector(".terminal-snapshot-lines")).not.toBeInTheDocument();
+    expect(localStorage.getItem("ajax.terminal.mode")).toBeNull();
   });
 });
