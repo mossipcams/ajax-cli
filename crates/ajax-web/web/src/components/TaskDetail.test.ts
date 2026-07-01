@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import TaskDetail from "./TaskDetail.svelte";
+import taskDetailSource from "./TaskDetail.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
 vi.mock("@xterm/xterm", () => ({
@@ -111,5 +112,15 @@ describe("TaskDetail", () => {
     const { getByText } = render(TaskDetail, { props: { detail: detail(), onBack } });
     await fireEvent.click(getByText("← Back"));
     expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it("hides the task-details disclosure on mobile so the terminal gets the height", () => {
+    // The mobile task view is a fixed-height band; the disclosure below the
+    // terminal eats rows the operator asked for. Its facts stay on desktop.
+    const mobileBlock = taskDetailSource.match(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
+    );
+    expect(mobileBlock).not.toBeNull();
+    expect(mobileBlock![1]).toMatch(/\.meta-details\s*\{[^}]*display:\s*none/);
   });
 });
