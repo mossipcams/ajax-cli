@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.27.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.2...ajax-cli-v0.27.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** keep the mobile terminal usable when the iOS keyboard is open ([#253](https://github.com/mossipcams/ajax-cli/issues/253)) ([9d9ddc7](https://github.com/mossipcams/ajax-cli/commit/9d9ddc76b742c1fcbdf41c38596f41f50a51b841))
+
 ## [0.27.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.27.1...ajax-cli-v0.27.2) (2026-07-01)
 
 
