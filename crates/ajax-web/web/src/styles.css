@@ -621,6 +621,28 @@ main {
   .next-action .interact-card-label {
     display: none;
   }
+
+  /* KEYBOARD OPEN — hand the whole visible band to the terminal.
+     viewport.ts adds .keyboard-open to <html> when the soft keyboard shrinks
+     visualViewport, and .task-detail is already sized to that band
+     (--app-height). Without this rule the header, status hero, next-action
+     buttons, and task-details still eat the shrunken band, squeezing the
+     terminal down to a couple of rows — you see the cursor line but no
+     scrollback. Collapsing them lets the terminal history + control-key bar
+     fill the band instead. Dismissing the keyboard drops the class and
+     restores the normal terminal-first chrome. */
+  html.keyboard-open .task-detail .detail-header,
+  html.keyboard-open .task-detail .interact-panel,
+  html.keyboard-open .task-detail .meta-details {
+    display: none;
+  }
+
+  /* With the chrome gone the terminal owns the fixed band top-to-bottom; the
+     control-key bar stays pinned at its bottom edge, directly above the
+     keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. */
+  html.keyboard-open .task-detail .terminal-primary {
+    margin-top: 0;
+  }
 }
 
 /* BOTTOM NAV -------------------------------------------------------------- */
