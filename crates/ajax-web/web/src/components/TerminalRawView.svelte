@@ -590,6 +590,16 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
+    /* Ajax synthesizes 100% of scrolling from touch drags via
+       term.scrollLines() (see the touchmove handler). Without touch-action:none
+       iOS Safari latches a native pan in the first pixels of a vertical drag —
+       before the handler's threshold fires preventDefault() — then delivers the
+       rest of the gesture as non-cancelable touchmoves. That native pan (which
+       has nothing to move: every scroll container is overflow:hidden) races and
+       beats scrollLines(), so the terminal appears completely unscrollable on
+       touch. none keeps every touchmove cancelable and hands the whole gesture
+       to our handler. */
+    touch-action: none;
   }
 
   .terminal-new-output {
@@ -707,9 +717,11 @@
        xterm rewrote row text, so one drag would native-scroll the layer AND
        scrollLines the buffer, desyncing them into duplicated/overwritten/
        unreadable rows. Disable native scrolling entirely so only scrollLines
-       moves the view. */
+       moves the view. touch-action:none stops iOS Safari from claiming the
+       vertical drag as a native pan before our touchmove handler can. */
     overflow: hidden;
     overscroll-behavior: contain;
+    touch-action: none;
   }
 
   :global(.terminal-panel .xterm-screen),
