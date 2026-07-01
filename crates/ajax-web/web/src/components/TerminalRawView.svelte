@@ -90,11 +90,10 @@
     return controlModify(data);
   };
 
-  // A phone-sized viewport needs a much larger cell than a desktop pane: 10px
-  // was an unreadable squint on a Retina display and forced needless column
-  // pressure. Prefer the media query; fall back to touch capability where
-  // matchMedia is unavailable.
-  const MOBILE_FONT_SIZE = 14;
+  // iPhone-sized viewports need readable cells without wasting vertical space.
+  // Prefer the media query; fall back to touch capability where matchMedia is
+  // unavailable.
+  const MOBILE_FONT_SIZE = 12;
   const DESKTOP_FONT_SIZE = 13;
   const isMobileViewport = (): boolean => {
     if (typeof window.matchMedia === "function") {
@@ -565,6 +564,21 @@
   @media (max-width: 767px) {
     .terminal-panel {
       margin-top: 8px;
+    }
+
+    .terminal-host {
+      padding: 4px;
+    }
+
+    .terminal-keys {
+      gap: 4px;
+      padding: 4px 6px;
+    }
+
+    .terminal-key {
+      min-height: 36px;
+      padding: 4px 8px;
+      font-size: 12px;
     }
   }
 
