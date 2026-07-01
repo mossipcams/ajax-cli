@@ -2,6 +2,15 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.28.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.4...ajax-cli-v0.28.5) (2026-07-01)
+
+
+### Bug Fixes
+
+* merge compatible context save task facts ([#272](https://github.com/mossipcams/ajax-cli/issues/272)) ([a0373e0](https://github.com/mossipcams/ajax-cli/commit/a0373e08fdb6137a1016432a92ef9517f7e31081))
+* **web:** make iOS Safari terminal actually scroll on touch ([#275](https://github.com/mossipcams/ajax-cli/issues/275)) ([07bdc73](https://github.com/mossipcams/ajax-cli/commit/07bdc7392275fd793c2c68c3b70fa3084abaef0f))
+* **web:** shrink mobile terminal font to 10px for usable column fit ([#273](https://github.com/mossipcams/ajax-cli/issues/273)) ([19e2fd5](https://github.com/mossipcams/ajax-cli/commit/19e2fd56e2b18d2bde9e62e451e12f4c48c024f7))
+
 ## [0.28.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.3...ajax-cli-v0.28.4) (2026-07-01)
 
 
