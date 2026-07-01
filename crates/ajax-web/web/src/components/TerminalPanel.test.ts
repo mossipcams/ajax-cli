@@ -422,6 +422,59 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
+  it("keeps fitting locally but withholds the server resize while the keyboard is open", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    vi.advanceTimersByTime(400); // let the open-path refits settle
+    fit.mockClear();
+    socket!.send.mockClear();
+
+    const resizeFrames = () =>
+      socket!.send.mock.calls
+        .map((call) => JSON.parse(call[0] as string))
+        .filter((frame) => frame.type === "resize");
+
+    // Keyboard opens: the visual viewport shrinks well past the threshold.
+    (window.visualViewport as unknown as { height: number }).height = 400;
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(500);
+
+    expect(fit).toHaveBeenCalled(); // local fit still runs
+    expect(resizeFrames()).toHaveLength(0); // no server resize while open
+    vi.useRealTimers();
+  });
+
+  it("flushes exactly one server resize once the keyboard closes", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+    vi.advanceTimersByTime(400);
+    socket!.send.mockClear();
+
+    const resizeFrames = () =>
+      socket!.send.mock.calls
+        .map((call) => JSON.parse(call[0] as string))
+        .filter((frame) => frame.type === "resize");
+
+    // Open the keyboard (several animation frames), then close it.
+    (window.visualViewport as unknown as { height: number }).height = 400;
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(100);
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(100);
+    (window.visualViewport as unknown as { height: number }).height = 790;
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(300);
+
+    expect(resizeFrames()).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
   it("does not scroll to bottom on viewport resize while the user is scrolled up", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];

@@ -138,8 +138,21 @@
 
     const socket = openTaskTerminalSocket(handle);
 
+    // The iOS keyboard animates the visual viewport shorter over several frames.
+    // A tmux-attached client SIGWINCHes the shared window on every resize, so
+    // spraying resize frames during that animation corrupts the pane. Detect the
+    // keyboard from the viewport height gap and withhold server resizes while
+    // it's open; the local fit still runs so xterm stays visually correct, and a
+    // single resize is flushed once the viewport settles.
+    const KEYBOARD_OPEN_THRESHOLD_PX = 150;
+    const keyboardOpen = (): boolean => {
+      const vp = window.visualViewport;
+      return vp ? window.innerHeight - vp.height > KEYBOARD_OPEN_THRESHOLD_PX : false;
+    };
+
     const sendResize = () => {
       if (socket.readyState !== WebSocket.OPEN) return;
+      if (keyboardOpen()) return;
       socket.send(
         JSON.stringify({
           type: "resize",
@@ -160,24 +173,31 @@
       term.focus();
     };
 
-    // Coalesce refits triggered by container, window, and orientation into one rAF.
     let refitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
-    const scheduleRefit = () => {
+
+    const fitNow = () => {
+      fitAddon.fit();
+      if (pinnedToBottom) term.scrollToBottom();
+    };
+
+    // Connection-time refit: the PTY must learn the real size immediately (the
+    // keyboard is never open at connect), so send without debouncing.
+    const scheduleImmediateRefit = () => {
       if (refitFrame) cancelAnimationFrame(refitFrame);
       refitFrame = requestAnimationFrame(() => {
-        fitAddon.fit();
+        fitNow();
         sendResize();
-        if (pinnedToBottom) term.scrollToBottom();
       });
     };
 
-    const scheduleViewportRefit = () => {
+    // Event-driven refit (container/window/orientation/keyboard): fit locally
+    // right away, but coalesce the server resize behind a debounce so a burst —
+    // e.g. the keyboard animation — collapses into a single frame after things
+    // settle (and is dropped entirely while the keyboard is open).
+    const scheduleDebouncedRefit = () => {
       if (refitFrame) cancelAnimationFrame(refitFrame);
-      refitFrame = requestAnimationFrame(() => {
-        fitAddon.fit();
-        if (pinnedToBottom) term.scrollToBottom();
-      });
+      refitFrame = requestAnimationFrame(fitNow);
 
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       viewportResizeTimer = setTimeout(() => {
@@ -187,21 +207,21 @@
     };
 
     const schedulePostLayoutRefit = () => {
-      scheduleRefit();
-      requestAnimationFrame(scheduleRefit);
+      scheduleImmediateRefit();
+      requestAnimationFrame(scheduleImmediateRefit);
     };
 
     const resizeObserver =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleRefit) : null;
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleDebouncedRefit) : null;
     if (container && resizeObserver) {
       resizeObserver.observe(container);
     }
 
-    window.addEventListener("resize", scheduleRefit);
-    window.addEventListener("orientationchange", scheduleRefit);
+    window.addEventListener("resize", scheduleDebouncedRefit);
+    window.addEventListener("orientationchange", scheduleDebouncedRefit);
     const viewport = window.visualViewport;
-    viewport?.addEventListener("resize", scheduleViewportRefit);
-    viewport?.addEventListener("scroll", scheduleViewportRefit);
+    viewport?.addEventListener("resize", scheduleDebouncedRefit);
+    viewport?.addEventListener("scroll", scheduleDebouncedRefit);
 
     socket.addEventListener("open", () => {
       status = "connected";
@@ -309,10 +329,10 @@
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       resizeObserver?.disconnect();
-      window.removeEventListener("resize", scheduleRefit);
-      window.removeEventListener("orientationchange", scheduleRefit);
-      viewport?.removeEventListener("resize", scheduleViewportRefit);
-      viewport?.removeEventListener("scroll", scheduleViewportRefit);
+      window.removeEventListener("resize", scheduleDebouncedRefit);
+      window.removeEventListener("orientationchange", scheduleDebouncedRefit);
+      viewport?.removeEventListener("resize", scheduleDebouncedRefit);
+      viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
       container?.removeEventListener("touchstart", onTouchStart);
       container?.removeEventListener("touchmove", onTouchMove);
       container?.removeEventListener("touchend", onTouchEnd);
