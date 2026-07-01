@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.29.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.6...ajax-cli-v0.29.0) (2026-07-01)
+
+
+### Features
+
+* **web:** 80-col terminal floor, pan/pinch/fling, and keyboard input-line fix ([#278](https://github.com/mossipcams/ajax-cli/issues/278)) ([8dd1ef5](https://github.com/mossipcams/ajax-cli/commit/8dd1ef575782ce7b2a504aca14a6fcd5c5e080ae))
+
 ## [0.28.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.5...ajax-cli-v0.28.6) (2026-07-01)
 
 
