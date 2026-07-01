@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.28.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.2...ajax-cli-v0.28.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* **web:** compact iOS Safari terminal sizing and touch scroll tests ([#268](https://github.com/mossipcams/ajax-cli/issues/268)) ([83b185c](https://github.com/mossipcams/ajax-cli/commit/83b185c6108f6ba17785ee08e4ca5ec92c2ed605))
+
 ## [0.28.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.28.1...ajax-cli-v0.28.2) (2026-07-01)
 
 
