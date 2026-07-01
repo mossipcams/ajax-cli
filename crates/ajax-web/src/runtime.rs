@@ -260,7 +260,10 @@ where
         .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
-        .route("/api/tasks/{*handle}", get(axum_task_get::<C, B>))
+        .route(
+            "/api/tasks/{*handle}",
+            get(axum_task_get::<C, B>).post(axum_task_post::<C, B>),
+        )
         .route("/api/actions", post(axum_action::<C, B>))
         .route("/api/operations", post(axum_action::<C, B>))
         .fallback(axum_fallback)
@@ -599,6 +602,89 @@ where
     upgrade.on_upgrade(move |socket| async move {
         crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
     })
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct SendKeysRequest {
+    #[serde(default)]
+    text: String,
+    #[serde(default)]
+    submit: bool,
+}
+
+async fn axum_task_post<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    AxumPath(handle): AxumPath<String>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    if let Some(task_handle) = handle.strip_suffix("/keys") {
+        return axum_task_keys(State(state), task_handle.to_string(), body).await;
+    }
+    json_value_response(
+        404,
+        serde_json::json!({ "ok": false, "error": "not found" }),
+    )
+}
+
+async fn axum_task_keys<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    handle: String,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let request: SendKeysRequest = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({ "ok": false, "error": format!("json parse failed: {error}") }),
+            );
+        }
+    };
+
+    // Clone the context and runner so the tmux shell-out doesn't hold the shared
+    // lock (the runner is a stateless command executor).
+    let (context, mut runner) = {
+        let guard = state
+            .shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (guard.context.clone(), guard.runner.clone())
+    };
+
+    let outcome = crate::slices::terminal::send_task_keys(
+        &context,
+        &mut runner,
+        &handle,
+        &request.text,
+        request.submit,
+    );
+
+    match outcome {
+        Ok(()) => json_value_response(200, serde_json::json!({ "ok": true })),
+        Err(crate::slices::terminal::SendKeysRouteError::TaskNotFound) => json_value_response(
+            404,
+            serde_json::json!({ "ok": false, "error": "task not found" }),
+        ),
+        Err(crate::slices::terminal::SendKeysRouteError::SessionMissing) => json_value_response(
+            409,
+            serde_json::json!({ "ok": false, "error": "tmux session missing" }),
+        ),
+        Err(crate::slices::terminal::SendKeysRouteError::InvalidKeys(message)) => {
+            json_value_response(400, serde_json::json!({ "ok": false, "error": message }))
+        }
+        Err(crate::slices::terminal::SendKeysRouteError::Command(message)) => json_value_response(
+            502,
+            serde_json::json!({ "ok": false, "error": format!("send-keys failed: {message}") }),
+        ),
+    }
 }
 
 async fn axum_start_task<C, B>(
