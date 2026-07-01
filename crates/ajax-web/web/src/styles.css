@@ -549,9 +549,10 @@ main {
    The detail view becomes a fixed flex column sized to the visible band
    (--app-height tracks visualViewport, set by viewport.ts). The terminal is the
    only scroll container; when the keyboard opens the column shrinks above it so
-   the cursor row and control-key bar stay visible. Desktop (>=768px) keeps the
-   inline panel untouched. */
-@media (max-width: 767px) {
+   the cursor row and control-key bar stay visible. Desktop keeps the inline
+   panel untouched. Landscape phones (coarse pointer, short viewport) exceed
+   the width breakpoint but still get the takeover. */
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
   /* Kill the 300ms double-tap delay / double-tap zoom (iOS ignores
      user-scalable=no; pinch is handled in viewport.ts). */
   html {
@@ -633,14 +634,43 @@ main {
      restores the normal terminal-first chrome. */
   html.keyboard-open .task-detail .detail-header,
   html.keyboard-open .task-detail .interact-panel,
-  html.keyboard-open .task-detail .meta-details {
+  html.keyboard-open .task-detail .meta-details,
+  html.terminal-expanded .task-detail .detail-header,
+  html.terminal-expanded .task-detail .interact-panel,
+  html.terminal-expanded .task-detail .meta-details {
     display: none;
   }
 
   /* With the chrome gone the terminal owns the fixed band top-to-bottom; the
      control-key bar stays pinned at its bottom edge, directly above the
-     keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. */
-  html.keyboard-open .task-detail .terminal-primary {
+     keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. The manual
+     expand toggle (html.terminal-expanded) reuses the same takeover. */
+  html.keyboard-open .task-detail .terminal-primary,
+  html.terminal-expanded .task-detail .terminal-primary {
+    margin-top: 0;
+  }
+}
+
+/* EXPANDED TERMINAL (desktop) — the key-bar ⛶ toggle lifts the inline panel
+   into a fixed full-viewport overlay. Mobile — including landscape phones —
+   handles the same class by collapsing the task chrome inside its existing
+   full-screen takeover, so it is excluded here. */
+@media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
+  html.terminal-expanded .task-detail .terminal-primary {
+    position: fixed;
+    inset: 0;
+    z-index: 40; /* above .cockpit-chrome (10) and .bottom-nav (20) */
+    display: flex;
+    flex-direction: column;
+    padding: 16px;
+    background: var(--paper);
+  }
+
+  html.terminal-expanded .task-detail .terminal-primary .terminal-host-shell,
+  html.terminal-expanded .task-detail .terminal-primary .terminal-panel {
+    height: auto;
+    flex: 1 1 auto;
+    min-height: 0;
     margin-top: 0;
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { wheelNotchesFromDrag } from "./terminalTouchScroll";
+import { flingFrames, wheelNotchesFromDrag } from "./terminalTouchScroll";
 
 describe("wheelNotchesFromDrag", () => {
   it("emits no notch until a full cell has been dragged", () => {
@@ -33,5 +33,49 @@ describe("wheelNotchesFromDrag", () => {
       expect(notches).toBe(0);
       expect(remainderPx).toBe(50);
     }
+  });
+});
+
+describe("flingFrames", () => {
+  const totalLines = (frames: number[]) => frames.reduce((sum, lines) => sum + Math.abs(lines), 0);
+
+  it("yields a finite decaying sequence of line steps for a fast release", () => {
+    const frames = flingFrames(2, 18);
+
+    expect(frames.length).toBeGreaterThan(0);
+    expect(totalLines(frames)).toBeGreaterThan(0);
+    // Decay: the tail of the fling moves fewer lines than the head.
+    const half = Math.floor(frames.length / 2);
+    expect(totalLines(frames.slice(0, half))).toBeGreaterThanOrEqual(
+      totalLines(frames.slice(half)),
+    );
+    // Positive velocity (finger moved up) only ever scrolls toward newest.
+    for (const lines of frames) {
+      expect(lines).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("scrolls back through history on a negative release velocity", () => {
+    const frames = flingFrames(-2, 18);
+
+    expect(totalLines(frames)).toBeGreaterThan(0);
+    for (const lines of frames) {
+      expect(lines).toBeLessThanOrEqual(0);
+    }
+  });
+
+  it("yields nothing for a slow or stationary release", () => {
+    expect(flingFrames(0, 18)).toEqual([]);
+    expect(flingFrames(0.01, 18)).toEqual([]);
+  });
+
+  it("caps the total distance so one swipe cannot flood the terminal", () => {
+    expect(totalLines(flingFrames(500, 18))).toBeLessThanOrEqual(200);
+  });
+
+  it("degrades safely for non-finite inputs", () => {
+    expect(flingFrames(Number.NaN, 18)).toEqual([]);
+    expect(flingFrames(2, 0)).toEqual([]);
+    expect(flingFrames(2, Number.NaN)).toEqual([]);
   });
 });

@@ -35,3 +35,52 @@ export function wheelNotchesFromDrag(
   const notches = Math.max(-maxNotches, Math.min(maxNotches, whole));
   return { notches, remainderPx };
 }
+
+/**
+ * Convert a touch-release velocity into a momentum "fling": a finite,
+ * pre-computed sequence of per-animation-frame line steps that decays to a
+ * stop. Native momentum scrolling is disabled on the terminal (it desyncs
+ * from `scrollLines`), so this provides the inertia a drag-only scroll lacks.
+ *
+ * `velocityPxPerMs` is positive when the finger moved up (scroll toward the
+ * newest output). Sub-threshold or non-finite velocities yield no frames, and
+ * the total distance is capped so one hard swipe cannot flood the terminal.
+ */
+export function flingFrames(
+  velocityPxPerMs: number,
+  cellPx: number,
+  decayPerFrame = 0.92,
+  minVelocityPxPerMs = 0.05,
+  maxTotalLines = 200,
+): number[] {
+  if (
+    !Number.isFinite(velocityPxPerMs) ||
+    !Number.isFinite(cellPx) ||
+    cellPx <= 0 ||
+    Math.abs(velocityPxPerMs) < minVelocityPxPerMs
+  ) {
+    return [];
+  }
+
+  const FRAME_MS = 16;
+  const frames: number[] = [];
+  let velocity = velocityPxPerMs;
+  let carryPx = 0;
+  let total = 0;
+
+  while (Math.abs(velocity) >= minVelocityPxPerMs && total < maxTotalLines) {
+    carryPx += velocity * FRAME_MS;
+    let lines = Math.trunc(carryPx / cellPx);
+    if (lines !== 0) {
+      // Never exceed the cap even mid-frame.
+      const room = maxTotalLines - total;
+      lines = Math.max(-room, Math.min(room, lines));
+      carryPx -= lines * cellPx;
+      total += Math.abs(lines);
+    }
+    frames.push(lines);
+    velocity *= decayPerFrame;
+  }
+
+  return frames;
+}
