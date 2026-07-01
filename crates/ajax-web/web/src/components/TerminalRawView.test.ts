@@ -1,7 +1,10 @@
+/// <reference types="vite/client" />
+
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalPanel from "./TerminalRawView.svelte";
+import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 
 const write = vi.fn();
 const scrollToBottom = vi.fn();
@@ -738,7 +741,7 @@ describe("TerminalPanel", () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
-      expect((terminalOptions as { fontSize: number }).fontSize).toBeGreaterThanOrEqual(14);
+      expect((terminalOptions as { fontSize: number }).fontSize).toBe(12);
     });
   });
 
@@ -827,6 +830,56 @@ describe("TerminalPanel", () => {
     expect(scrollLines).toHaveBeenCalledWith(1);
     expect(scrollLines).toHaveBeenCalledTimes(3);
     expect(move.defaultPrevented).toBe(true);
+  });
+
+  it("intercepts iPhone touch drags from xterm child layers with scrollLines only", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query.includes("max-width: 767px"),
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const layer = appendXtermLayer(host);
+    layer.addEventListener("touchmove", (event) => event.stopPropagation());
+
+    layer.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 140);
+    layer.dispatchEvent(move);
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(scrollLines).toHaveBeenCalledWith(1);
+    expect(scrollLines).toHaveBeenCalledTimes(3);
+
+    const inputFrames = socket!.send.mock.calls
+      .map((call) => JSON.parse(call[0] as string))
+      .filter((frame) => frame.type === "input");
+    expect(inputFrames).toHaveLength(0);
+  });
+
+  it("uses tighter mobile terminal chrome without changing desktop sizing", () => {
+    const mobileBlock = terminalRawViewSource.match(/@media \(max-width: 767px\) \{([\s\S]*?)\n  \}/);
+    expect(mobileBlock).not.toBeNull();
+    const mobileCss = mobileBlock![1];
+
+    expect(mobileCss).toContain(".terminal-host");
+    expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
+    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
+    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*4px 6px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*36px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*4px 8px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*12px/);
+
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*40px/);
+    expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
   });
 
   it("intercepts wheel scroll from xterm child layers into local scrollback", async () => {
