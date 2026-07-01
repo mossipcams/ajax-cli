@@ -2,7 +2,7 @@ use ajax_core::{
     commands::CommandContext,
     config::{Config, RuntimePathRequest, RuntimePaths},
     ghost_task::is_registry_ghost_task,
-    models::LifecycleStatus,
+    models::{LifecycleStatus, Task},
     registry::{
         InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
     },
@@ -322,6 +322,17 @@ fn merge_registries(
             // has deleted it since: the deletion wins over any in-memory edits,
             // otherwise every later save fails with a permanent conflict.
             (None, Some(_)) => {}
+            (Some(disk_task), Some(baseline_task)) => {
+                let Some(merged_task) =
+                    merge_same_task_facts(disk_task, memory_task, baseline_task)?
+                else {
+                    return Err(CliError::ContextSave(format!(
+                        "state conflict for {}: disk and in-memory task facts diverged",
+                        memory_task.qualified_handle()
+                    )));
+                };
+                *merged.get_task_mut(&memory_task.id).expect("disk task") = merged_task;
+            }
             (None, None) => {
                 merged.create_task(memory_task.clone()).map_err(|error| {
                     CliError::ContextSave(format!("state merge failed: {error}"))
@@ -364,6 +375,77 @@ fn merge_registries(
 
     Ok(merged)
 }
+
+fn merge_same_task_facts(
+    disk: &Task,
+    memory: &Task,
+    baseline: &Task,
+) -> Result<Option<Task>, CliError> {
+    let disk_value = serde_json::to_value(disk)
+        .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+    let memory_value = serde_json::to_value(memory)
+        .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+    let baseline_value = serde_json::to_value(baseline)
+        .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))?;
+
+    let (Some(disk_fields), Some(memory_fields), Some(baseline_fields)) = (
+        disk_value.as_object(),
+        memory_value.as_object(),
+        baseline_value.as_object(),
+    ) else {
+        return Ok(None);
+    };
+
+    if attention_facts_changed(disk_fields, baseline_fields)
+        && attention_facts_changed(memory_fields, baseline_fields)
+        && !attention_facts_match(disk_fields, memory_fields)
+    {
+        return Ok(None);
+    }
+
+    let mut merged_fields = disk_fields.clone();
+    for (field, memory_value) in memory_fields {
+        let baseline_value = baseline_fields.get(field);
+        if Some(memory_value) == baseline_value {
+            continue;
+        }
+
+        let disk_value = disk_fields.get(field);
+        if disk_value != baseline_value && disk_value != Some(memory_value) {
+            return Ok(None);
+        }
+        merged_fields.insert(field.clone(), memory_value.clone());
+    }
+
+    serde_json::from_value(serde_json::Value::Object(merged_fields))
+        .map(Some)
+        .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))
+}
+
+fn attention_facts_changed(
+    task: &serde_json::Map<String, serde_json::Value>,
+    baseline: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    ATTENTION_FACT_FIELDS
+        .iter()
+        .any(|field| task.get(*field) != baseline.get(*field))
+}
+
+fn attention_facts_match(
+    left: &serde_json::Map<String, serde_json::Value>,
+    right: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    ATTENTION_FACT_FIELDS
+        .iter()
+        .all(|field| left.get(*field) == right.get(*field))
+}
+
+const ATTENTION_FACT_FIELDS: &[&str] = &[
+    "agent_status",
+    "live_status",
+    "live_status_observed_at",
+    "attention_acknowledged_at",
+];
 
 fn prevent_accidental_empty_overwrite(
     paths: &CliContextPaths,
@@ -677,6 +759,115 @@ mod tests {
                 .title,
             "Refreshed by web"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_keeps_disk_task_when_memory_task_is_unchanged_from_baseline() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-unchanged-memory-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        baseline
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+
+        let mut web_registry = baseline.clone();
+        let web_task = web_registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("web task");
+        web_task.live_status = Some(ajax_core::models::LiveObservation::new(
+            ajax_core::models::LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+        web_task.live_status_observed_at = Some(std::time::UNIX_EPOCH + Duration::from_secs(10));
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&web_registry)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        save_tracked_context(&paths, &mut tracked).expect("unchanged task keeps disk facts");
+        let reloaded = load_context(&paths).expect("reload");
+        assert_eq!(
+            reloaded
+                .registry
+                .get_task(&TaskId::new("web/fix-login"))
+                .expect("reloaded task")
+                .live_status
+                .as_ref()
+                .map(|status| status.kind),
+            Some(ajax_core::models::LiveStatusKind::AgentRunning)
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_context_merges_independent_same_task_fact_updates() {
+        let root = std::env::temp_dir().join(format!(
+            "ajax-context-same-task-merge-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let paths = CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
+        let mut baseline = InMemoryRegistry::default();
+        baseline
+            .create_task(sample_task("web/fix-login", "fix-login", "Fix login"))
+            .unwrap();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&baseline)
+            .unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        tracked
+            .context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("native task")
+            .title = "Updated by native".to_string();
+
+        let observed_at = std::time::UNIX_EPOCH + Duration::from_secs(10);
+        let mut web_registry = baseline.clone();
+        let web_task = web_registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .expect("web task");
+        web_task.live_status = Some(ajax_core::models::LiveObservation::new(
+            ajax_core::models::LiveStatusKind::AgentRunning,
+            "agent running",
+        ));
+        web_task.live_status_observed_at = Some(observed_at);
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&web_registry)
+            .unwrap();
+        thread::sleep(Duration::from_millis(20));
+
+        save_tracked_context(&paths, &mut tracked).expect("independent updates merge");
+        let reloaded = load_context(&paths).expect("reload");
+        let reloaded_task = reloaded
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .expect("reloaded task");
+        assert_eq!(reloaded_task.title, "Updated by native");
+        assert_eq!(
+            reloaded_task.live_status.as_ref().map(|status| status.kind),
+            Some(ajax_core::models::LiveStatusKind::AgentRunning)
+        );
+        assert_eq!(reloaded_task.live_status_observed_at, Some(observed_at));
 
         let _ = std::fs::remove_dir_all(root);
     }
