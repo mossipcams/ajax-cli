@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { ZerolagInputAddon } from "xterm-zerolag-input";
   import { openTaskTerminalSocket } from "../api";
+  import { wheelNotchesFromDrag } from "../terminalTouchScroll";
   import "@xterm/xterm/css/xterm.css";
 
   interface Props {
@@ -73,6 +74,81 @@
     term.onScroll(() => {
       pinnedToBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
     });
+
+    // Touch-drag scrolling. xterm 6 ships VS Code's touch-gesture code but
+    // never wires it up, and its `.xterm-screen` overlays the scrollable
+    // `.xterm-viewport`, so native touch scrolling never fires — the terminal
+    // was completely unscrollable on iOS. We translate vertical drags into
+    // synthetic wheel events dispatched at the xterm root (`term.element`),
+    // where xterm binds both its wheel handlers. This reuses xterm's own
+    // wheel logic: it forwards scroll to tmux when the pane is in mouse mode
+    // (our attach) or scrolls xterm's local scrollback otherwise. A stationary
+    // tap still focuses the textarea to type; only a drag scrolls, so scrolling
+    // no longer pops the iOS keyboard.
+    const TOUCH_SCROLL_THRESHOLD_PX = 6;
+    let touchActive = false;
+    let touchLastY = 0;
+    let touchAccumPx = 0;
+
+    const cellHeightPx = (): number => {
+      const viewport = container?.querySelector<HTMLElement>(".xterm-viewport");
+      const height = viewport?.clientHeight ?? 0;
+      // jsdom and pre-layout paints report 0; fall back to a sane line height.
+      return height > 0 && term.rows > 0 ? height / term.rows : 18;
+    };
+
+    const dispatchWheel = (deltaY: number, clientX: number, clientY: number) => {
+      term.element?.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY,
+          deltaMode: WheelEvent.DOM_DELTA_LINE,
+          clientX,
+          clientY,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) {
+        touchActive = false;
+        return;
+      }
+      touchActive = true;
+      touchAccumPx = 0;
+      touchLastY = event.touches[0].clientY;
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (!touchActive || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      touchAccumPx += touchLastY - touch.clientY;
+      touchLastY = touch.clientY;
+      if (Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX) return;
+
+      const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, cellHeightPx());
+      touchAccumPx = remainderPx;
+      if (notches === 0) return;
+
+      // A moved touch is a scroll, not a tap: stop the page from rubber-banding
+      // and stop iOS from synthesizing the click that would open the keyboard.
+      if (event.cancelable) event.preventDefault();
+      const step = notches > 0 ? 1 : -1;
+      for (let i = 0; i < Math.abs(notches); i += 1) {
+        dispatchWheel(step, touch.clientX, touch.clientY);
+      }
+    };
+
+    const onTouchEnd = () => {
+      touchActive = false;
+      touchAccumPx = 0;
+    };
+
+    container?.addEventListener("touchstart", onTouchStart, { passive: true });
+    container?.addEventListener("touchmove", onTouchMove, { passive: false });
+    container?.addEventListener("touchend", onTouchEnd, { passive: true });
+    container?.addEventListener("touchcancel", onTouchEnd, { passive: true });
 
     const socket = openTaskTerminalSocket(handle);
 
@@ -225,6 +301,10 @@
       window.removeEventListener("orientationchange", scheduleRefit);
       viewport?.removeEventListener("resize", scheduleRefit);
       viewport?.removeEventListener("scroll", scheduleRefit);
+      container?.removeEventListener("touchstart", onTouchStart);
+      container?.removeEventListener("touchmove", onTouchMove);
+      container?.removeEventListener("touchend", onTouchEnd);
+      container?.removeEventListener("touchcancel", onTouchEnd);
       socket.close();
       zerolag.dispose();
       term.dispose();
