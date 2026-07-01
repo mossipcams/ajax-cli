@@ -37,7 +37,7 @@
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: 10,
+      fontSize: 6,
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",
