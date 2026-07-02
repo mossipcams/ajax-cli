@@ -7,6 +7,19 @@ operator surfaces used by Cockpit, scripts, and tests.
 
 The codebase is a modular monolith organized around vertical slices.
 
+## Documentation Sources
+
+`architecture.md` records durable ownership, boundaries, and invariants. It is
+not a parking lot for implementation plans, TDD packets, review notes, or
+one-off migration playbooks.
+
+Task-specific plans should live outside the main repo or in an explicitly
+temporary planning workspace. If a plan discovers durable architecture, move
+only the lasting decision or boundary into `architecture.md` or the nearest
+user-facing docs, then retire the plan artifact. Generated graphs, code maps,
+and old plan docs are useful for investigation, but source files, tests, and
+this architecture document remain the durable references.
+
 ## Crates
 
 ### `ajax-core`
@@ -449,8 +462,9 @@ experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
 desktop. The browser submits only an Ajax task handle; `ajax-web` resolves that
 handle to the registered `tmux_session` and attaches to the fixed `worktrunk`
-target. Guarded pane snapshots remain part of dashboard approval workflows, not
-the default mobile task terminal.
+target. The browser must not accept raw tmux target names or make pane captures,
+snapshot viewers, key-send endpoints, or answer routes the default task
+interaction path.
 
 The browser shell is not an offline-first Ajax client and must not introduce a
 second browser-side task model. Git, tmux, SQLite, supervised processes, and
@@ -505,18 +519,18 @@ refresh of the latest Cockpit projection. The browser may keep transient UI
 state such as "sending" or "failed," but it must not persist pending task
 operations or replay mutations after reload.
 
-Web API access follows an explicit adapter-level API access policy. Non-API shell and
-asset routes are public, `/api/health` is public for reachability checks, and
-`POST /api/session` is public only as a browser-session bootstrap on the
-private listener. Live-control API routes such as `/api/cockpit`,
-`/api/version`, `/api/server/restart`, `/api/operations`, `/api/tasks`, pane,
-and answer routes require the server-issued, HttpOnly, Secure, same-origin
-browser-session cookie. The HTML shell sets the cookie on normal loads, and
-`POST /api/session` exists only to renew or bootstrap that same cookie when a
-live browser shell receives a `401` from a protected API route. Session renewal
-does not authenticate public clients, create browser-owned task state, persist
-pending work, cache operational data, or replay mutations. It is a transport
-recovery mechanism for the host-native private listener.
+Web API access follows an explicit adapter-level API access policy. Non-API
+shell and asset routes are public, `/api/health` is public for reachability
+checks, and `POST /api/session` is public only as a browser-session bootstrap on
+the private listener. Live-control API routes such as `/api/cockpit`,
+`/api/version`, `/api/server/restart`, `/api/operations`, `/api/tasks`, and the
+task terminal WebSocket route require the server-issued, HttpOnly, Secure,
+same-origin browser-session cookie. The HTML shell sets the cookie on normal
+loads, and `POST /api/session` exists only to renew or bootstrap that same
+cookie when a live browser shell receives a `401` from a protected API route.
+Session renewal does not authenticate public clients, create browser-owned task
+state, persist pending work, cache operational data, or replay mutations. It is
+a transport recovery mechanism for the host-native private listener.
 
 The app must function correctly without a service worker. If a service worker
 is kept, it is non-critical and limited to cleanup or safe static assets. It
@@ -565,15 +579,15 @@ feature needs a concrete external mechanism.
 ### `ajax-web::slices::cockpit`
 
 Owns the browser Cockpit read experience. It builds browser DTOs from the core
-Cockpit projection, supports projection snapshot or stream delivery, and
-preserves the same task/action meaning as Native Cockpit. Cards and details share
-one status contract (`status`, `status_explanation`) and one ordered `actions`
-collection containing only browser-executable action metadata. Unsupported
-actions, legacy UI states, and action support-state records are absent. Raw live,
-lifecycle, pane, and runtime values may remain detail diagnostics, but browser
-JavaScript must not derive or override headline status from them. The browser may
-style the first returned action as prominent; it does not receive or invent a
-separate `primary_action` contract.
+Cockpit projection and preserves the same task/action meaning as Native
+Cockpit. Cards and details share one status contract (`status`,
+`status_explanation`) and one ordered `actions` collection containing only
+browser-executable action metadata. Unsupported actions, legacy UI states, and
+action support-state records are absent. Raw live, lifecycle, pane, and runtime
+values may remain detail diagnostics, but browser JavaScript must not derive or
+override headline status from them. The browser may style the first returned
+action as prominent; it does not receive or invent a separate `primary_action`
+contract.
 
 ### `ajax-web::slices::operate`
 
@@ -590,23 +604,6 @@ Owns the browser shell. It serves the HTML shell, client JavaScript,
 stylesheet, and Ghostty terminal WASM asset. It must not serve a web manifest,
 service worker, install icon, or offline cache surface.
 
-### `ajax-web::slices::pane`
-
-Owns the browser pane and guarded approval capability. It turns tmux pane
-captures into cleaned browser snapshots with stable per-task sequences so the
-dashboard can derive current status and optional terminal details without
-centering the UI on a scrolling log.
-
-When the task's agent is at a recognized prompt, the snapshot can also carry a
-structured, confidence-scored `AgentPrompt` from `ajax-core::agent_prompt`: the
-command, the answerable choices, and a fingerprint. Browser approval actions
-post a typed answer plus that fingerprint; `answer_task_prompt` re-captures the
-live pane, rejects stale answers, resolves the operator intent through the agent
-adapter, and only then delivers `send-keys`, with per-task de-duplication and
-rate limiting inside the adapter boundary. Free-form browser input and full
-interactive attach use the task terminal bridge; pane approval remains the
-guarded dashboard path for structured prompts.
-
 ### `ajax-web::slices::terminal`
 
 Owns task-handle-to-terminal attach planning for the browser raw terminal bridge.
@@ -615,7 +612,16 @@ The slice resolves a qualified Ajax task handle to the registered
 tmux session names from the browser and does not own task lifecycle or registry
 truth. The browser task terminal is raw Ghostty/tmux-first on mobile and
 desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
-without explicit approval.
+without explicit approval. Legacy snapshot, keys, and answer routes are not
+supported browser task-control APIs.
+
+The browser terminal frontend lives in `crates/ajax-web/web`. `TaskDetail.svelte`
+mounts `TerminalRawView.svelte`; `TerminalRawView.svelte` uses `ghostty-web`
+with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
+task-terminal WebSocket lifecycle and reconnect behavior, and
+`terminalGestures.ts` plus `terminalGeometry.ts` keep mobile scrolling, panning,
+pinch font sizing, and keyboard-safe fitting local to the browser shell. These
+frontend modules do not own task truth or tmux target selection.
 
 ### `ajax-web::adapters::terminal_pty`
 
@@ -634,10 +640,12 @@ passes resolved runtime context to `ajax-web` explicitly.
 
 Post-startup Web Cockpit routes snapshot registry state under a short mutex hold,
 run external tmux/git probes outside the lock, then merge deltas back under the
-lock. `/api/cockpit` refresh and `/api/tasks/{handle}/pane` capture follow this
-pattern so lightweight routes such as `/api/health` and task detail reads stay
-responsive during slow substrate work. Mutating task operations remain
-serialized per task through the operation coordinator.
+lock. `/api/cockpit` refresh follows this pattern so lightweight routes such as
+`/api/health` and task detail reads stay responsive during slow substrate work.
+Task-terminal WebSocket upgrades read the registered task evidence needed to
+build an attach plan, then the PTY/tmux bridge runs outside the shared-state
+lock. Mutating task operations remain serialized per task through the operation
+coordinator.
 
 ### Post-startup runtime refresh
 
@@ -694,12 +702,13 @@ asset embedding inside `ajax-web`. Those mechanisms must not move into
 `ajax-core` or `ajax-tui`.
 
 Web operations are coordinated by request ID and task key. External operation
-and pane work run outside the global shared-state lock, then commits against
-the prepared revision or pane generation; stale commits return conflicts
-instead of replacing newer state. `/api/cockpit` adds a short refresh TTL and
-single-flight gate so near-simultaneous polls reuse the same refreshed
-projection, and task mutations invalidate that window. Pane control commands
-are bounded by timeouts. Supervisor cancellation terminates and awaits the
+work runs outside the global shared-state lock, then commits against the
+prepared revision; stale commits return conflicts instead of replacing newer
+state. `/api/cockpit` adds a short refresh TTL and single-flight gate so
+near-simultaneous polls reuse the same refreshed projection, and task mutations
+invalidate that window. Terminal bridge cleanup and substrate probes are
+bounded so browser disconnects, pane probes, or slow external commands do not
+starve lightweight routes. Supervisor cancellation terminates and awaits the
 child process before reporting completion, with a bounded wait.
 
 ## Cockpit Architecture

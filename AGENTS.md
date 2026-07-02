@@ -150,6 +150,24 @@ How to apply:
   `model: sonnet`, `effort: low` whose prompt instructs it to write a
   self-contained Codex prompt, run `codex exec` via Bash, and return the result.
 
+## Cursor Delegate
+
+Use the `cursor-delegate` skill when a task is bounded enough to hand to Cursor
+CLI in the current worktree and Codex can remain the planner, reviewer, and
+final approver.
+
+Good fits:
+
+- implementing an approved plan or narrow feature/fix
+- fixing a clear small bug or failing test with minimal edits
+- adding or updating tests only
+- sending a focused follow-up after Codex reviews Cursor's first diff
+- asking Cursor for a read-only second-pass review
+
+Do not use it for vague discovery, broad architecture planning, large refactors
+without a written plan, security-sensitive changes without human review, tasks
+requiring private external access, or changes outside the current worktree.
+
 ## Non-Negotiable Rules
 
 - Do not weaken, delete, skip, or rewrite tests just to make a change pass.
