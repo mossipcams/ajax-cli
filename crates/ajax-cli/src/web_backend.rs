@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn http_router_serves_static_css_and_js() {
+    fn http_router_serves_static_css_js_and_ghostty_wasm() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
 
         let css = handle_http_request("GET", "/app.css", "", &context).unwrap();
@@ -493,6 +493,11 @@ mod tests {
         assert_eq!(js.status_code, 200);
         assert_eq!(js.content_type, "text/javascript; charset=utf-8");
         assert!(!js.body.is_empty());
+
+        let wasm = handle_http_request("GET", "/ghostty-vt.wasm", "", &context).unwrap();
+        assert_eq!(wasm.status_code, 200);
+        assert_eq!(wasm.content_type, "application/wasm");
+        assert!(!wasm.body.is_empty());
     }
 
     #[test]

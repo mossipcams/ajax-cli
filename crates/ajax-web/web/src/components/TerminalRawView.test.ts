@@ -13,18 +13,6 @@ const dispose = vi.fn();
 let onDataHandler: ((data: string) => void) | undefined;
 const fit = vi.fn();
 const fitDispose = vi.fn();
-const zerolagDispose = vi.fn();
-let flushedCount = 0;
-let flushedText = "";
-const getFlushed = vi.fn(() => ({ count: flushedCount, text: flushedText }));
-const setFlushed = vi.fn((count: number, text: string) => {
-  flushedCount = count;
-  flushedText = text;
-});
-const removeChar = vi.fn<() => "pending" | "flushed" | false>(() => "flushed");
-const clear = vi.fn();
-const clearFlushed = vi.fn();
-const rerender = vi.fn();
 
 const focus = vi.fn();
 const blur = vi.fn();
@@ -34,18 +22,24 @@ let lastTextarea: HTMLTextAreaElement | undefined;
 let terminalOptions: unknown;
 let liveOptions: { fontSize?: number } | undefined;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
-let bufferActive = { viewportY: 0, baseY: 0 };
+let viewportY = 0;
 let proposedDimensions: { cols: number; rows: number } | undefined;
+const ghosttyLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
 
-vi.mock("@xterm/xterm", () => ({
+vi.mock("ghostty-web", () => ({
+  Ghostty: {
+    load: ghosttyLoad,
+  },
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
     textarea = document.createElement("textarea");
     element = document.createElement("div");
-    buffer = { active: bufferActive };
+    buffer = { active: { viewportY: 0, baseY: 0 } };
     loadAddon = vi.fn();
-    open = vi.fn();
+    open = vi.fn((container: HTMLElement) => {
+      container.appendChild(document.createElement("canvas"));
+    });
     write = write;
     scrollToBottom = scrollToBottom;
     scrollLines = scrollLines;
@@ -60,10 +54,13 @@ vi.mock("@xterm/xterm", () => ({
     };
     onData = vi.fn((handler: (data: string) => void) => {
       onDataHandler = handler;
+      return { dispose: vi.fn() };
     });
     onScroll = vi.fn((handler: (viewportY: number) => void) => {
       onScrollHandler = handler;
+      return { dispose: vi.fn() };
     });
+    getViewportY = () => viewportY;
     options: { fontSize?: number };
     constructor(options: unknown) {
       terminalOptions = options;
@@ -72,26 +69,12 @@ vi.mock("@xterm/xterm", () => ({
       lastTextarea = this.textarea;
     }
   },
-}));
-
-vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = fit;
     dispose = fitDispose;
     proposeDimensions = () => proposedDimensions;
   },
-}));
-
-vi.mock("xterm-zerolag-input", () => ({
-  ZerolagInputAddon: class MockZerolagInputAddon {
-    getFlushed = getFlushed;
-    setFlushed = setFlushed;
-    removeChar = removeChar;
-    clear = clear;
-    clearFlushed = clearFlushed;
-    rerender = rerender;
-    dispose = zerolagDispose;
-  },
+  type: {},
 }));
 
 class MockWebSocket {
@@ -133,17 +116,22 @@ beforeEach(() => {
   lastTextarea = undefined;
   terminalOptions = undefined;
   onScrollHandler = undefined;
-  bufferActive.viewportY = 0;
-  bufferActive.baseY = 0;
+  viewportY = 0;
   proposedDimensions = undefined;
   liveOptions = undefined;
+  write.mockClear();
+  scrollToBottom.mockClear();
+  dispose.mockClear();
+  fit.mockClear();
+  fitDispose.mockClear();
+  focus.mockClear();
+  blur.mockClear();
   paste.mockClear();
   resize.mockClear();
   scrollLines.mockClear();
+  ghosttyLoad.mockClear();
   window.localStorage.clear();
   delete (navigator as { clipboard?: unknown }).clipboard;
-  flushedCount = 0;
-  flushedText = "";
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
   vi.stubGlobal(
@@ -162,6 +150,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -180,16 +169,17 @@ function stubMatchMedia(matcher: (query: string) => boolean) {
 
 /** Mount the terminal for the standard test handle; expose the socket and the
  * touch-scroll host alongside the render utils. */
-function mountTerminal() {
+async function mountTerminal() {
   const utils = render(TerminalRawView, { props: { handle: "web/fix-login" } });
+  await waitFor(() => expect(onDataHandler).toBeDefined());
   const socket = MockWebSocket.instances[0];
   const host = utils.container.querySelector(".task-terminal-viewport") as HTMLElement;
   return { ...utils, socket, host };
 }
 
 /** mountTerminal plus a successful socket open. */
-function mountOpenTerminal() {
-  const mounted = mountTerminal();
+async function mountOpenTerminal() {
+  const mounted = await mountTerminal();
   mounted.socket?.emit("open");
   return mounted;
 }
@@ -200,8 +190,7 @@ const settleFrames = () =>
 
 /** Simulate the user scrolling away from the bottom of the scrollback. */
 function scrollAwayFromBottom() {
-  bufferActive.baseY = 10;
-  bufferActive.viewportY = 3;
+  viewportY = 3;
   onScrollHandler?.(3);
 }
 
@@ -215,9 +204,17 @@ const resizeFramesOf = (socket: MockWebSocket) =>
 const linesScrolled = () =>
   scrollLines.mock.calls.reduce((sum, call) => sum + (call[0] as number), 0);
 
-// Raw-first contract: the task terminal is the raw xterm/tmux bridge on every
+// Raw-first contract: the task terminal is the raw ghostty/tmux bridge on every
 // viewport. No Live/snapshot/composer mode may come back as the default.
 describe("raw-first task terminal contract", () => {
+  it("uses ghostty-web as the terminal renderer without xterm runtime imports", () => {
+    expect(terminalRawViewSource).toContain("ghostty-web");
+    expect(terminalRawViewSource).not.toContain("@xterm/xterm");
+    expect(terminalRawViewSource).not.toContain("@xterm/addon-fit");
+    expect(terminalRawViewSource).not.toContain("xterm-zerolag-input");
+    expect(terminalRawViewSource).not.toContain(".xterm");
+  });
+
   it("defaults to the raw terminal socket on a mobile viewport", async () => {
     stubMatchMedia((query) => query.includes("max-width: 767px"));
 
@@ -265,20 +262,18 @@ describe("TerminalRawView", () => {
   });
 
   it("writes incoming output frames to the terminal", async () => {
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
     socket?.emit("message", {
       data: JSON.stringify({ type: "output", data: btoa("hello") }),
     } as MessageEvent);
 
     await waitFor(() => {
       expect(write).toHaveBeenCalledWith("hello");
-      expect(clearFlushed).toHaveBeenCalled();
-      expect(rerender).toHaveBeenCalled();
     });
   });
 
   it("decodes UTF-8 output frames before writing to the terminal", async () => {
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
     const bytes = new TextEncoder().encode("λ ready");
     const encoded = btoa(String.fromCharCode(...bytes));
 
@@ -303,7 +298,7 @@ describe("TerminalRawView", () => {
   });
 
   it("decodes Blob websocket messages before writing to the terminal", async () => {
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
     const payload = JSON.stringify({ type: "output", data: btoa("blob ready") });
 
     socket?.emit("message", {
@@ -316,7 +311,7 @@ describe("TerminalRawView", () => {
   });
 
   it("sends_clear_command_text_and_enter_over_the_raw_socket", async () => {
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
 
     for (const char of "clear") {
       onDataHandler?.(char);
@@ -336,86 +331,58 @@ describe("TerminalRawView", () => {
   });
 
   it("sends terminal input as JSON frames", async () => {
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("a");
 
     await waitFor(() => {
-      // Sent immediately, so the char is tracked as flushed (awaiting echo),
-      // not pending — the overlay clears when the echo lands.
-      expect(setFlushed).toHaveBeenCalledWith(1, "a");
       expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "a" }),
       );
     });
   });
 
-  it("accumulates flushed overlay text across successive keystrokes", async () => {
-    mountOpenTerminal();
-    setFlushed.mockClear();
+  it("forwards successive printable input immediately", async () => {
+    const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("h");
     onDataHandler?.("i");
 
     await waitFor(() => {
-      expect(setFlushed).toHaveBeenNthCalledWith(1, 1, "h");
-      expect(setFlushed).toHaveBeenNthCalledWith(2, 2, "hi");
+      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "h" }));
+      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "i" }));
     });
   });
 
-  it("clears zerolag overlay state on Enter and sends the frame", async () => {
-    const { socket } = mountOpenTerminal();
+  it("sends Enter as a raw terminal frame", async () => {
+    const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("\r");
 
     await waitFor(() => {
-      expect(clear).toHaveBeenCalled();
       expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "\r" }),
       );
     });
   });
 
-  it("always forwards backspace to the PTY and syncs the overlay", async () => {
-    removeChar.mockReturnValueOnce("flushed");
-    const { socket } = mountOpenTerminal();
+  it("always forwards backspace to the PTY", async () => {
+    const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("\x7f");
 
     await waitFor(() => {
-      expect(removeChar).toHaveBeenCalled();
       expect(socket?.send).toHaveBeenCalledWith(
         JSON.stringify({ type: "input", data: "\x7f" }),
       );
     });
   });
 
-  it("forwards backspace even when zerolag reports a pending-only removal", async () => {
-    // Raw tmux attach sends every keystroke immediately, so the typed
-    // characters live in the real PTY buffer even though zerolag still
-    // tracks them as "pending". Backspace must reach the PTY regardless,
-    // otherwise the iOS soft-keyboard delete erases only the overlay.
-    removeChar.mockReturnValueOnce("pending");
-    const { socket } = mountOpenTerminal();
+  it("loads ghostty-web with the served wasm asset", async () => {
+    await mountTerminal();
 
-    onDataHandler?.("\x7f");
-
-    await waitFor(() => {
-      expect(removeChar).toHaveBeenCalled();
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\x7f" }),
-      );
-    });
-  });
-
-  it("loads ZerolagInputAddon for local echo", async () => {
-    const { ZerolagInputAddon } = await import("xterm-zerolag-input");
-    render(TerminalRawView, { props: { handle: "web/fix-login" } });
-
-    await waitFor(() => {
-      expect(ZerolagInputAddon).toBeDefined();
-      expect(setFlushed).toBeDefined();
-    });
+    expect(ghosttyLoad).toHaveBeenCalledWith("/ghostty-vt.wasm");
+    expect((terminalOptions as { ghostty?: unknown }).ghostty).toEqual({ runtime: "ghostty" });
   });
 
   it("exposes stable layout hooks for the task terminal viewport", () => {
@@ -424,7 +391,10 @@ describe("TerminalRawView", () => {
     });
 
     expect(getByLabelText("Task terminal")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='task-terminal-panel']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='task-terminal-panel']")).toHaveAttribute(
+      "data-terminal-engine",
+      "ghostty",
+    );
     expect(container.querySelector(".task-terminal-viewport")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='terminal-bottom-controls']")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='terminal-composer']")).toBeInTheDocument();
@@ -440,21 +410,19 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*padding-bottom:\s*max\([^;]*env\(safe-area-inset-bottom\)/);
   });
 
-  it("closes the socket and disposes xterm on destroy", async () => {
-    const { unmount } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+  it("closes the socket and disposes ghostty on destroy", async () => {
+    const { unmount, socket } = await mountTerminal();
 
     unmount();
 
     await waitFor(() => {
       expect(socket?.close).toHaveBeenCalled();
       expect(dispose).toHaveBeenCalled();
-      expect(zerolagDispose).toHaveBeenCalled();
     });
   });
 
   it("keeps the newest output in view after writes and viewport resizes", async () => {
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
 
     scrollToBottom.mockClear();
     socket?.emit("message", {
@@ -470,7 +438,7 @@ describe("TerminalRawView", () => {
   });
 
   it("does not yank the view back down while the user has scrolled up", async () => {
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
 
     // Let the open-triggered post-layout refits (which unconditionally
     // scroll to bottom) settle before simulating the user scrolling up.
@@ -489,7 +457,7 @@ describe("TerminalRawView", () => {
     expect(scrollToBottom).not.toHaveBeenCalled();
 
     // Once the user scrolls back to the bottom, auto-follow resumes.
-    bufferActive.viewportY = 10;
+    viewportY = 0;
     onScrollHandler?.(10);
     socket?.emit("message", {
       data: JSON.stringify({ type: "output", data: btoa("more output") }),
@@ -536,7 +504,7 @@ describe("TerminalRawView", () => {
 
   it("refits immediately but debounces server resize when the visual viewport changes", async () => {
     vi.useFakeTimers();
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(50);
     fit.mockClear();
     socket!.send.mockClear();
@@ -565,11 +533,11 @@ describe("TerminalRawView", () => {
   it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
     // The server resize is withheld while the keyboard is open, so the local
     // grid must not shrink either: a grid smaller than the PTY makes tmux
-    // cursor-address rows that no longer exist locally, and xterm clamps
+    // cursor-address rows that no longer exist locally, and the renderer clamps
     // those writes to its bottom row — the TUI input box drifts up and
     // overwrites the line below it.
     vi.useFakeTimers();
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // let the open-path refits settle
     fit.mockClear();
     resize.mockClear();
@@ -591,7 +559,7 @@ describe("TerminalRawView", () => {
 
   it("anchors the visible crop to the canvas bottom while the keyboard is open", async () => {
     vi.useFakeTimers();
-    const { socket, host } = mountTerminal();
+    const { socket, host } = await mountTerminal();
     socket?.emit("open");
     vi.advanceTimersByTime(400);
 
@@ -611,7 +579,7 @@ describe("TerminalRawView", () => {
 
   it("flushes exactly one server resize once the keyboard closes", async () => {
     vi.useFakeTimers();
-    const { socket } = mountOpenTerminal();
+    const { socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400);
     socket!.send.mockClear();
 
@@ -632,7 +600,7 @@ describe("TerminalRawView", () => {
   });
 
   it("does not scroll to bottom on viewport resize while the user is scrolled up", async () => {
-    mountOpenTerminal();
+    await mountOpenTerminal();
 
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     await settleFrames();
@@ -647,29 +615,30 @@ describe("TerminalRawView", () => {
   });
 
   it("runs a second post-layout resize after the socket opens", async () => {
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
+    await settleFrames();
     fit.mockClear();
     socket!.send.mockClear();
 
     socket?.emit("open");
+    await settleFrames();
+    await settleFrames();
 
-    await waitFor(() => {
-      expect(fit.mock.calls.length).toBeGreaterThanOrEqual(2);
-      expect(socket?.send).toHaveBeenCalledTimes(2);
-      expect(socket?.send).toHaveBeenNthCalledWith(
-        1,
-        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
-      );
-      expect(socket?.send).toHaveBeenNthCalledWith(
-        2,
-        JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
-      );
-    });
+    expect(fit.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(socket?.send).toHaveBeenCalledTimes(2);
+    expect(socket?.send).toHaveBeenNthCalledWith(
+      1,
+      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+    );
+    expect(socket?.send).toHaveBeenNthCalledWith(
+      2,
+      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+    );
   });
 
   it("floors the PTY at 80 columns when the viewport proposes fewer", async () => {
     proposedDimensions = { cols: 55, rows: 30 };
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
 
     socket?.emit("open");
 
@@ -683,7 +652,7 @@ describe("TerminalRawView", () => {
 
   it("keeps a wide fit proposal above the column floor untouched", async () => {
     proposedDimensions = { cols: 120, rows: 40 };
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
 
     socket?.emit("open");
 
@@ -697,7 +666,7 @@ describe("TerminalRawView", () => {
 
   it("falls back to a plain fit when no dimensions can be proposed", async () => {
     proposedDimensions = undefined;
-    const { socket } = mountTerminal();
+    const { socket } = await mountTerminal();
     fit.mockClear();
 
     socket?.emit("open");
@@ -773,32 +742,39 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("clears the local input overlay on reconnect so stale echoes don't linger", async () => {
+  it("refits and focuses ghostty on reconnect", async () => {
+    const { socket: first } = await mountTerminal();
+    await settleFrames();
     vi.useFakeTimers();
-    render(TerminalRawView, { props: { handle: "web/fix-login" } });
-    const first = MockWebSocket.instances[0];
     first?.emit("open");
+    await vi.advanceTimersByTimeAsync(1000);
 
-    clear.mockClear();
+    fit.mockClear();
+    focus.mockClear();
     first!.readyState = MockWebSocket.CLOSED;
     first?.emit("close");
-    vi.advanceTimersByTime(1000);
+    await vi.advanceTimersByTimeAsync(1000);
 
     const second = MockWebSocket.instances[1];
     second?.emit("open");
+    await vi.advanceTimersByTimeAsync(1000);
 
-    expect(clear).toHaveBeenCalled();
+    expect(fit).toHaveBeenCalled();
+    expect(focus).toHaveBeenCalled();
     vi.useRealTimers();
   });
 
-  it("does not clear the overlay on the very first connect", async () => {
-    render(TerminalRawView, { props: { handle: "web/fix-login" } });
-    const first = MockWebSocket.instances[0];
+  it("refits and focuses ghostty on the first connect", async () => {
+    const { socket: first } = await mountTerminal();
+    await settleFrames();
 
-    clear.mockClear();
+    fit.mockClear();
+    focus.mockClear();
     first?.emit("open");
+    await settleFrames();
 
-    expect(clear).not.toHaveBeenCalled();
+    expect(fit).toHaveBeenCalled();
+    expect(focus).toHaveBeenCalled();
   });
 
   it("offers a manual reconnect button that opens a new socket", async () => {
@@ -818,7 +794,7 @@ describe("TerminalRawView", () => {
     // iPhone keyboards have no dismiss key and the keyboard-open chrome
     // collapse hides the Back button, so without this key the operator is
     // trapped typing with a half-height terminal.
-    const { getByRole } = mountOpenTerminal();
+    const { getByRole } = await mountOpenTerminal();
 
     getByRole("button", { name: "Hide keyboard" }).click();
 
@@ -828,7 +804,7 @@ describe("TerminalRawView", () => {
   });
 
   it("sends composer text plus Enter over the raw socket and clears it", async () => {
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
     const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
 
     await fireEvent.input(composer, { target: { value: "cargo nextest run" } });
@@ -841,7 +817,7 @@ describe("TerminalRawView", () => {
   });
 
   it("does not send an empty composer submission", async () => {
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
 
     socket!.send.mockClear();
     await fireEvent.click(getByRole("button", { name: "Send terminal input" }));
@@ -850,7 +826,7 @@ describe("TerminalRawView", () => {
   });
 
   it("keeps composer text when the connection is closed on submit", async () => {
-    const { getByRole, getByTestId, socket } = mountOpenTerminal();
+    const { getByRole, getByTestId, socket } = await mountOpenTerminal();
     const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
     const command = "cargo nextest run";
 
@@ -870,7 +846,7 @@ describe("TerminalRawView", () => {
       value: { readText: vi.fn().mockResolvedValue("git push origin main") },
       configurable: true,
     });
-    const { getByRole } = mountOpenTerminal();
+    const { getByRole } = await mountOpenTerminal();
 
     getByRole("button", { name: "Paste" }).click();
 
@@ -889,7 +865,7 @@ describe("TerminalRawView", () => {
       value: { readText: vi.fn().mockResolvedValue("ls") },
       configurable: true,
     });
-    const { getByRole, getByTestId, socket } = mountOpenTerminal();
+    const { getByRole, getByTestId, socket } = await mountOpenTerminal();
     socket?.emit("message", {
       data: JSON.stringify({ type: "error", error: "tmux session missing" }),
     } as MessageEvent);
@@ -923,7 +899,7 @@ describe("TerminalRawView", () => {
   });
 
   it("sends an Escape byte when the Esc key is tapped", async () => {
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
 
     getByRole("button", { name: "Esc" }).click();
 
@@ -935,7 +911,7 @@ describe("TerminalRawView", () => {
   });
 
   it("folds the next letter into a control code after Ctrl is armed", async () => {
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
 
     getByRole("button", { name: "Ctrl" }).click();
     onDataHandler?.("c");
@@ -949,7 +925,7 @@ describe("TerminalRawView", () => {
 
   it("auto-disarms sticky Ctrl after the timeout so a later key is unmodified", async () => {
     vi.useFakeTimers();
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
 
     getByRole("button", { name: /Ctrl/ }).click();
     vi.advanceTimersByTime(4000);
@@ -962,24 +938,21 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("clears the overlay when Enter arrives while Ctrl is armed", async () => {
+  it("sends Enter unchanged when Ctrl is armed", async () => {
     // Ctrl folds letters and cursor keys but leaves Enter as a plain "\r" —
-    // which must still take the normal Enter path (overlay cleared), not
-    // linger as ghost text until the next output frame.
-    const { getByRole, socket } = mountOpenTerminal();
+    // which must still take the normal Enter path.
+    const { getByRole, socket } = await mountOpenTerminal();
 
     getByRole("button", { name: /Ctrl/ }).click();
-    clear.mockClear();
     onDataHandler?.("\r");
 
     await waitFor(() => {
-      expect(clear).toHaveBeenCalled();
       expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\r" }));
     });
   });
 
   it("applies an armed Ctrl to a control-bar cursor key, then disarms", async () => {
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
 
     getByRole("button", { name: /Ctrl/ }).click();
     getByRole("button", { name: "←" }).click();
@@ -1025,7 +998,7 @@ describe("TerminalRawView", () => {
     // focusTerm() here popped the iOS keyboard mid-toggle — and an open
     // keyboard freezes the grid refit (PTY lockstep), so the expanded area
     // stayed misfit until the keyboard closed. Expand must never focus.
-    const { getByRole } = mountOpenTerminal();
+    const { getByRole } = await mountOpenTerminal();
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     focus.mockClear();
 
@@ -1038,7 +1011,7 @@ describe("TerminalRawView", () => {
   it("refits through the immediate path when expand is toggled", async () => {
     vi.useFakeTimers();
     proposedDimensions = { cols: 55, rows: 30 };
-    const { getByRole, socket } = mountOpenTerminal();
+    const { getByRole, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
     socket!.send.mockClear();
 
@@ -1051,7 +1024,7 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("disables autocorrect/autocapitalize on the xterm input", async () => {
+  it("disables autocorrect/autocapitalize on the ghostty input", async () => {
     render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
@@ -1105,15 +1078,15 @@ describe("TerminalRawView", () => {
     Object.defineProperty(host, "clientWidth", { value: clientWidth, configurable: true });
   }
 
-  function appendXtermLayer(host: HTMLElement): HTMLElement {
+  function appendTerminalLayer(host: HTMLElement): HTMLElement {
     const layer = document.createElement("div");
-    layer.className = "xterm-screen";
+    layer.className = "ghostty-screen";
     host.appendChild(layer);
     return layer;
   }
 
   it("scrolls local terminal scrollback on touch drag", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     // Drag the finger up ~60px. With no rendered viewport the cell height falls
     // back to 18px, so that is 3 wheel notches toward the newest output.
@@ -1128,7 +1101,7 @@ describe("TerminalRawView", () => {
   });
 
   it("scrolls back into history when the finger drags downward", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 100));
     host.dispatchEvent(makeTouch("touchmove", 160));
@@ -1137,7 +1110,7 @@ describe("TerminalRawView", () => {
   });
 
   it("pans the terminal horizontally on a sideways drag", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
     sizeHostForPan(host);
 
     // Finger moves left 60px with no vertical travel: the canvas pans right.
@@ -1151,7 +1124,7 @@ describe("TerminalRawView", () => {
   });
 
   it("clamps the horizontal pan at the canvas edge", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
     sizeHostForPan(host); // 480px canvas in a 338px viewport → max pan 142
 
     host.dispatchEvent(makeTouch("touchstart", 200, 600));
@@ -1167,7 +1140,7 @@ describe("TerminalRawView", () => {
   });
 
   it("does not pan horizontally during a vertical-only drag", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
     sizeHostForPan(host);
 
     host.dispatchEvent(makeTouch("touchstart", 200));
@@ -1204,7 +1177,7 @@ describe("TerminalRawView", () => {
   });
 
   it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     // Two fingers land 100px apart (base font 13), spread to 150px:
     // 13 * 1.5 = 19.5 → rounds to 20, which is also the clamp ceiling.
@@ -1228,7 +1201,7 @@ describe("TerminalRawView", () => {
   });
 
   it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     // 100px → 20px spread: 13 * 0.2 = 2.6 → clamped up to the 7px floor.
     host.dispatchEvent(
@@ -1249,7 +1222,7 @@ describe("TerminalRawView", () => {
   });
 
   it("keeps scrolling with momentum after a fast drag is released", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     // A fast upward drag (~60px) then release: the drag itself scrolls 3
     // notches (18px fallback cell), and the fling must keep going afterwards.
@@ -1265,7 +1238,7 @@ describe("TerminalRawView", () => {
   });
 
   it("cancels a running fling the moment a new touch lands", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     host.dispatchEvent(makeTouch("touchmove", 140));
@@ -1283,7 +1256,7 @@ describe("TerminalRawView", () => {
   });
 
   it("cancels a running fling the moment wheel input arrives", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     host.dispatchEvent(makeTouch("touchmove", 140));
@@ -1309,7 +1282,7 @@ describe("TerminalRawView", () => {
   });
 
   it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
-    const { host } = mountTerminal();
+    const { host } = await mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     const move = makeTouch("touchmove", 198); // 2px jitter, below the threshold
@@ -1319,9 +1292,9 @@ describe("TerminalRawView", () => {
     expect(move.defaultPrevented).toBe(false);
   });
 
-  it("captures touch drags from xterm child layers before they can be swallowed", async () => {
-    const { host } = mountTerminal();
-    const layer = appendXtermLayer(host);
+  it("captures touch drags from terminal child layers before they can be swallowed", async () => {
+    const { host } = await mountTerminal();
+    const layer = appendTerminalLayer(host);
     layer.addEventListener("touchmove", (event) => event.stopPropagation());
 
     layer.dispatchEvent(makeTouch("touchstart", 200));
@@ -1332,7 +1305,7 @@ describe("TerminalRawView", () => {
     expect(move.defaultPrevented).toBe(true);
   });
 
-  it("intercepts iPhone touch drags from xterm child layers with scrollLines only", async () => {
+  it("intercepts iPhone touch drags from terminal child layers with scrollLines only", async () => {
     vi.stubGlobal(
       "matchMedia",
       vi.fn((query: string) => ({
@@ -1342,12 +1315,10 @@ describe("TerminalRawView", () => {
         removeEventListener: vi.fn(),
       })),
     );
-    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { host, socket } = await mountTerminal();
     socket?.emit("open");
 
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
-    const layer = appendXtermLayer(host);
+    const layer = appendTerminalLayer(host);
     layer.addEventListener("touchmove", (event) => event.stopPropagation());
 
     layer.dispatchEvent(makeTouch("touchstart", 200));
@@ -1385,22 +1356,13 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
   });
 
-  it("hides the xterm DOM scrollbar on touch devices", () => {
-    // xterm 6 renders VS Code's 14px DOM scrollbar; on a phone it overlaps
-    // ~3 columns of text and flickers on every tmux redraw, while every touch
-    // scroll gesture is already Ajax-owned — so it must not render there.
-    const coarseBlock = terminalRawViewSource.match(
-      /@media \(pointer: coarse\) \{([\s\S]*?)\n  \}/,
-    );
-    expect(coarseBlock).not.toBeNull();
-    const coarseCss = coarseBlock![1];
-    expect(coarseCss).toContain(".xterm-scrollable-element > .scrollbar");
-    expect(coarseCss).toMatch(/display:\s*none/);
+  it("does not keep xterm-specific DOM scrollbar styling", () => {
+    expect(terminalRawViewSource).not.toContain(".xterm-scrollable-element");
   });
 
-  it("intercepts wheel scroll from xterm child layers into local scrollback", async () => {
-    const { host } = mountTerminal();
-    const layer = appendXtermLayer(host);
+  it("intercepts wheel scroll from terminal child layers into local scrollback", async () => {
+    const { host } = await mountTerminal();
+    const layer = appendTerminalLayer(host);
     layer.addEventListener("wheel", (event) => event.stopPropagation());
 
     const wheel = new WheelEvent("wheel", {

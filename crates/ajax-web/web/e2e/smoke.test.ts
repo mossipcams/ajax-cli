@@ -119,6 +119,99 @@ async function mockFetch(page: Page, extra: Record<string, unknown> = {}) {
   }, routes);
 }
 
+async function mockTerminalWebSocket(page: Page) {
+  await page.addInitScript(() => {
+    const sockets: unknown[] = [];
+    const frames: unknown[] = [];
+
+    class MockTerminalWebSocket {
+      static CONNECTING = 0;
+      static OPEN = 1;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      readyState = MockTerminalWebSocket.CONNECTING;
+      readonly url: string;
+      private listeners: Record<string, Array<(event: Event) => void>> = {};
+
+      constructor(url: string) {
+        this.url = url;
+        sockets.push(this);
+        setTimeout(() => {
+          if (this.readyState !== MockTerminalWebSocket.CONNECTING) return;
+          this.readyState = MockTerminalWebSocket.OPEN;
+          this.dispatch("open", new Event("open"));
+        }, 0);
+      }
+
+      addEventListener(type: string, handler: (event: Event) => void) {
+        (this.listeners[type] ??= []).push(handler);
+      }
+
+      removeEventListener(type: string, handler: (event: Event) => void) {
+        this.listeners[type] = (this.listeners[type] ?? []).filter((item) => item !== handler);
+      }
+
+      send(data: string) {
+        frames.push(JSON.parse(data));
+      }
+
+      close() {
+        this.emitClose();
+      }
+
+      emitMessage(data: string) {
+        this.dispatch("message", new MessageEvent("message", { data }));
+      }
+
+      emitClose() {
+        this.readyState = MockTerminalWebSocket.CLOSED;
+        this.dispatch("close", new CloseEvent("close"));
+      }
+
+      private dispatch(type: string, event: Event) {
+        for (const handler of this.listeners[type] ?? []) handler(event);
+      }
+    }
+
+    Object.defineProperty(window, "__terminalSockets", {
+      value: sockets,
+      configurable: true,
+    });
+    Object.defineProperty(window, "__terminalFrames", {
+      value: frames,
+      configurable: true,
+    });
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: async () => "echo pasted" },
+      configurable: true,
+    });
+    (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockTerminalWebSocket;
+  });
+}
+
+const terminalFrames = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __terminalFrames: unknown[] }).__terminalFrames);
+
+const terminalPanel = (page: Page) =>
+  page.locator("[data-testid='task-terminal-panel'][data-terminal-engine='ghostty']");
+
+const terminalToolbar = (page: Page) =>
+  page.locator("[data-testid='terminal-bottom-controls']").getByRole("toolbar", {
+    name: "Terminal keys",
+  });
+
+async function waitForTerminalSocket(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { __terminalSockets: Array<{ readyState: number }> })
+            .__terminalSockets?.[0]?.readyState,
+      ),
+    )
+    .toBe(1);
+}
+
 // ---- tests ---------------------------------------------------------------
 
 // Task list rows show `qualified_handle`, not `title`. Inbox cards also show
@@ -153,6 +246,80 @@ test("task detail renders server status and actions", async ({ page }) => {
 
   await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
   await expect(page.locator("[data-action='review']")).toBeVisible();
+});
+
+test("mobile task terminal opens ghostty and sends toolbar input", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+
+  await expect(terminalPanel(page)).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  const toolbar = terminalToolbar(page);
+  await toolbar.getByRole("button", { name: "Esc" }).click();
+  await toolbar.getByRole("button", { name: "Tab" }).click();
+  await toolbar.getByRole("button", { name: "⌃C" }).click();
+  await toolbar.getByRole("button", { name: "Ctrl" }).click();
+  await toolbar.getByRole("button", { name: "←" }).click();
+
+  await expect
+    .poll(() => terminalFrames(page))
+    .toEqual(
+      expect.arrayContaining([
+        { type: "input", data: "\x1b" },
+        { type: "input", data: "\t" },
+        { type: "input", data: "\x03" },
+        { type: "input", data: "\x1b[1;5D" },
+      ]),
+    );
+});
+
+test("mobile task terminal paste, resize, and reconnect flows stay wired", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await expect
+    .poll(() => terminalFrames(page))
+    .toContainEqual({ type: "input", data: "echo pasted" });
+
+  await page.setViewportSize({ width: 844, height: 390 });
+  await expect
+    .poll(async () => {
+      const frames = await terminalFrames(page);
+      return frames.filter(
+        (frame) => (frame as { type?: string }).type === "resize",
+      ).length;
+    })
+    .toBeGreaterThan(0);
+
+  const closeDebug = await page.evaluate(async () => {
+    const socket = (window as unknown as { __terminalSockets: Array<{
+      emitClose(): void;
+      listeners?: Record<string, Array<unknown>>;
+      readyState: number;
+    }> }).__terminalSockets.at(-1)!;
+    const listenerCounts = Object.fromEntries(
+      Object.entries(socket.listeners ?? {}).map(([name, handlers]) => [name, handlers.length]),
+    );
+    socket.emitClose();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    return {
+      listenerCounts,
+      readyState: socket.readyState,
+      socketCount: (window as unknown as { __terminalSockets: unknown[] }).__terminalSockets.length,
+      status:
+        document.querySelector("[data-testid='terminal-status']")?.textContent?.trim() ?? "",
+    };
+  });
+  expect(closeDebug.status, JSON.stringify(closeDebug)).toContain("Reconnecting");
 });
 
 test("non-destructive action completes without a second tap", async ({ page }) => {

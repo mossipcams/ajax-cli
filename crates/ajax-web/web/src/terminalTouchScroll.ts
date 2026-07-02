@@ -1,9 +1,8 @@
 /**
  * Touch-drag → scroll-line math for the terminal's synthetic scrolling.
  *
- * xterm 6 ships VS Code's touch-gesture code but never wires it up, and its
- * `.xterm-screen` overlays the scrollable `.xterm-viewport`, so native touch
- * scrolling never fires. terminalGestures owns 100% of scrolling instead,
+ * Browser terminal renderers expose their own layered DOM/canvas surfaces, so
+ * native touch scrolling is not reliable. terminalGestures owns scrolling instead,
  * translating drags into local `term.scrollLines()` steps; this module holds
  * the pure math: accumulated drag pixels become whole line "notches" while
  * the leftover sub-cell pixels carry forward so slow drags scroll smoothly.

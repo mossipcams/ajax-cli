@@ -442,7 +442,7 @@ lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
 Web Cockpit is a first-class browser operator surface that is dashboard-first,
-with an authenticated raw xterm/tmux terminal bridge for existing Ajax task tmux
+with an authenticated raw Ghostty/tmux terminal bridge for existing Ajax task tmux
 sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
@@ -482,7 +482,8 @@ substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
-the HTML shell, client JavaScript, and stylesheet from that directory.
+the HTML shell, client JavaScript, stylesheet, and Ghostty terminal WASM asset
+from that directory.
 `ajax-web::runtime` owns HTTP transport wiring, local TLS setup, and shell asset
 delivery.
 `ajax-web::adapters::browser_session` owns browser-session token persistence,
@@ -525,7 +526,8 @@ endpoints, WebSocket/SSE endpoints, or any future `/api/*` endpoint.
 
 Browser storage is intentionally limited. The browser shell must not use
 IndexedDB, background sync, local task queues, offline mutation replay, or
-cached operational/API data. It must not add Yew, Trunk, WASM, or a large
+cached operational/API data. Ghostty's terminal WASM is the only approved
+browser WASM runtime asset; the shell must not add Yew, Trunk, or a large
 frontend architecture unless the project explicitly adopts those elsewhere.
 
 Stable and dev runtime profiles remain separated by the host-native
@@ -585,8 +587,8 @@ when the operator needs full interactive attach.
 ### `ajax-web::slices::install`
 
 Owns the browser shell. It serves the HTML shell, client JavaScript,
-and stylesheet. It must not serve a web manifest, service worker, install icon,
-or offline cache surface.
+stylesheet, and Ghostty terminal WASM asset. It must not serve a web manifest,
+service worker, install icon, or offline cache surface.
 
 ### `ajax-web::slices::pane`
 
@@ -611,9 +613,9 @@ Owns task-handle-to-terminal attach planning for the browser raw terminal bridge
 The slice resolves a qualified Ajax task handle to the registered
 `tmux_session` and fixed `worktrunk` window target. It does not accept raw
 tmux session names from the browser and does not own task lifecycle or registry
-truth. The browser task terminal is raw xterm/tmux-first on mobile and desktop;
-do not reintroduce Live/snapshot/composer as the default terminal mode without
-explicit approval.
+truth. The browser task terminal is raw Ghostty/tmux-first on mobile and
+desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
+without explicit approval.
 
 ### `ajax-web::adapters::terminal_pty`
 

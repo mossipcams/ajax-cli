@@ -4,37 +4,34 @@ import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
-vi.mock("@xterm/xterm", () => ({
+vi.mock("ghostty-web", () => ({
+  Ghostty: {
+    load: vi.fn(() => Promise.resolve({ runtime: "ghostty" })),
+  },
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
+    textarea = document.createElement("textarea");
     buffer = { active: { viewportY: 0, baseY: 0 } };
     loadAddon = vi.fn();
     open = vi.fn();
     write = vi.fn();
     dispose = vi.fn();
-    onData = vi.fn();
-    onScroll = vi.fn();
+    onData = vi.fn(() => ({ dispose: vi.fn() }));
+    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
     scrollToBottom = vi.fn();
+    scrollLines = vi.fn();
+    focus = vi.fn();
+    blur = vi.fn();
+    paste = vi.fn();
+    resize = vi.fn();
+    getViewportY = vi.fn(() => 0);
+    options = { fontSize: 13 };
   },
-}));
-
-vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class MockFitAddon {
     fit = vi.fn();
     dispose = vi.fn();
-  },
-}));
-
-vi.mock("xterm-zerolag-input", () => ({
-  ZerolagInputAddon: class MockZerolagInputAddon {
-    getFlushed = vi.fn(() => ({ count: 0, text: "" }));
-    setFlushed = vi.fn();
-    removeChar = vi.fn();
-    clear = vi.fn();
-    clearFlushed = vi.fn();
-    rerender = vi.fn();
-    dispose = vi.fn();
+    proposeDimensions = vi.fn(() => ({ cols: 80, rows: 24 }));
   },
 }));
 

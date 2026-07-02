@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Terminal } from "@xterm/xterm";
-  import { FitAddon } from "@xterm/addon-fit";
-  import { ZerolagInputAddon } from "xterm-zerolag-input";
+  import { Ghostty, Terminal, FitAddon, type IDisposable } from "ghostty-web";
   import {
     connectTaskTerminal,
     type TerminalConnection,
@@ -17,7 +15,13 @@
     DEFAULT_FONT_SIZE,
     MIN_TERMINAL_COLS,
   } from "../terminalGeometry";
-  import "@xterm/xterm/css/xterm.css";
+  const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
+  let ghosttyRuntime: Promise<Ghostty> | undefined;
+
+  const loadGhosttyRuntime = () => {
+    ghosttyRuntime ??= Ghostty.load(GHOSTTY_WASM_URL);
+    return ghosttyRuntime;
+  };
 
   interface Props {
     handle: string;
@@ -132,35 +136,12 @@
   };
 
   onMount(() => {
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize: persistedFontSize() ?? DEFAULT_FONT_SIZE,
-      theme: {
-        background: "#1c1714",
-        foreground: "#f4eee0",
-        cursor: "#52a095",
-      },
-    });
-    const fitAddon = new FitAddon();
-    const zerolag = new ZerolagInputAddon();
-    term.loadAddon(fitAddon);
-    term.loadAddon(zerolag);
-
-    if (container) {
-      term.open(container);
-      // Harden the hidden textarea xterm owns so mobile keyboards don't corrupt
-      // terminal input with autocorrect/autocapitalize.
-      const input = term.textarea;
-      if (input) {
-        input.setAttribute("autocapitalize", "off");
-        input.setAttribute("autocorrect", "off");
-        input.setAttribute("autocomplete", "off");
-        input.setAttribute("spellcheck", "false");
-      }
-      // Defer the first fit until layout settles so the PTY gets real dimensions.
-      requestAnimationFrame(() => fitAddon.fit());
-    }
+    let disposed = false;
+    let term: Terminal | undefined;
+    let fitAddon: FitAddon | undefined;
+    let connection: TerminalConnection;
+    const terminalSubscriptions: IDisposable[] = [];
+    const pendingOutput: string[] = [];
 
     // Auto-follow new output only while the user is at the bottom of the
     // scrollback. A tmux-attached session redraws constantly (status bar,
@@ -168,16 +149,21 @@
     // every output frame yanked the view back down the instant a user tried
     // to scroll up — scrolling looked completely broken.
     let pinnedToBottom = true;
-    term.onScroll(() => {
-      pinnedToBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
-      if (pinnedToBottom) hasUnseenOutput = false;
-    });
+
+    const hardenMobileTextarea = () => {
+      const input = term?.textarea;
+      if (!input) return;
+      input.setAttribute("autocapitalize", "off");
+      input.setAttribute("autocorrect", "off");
+      input.setAttribute("autocomplete", "off");
+      input.setAttribute("spellcheck", "false");
+    };
 
     const cellHeightPx = (): number => {
-      const viewport = container?.querySelector<HTMLElement>(".xterm-viewport");
+      const viewport = container?.querySelector<HTMLElement>("canvas") ?? container;
       const height = viewport?.clientHeight ?? 0;
       // jsdom and pre-layout paints report 0; fall back to a sane line height.
-      return height > 0 && term.rows > 0 ? height / term.rows : 18;
+      return height > 0 && term && term.rows > 0 ? height / term.rows : 18;
     };
 
     // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
@@ -185,20 +171,16 @@
     // effects each gesture drives.
     const detachGestures = container
       ? attachTerminalGestures(container, {
-          scrollLines: (lines) => term.scrollLines(lines),
+          scrollLines: (lines) => term?.scrollLines(lines),
           cellHeightPx,
-          fontSize: () => term.options.fontSize ?? DEFAULT_FONT_SIZE,
+          fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
           setFontSize: (next) => {
-            term.options.fontSize = next;
+            if (term) term.options.fontSize = next;
             persistFontSize(next);
             scheduleDebouncedRefit();
           },
         })
       : () => {};
-
-    // Declared before the refit closures that capture it; assigned once the
-    // callbacks it feeds exist below.
-    let connection: TerminalConnection;
 
     // The iOS keyboard animates the visual viewport shorter over several frames.
     // A tmux-attached client SIGWINCHes the shared window on every resize, so
@@ -206,27 +188,28 @@
     // server resizes while the keyboard is open (isKeyboardOpen — the same
     // hysteresis-guarded state that drives the CSS takeover, so the freeze and
     // the chrome collapse can never disagree); the local fit still runs so
-    // xterm stays visually correct, and a single resize is flushed once the
+    // Ghostty stays visually correct, and a single resize is flushed once the
     // viewport settles.
     const sendResize = () => {
       if (isKeyboardOpen()) return;
+      if (!term) return;
       connection.sendResize(term.cols, term.rows);
     };
 
     sendKey = (data: string) => connection.sendInput(data);
     canSend = () => connection.isOpen();
-    focusTerm = () => term.focus();
+    focusTerm = () => term?.focus();
     // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
-    // collapse hides the Back button; blurring xterm's textarea is the only
+    // collapse hides the Back button; blurring the terminal input is the only
     // way to hand the screen back to the full-height terminal.
-    blurTerm = () => term.blur();
+    blurTerm = () => term?.blur();
     // Reading action only: focusing here would pop the iOS keyboard and
     // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
-      term.scrollToBottom();
+      term?.scrollToBottom();
       hasUnseenOutput = false;
     };
-    // iOS long-press paste doesn't reliably reach xterm's hidden textarea, so
+    // iOS long-press paste doesn't reliably reach the hidden terminal input, so
     // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
     // mode and flows through the normal onData → socket path. Failures must be
     // visible: silently doing nothing reads as a broken button.
@@ -239,9 +222,9 @@
       clipboard
         .readText()
         .then((text) => {
-          if (text) term.paste(text);
+          if (text) term?.paste(text);
           pasteNotice = "";
-          term.focus();
+          term?.focus();
         })
         .catch(() => {
           pasteNotice = "Clipboard read failed — allow paste access and retry";
@@ -259,7 +242,7 @@
       if (isKeyboardOpen()) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
-        // tmux cursor-address rows that no longer exist locally, and xterm
+        // tmux cursor-address rows that no longer exist locally, and the renderer
         // clamps those writes to its bottom row — the TUI input box drifts up
         // and overwrites the line below it. Keep grid == PTY and crop the
         // taller canvas bottom-anchored so the cursor/input row stays visible
@@ -267,9 +250,10 @@
         if (container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
-        if (pinnedToBottom) term.scrollToBottom();
+        if (pinnedToBottom) term?.scrollToBottom();
         return;
       }
+      if (!term || !fitAddon) return;
       if (container) container.scrollTop = 0;
       const proposed = fitAddon.proposeDimensions();
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
@@ -284,8 +268,11 @@
     // Connection-time refit: the PTY must learn the real size immediately (the
     // keyboard is never open at connect), so send without debouncing.
     const scheduleImmediateRefit = () => {
+      if (disposed) return;
       if (refitFrame) cancelAnimationFrame(refitFrame);
       refitFrame = requestAnimationFrame(() => {
+        refitFrame = 0;
+        if (disposed) return;
         fitNow();
         sendResize();
       });
@@ -296,8 +283,13 @@
     // e.g. the keyboard animation — collapses into a single frame after things
     // settle (and is dropped entirely while the keyboard is open).
     const scheduleDebouncedRefit = () => {
+      if (disposed) return;
       if (refitFrame) cancelAnimationFrame(refitFrame);
-      refitFrame = requestAnimationFrame(fitNow);
+      refitFrame = requestAnimationFrame(() => {
+        refitFrame = 0;
+        if (disposed) return;
+        fitNow();
+      });
 
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       viewportResizeTimer = setTimeout(() => {
@@ -308,7 +300,9 @@
 
     const schedulePostLayoutRefit = () => {
       scheduleImmediateRefit();
-      requestAnimationFrame(scheduleImmediateRefit);
+      requestAnimationFrame(() => {
+        if (!disposed) scheduleImmediateRefit();
+      });
     };
     // Discrete layout jumps (the ⛶ expand toggle) refit through the immediate
     // path: waiting out the debounce leaves the grid misfit in the new space
@@ -327,15 +321,21 @@
     viewport?.addEventListener("resize", scheduleDebouncedRefit);
     viewport?.addEventListener("scroll", scheduleDebouncedRefit);
 
-    const writeOutput = (text: string) => {
+    const writeToTerminal = (text: string) => {
+      if (!term) {
+        pendingOutput.push(text);
+        return;
+      }
       term.write(text);
+    };
+
+    const writeOutput = (text: string) => {
+      writeToTerminal(text);
       if (pinnedToBottom) {
-        term.scrollToBottom();
+        term?.scrollToBottom();
       } else {
         hasUnseenOutput = true;
       }
-      zerolag.clearFlushed();
-      zerolag.rerender();
     };
 
     connection = connectTaskTerminal(handle, {
@@ -346,21 +346,17 @@
       onStatus: (next) => {
         status = next;
       },
-      onOpen: (isReconnect) => {
+      onOpen: () => {
         statusDetail = "";
-        // Keystrokes sent on the previous socket will never be echoed by this
-        // new one, so drop the local input overlay; otherwise those characters
-        // would linger as ghost text until the next output frame reconciled it.
-        if (isReconnect) zerolag.clear();
         schedulePostLayoutRefit();
-        requestAnimationFrame(() => term.focus());
+        requestAnimationFrame(() => term?.focus());
       },
     });
 
     // Exposed to the status banner's manual "Reconnect" button.
     requestReconnect = () => connection.reconnectNow();
 
-    term.onData((raw) => {
+    const handleTerminalData = (raw: string) => {
       if (!connection.isOpen()) return;
 
       // Sticky Ctrl folds into this key (letter → control code, cursor key →
@@ -370,53 +366,84 @@
       const data = consumeCtrl(raw);
 
       if (data === "\r") {
-        zerolag.clear();
         connection.sendInput(data);
         return;
       }
 
       if (data === "\x7f") {
-        // Raw tmux/TUI attach: every keystroke is sent immediately, so the
-        // remote PTY owns line editing. removeChar() only keeps the latency
-        // overlay in sync — the backspace itself must always reach the PTY,
-        // otherwise the deleted character lives on in the real buffer.
-        zerolag.removeChar();
         connection.sendInput(data);
         return;
       }
 
-      // Printable keystrokes are sent to the PTY immediately (raw attach), so
-      // the zero-lag overlay tracks them as "flushed" — in flight, echo not yet
-      // received — rather than "pending" (locally held, unsent). The output
-      // handler's clearFlushed() wipes them the moment the echo lands, so the
-      // overlay never accumulates text that already lives in the real buffer.
-      if (data.length === 1 && data.charCodeAt(0) >= 32) {
-        const { count, text } = zerolag.getFlushed();
-        zerolag.setFlushed(count + 1, text + data);
-      }
-
       connection.sendInput(data);
+    };
+
+    const flushPendingOutput = () => {
+      if (!term) return;
+      for (const text of pendingOutput) term.write(text);
+      pendingOutput.length = 0;
+      if (pinnedToBottom) term.scrollToBottom();
+    };
+
+    const mountGhosttyTerminal = async () => {
+      const ghostty = await loadGhosttyRuntime();
+      if (disposed || !container) return;
+      fitAddon = new FitAddon();
+      term = new Terminal({
+        cursorBlink: true,
+        fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
+        fontSize: persistedFontSize() ?? DEFAULT_FONT_SIZE,
+        ghostty,
+        theme: {
+          background: "#1c1714",
+          foreground: "#f4eee0",
+          cursor: "#52a095",
+        },
+      });
+      term.loadAddon(fitAddon);
+      term.open(container);
+      hardenMobileTextarea();
+      terminalSubscriptions.push(
+        term.onScroll(() => {
+          pinnedToBottom = term ? term.getViewportY() <= 0 : true;
+          if (pinnedToBottom) hasUnseenOutput = false;
+        }),
+        term.onData(handleTerminalData),
+      );
+      flushPendingOutput();
+      schedulePostLayoutRefit();
+      requestAnimationFrame(() => term?.focus());
+    };
+
+    void mountGhosttyTerminal().catch((error) => {
+      statusDetail = error instanceof Error ? error.message : String(error);
     });
 
     return () => {
+      disposed = true;
       setExpanded(false);
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
+      for (const subscription of terminalSubscriptions) subscription.dispose();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
       viewport?.removeEventListener("resize", scheduleDebouncedRefit);
       viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
       detachGestures();
-      zerolag.dispose();
-      term.dispose();
+      fitAddon?.dispose();
+      term?.dispose();
     };
   });
 </script>
 
-<section class="terminal-panel" data-testid="task-terminal-panel" aria-label="Task terminal">
+<section
+  class="terminal-panel"
+  data-testid="task-terminal-panel"
+  data-terminal-engine="ghostty"
+  aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}></div>
   {#if hasUnseenOutput}
     <button
@@ -562,7 +589,7 @@
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
-    /* The 80-column floor can make the xterm canvas wider than the phone
+    /* The 80-column floor can make the Ghostty canvas wider than the phone
        viewport. The host clips it and the touch handler pans it via
        scrollLeft (programmatic scrolling works on overflow:hidden boxes);
        nothing else may scroll this element. */
@@ -731,39 +758,9 @@
     text-transform: uppercase;
   }
 
-  :global(.terminal-panel .xterm) {
+  :global(.terminal-panel canvas) {
+    display: block;
     height: 100%;
     min-width: 0;
-  }
-
-  :global(.terminal-panel .xterm-viewport) {
-    /* Ajax owns 100% of scrollback: every touch and wheel gesture is
-       intercepted and translated into term.scrollLines(). Native scrolling here
-       is not just redundant — on iOS Safari the momentum-composited layer that
-       -webkit-overflow-scrolling: touch created retained stale pixels when
-       xterm rewrote row text, so one drag would native-scroll the layer AND
-       scrollLines the buffer, desyncing them into duplicated/overwritten/
-       unreadable rows. Disable native scrolling entirely so only scrollLines
-       moves the view. touch-action:none stops iOS Safari from claiming the
-       vertical drag as a native pan before our touchmove handler can. */
-    overflow: hidden;
-    overscroll-behavior: contain;
-    touch-action: none;
-  }
-
-  /* No max-width clamps on .xterm-screen/.xterm-rows or the render layers:
-     the renderer sizes them to cols × cellWidth, and with the 80-column floor
-     they legitimately exceed the host width. The host's overflow:hidden +
-     scrollLeft pan owns the clipping instead. */
-
-  /* xterm 6 renders VS Code's 14px DOM scrollbar inside the terminal. On a
-     phone it overlaps ~3 columns of text and flickers visible on every tmux
-     redraw, while touch scrolling is entirely Ajax-owned (scrollLines) — so
-     it is pure noise there. Desktop keeps it: it is proportionate and
-     mouse-draggable. */
-  @media (pointer: coarse) {
-    :global(.terminal-panel .xterm-scrollable-element > .scrollbar) {
-      display: none;
-    }
   }
 </style>
