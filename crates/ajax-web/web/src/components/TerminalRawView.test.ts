@@ -849,6 +849,22 @@ describe("TerminalRawView", () => {
     expect(socket?.send).not.toHaveBeenCalled();
   });
 
+  it("keeps composer text when the connection is closed on submit", async () => {
+    const { getByRole, getByTestId, socket } = mountOpenTerminal();
+    const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
+    const command = "cargo nextest run";
+
+    await fireEvent.input(composer, { target: { value: command } });
+    socket!.readyState = MockWebSocket.CLOSED;
+    socket!.send.mockClear();
+    await fireEvent.submit(getByTestId("terminal-composer"));
+
+    expect(socket?.send).not.toHaveBeenCalledWith(
+      JSON.stringify({ type: "input", data: `${command}\r` }),
+    );
+    expect(composer.value).toBe(command);
+  });
+
   it("pastes clipboard text through the terminal paste path", async () => {
     Object.defineProperty(navigator, "clipboard", {
       value: { readText: vi.fn().mockResolvedValue("git push origin main") },
