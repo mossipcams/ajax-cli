@@ -525,6 +525,11 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
+  // Keyboard state is the shared `keyboard-open` class viewport.ts maintains
+  // (the same signal the CSS takeover uses), so the tests drive that class.
+  const setKeyboardOpen = (open: boolean) =>
+    document.documentElement.classList.toggle("keyboard-open", open);
+
   it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
     // The server resize is withheld while the keyboard is open, so the local
     // grid must not shrink either: a grid smaller than the PTY makes tmux
@@ -532,7 +537,6 @@ describe("TerminalPanel", () => {
     // those writes to its bottom row — the TUI input box drifts up and
     // overwrites the line below it.
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
     const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400); // let the open-path refits settle
     fit.mockClear();
@@ -541,10 +545,11 @@ describe("TerminalPanel", () => {
 
     const resizeFrames = () => resizeFramesOf(socket!);
 
-    // Keyboard opens: the visual viewport shrinks well past the threshold.
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    // Keyboard opens: viewport.ts flags it and the viewport resizes.
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(500);
+    setKeyboardOpen(false);
 
     expect(fit).not.toHaveBeenCalled(); // grid untouched while open
     expect(resize).not.toHaveBeenCalled();
@@ -554,21 +559,19 @@ describe("TerminalPanel", () => {
 
   it("anchors the visible crop to the canvas bottom while the keyboard is open", async () => {
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket, host } = mountTerminal();
     socket?.emit("open");
     vi.advanceTimersByTime(400);
 
     // The frozen grid is taller than the keyboard-shrunken host; the crop
     // must show the bottom of the canvas (cursor/input row), not the top.
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
     Object.defineProperty(host, "scrollHeight", { value: 800, configurable: true });
     Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
 
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(500);
+    setKeyboardOpen(false);
 
     expect(host.scrollTop).toBe(500);
     vi.useRealTimers();
@@ -576,7 +579,6 @@ describe("TerminalPanel", () => {
 
   it("flushes exactly one server resize once the keyboard closes", async () => {
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
     const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400);
     socket!.send.mockClear();
@@ -584,12 +586,12 @@ describe("TerminalPanel", () => {
     const resizeFrames = () => resizeFramesOf(socket!);
 
     // Open the keyboard (several animation frames), then close it.
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(100);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(100);
-    (window.visualViewport as unknown as { height: number }).height = 790;
+    setKeyboardOpen(false);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(300);
 
@@ -867,6 +869,22 @@ describe("TerminalPanel", () => {
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "c" }));
     expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\x03" }));
     vi.useRealTimers();
+  });
+
+  it("clears the overlay when Enter arrives while Ctrl is armed", async () => {
+    // Ctrl folds letters and cursor keys but leaves Enter as a plain "\r" —
+    // which must still take the normal Enter path (overlay cleared), not
+    // linger as ghost text until the next output frame.
+    const { getByRole, socket } = mountOpenTerminal();
+
+    getByRole("button", { name: /Ctrl/ }).click();
+    clear.mockClear();
+    onDataHandler?.("\r");
+
+    await waitFor(() => {
+      expect(clear).toHaveBeenCalled();
+      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\r" }));
+    });
   });
 
   it("applies an armed Ctrl to a control-bar cursor key, then disarms", async () => {

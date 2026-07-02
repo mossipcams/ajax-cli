@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { ZerolagInputAddon } from "xterm-zerolag-input";
   import { openTaskTerminalSocket } from "../api";
+  import { isKeyboardOpen } from "../viewport";
   import { flingFrames, wheelNotchesFromDrag } from "../terminalTouchScroll";
   import {
     clampPan,
@@ -22,8 +23,9 @@
   let { handle }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state();
-  // One of: connecting | connected | reconnecting | disconnected.
-  let status = $state<"connecting" | "connected" | "reconnecting" | "disconnected">("connecting");
+  // A dead socket always auto-recovers (scheduleReconnect), so there is no
+  // terminal "disconnected" state — only the reconnecting one.
+  let status = $state<"connecting" | "connected" | "reconnecting">("connecting");
   let statusDetail = $state("");
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
@@ -52,7 +54,6 @@
     connecting: "Connecting…",
     connected: "Connected",
     reconnecting: "Reconnecting…",
-    disconnected: "Disconnected",
   };
 
   // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
@@ -403,19 +404,15 @@
 
     // The iOS keyboard animates the visual viewport shorter over several frames.
     // A tmux-attached client SIGWINCHes the shared window on every resize, so
-    // spraying resize frames during that animation corrupts the pane. Detect the
-    // keyboard from the viewport height gap and withhold server resizes while
-    // it's open; the local fit still runs so xterm stays visually correct, and a
-    // single resize is flushed once the viewport settles.
-    const KEYBOARD_OPEN_THRESHOLD_PX = 150;
-    const keyboardOpen = (): boolean => {
-      const vp = window.visualViewport;
-      return vp ? window.innerHeight - vp.height > KEYBOARD_OPEN_THRESHOLD_PX : false;
-    };
-
+    // spraying resize frames during that animation corrupts the pane. Withhold
+    // server resizes while the keyboard is open (isKeyboardOpen — the same
+    // hysteresis-guarded state that drives the CSS takeover, so the freeze and
+    // the chrome collapse can never disagree); the local fit still runs so
+    // xterm stays visually correct, and a single resize is flushed once the
+    // viewport settles.
     const sendResize = () => {
       if (socket.readyState !== WebSocket.OPEN) return;
-      if (keyboardOpen()) return;
+      if (isKeyboardOpen()) return;
       socket.send(
         JSON.stringify({
           type: "resize",
@@ -469,7 +466,7 @@
     // nearly every line. When the floor exceeds what fits, the canvas extends
     // past the right edge and horizontal pan brings it into view.
     const fitNow = () => {
-      if (keyboardOpen()) {
+      if (isKeyboardOpen()) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and xterm
@@ -543,6 +540,8 @@
     const readMessageData = async (data: unknown): Promise<string> => {
       if (typeof data === "string") return data;
       if (data instanceof Blob) {
+        // Every supported browser has Blob.text(), but jsdom's Blob does not —
+        // the FileReader fallback is what the component tests exercise.
         if ("text" in data && typeof data.text === "function") return data.text();
         return new Promise((resolve, reject) => {
           const reader = new FileReader();
@@ -636,7 +635,7 @@
     const onVisibility = () => {
       if (
         document.visibilityState === "visible" &&
-        (status === "reconnecting" || status === "disconnected")
+        status === "reconnecting"
       ) {
         reconnectNow();
       }
@@ -648,15 +647,14 @@
 
     connect();
 
-    term.onData((data) => {
+    term.onData((raw) => {
       if (socket.readyState !== WebSocket.OPEN) return;
 
-      // Sticky Ctrl: fold it into this key (letter → control code, cursor key →
-      // Ctrl-modified CSI) and consume the arm.
-      if (ctrlArmed) {
-        socket.send(JSON.stringify({ type: "input", data: consumeCtrl(data) }));
-        return;
-      }
+      // Sticky Ctrl folds into this key (letter → control code, cursor key →
+      // Ctrl-modified CSI). The folded byte then takes the normal branches, so
+      // keys Ctrl leaves untouched (Enter, backspace) keep their overlay
+      // bookkeeping instead of slipping past it.
+      const data = consumeCtrl(raw);
 
       if (data === "\r") {
         zerolag.clear();
@@ -772,7 +770,7 @@
       {#if statusDetail}
         <span class="terminal-status-detail">{statusDetail}</span>
       {/if}
-      {#if status === "reconnecting" || status === "disconnected"}
+      {#if status === "reconnecting"}
         <button
           type="button"
           class="terminal-status-reconnect"
