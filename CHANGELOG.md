@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.30.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.0...ajax-cli-v0.30.1) (2026-07-02)
+
+
+### Bug Fixes
+
+* **web:** terminal full-screen, keyboard auto-scroll, arrow-key jump, task page redesign ([#291](https://github.com/mossipcams/ajax-cli/issues/291)) ([0519939](https://github.com/mossipcams/ajax-cli/commit/05199394b39964338fcd84738417c0ed07c2f544))
+
 ## [0.30.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.4...ajax-cli-v0.30.0) (2026-07-02)
 
 
