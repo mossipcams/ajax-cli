@@ -63,7 +63,7 @@ export function initViewport(): () => void {
     if (!keyboardOpen) baselineHeight = current;
   };
 
-  // iOS scrolls the document to chase xterm's hidden textarea when the keyboard
+  // iOS scrolls the document to chase the terminal's hidden textarea when the keyboard
   // opens; snap it back so the fixed terminal layer never slides off-screen.
   const onWindowScroll = () => {
     if (keyboardOpen) window.scrollTo(0, 0);

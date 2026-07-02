@@ -1,8 +1,8 @@
 /**
  * Touch/wheel gesture state machine for the raw terminal host.
  *
- * Wheel/touch scrolling always uses Ajax-owned xterm scrollback: every
- * gesture is captured before xterm layers can handle it and translated into
+ * Wheel/touch scrolling always uses Ajax-owned terminal scrollback: every
+ * gesture is captured before renderer layers can handle it and translated into
  * whole-line scroll steps, horizontal pan of the 80-column canvas, or a
  * pinch font-size change — never forwarded into tmux or the foreground app.
  * The pure px→line and momentum math lives in terminalTouchScroll/
@@ -199,7 +199,7 @@ export function attachTerminalGestures(
     host.scrollLines(lineDelta);
   };
 
-  // Capture phase so xterm's own layers can never swallow the gesture;
+  // Capture phase so renderer layers can never swallow the gesture;
   // touchmove/wheel are non-passive because owning the gesture requires
   // preventDefault (see the iOS notes above).
   const touchStartOptions: AddEventListenerOptions = { passive: true, capture: true };

@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Build-layout check. Runs the production build and asserts the
 // emitted shell is deterministic and serving-compatible:
-//   - dist/index.html, dist/app.js, dist/app.css all exist
+//   - dist/index.html, dist/app.js, dist/app.css, dist/ghostty-vt.wasm all exist
 //   - the HTML keeps the __AJAX_APP_VERSION__ placeholder Rust replaces
 //   - exactly one local module script and one local stylesheet
 // Run via `npm run web:build:check`. Exits non-zero on any violation.
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,8 +29,23 @@ for (const name of ["index.html", "app.js", "app.css"]) {
   if (contents !== normalized) writeFileSync(assetPath, normalized);
 }
 
-for (const name of ["index.html", "app.js", "app.css"]) {
+for (const name of ["index.html", "app.js", "app.css", "ghostty-vt.wasm"]) {
   check(existsSync(join(distDir, name)), `missing dist/${name}`);
+}
+
+const jsFiles = existsSync(distDir)
+  ? readdirSync(distDir).filter((name) => name.endsWith(".js"))
+  : [];
+check(
+  jsFiles.length === 1 && jsFiles[0] === "app.js",
+  `expected exactly dist/app.js as the only JS bundle, found ${jsFiles.join(", ") || "none"}`,
+);
+
+if (existsSync(join(distDir, "ghostty-vt.wasm"))) {
+  check(
+    statSync(join(distDir, "ghostty-vt.wasm")).size > 0,
+    "dist/ghostty-vt.wasm is empty",
+  );
 }
 
 if (existsSync(join(distDir, "index.html"))) {

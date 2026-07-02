@@ -81,8 +81,8 @@ From Safari you can see every repo's tasks, use the attention inbox, and run
 browser-capable operations such as `review`, `ship`, `repair`, and `drop`. The
 main task view is dashboard-first: current status, required decision, best next
 action, and recent milestones are primary. When you open a task, the embedded
-raw xterm/tmux terminal is the default on mobile and desktop. Browser `resume`
-uses that authenticated terminal bridge for full interactive attach.
+raw Ghostty/tmux terminal is the default on mobile and desktop. Browser
+`resume` uses that authenticated terminal bridge for full interactive attach.
 
 When an agent stops at a recognized approval prompt, Web Cockpit shows guarded
 structured actions such as Approve and Deny. The browser sends a typed answer

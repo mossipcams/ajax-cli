@@ -1,11 +1,14 @@
-import { defineConfig } from "vite";
+import { defineConfig, type ViteDevServer } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
 import { fileURLToPath } from "node:url";
-import { renameSync, existsSync } from "node:fs";
+import { renameSync, existsSync, copyFileSync, createReadStream } from "node:fs";
 import { join } from "node:path";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const ghosttyWasm = fileURLToPath(
+  new URL("../../../node_modules/ghostty-web/ghostty-vt.wasm", import.meta.url),
+);
 
 // The Svelte entry lives in `app.html` so Vite uses a predictable output name.
 // We rename the built `dist/app.html` to `dist/index.html` so the Rust embed
@@ -24,14 +27,39 @@ function renameAppHtml() {
   };
 }
 
+function copyGhosttyWasm() {
+  return {
+    name: "ajax-copy-ghostty-wasm",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use("/ghostty-vt.wasm", (_req, res) => {
+        if (!existsSync(ghosttyWasm)) {
+          res.statusCode = 404;
+          res.end("ghostty-vt.wasm not found");
+          return;
+        }
+        res.setHeader("Content-Type", "application/wasm");
+        createReadStream(ghosttyWasm).pipe(res);
+      });
+    },
+    closeBundle() {
+      if (!existsSync(ghosttyWasm)) {
+        throw new Error(
+          `ajax-copy-ghostty-wasm: expected ${ghosttyWasm} but it was not found`,
+        );
+      }
+      copyFileSync(ghosttyWasm, join(root, "dist", "ghostty-vt.wasm"));
+    },
+  };
+}
+
 // The Rust asset adapter embeds and fingerprints the built files by exact
 // name, so the build must emit deterministic, non-hashed output:
-//   dist/index.html, dist/app.js, dist/app.css
+//   dist/index.html, dist/app.js, dist/app.css, dist/ghostty-vt.wasm
 // Do not enable content hashing here without updating adapters/assets.rs.
 export default defineConfig({
   root,
   base: "/",
-  plugins: [svelte(), svelteTesting(), renameAppHtml()],
+  plugins: [svelte(), svelteTesting(), renameAppHtml(), copyGhosttyWasm()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
@@ -40,6 +68,7 @@ export default defineConfig({
     rollupOptions: {
       input: join(root, "app.html"),
       output: {
+        inlineDynamicImports: true,
         entryFileNames: "app.js",
         // Dynamic imports are forbidden: splitting would produce app2.js etc.
         // which the Rust embed contract does not account for (see assets.rs).
