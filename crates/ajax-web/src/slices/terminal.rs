@@ -40,56 +40,17 @@ pub fn prepare_task_terminal<R: Registry>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ajax_core::{
-        config::{Config, ManagedRepo},
-        models::{AgentClient, Task, TaskId},
-        registry::InMemoryRegistry,
-    };
+    use crate::test_support;
+    use ajax_core::registry::InMemoryRegistry;
 
     fn context_with_task() -> CommandContext<InMemoryRegistry> {
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        CommandContext::new(config, registry)
+        test_support::context_with_fix_login_task()
     }
 
     fn context_with_empty_session_task() -> CommandContext<InMemoryRegistry> {
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        CommandContext::new(config, registry)
+        let mut task = test_support::fix_login_task();
+        task.tmux_session = String::new();
+        test_support::context_with_tasks(&["web"], vec![task])
     }
 
     #[test]

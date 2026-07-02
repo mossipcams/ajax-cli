@@ -304,6 +304,18 @@ fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec
     output
 }
 
+/// Report a bridge setup failure to the browser and close the socket.
+async fn send_error_and_close(socket: &mut WebSocket, error: String) {
+    let _ = socket
+        .send(Message::Text(
+            serde_json::json!({ "type": "error", "error": error })
+                .to_string()
+                .into(),
+        ))
+        .await;
+    let _ = socket.send(Message::Close(None)).await;
+}
+
 pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAttachPlan) {
     let isolated = build_isolated_attach_plan(&plan);
 
@@ -312,38 +324,17 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     // fails the shared session is likely gone; report and bail rather than
     // attaching to nothing.
     for command in &isolated.setup {
-        match run_tmux_command_blocking(command) {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let _ = socket
-                    .send(Message::Text(
-                        serde_json::json!({
-                            "type": "error",
-                            "error": format!("failed to create terminal session: {}", stderr.trim()),
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await;
-                let _ = socket.send(Message::Close(None)).await;
-                return;
-            }
-            Err(error) => {
-                let _ = socket
-                    .send(Message::Text(
-                        serde_json::json!({
-                            "type": "error",
-                            "error": format!("failed to create terminal session: {error}"),
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await;
-                let _ = socket.send(Message::Close(None)).await;
-                return;
-            }
-        }
+        let failure = match run_tmux_command_blocking(command) {
+            Ok(output) if output.status.success() => continue,
+            Ok(output) => String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            Err(error) => error.to_string(),
+        };
+        send_error_and_close(
+            &mut socket,
+            format!("failed to create terminal session: {failure}"),
+        )
+        .await;
+        return;
     }
 
     let command_plan = isolated.attach.clone();
@@ -356,17 +347,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     }) {
         Ok(pair) => pair,
         Err(error) => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "error": format!("failed to open PTY: {error}"),
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await;
-            let _ = socket.send(Message::Close(None)).await;
+            send_error_and_close(&mut socket, format!("failed to open PTY: {error}")).await;
             return;
         }
     };
@@ -379,17 +360,8 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     let child = match pty_pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "error": format!("failed to spawn tmux attach: {error}"),
-                    })
-                    .to_string()
-                    .into(),
-                ))
+            send_error_and_close(&mut socket, format!("failed to spawn tmux attach: {error}"))
                 .await;
-            let _ = socket.send(Message::Close(None)).await;
             return;
         }
     };
@@ -398,17 +370,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         Ok(reader) => reader,
         Err(error) => {
             cleanup_spawned_child_async(child).await;
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "error": format!("failed to clone PTY reader: {error}"),
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await;
-            let _ = socket.send(Message::Close(None)).await;
+            send_error_and_close(&mut socket, format!("failed to clone PTY reader: {error}")).await;
             return;
         }
     };
@@ -416,17 +378,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         Ok(writer) => writer,
         Err(error) => {
             cleanup_spawned_child_async(child).await;
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::json!({
-                        "type": "error",
-                        "error": format!("failed to open PTY writer: {error}"),
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await;
-            let _ = socket.send(Message::Close(None)).await;
+            send_error_and_close(&mut socket, format!("failed to open PTY writer: {error}")).await;
             return;
         }
     };
@@ -566,36 +518,8 @@ fn handle_input_frame(
 
 #[cfg(test)]
 pub(crate) async fn simulate_terminal_disconnect_cleanup_for_tests(wait_timeout: Duration) {
-    #[derive(Clone, Debug)]
-    struct Child {
-        killed: Arc<std::sync::Mutex<bool>>,
-        wait_gate: Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
-    }
-
-    impl Default for Child {
-        fn default() -> Self {
-            let (_, receiver) = std::sync::mpsc::channel();
-            Self {
-                killed: Arc::new(std::sync::Mutex::new(false)),
-                wait_gate: Arc::new(std::sync::Mutex::new(receiver)),
-            }
-        }
-    }
-
-    impl TerminalChild for Child {
-        fn kill_child(&mut self) -> std::io::Result<()> {
-            *self.killed.lock().unwrap() = true;
-            Ok(())
-        }
-
-        fn wait_child(&mut self) -> std::io::Result<()> {
-            let receiver = self.wait_gate.lock().unwrap();
-            let _ = receiver.recv();
-            Ok(())
-        }
-    }
-
-    cleanup_spawned_child_async_with_timeout(Child::default(), wait_timeout).await;
+    let (child, _release) = tests::MockChild::gated();
+    cleanup_spawned_child_async_with_timeout(child, wait_timeout).await;
 }
 
 #[cfg(test)]
@@ -603,13 +527,60 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn tmux_attach_command_plan_uses_registered_session_and_worktrunk_target() {
-        let plan = TerminalAttachPlan {
-            qualified_handle: "web/fix-login".to_string(),
+    fn attach_plan(handle: &str) -> TerminalAttachPlan {
+        TerminalAttachPlan {
+            qualified_handle: handle.to_string(),
             tmux_session: "ajax-web-fix-login".to_string(),
             worktrunk_window: "worktrunk".to_string(),
-        };
+        }
+    }
+
+    /// One configurable stand-in for a spawned PTY child: records kill/wait
+    /// calls and, when gated, blocks `wait_child` until the returned sender is
+    /// dropped or signalled.
+    #[derive(Clone)]
+    pub(crate) struct MockChild {
+        killed: Arc<Mutex<bool>>,
+        waited: Arc<Mutex<bool>>,
+        wait_gate: Option<Arc<Mutex<std::sync::mpsc::Receiver<()>>>>,
+    }
+
+    impl MockChild {
+        fn instant() -> Self {
+            Self {
+                killed: Arc::new(Mutex::new(false)),
+                waited: Arc::new(Mutex::new(false)),
+                wait_gate: None,
+            }
+        }
+
+        pub(crate) fn gated() -> (Self, std::sync::mpsc::Sender<()>) {
+            let (release, receiver) = std::sync::mpsc::channel();
+            let mut child = Self::instant();
+            child.wait_gate = Some(Arc::new(Mutex::new(receiver)));
+            (child, release)
+        }
+    }
+
+    impl TerminalChild for MockChild {
+        fn kill_child(&mut self) -> std::io::Result<()> {
+            *self.killed.lock().unwrap() = true;
+            Ok(())
+        }
+
+        fn wait_child(&mut self) -> std::io::Result<()> {
+            if let Some(gate) = &self.wait_gate {
+                let receiver = gate.lock().unwrap();
+                let _ = receiver.recv();
+            }
+            *self.waited.lock().unwrap() = true;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn tmux_attach_command_plan_uses_registered_session_and_worktrunk_target() {
+        let plan = attach_plan("web/fix-login");
 
         let command_plan = build_tmux_attach_command_plan(&plan);
 
@@ -630,11 +601,7 @@ mod tests {
 
     #[test]
     fn tmux_attach_target_never_uses_browser_handle() {
-        let plan = TerminalAttachPlan {
-            qualified_handle: "web/evil-handle".to_string(),
-            tmux_session: "ajax-web-fix-login".to_string(),
-            worktrunk_window: "worktrunk".to_string(),
-        };
+        let plan = attach_plan("web/evil-handle");
 
         let command_plan = build_tmux_attach_command_plan(&plan);
 
@@ -647,11 +614,7 @@ mod tests {
 
     #[test]
     fn isolated_attach_plan_creates_grouped_session_then_attaches() {
-        let plan = TerminalAttachPlan {
-            qualified_handle: "web/fix-login".to_string(),
-            tmux_session: "ajax-web-fix-login".to_string(),
-            worktrunk_window: "worktrunk".to_string(),
-        };
+        let plan = attach_plan("web/fix-login");
 
         let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
         let ephemeral = "ajax-web-fix-login-m1a2b3c";
@@ -713,11 +676,7 @@ mod tests {
 
     #[test]
     fn isolated_attach_cleanup_kills_ephemeral_session() {
-        let plan = TerminalAttachPlan {
-            qualified_handle: "web/fix-login".to_string(),
-            tmux_session: "ajax-web-fix-login".to_string(),
-            worktrunk_window: "worktrunk".to_string(),
-        };
+        let plan = attach_plan("web/fix-login");
 
         let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
 
@@ -736,11 +695,7 @@ mod tests {
 
     #[test]
     fn isolated_attach_sessions_are_unique_per_call_and_never_the_shared_session() {
-        let plan = TerminalAttachPlan {
-            qualified_handle: "web/fix-login".to_string(),
-            tmux_session: "ajax-web-fix-login".to_string(),
-            worktrunk_window: "worktrunk".to_string(),
-        };
+        let plan = attach_plan("web/fix-login");
 
         let first = build_isolated_attach_plan(&plan).ephemeral_session;
         let second = build_isolated_attach_plan(&plan).ephemeral_session;
@@ -792,6 +747,21 @@ mod tests {
     }
 
     #[test]
+    fn filter_strips_hostile_sequences_fed_one_byte_at_a_time_without_prefix_leaks() {
+        // A PTY read can split an escape sequence at any byte. Feeding the
+        // stream byte-by-byte is the worst case: every hostile sequence must
+        // still vanish completely and every normal byte must still come out.
+        let stream: &[u8] = b"a\x1b[?1049h\x1b[2Jb\x1b[?1002lc\x1b[3J\x1b[31md";
+        let mut carry = Vec::new();
+        let mut output = Vec::new();
+        for byte in stream {
+            output.extend(filter_scrollback_hostile_sequences(&mut carry, &[*byte]));
+        }
+        assert_eq!(output, b"a\x1b[2Jbc\x1b[31md");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
     fn handle_input_frame_accepts_resize_without_data() {
         let mut writer: Box<dyn Write + Send> = Box::new(Vec::<u8>::new());
 
@@ -803,27 +773,9 @@ mod tests {
         assert_eq!(size.rows, 40);
     }
 
-    #[derive(Clone, Debug, Default)]
-    struct CleanupRecorder {
-        killed: Arc<Mutex<bool>>,
-        waited: Arc<Mutex<bool>>,
-    }
-
-    impl TerminalChild for CleanupRecorder {
-        fn kill_child(&mut self) -> std::io::Result<()> {
-            *self.killed.lock().unwrap() = true;
-            Ok(())
-        }
-
-        fn wait_child(&mut self) -> std::io::Result<()> {
-            *self.waited.lock().unwrap() = true;
-            Ok(())
-        }
-    }
-
     #[test]
     fn cleanup_spawned_child_kills_and_waits() {
-        let child = CleanupRecorder::default();
+        let child = MockChild::instant();
         let killed = Arc::clone(&child.killed);
         let waited = Arc::clone(&child.waited);
 
@@ -833,32 +785,9 @@ mod tests {
         assert!(*waited.lock().unwrap());
     }
 
-    #[derive(Clone, Debug)]
-    struct BlockingWaitChild {
-        killed: Arc<Mutex<bool>>,
-        release_rx: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
-    }
-
-    impl TerminalChild for BlockingWaitChild {
-        fn kill_child(&mut self) -> std::io::Result<()> {
-            *self.killed.lock().unwrap() = true;
-            Ok(())
-        }
-
-        fn wait_child(&mut self) -> std::io::Result<()> {
-            let receiver = self.release_rx.lock().unwrap();
-            let _ = receiver.recv();
-            Ok(())
-        }
-    }
-
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn terminal_cleanup_runs_wait_on_blocking_task() {
-        let (release_tx, release_rx) = std::sync::mpsc::channel();
-        let child = BlockingWaitChild {
-            killed: Arc::new(Mutex::new(false)),
-            release_rx: Arc::new(Mutex::new(release_rx)),
-        };
+        let (child, release_tx) = MockChild::gated();
         let killed = Arc::clone(&child.killed);
         let progress = Arc::new(AtomicBool::new(false));
         let progress_for_task = Arc::clone(&progress);
@@ -884,38 +813,11 @@ mod tests {
         cleanup.await.expect("cleanup task should finish");
     }
 
-    #[derive(Clone, Debug)]
-    struct NeverCompletingWaitChild {
-        killed: Arc<Mutex<bool>>,
-        wait_gate: Arc<Mutex<std::sync::mpsc::Receiver<()>>>,
-    }
-
-    impl Default for NeverCompletingWaitChild {
-        fn default() -> Self {
-            let (_, receiver) = std::sync::mpsc::channel();
-            Self {
-                killed: Arc::new(Mutex::new(false)),
-                wait_gate: Arc::new(Mutex::new(receiver)),
-            }
-        }
-    }
-
-    impl TerminalChild for NeverCompletingWaitChild {
-        fn kill_child(&mut self) -> std::io::Result<()> {
-            *self.killed.lock().unwrap() = true;
-            Ok(())
-        }
-
-        fn wait_child(&mut self) -> std::io::Result<()> {
-            let receiver = self.wait_gate.lock().unwrap();
-            let _ = receiver.recv();
-            Ok(())
-        }
-    }
-
     #[tokio::test]
     async fn terminal_cleanup_does_not_wait_forever_after_kill() {
-        let child = NeverCompletingWaitChild::default();
+        // The release sender is held for the whole test, so wait_child never
+        // completes on its own; only the cleanup timeout can end it.
+        let (child, _release) = MockChild::gated();
         let killed = Arc::clone(&child.killed);
         let timeout = Duration::from_millis(50);
 

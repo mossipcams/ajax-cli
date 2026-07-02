@@ -113,22 +113,10 @@
   };
 
   // The 80-column PTY floor means the font is no longer a column-count lever
-  // (narrow viewports pan instead of wrapping), so mobile gets the same
-  // comfortable cell as desktop. Pinch-to-zoom persists any override.
-  // Prefer the media query; fall back to touch capability where matchMedia is
-  // unavailable.
-  const MOBILE_FONT_SIZE = 13;
-  const DESKTOP_FONT_SIZE = 13;
-  // Portrait phones match on width; a landscape phone is wider than the
-  // breakpoint but still a phone (coarse pointer, short viewport), so it gets
-  // the same mobile treatment instead of falling into the desktop rules.
-  const MOBILE_MEDIA_QUERY = "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
-  const isMobileViewport = (): boolean => {
-    if (typeof window.matchMedia === "function") {
-      return window.matchMedia(MOBILE_MEDIA_QUERY).matches;
-    }
-    return (navigator.maxTouchPoints ?? 0) > 0;
-  };
+  // (narrow viewports pan instead of wrapping), so every viewport — phone,
+  // landscape phone, desktop — gets the same comfortable cell.
+  // Pinch-to-zoom persists any override.
+  const DEFAULT_FONT_SIZE = 13;
 
   // Pinch-to-zoom persists the operator's legibility choice; a valid stored
   // size wins over the per-device default. localStorage can throw (Safari
@@ -159,8 +147,7 @@
     const term = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
-      fontSize:
-        persistedFontSize() ?? (isMobileViewport() ? MOBILE_FONT_SIZE : DESKTOP_FONT_SIZE),
+      fontSize: persistedFontSize() ?? DEFAULT_FONT_SIZE,
       theme: {
         background: "#1c1714",
         foreground: "#f4eee0",
@@ -272,7 +259,7 @@
       if (event.touches.length === 2) {
         touchActive = false;
         pinchStartDistance = touchDistance(event.touches);
-        pinchBaseFontSize = term.options.fontSize ?? DESKTOP_FONT_SIZE;
+        pinchBaseFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
         return;
       }
       pinchStartDistance = 0;
@@ -355,13 +342,7 @@
       scrollLocalLines(notches);
     };
 
-    const onTouchEnd = () => {
-      // Only a gesture that actually scrolled may fling; a tap with a few
-      // pixels of jitter must stay a tap.
-      if (touchActive && touchScrolled) {
-        const frames = flingFrames(flingVelocity, cellHeightPx());
-        if (frames.length) startFling(frames);
-      }
+    const resetTouchState = () => {
       flingVelocity = 0;
       touchActive = false;
       touchAccumPx = 0;
@@ -369,16 +350,20 @@
       pinchStartDistance = 0;
     };
 
+    const onTouchEnd = () => {
+      // Only a gesture that actually scrolled may fling; a tap with a few
+      // pixels of jitter must stay a tap.
+      if (touchActive && touchScrolled) {
+        const frames = flingFrames(flingVelocity, cellHeightPx());
+        if (frames.length) startFling(frames);
+      }
+      resetTouchState();
+    };
+
     // touchcancel means the system stole the gesture (e.g. an incoming call
     // sheet); momentum from a stolen gesture would feel haunted, so reset
     // without flinging.
-    const onTouchCancel = () => {
-      flingVelocity = 0;
-      touchActive = false;
-      touchAccumPx = 0;
-      touchAccumXPx = 0;
-      pinchStartDistance = 0;
-    };
+    const onTouchCancel = resetTouchState;
 
     const onWheel = (event: WheelEvent) => {
       cancelFling();
@@ -570,6 +555,17 @@
       return String(data);
     };
 
+    const writeOutput = (text: string) => {
+      term.write(text);
+      if (pinnedToBottom) {
+        term.scrollToBottom();
+      } else {
+        hasUnseenOutput = true;
+      }
+      zerolag.clearFlushed();
+      zerolag.rerender();
+    };
+
     const onSocketMessage = async (event: MessageEvent) => {
       const data = await readMessageData(event.data);
       try {
@@ -577,27 +573,12 @@
         if (payload.type === "output" && payload.data) {
           const binary = atob(payload.data);
           const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-          const decoded = outputDecoder.decode(bytes, { stream: true });
-          term.write(decoded);
-          if (pinnedToBottom) {
-            term.scrollToBottom();
-          } else {
-            hasUnseenOutput = true;
-          }
-          zerolag.clearFlushed();
-          zerolag.rerender();
+          writeOutput(outputDecoder.decode(bytes, { stream: true }));
         } else if (payload.type === "error" && "error" in payload && payload.error) {
           statusDetail = String(payload.error);
         }
       } catch {
-        term.write(data);
-        if (pinnedToBottom) {
-          term.scrollToBottom();
-        } else {
-          hasUnseenOutput = true;
-        }
-        zerolag.clearFlushed();
-        zerolag.rerender();
+        writeOutput(data);
       }
     };
 

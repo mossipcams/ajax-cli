@@ -3,7 +3,7 @@
   import { statusMeta } from "../state";
   import { copyText } from "../diagnostics";
   import ActionBar from "./ActionBar.svelte";
-  import TerminalPanel from "./TerminalPanel.svelte";
+  import TerminalRawView from "./TerminalRawView.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -56,7 +56,7 @@
   </section>
 
   <div class="terminal-primary" data-mobile-primary="terminal">
-    <TerminalPanel handle={detail.qualified_handle} />
+    <TerminalRawView handle={detail.qualified_handle} />
   </div>
 
   <details class="meta-details" bind:open={metaOpen}>

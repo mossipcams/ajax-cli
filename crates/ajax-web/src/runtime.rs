@@ -96,10 +96,7 @@ where
         operate: impl FnOnce(&mut CommandContext<InMemoryRegistry>, &mut C, &mut B) -> Response,
     ) -> Response {
         let (mut context, mut runner, mut bridge, base_revision) = {
-            let guard = self
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let guard = self.shared();
             (
                 guard.context.clone(),
                 guard.runner.clone(),
@@ -108,10 +105,7 @@ where
             )
         };
         let response = operate(&mut context, &mut runner, &mut bridge);
-        let mut guard = self
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = self.shared();
         if guard.revision == base_revision {
             guard.context = context;
             guard.runner = runner;
@@ -133,6 +127,18 @@ where
 }
 
 impl<C, B> WebAppState<C, B> {
+    fn shared(&self) -> std::sync::MutexGuard<'_, WebSharedState<C, B>> {
+        self.shared
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn operations(&self) -> std::sync::MutexGuard<'_, OperationCoordinator> {
+        self.operations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn new(
         context: CommandContext<InMemoryRegistry>,
         runner: C,
@@ -177,10 +183,7 @@ impl<C, B> WebAppState<C, B> {
     }
 
     fn cached_cockpit_response(&self) -> Option<Response> {
-        let guard = self
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = self.shared();
         let cache = guard.cockpit_cache.as_ref()?;
         if cache.revision != guard.revision {
             return None;
@@ -200,6 +203,14 @@ struct OperationCoordinator {
     in_flight_tasks: BTreeSet<String>,
 }
 
+/// Why a mutation could not enter the in-flight gate.
+enum GateRejection {
+    /// The request id already completed; replay its stored response.
+    Replay(Response),
+    /// Another mutation holds the gate.
+    Conflict,
+}
+
 impl OperationCoordinator {
     fn completed_response(&self, request_id: &str) -> Option<Response> {
         self.completed.get(request_id).cloned()
@@ -207,6 +218,40 @@ impl OperationCoordinator {
 
     fn has_in_flight_mutation(&self) -> bool {
         !self.in_flight_requests.is_empty() || !self.in_flight_tasks.is_empty()
+    }
+
+    /// Claim the single-mutation gate for this request/task pair, or explain
+    /// why the caller must stop: idempotent replay or a 409 conflict.
+    fn try_begin(&mut self, request_id: Option<&str>, task_key: &str) -> Result<(), GateRejection> {
+        if let Some(request_id) = request_id {
+            if let Some(response) = self.completed_response(request_id) {
+                return Err(GateRejection::Replay(response));
+            }
+        }
+        if self.has_in_flight_mutation() {
+            return Err(GateRejection::Conflict);
+        }
+        if let Some(request_id) = request_id {
+            if !self.in_flight_requests.insert(request_id.to_string()) {
+                return Err(GateRejection::Conflict);
+            }
+        }
+        if !self.in_flight_tasks.insert(task_key.to_string()) {
+            if let Some(request_id) = request_id {
+                self.in_flight_requests.remove(request_id);
+            }
+            return Err(GateRejection::Conflict);
+        }
+        Ok(())
+    }
+
+    /// Release the gate and record the response for idempotent replay.
+    fn finish(&mut self, request_id: Option<&str>, task_key: &str, response: &Response) {
+        self.in_flight_tasks.remove(task_key);
+        if let Some(request_id) = request_id {
+            self.in_flight_requests.remove(request_id);
+            self.store_completed_response(request_id.to_string(), response.clone());
+        }
     }
 
     fn store_completed_response(&mut self, request_id: String, response: Response) {
@@ -467,10 +512,7 @@ where
     }
 
     let mut refresh_session = {
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = state.shared();
         CockpitRefreshSession {
             context: guard.context.clone(),
             runner: guard.runner.clone(),
@@ -488,10 +530,7 @@ where
         Err(_) => None,
     };
     {
-        let mut guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = state.shared();
         if guard.revision == refresh_session.revision {
             guard.context = refresh_session.context;
             guard.bridge = refresh_session.bridge;
@@ -525,10 +564,7 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let guard = state
-        .shared
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let guard = state.shared();
     match cockpit::browser_task_detail_view(&guard.context, &handle) {
         Some(detail) => json_value_response(200, serde_json::to_value(detail).unwrap_or_default()),
         None => json_value_response(
@@ -578,10 +614,7 @@ where
     }
 
     let plan = {
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = state.shared();
         match crate::slices::terminal::prepare_task_terminal(&guard.context, &handle) {
             Ok(plan) => plan,
             Err(crate::slices::terminal::TerminalRouteError::TaskNotFound) => {
@@ -643,45 +676,8 @@ where
     let task_key = ajax_core::commands::start_task_identity(&request.repo, &request.title)
         .as_str()
         .to_string();
-    {
-        let mut operations = state
-            .operations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(response) = operations.completed_response(&request_id) {
-            return response.clone().into_axum_response();
-        }
-        if operations.has_in_flight_mutation() {
-            return json_value_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "request_id": request_id,
-                    "error": "task start already in progress",
-                }),
-            );
-        }
-        if !operations.in_flight_requests.insert(request_id.clone()) {
-            return json_value_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "request_id": request_id,
-                    "error": "task start already in progress",
-                }),
-            );
-        }
-        if !operations.in_flight_tasks.insert(task_key.clone()) {
-            operations.in_flight_requests.remove(&request_id);
-            return json_value_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "request_id": request_id,
-                    "error": "task start already in progress",
-                }),
-            );
-        }
+    if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
+        return gate_rejection_response(rejection, Some(&request_id), "task start");
     }
     let response = state.run_optimistic(
         Some(&request_id),
@@ -692,14 +688,30 @@ where
             Err(error) => response_from_web_error(error, Some(&request_id)),
         },
     );
-    let mut operations = state
-        .operations
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    operations.in_flight_requests.remove(&request_id);
-    operations.in_flight_tasks.remove(&task_key);
-    operations.store_completed_response(request_id, response.clone());
+    state
+        .operations()
+        .finish(Some(&request_id), &task_key, &response);
     response.into_axum_response()
+}
+
+/// Turn a gate rejection into the route response: replay the completed
+/// response or report that a `{noun} already in progress` conflict.
+fn gate_rejection_response(
+    rejection: GateRejection,
+    request_id: Option<&str>,
+    noun: &str,
+) -> AxumResponse {
+    match rejection {
+        GateRejection::Replay(response) => response.into_axum_response(),
+        GateRejection::Conflict => json_value_response(
+            409,
+            serde_json::json!({
+                "ok": false,
+                "request_id": request_id,
+                "error": format!("{noun} already in progress"),
+            }),
+        ),
+    }
 }
 
 async fn axum_action<C, B>(State(state): State<WebAppState<C, B>>, body: Bytes) -> AxumResponse
@@ -721,51 +733,11 @@ where
     };
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();
+    if let Err(rejection) = state
+        .operations()
+        .try_begin(request_id.as_deref(), &task_key)
     {
-        let mut operations = state
-            .operations
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(request_id) = request_id.as_ref() {
-            if let Some(response) = operations.completed_response(request_id) {
-                return response.clone().into_axum_response();
-            }
-        }
-        if operations.has_in_flight_mutation() {
-            return json_value_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "request_id": request_id,
-                    "error": "operation already in progress",
-                }),
-            );
-        }
-        if let Some(request_id) = request_id.as_ref() {
-            if !operations.in_flight_requests.insert(request_id.clone()) {
-                return json_value_response(
-                    409,
-                    serde_json::json!({
-                        "ok": false,
-                        "request_id": request_id,
-                        "error": "operation already in progress",
-                    }),
-                );
-            }
-        }
-        if !operations.in_flight_tasks.insert(task_key.clone()) {
-            if let Some(request_id) = request_id.as_ref() {
-                operations.in_flight_requests.remove(request_id);
-            }
-            return json_value_response(
-                409,
-                serde_json::json!({
-                    "ok": false,
-                    "request_id": request_id,
-                    "error": "operation already in progress",
-                }),
-            );
-        }
+        return gate_rejection_response(rejection, request_id.as_deref(), "operation");
     }
 
     let response = state.run_optimistic(
@@ -777,15 +749,9 @@ where
         },
     );
 
-    let mut operations = state
-        .operations
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    operations.in_flight_tasks.remove(&task_key);
-    if let Some(request_id) = request_id.as_ref() {
-        operations.in_flight_requests.remove(request_id);
-        operations.store_completed_response(request_id.clone(), response.clone());
-    }
+    state
+        .operations()
+        .finish(request_id.as_deref(), &task_key, &response);
 
     response.into_axum_response()
 }
@@ -1013,56 +979,62 @@ mod tests {
         }
     }
 
-    fn refresh_cockpit_with_optional_delay<C: CommandRunner>(
-        bridge: &mut TestBridge,
-        context: &mut CommandContext<InMemoryRegistry>,
-        _runner: &mut C,
-        tier: RefreshTier,
-    ) -> Result<bool, crate::WebError> {
-        if bridge.refresh_delay > Duration::ZERO {
-            std::thread::sleep(bridge.refresh_delay);
+    /// Block the first bridge call until the test releases the gate; later
+    /// calls pass straight through.
+    fn wait_for_release(release: &Option<Arc<(Mutex<bool>, Condvar)>>, call_index: usize) {
+        if call_index != 0 {
+            return;
         }
-        bridge.refreshed = true;
-        bridge.refresh_tier = Some(tier);
-        bridge.refresh_count += 1;
-        let _ = context;
-        Ok(false)
+        if let Some(release) = release.as_ref() {
+            let (lock, cvar) = &**release;
+            let mut released = lock
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            while !*released {
+                released = cvar
+                    .wait(released)
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+        }
     }
 
-    impl RuntimeBridge<OkRunner> for TestBridge {
+    fn release_gate(release: &Arc<(Mutex<bool>, Condvar)>) {
+        let (lock, cvar) = &**release;
+        let mut released = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *released = true;
+        cvar.notify_all();
+    }
+
+    impl<R: CommandRunner> RuntimeBridge<R> for TestBridge {
         fn refresh_cockpit(
             &mut self,
-            context: &mut CommandContext<InMemoryRegistry>,
-            runner: &mut OkRunner,
+            _context: &mut CommandContext<InMemoryRegistry>,
+            _runner: &mut R,
             tier: RefreshTier,
         ) -> Result<bool, crate::WebError> {
-            refresh_cockpit_with_optional_delay(self, context, runner, tier)
+            if self.refresh_delay > Duration::ZERO {
+                std::thread::sleep(self.refresh_delay);
+            }
+            self.refreshed = true;
+            self.refresh_tier = Some(tier);
+            self.refresh_count += 1;
+            Ok(false)
         }
 
         fn execute_operate(
             &mut self,
             request: OperateRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut OkRunner,
+            _runner: &mut R,
         ) -> Result<OperateOutcome, ActionFailure> {
             self.operate_count += 1;
-            let operate_call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(entered) = self.operate_entered.as_ref() {
                 entered.notify_one();
             }
-            if operate_call_index == 0 {
-                if let Some(operate_release) = self.operate_release.as_ref() {
-                    let (lock, cvar) = &**operate_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
+            wait_for_release(&self.operate_release, call_index);
             std::thread::sleep(self.operate_delay);
             self.operate = Some(request);
             self.operate_result.clone()
@@ -1072,94 +1044,14 @@ mod tests {
             &mut self,
             request: crate::slices::operate::StartTaskRequest,
             _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut OkRunner,
+            _runner: &mut R,
         ) -> Result<OperateOutcome, ActionFailure> {
             self.start_count += 1;
-            let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
+            let call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
             if let Some(entered) = self.start_entered.as_ref() {
                 entered.notify_one();
             }
-            if start_call_index == 0 {
-                if let Some(start_release) = self.start_release.as_ref() {
-                    let (lock, cvar) = &**start_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            self.start = Some(request);
-            self.start_result.clone()
-        }
-    }
-
-    impl RuntimeBridge<ajax_core::adapters::RecordingCommandRunner> for TestBridge {
-        fn refresh_cockpit(
-            &mut self,
-            context: &mut CommandContext<InMemoryRegistry>,
-            runner: &mut ajax_core::adapters::RecordingCommandRunner,
-            tier: RefreshTier,
-        ) -> Result<bool, crate::WebError> {
-            refresh_cockpit_with_optional_delay(self, context, runner, tier)
-        }
-
-        fn execute_operate(
-            &mut self,
-            request: OperateRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut ajax_core::adapters::RecordingCommandRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.operate_count += 1;
-            let operate_call_index = self.operate_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.operate_entered.as_ref() {
-                entered.notify_one();
-            }
-            if operate_call_index == 0 {
-                if let Some(operate_release) = self.operate_release.as_ref() {
-                    let (lock, cvar) = &**operate_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
-            std::thread::sleep(self.operate_delay);
-            self.operate = Some(request);
-            self.operate_result.clone()
-        }
-
-        fn execute_start_task(
-            &mut self,
-            request: crate::slices::operate::StartTaskRequest,
-            _context: &mut CommandContext<InMemoryRegistry>,
-            _runner: &mut ajax_core::adapters::RecordingCommandRunner,
-        ) -> Result<OperateOutcome, ActionFailure> {
-            self.start_count += 1;
-            let start_call_index = self.start_calls.fetch_add(1, Ordering::SeqCst);
-            if let Some(entered) = self.start_entered.as_ref() {
-                entered.notify_one();
-            }
-            if start_call_index == 0 {
-                if let Some(start_release) = self.start_release.as_ref() {
-                    let (lock, cvar) = &**start_release;
-                    let mut released = lock
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    while !*released {
-                        released = cvar
-                            .wait(released)
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    }
-                }
-            }
+            wait_for_release(&self.start_release, call_index);
             self.start = Some(request);
             self.start_result.clone()
         }
@@ -1179,88 +1071,21 @@ mod tests {
     }
 
     fn context_with_task() -> CommandContext<InMemoryRegistry> {
-        use ajax_core::{
-            config::ManagedRepo,
-            models::{AgentClient, Task, TaskId},
-            registry::Registry as _,
-        };
-
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        CommandContext::new(config, registry)
+        crate::test_support::context_with_fix_login_task()
     }
 
     fn context_with_web_repo() -> CommandContext<InMemoryRegistry> {
-        use ajax_core::config::ManagedRepo;
-
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        CommandContext::new(config, InMemoryRegistry::default())
+        crate::test_support::context_with_tasks(&["web"], vec![])
     }
 
     fn context_with_two_tasks() -> CommandContext<InMemoryRegistry> {
-        use ajax_core::{
-            config::ManagedRepo,
-            models::{AgentClient, Task, TaskId},
-            registry::Registry as _,
-        };
-
-        let config = Config {
-            repos: vec![
-                ManagedRepo::new("web", "/repo/web", "main"),
-                ManagedRepo::new("api", "/repo/api", "main"),
+        crate::test_support::context_with_tasks(
+            &["web", "api"],
+            vec![
+                crate::test_support::fix_login_task(),
+                crate::test_support::task_in("api", "fix-auth", "Fix auth"),
             ],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        registry
-            .create_task(Task::new(
-                TaskId::new("api/fix-auth"),
-                "api",
-                "fix-auth",
-                "Fix auth",
-                "ajax/fix-auth",
-                "main",
-                "/repo/api__worktrees/ajax-fix-auth",
-                "ajax-api-fix-auth",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        CommandContext::new(config, registry)
+        )
     }
 
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
@@ -1282,59 +1107,81 @@ mod tests {
         AxumRequest::builder().uri(uri).header("cookie", cookie)
     }
 
-    fn run_axum_request<C, B>(
-        state: super::WebAppState<C, B>,
-        method: &str,
-        path: &str,
-        body: &str,
-    ) -> super::Response
-    where
-        C: CommandRunner + Clone + Send + 'static,
-        B: RuntimeBridge<C> + Clone + Send + 'static,
-    {
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async move {
-                let mut request = authenticated_request(&session_cookie, path).method(method);
-                if !body.is_empty() {
-                    request = request.header("content-type", "application/json");
-                }
-                let response = app
-                    .oneshot(request.body(Body::from(body.to_string())).unwrap())
-                    .await
-                    .unwrap();
-                let status_code = response.status().as_u16();
-                let content_type = response
-                    .headers()
-                    .get("content-type")
-                    .and_then(|value| value.to_str().ok())
-                    .map(http_content_type_to_static)
-                    .unwrap_or("text/plain; charset=utf-8");
-                let body = to_bytes(response.into_body(), usize::MAX)
-                    .await
-                    .unwrap()
-                    .to_vec();
-                super::Response {
-                    status_code,
-                    content_type,
-                    body,
-                }
-            })
+    /// State + session cookie + router for an `OkRunner`-backed test app.
+    fn app_with(
+        context: CommandContext<InMemoryRegistry>,
+        bridge: TestBridge,
+        tag: &str,
+    ) -> (
+        super::WebAppState<OkRunner, TestBridge>,
+        String,
+        axum::Router,
+    ) {
+        let state = super::WebAppState::new(context, OkRunner, bridge, scratch_dir(tag));
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state.clone());
+        (state, cookie, app)
     }
 
-    fn http_content_type_to_static(value: &str) -> &'static str {
-        match value {
-            "application/json; charset=utf-8" => "application/json; charset=utf-8",
-            "text/html; charset=utf-8" => "text/html; charset=utf-8",
-            "text/css; charset=utf-8" => "text/css; charset=utf-8",
-            "text/javascript; charset=utf-8" => "text/javascript; charset=utf-8",
-            "text/plain; charset=utf-8" => "text/plain; charset=utf-8",
-            other => Box::leak(other.to_string().into_boxed_str()),
-        }
+    /// GET without a browser-session cookie (public shell/asset routes and
+    /// 401 checks).
+    async fn get_public(app: &axum::Router, path: &str) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                AxumRequest::builder()
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    /// The `name=value` pair of the browser-session cookie a response set.
+    fn set_cookie_pair(response: &axum::response::Response) -> String {
+        response
+            .headers()
+            .get("set-cookie")
+            .expect("response should set browser session cookie")
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    async fn get(app: &axum::Router, cookie: &str, path: &str) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                authenticated_request(cookie, path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn post_json(
+        app: &axum::Router,
+        cookie: &str,
+        path: &str,
+        body: &str,
+    ) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                authenticated_request(cookie, path)
+                    .method("POST")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn json_of(response: axum::response::Response) -> serde_json::Value {
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap()
     }
 
     #[test]
@@ -1385,11 +1232,7 @@ mod tests {
         let session_cookie = browser_session_cookie(&state);
         let app = super::axum_app(state);
 
-        let shell = app
-            .clone()
-            .oneshot(AxumRequest::builder().uri("/").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let shell = get_public(&app, "/").await;
         assert_eq!(shell.status(), StatusCode::OK);
         assert_eq!(shell.headers()["content-type"], "text/html; charset=utf-8");
         assert_eq!(shell.headers()["cache-control"], "no-store");
@@ -1398,36 +1241,16 @@ mod tests {
             .unwrap()
             .contains("Ajax Cockpit"));
 
-        let cockpit = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let cockpit = get(&app, &session_cookie, "/api/cockpit").await;
         assert_eq!(cockpit.status(), StatusCode::OK);
         assert_eq!(
             cockpit.headers()["content-type"],
             "application/json; charset=utf-8"
         );
         assert_eq!(cockpit.headers()["cache-control"], "no-store");
-        let cockpit_body = to_bytes(cockpit.into_body(), usize::MAX).await.unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&cockpit_body).unwrap()["cards"],
-            serde_json::json!([])
-        );
+        assert_eq!(json_of(cockpit).await["cards"], serde_json::json!([]));
 
-        let missing_api = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/missing")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let missing_api = get(&app, &session_cookie, "/api/missing").await;
         assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             missing_api.headers()["content-type"],
@@ -1447,16 +1270,7 @@ mod tests {
             "/icons/icon-maskable-512.png",
             "/icons/apple-touch-icon.png",
         ] {
-            let retired_asset = app
-                .clone()
-                .oneshot(
-                    AxumRequest::builder()
-                        .uri(path)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let retired_asset = get_public(&app, path).await;
             assert_eq!(retired_asset.status(), StatusCode::NOT_FOUND, "{path}");
             assert_eq!(
                 retired_asset.headers()["content-type"],
@@ -1465,15 +1279,7 @@ mod tests {
             );
         }
 
-        let missing_asset = app
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/does-not-exist.css")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let missing_asset = get_public(&app, "/does-not-exist.css").await;
         assert_eq!(missing_asset.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             missing_asset.headers()["content-type"],
@@ -1500,58 +1306,22 @@ mod tests {
         );
         let app = super::axum_app(state);
 
-        let shell = app
-            .clone()
-            .oneshot(AxumRequest::builder().uri("/").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        let session_cookie = shell
-            .headers()
-            .get("set-cookie")
-            .expect("shell should set browser session cookie")
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap()
-            .to_string();
+        let shell = get_public(&app, "/").await;
+        let session_cookie = set_cookie_pair(&shell);
         assert!(session_cookie.starts_with("ajax_browser_session="));
 
-        let health = app
-            .clone()
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/health")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(health.status(), StatusCode::OK);
-
-        let unauthenticated = app
-            .clone()
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
-
-        let authenticated = app
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
-                    .header("cookie", session_cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(authenticated.status(), StatusCode::OK);
+        assert_eq!(
+            get_public(&app, "/api/health").await.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_public(&app, "/api/cockpit").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            get(&app, &session_cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]
@@ -1565,17 +1335,10 @@ mod tests {
         );
         let app = super::axum_app(state);
 
-        let unauthenticated = app
-            .clone()
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            get_public(&app, "/api/cockpit").await.status(),
+            StatusCode::UNAUTHORIZED
+        );
 
         let renewal = app
             .clone()
@@ -1589,29 +1352,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(renewal.status(), StatusCode::OK);
-        let session_cookie = renewal
-            .headers()
-            .get("set-cookie")
-            .expect("session renewal should set browser session cookie")
-            .to_str()
-            .unwrap()
-            .split(';')
-            .next()
-            .unwrap()
-            .to_string();
+        let session_cookie = set_cookie_pair(&renewal);
         assert!(session_cookie.starts_with("ajax_browser_session="));
 
-        let authenticated = app
-            .oneshot(
-                AxumRequest::builder()
-                    .uri("/api/cockpit")
-                    .header("cookie", session_cookie)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(authenticated.status(), StatusCode::OK);
+        assert_eq!(
+            get(&app, &session_cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
     }
 
     #[tokio::test]
@@ -1640,10 +1387,7 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
             serde_json::json!({ "ok": true })
         );
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = state.shared();
         assert_eq!(guard.revision, 0);
         assert!(!guard.bridge.refreshed);
         assert_eq!(guard.bridge.operate_count, 0);
@@ -1763,203 +1507,111 @@ mod tests {
 
     #[tokio::test]
     async fn axum_cockpit_serves_cached_projection_within_refresh_ttl() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("axum-cockpit-cache"),
+            "axum-cockpit-cache",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         for _ in 0..2 {
-            let response = app
-                .clone()
-                .oneshot(
-                    authenticated_request(&session_cookie, "/api/cockpit")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                get(&app, &cookie, "/api/cockpit").await.status(),
+                StatusCode::OK
+            );
         }
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.refresh_count, 1);
+        assert_eq!(state.shared().bridge.refresh_count, 1);
     }
 
     #[tokio::test]
     async fn axum_cockpit_refreshes_again_after_ttl_expires() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("axum-cockpit-ttl"),
+            "axum-cockpit-ttl",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
-        let first = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(
+            get(&app, &cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
 
         tokio::time::sleep(super::COCKPIT_REFRESH_CACHE_TTL + Duration::from_millis(50)).await;
 
-        let second = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(second.status(), StatusCode::OK);
+        assert_eq!(
+            get(&app, &cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.refresh_count, 2);
+        assert_eq!(state.shared().bridge.refresh_count, 2);
     }
 
     #[tokio::test]
     async fn axum_operation_invalidates_cockpit_refresh_cache() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("axum-cockpit-invalidate"),
+            "axum-cockpit-invalidate",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
-        let cockpit = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(
+            get(&app, &cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
 
-        let operation = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"invalidate-1","task_handle":"web/fix-login","action":"review"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let operation = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"invalidate-1","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await;
         assert_eq!(operation.status(), StatusCode::OK);
 
-        let refreshed = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(refreshed.status(), StatusCode::OK);
+        assert_eq!(
+            get(&app, &cookie, "/api/cockpit").await.status(),
+            StatusCode::OK
+        );
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.refresh_count, 2);
+        assert_eq!(state.shared().bridge.refresh_count, 2);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn concurrent_cockpit_polls_share_one_refresh() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge {
                 refresh_delay: Duration::from_millis(200),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-cockpit-single-flight"),
+            "axum-cockpit-single-flight",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
-        let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/cockpit")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        });
+        let first_cookie = cookie.clone();
+        let first =
+            tokio::spawn(async move { get(&first_app, &first_cookie, "/api/cockpit").await });
         tokio::time::sleep(Duration::from_millis(25)).await;
-        let second = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/cockpit")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let second = get(&app, &cookie, "/api/cockpit").await;
 
         assert_eq!(first.await.unwrap().status(), StatusCode::OK);
         assert_eq!(second.status(), StatusCode::OK);
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.refresh_count, 1);
+        assert_eq!(state.shared().bridge.refresh_count, 1);
     }
 
     #[tokio::test]
     async fn axum_router_reports_shell_version() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("axum-version"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "axum-version");
 
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/version")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = get(&app, &cookie, "/api/version").await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
             response.headers()["content-type"],
             "application/json; charset=utf-8"
         );
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let value = json_of(response).await;
         let version = value["version"].as_str().expect("version string");
         assert!(version.starts_with(env!("CARGO_PKG_VERSION")));
         assert_eq!(version, crate::slices::install::app_version());
@@ -1968,135 +1620,66 @@ mod tests {
     #[tokio::test]
     async fn axum_operations_are_idempotent_by_request_id() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("axum-idempotency"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "axum-idempotency");
 
         let operation = r#"{"request_id":"req-1","task_handle":"web/fix-login","action":"review"}"#;
-        let first = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(operation))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let first = post_json(&app, &cookie, "/api/operations", operation).await;
         assert_eq!(first.status(), StatusCode::OK);
-        let first_body = to_bytes(first.into_body(), usize::MAX).await.unwrap();
-        let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+        let first_json = json_of(first).await;
         assert_eq!(first_json["ok"], true);
         assert_eq!(first_json["request_id"], "req-1");
         assert!(first_json["cockpit"].is_object());
 
-        let second = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(operation))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let second = post_json(&app, &cookie, "/api/operations", operation).await;
         assert_eq!(second.status(), StatusCode::OK);
-        let second_body = to_bytes(second.into_body(), usize::MAX).await.unwrap();
-        let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
-        assert_eq!(second_json, first_json);
+        assert_eq!(json_of(second).await, first_json);
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.operate_count, 1);
+        assert_eq!(state.shared().bridge.operate_count, 1);
     }
 
     #[tokio::test]
     async fn axum_task_starts_are_idempotent_by_request_id() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             CommandContext::new(Config::default(), InMemoryRegistry::default()),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("axum-start-idempotency"),
+            "axum-start-idempotency",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
         let request =
             r#"{"request_id":"start-1","repo":"web","title":"Fix login","agent":"codex"}"#;
 
         for _ in 0..2 {
-            let response = app
-                .clone()
-                .oneshot(
-                    authenticated_request(&session_cookie, "/api/tasks")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(request))
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
+            let response = post_json(&app, &cookie, "/api/tasks", request).await;
             assert_eq!(response.status(), StatusCode::OK);
-            let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-            let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+            let json = json_of(response).await;
             assert_eq!(json["ok"], true);
             assert_eq!(json["request_id"], "start-1");
             assert!(json["cockpit"].is_object());
         }
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.start_count, 1);
+        assert_eq!(state.shared().bridge.start_count, 1);
     }
 
     #[tokio::test]
     async fn axum_operation_parse_errors_are_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("axum-json-error"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "axum-json-error");
 
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{not-json"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = post_json(&app, &cookie, "/api/operations", "{not-json").await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         assert_eq!(
             response.headers()["content-type"],
             "application/json; charset=utf-8"
         );
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(response).await;
         assert_eq!(json["ok"], false);
         assert!(json["error"].as_str().unwrap_or_default().contains("json"));
     }
 
     #[tokio::test]
     async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
-        let state = super::WebAppState::new(
+        let (_state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge {
                 operate_result: Err(ActionFailure {
                     message: "bridge failed".to_string(),
@@ -2104,27 +1687,19 @@ mod tests {
                 }),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-operation-error"),
+            "axum-operation-error",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
 
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"op-error-1","task_handle":"web/fix-login","action":"review"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"op-error-1","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(response).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "op-error-1");
         assert_eq!(json["state_changed"], true);
@@ -2136,34 +1711,26 @@ mod tests {
     async fn axum_start_task_rejects_concurrent_colliding_normalized_identity() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new((Mutex::new(false), Condvar::new()));
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_web_repo(),
-            OkRunner,
             TestBridge {
                 start_entered: Some(Arc::clone(&entered)),
                 start_release: Some(Arc::clone(&release)),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-start-collision"),
+            "axum-start-collision",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
+        let first_cookie = cookie.clone();
         let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/tasks")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
+            post_json(
+                &first_app,
+                &first_cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+            )
+            .await
         });
 
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
@@ -2172,35 +1739,20 @@ mod tests {
 
         let conflict = tokio::time::timeout(
             Duration::from_secs(5),
-            async {
-                app.oneshot(
-                    authenticated_request(&session_cookie, "/api/tasks")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"start-b","repo":"web","title":"Fix login!","agent":"codex"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-            },
+            post_json(
+                &app,
+                &cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-b","repo":"web","title":"Fix login!","agent":"codex"}"#,
+            ),
         )
         .await
         .expect("second start request timed out");
 
-        {
-            let (lock, cvar) = &*release;
-            let mut released = lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *released = true;
-            cvar.notify_all();
-        }
+        release_gate(&release);
 
         assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(conflict).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "start-b");
         assert!(json["error"]
@@ -2216,11 +1768,7 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.start_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.shared().bridge.start_calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -2228,68 +1776,48 @@ mod tests {
     {
         let entered = Arc::new(Notify::new());
         let release = Arc::new((Mutex::new(false), Condvar::new()));
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_two_tasks(),
-            OkRunner,
             TestBridge {
                 operate_entered: Some(Arc::clone(&entered)),
                 operate_release: Some(Arc::clone(&release)),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-start-blocked-by-action"),
+            "axum-start-blocked-by-action",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
+        let first_cookie = cookie.clone();
         let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/operations")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"op-a","task_handle":"web/fix-login","action":"review"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
+            post_json(
+                &first_app,
+                &first_cookie,
+                "/api/operations",
+                r#"{"request_id":"op-a","task_handle":"web/fix-login","action":"review"}"#,
+            )
+            .await
         });
 
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
             .await
             .expect("first operation request never entered the bridge");
 
-        let conflict = tokio::time::timeout(Duration::from_secs(5), async {
-            app.oneshot(
-                authenticated_request(&session_cookie, "/api/tasks")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"start-a","repo":"web","title":"Start while action runs","agent":"codex"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-        })
+        let conflict = tokio::time::timeout(
+            Duration::from_secs(5),
+            post_json(
+                &app,
+                &cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-a","repo":"web","title":"Start while action runs","agent":"codex"}"#,
+            ),
+        )
         .await
         .expect("start request timed out");
 
-        {
-            let (lock, cvar) = &*release;
-            let mut released = lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *released = true;
-            cvar.notify_all();
-        }
+        release_gate(&release);
 
         assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(conflict).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "start-a");
         assert!(json["error"]
@@ -2305,10 +1833,7 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = state.shared();
         assert_eq!(guard.bridge.start_calls.load(Ordering::SeqCst), 0);
         assert_eq!(guard.bridge.operate_calls.load(Ordering::SeqCst), 1);
     }
@@ -2317,79 +1842,54 @@ mod tests {
     async fn axum_start_task_duplicate_request_id_does_not_clear_original_in_flight_marker() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new((Mutex::new(false), Condvar::new()));
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_web_repo(),
-            OkRunner,
             TestBridge {
                 start_entered: Some(Arc::clone(&entered)),
                 start_release: Some(Arc::clone(&release)),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-start-duplicate-request-id"),
+            "axum-start-duplicate-request-id",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
+        let first_cookie = cookie.clone();
         let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/tasks")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
+            post_json(
+                &first_app,
+                &first_cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+            )
+            .await
         });
 
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
             .await
             .expect("first start request never entered the bridge");
 
-        let duplicate_same_task = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let duplicate_same_task = post_json(
+            &app,
+            &cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-a","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await;
         assert_eq!(duplicate_same_task.status(), StatusCode::CONFLICT);
 
-        let duplicate_different_task = tokio::time::timeout(Duration::from_secs(5), async {
-            app.oneshot(
-                authenticated_request(&session_cookie, "/api/tasks")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"start-a","repo":"web","title":"Different task","agent":"codex"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap()
-        })
+        let duplicate_different_task = tokio::time::timeout(
+            Duration::from_secs(5),
+            post_json(
+                &app,
+                &cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-a","repo":"web","title":"Different task","agent":"codex"}"#,
+            ),
+        )
         .await
         .expect("duplicate start request timed out");
 
-        {
-            let (lock, cvar) = &*release;
-            let mut released = lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *released = true;
-            cvar.notify_all();
-        }
+        release_gate(&release);
 
         assert_eq!(duplicate_different_task.status(), StatusCode::CONFLICT);
         assert_eq!(
@@ -2400,11 +1900,7 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.start_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(state.shared().bridge.start_calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -2455,9 +1951,8 @@ mod tests {
 
     #[tokio::test]
     async fn start_task_endpoint_returns_refreshed_cockpit_on_bridge_error() {
-        let state = super::WebAppState::new(
+        let (_state, cookie, app) = app_with(
             CommandContext::new(Config::default(), InMemoryRegistry::default()),
-            OkRunner,
             TestBridge {
                 start_result: Err(ActionFailure {
                     message: "start failed".to_string(),
@@ -2465,27 +1960,19 @@ mod tests {
                 }),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-start-error"),
+            "axum-start-error",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
 
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"start-error-1","repo":"web","title":"Fix login","agent":"codex"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = post_json(
+            &app,
+            &cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-error-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+        )
+        .await;
 
         assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(response).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "start-error-1");
         assert_eq!(json["state_changed"], true);
@@ -2500,45 +1987,31 @@ mod tests {
             operate_delay: Duration::from_millis(150),
             ..TestBridge::default()
         };
-        let state =
-            super::WebAppState::new(context, OkRunner, bridge, scratch_dir("axum-conflict"));
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
+        let (state, cookie, app) = app_with(context, bridge, "axum-conflict");
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
+        let first_cookie = cookie.clone();
         let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/operations")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
+            post_json(
+                &first_app,
+                &first_cookie,
+                "/api/operations",
+                r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
+            )
+            .await
         });
         tokio::time::sleep(Duration::from_millis(25)).await;
 
-        let conflict = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"req-b","task_handle":"web/fix-login","action":"ship"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let conflict = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"req-b","task_handle":"web/fix-login","action":"ship"}"#,
+        )
+        .await;
 
         assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(conflict).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "req-b");
         assert!(json["error"]
@@ -2547,76 +2020,54 @@ mod tests {
             .contains("already in progress"));
 
         assert_eq!(first.await.unwrap().status(), StatusCode::OK);
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.operate_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            state.shared().bridge.operate_calls.load(Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn axum_rejects_concurrent_different_task_operations_before_bridge_side_effects() {
         let entered = Arc::new(Notify::new());
         let release = Arc::new((Mutex::new(false), Condvar::new()));
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_two_tasks(),
-            OkRunner,
             TestBridge {
                 operate_entered: Some(Arc::clone(&entered)),
                 operate_release: Some(Arc::clone(&release)),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-concurrent-different-tasks"),
+            "axum-concurrent-different-tasks",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let first_app = app.clone();
-        let first_cookie = session_cookie.clone();
+        let first_cookie = cookie.clone();
         let first = tokio::spawn(async move {
-            first_app
-                .oneshot(
-                    authenticated_request(&first_cookie, "/api/operations")
-                        .method("POST")
-                        .header("content-type", "application/json")
-                        .body(Body::from(
-                            r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
-                        ))
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
+            post_json(
+                &first_app,
+                &first_cookie,
+                "/api/operations",
+                r#"{"request_id":"req-a","task_handle":"web/fix-login","action":"review"}"#,
+            )
+            .await
         });
 
         tokio::time::timeout(Duration::from_secs(5), entered.notified())
             .await
             .expect("first request never entered the bridge");
 
-        let conflict = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"req-b","task_handle":"api/fix-auth","action":"ship"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let conflict = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"req-b","task_handle":"api/fix-auth","action":"ship"}"#,
+        )
+        .await;
 
-        {
-            let (lock, cvar) = &*release;
-            let mut released = lock
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *released = true;
-            cvar.notify_all();
-        }
+        release_gate(&release);
 
         assert_eq!(conflict.status(), StatusCode::CONFLICT);
-        let body = to_bytes(conflict.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let json = json_of(conflict).await;
         assert_eq!(json["ok"], false);
         assert_eq!(json["request_id"], "req-b");
         assert!(json["error"]
@@ -2625,39 +2076,24 @@ mod tests {
             .contains("already in progress"));
 
         assert_eq!(first.await.unwrap().status(), StatusCode::OK);
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(guard.bridge.operate_count, 1);
+        assert_eq!(state.shared().bridge.operate_count, 1);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn axum_health_stays_responsive_during_slow_cockpit_refresh() {
-        let state = super::WebAppState::new(
+        let (_state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge {
                 refresh_delay: Duration::from_millis(400),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-health-cockpit"),
+            "axum-health-cockpit",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
 
         let slow_app = app.clone();
-        let slow_cookie = session_cookie.clone();
-        let cockpit = tokio::spawn(async move {
-            slow_app
-                .oneshot(
-                    authenticated_request(&slow_cookie, "/api/cockpit")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        });
+        let slow_cookie = cookie.clone();
+        let cockpit =
+            tokio::spawn(async move { get(&slow_app, &slow_cookie, "/api/cockpit").await });
 
         let health_started = std::time::Instant::now();
         let health = app
@@ -2681,52 +2117,33 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn axum_cockpit_refresh_does_not_overwrite_concurrent_operation_state() {
-        let state = super::WebAppState::new(
+        let (state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge {
                 refresh_delay: Duration::from_millis(250),
                 ..TestBridge::default()
             },
-            scratch_dir("axum-refresh-operation-race"),
+            "axum-refresh-operation-race",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state.clone());
 
         let refresh_app = app.clone();
-        let refresh_cookie = session_cookie.clone();
-        let cockpit = tokio::spawn(async move {
-            refresh_app
-                .oneshot(
-                    authenticated_request(&refresh_cookie, "/api/cockpit")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-        });
+        let refresh_cookie = cookie.clone();
+        let cockpit =
+            tokio::spawn(async move { get(&refresh_app, &refresh_cookie, "/api/cockpit").await });
         tokio::time::sleep(Duration::from_millis(25)).await;
 
-        let operation = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/operations")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"request_id":"req-race","task_handle":"web/fix-login","action":"review"}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let operation = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"req-race","task_handle":"web/fix-login","action":"review"}"#,
+        )
+        .await;
 
         assert_eq!(operation.status(), StatusCode::OK);
         assert_eq!(cockpit.await.unwrap().status(), StatusCode::OK);
 
-        let guard = state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let guard = state.shared();
         assert_eq!(guard.bridge.operate_count, 1);
         assert_eq!(
             guard
@@ -2738,95 +2155,74 @@ mod tests {
         );
     }
 
-    #[test]
-    fn runtime_routes_to_vertical_slices() {
+    #[tokio::test]
+    async fn runtime_routes_to_vertical_slices() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("routes"),
-        );
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "routes");
 
-        let shell = run_axum_request(state.clone(), "GET", "/", "");
-        assert_eq!(shell.status_code, 200);
-        assert_eq!(shell.content_type, "text/html; charset=utf-8");
-        assert!(std::str::from_utf8(&shell.body)
+        let shell = get_public(&app, "/").await;
+        assert_eq!(shell.status(), StatusCode::OK);
+        assert_eq!(shell.headers()["content-type"], "text/html; charset=utf-8");
+        let shell_body = to_bytes(shell.into_body(), usize::MAX).await.unwrap();
+        assert!(std::str::from_utf8(&shell_body)
             .unwrap()
             .contains("Ajax Cockpit"));
 
-        let cockpit = run_axum_request(state, "GET", "/api/cockpit", "");
-        assert_eq!(cockpit.status_code, 200);
-        assert_eq!(cockpit.content_type, "application/json; charset=utf-8");
+        let cockpit = get(&app, &cookie, "/api/cockpit").await;
+        assert_eq!(cockpit.status(), StatusCode::OK);
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&cockpit.body).unwrap()["cards"],
-            serde_json::json!([])
+            cockpit.headers()["content-type"],
+            "application/json; charset=utf-8"
         );
+        assert_eq!(json_of(cockpit).await["cards"], serde_json::json!([]));
     }
 
-    #[test]
-    fn cockpit_api_refreshes_before_rendering() {
+    #[tokio::test]
+    async fn cockpit_api_refreshes_before_rendering() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("refresh");
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "refresh");
 
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(state.clone(), "GET", "/api/cockpit", "");
+        let response = get(&app, &cookie, "/api/cockpit").await;
 
-        assert_eq!(response.status_code, 200);
-        let bridge = &state
-            .shared
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .bridge;
+        assert_eq!(response.status(), StatusCode::OK);
+        let bridge = &state.shared().bridge;
         assert!(bridge.refreshed);
         assert_eq!(bridge.refresh_tier, Some(RefreshTier::Live));
     }
 
-    #[test]
-    fn server_restart_endpoint_returns_restarting_json() {
+    #[tokio::test]
+    async fn server_restart_endpoint_returns_restarting_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("restart");
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart");
 
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(state, "POST", "/api/server/restart", "");
+        let response = post_json(&app, &cookie, "/api/server/restart", "").await;
 
-        assert_eq!(response.status_code, 200);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_of(response).await;
         assert_eq!(body["ok"], true);
         assert_eq!(body["restarting"], true);
     }
 
-    #[test]
-    fn action_endpoint_executes_bridge_action_and_returns_cockpit() {
+    #[tokio::test]
+    async fn action_endpoint_executes_bridge_action_and_returns_cockpit() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("action");
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "action");
 
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state.clone(),
-            "POST",
+        let response = post_json(
+            &app,
+            &cookie,
             "/api/actions",
             r#"{"task_handle":"web/fix-login","action":"review"}"#,
-        );
+        )
+        .await;
 
-        assert_eq!(response.status_code, 200);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_of(response).await;
         assert_eq!(body["ok"], true);
         assert_eq!(body["state_changed"], true);
         assert!(body["cockpit"].is_object());
         assert_eq!(
-            state
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .bridge
-                .operate,
+            state.shared().bridge.operate,
             Some(OperateRequest {
                 task_handle: "web/fix-login".to_string(),
                 action: "review".to_string(),
@@ -2834,51 +2230,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn get_task_detail_returns_json_for_existing_handle() {
-        use ajax_core::config::ManagedRepo;
-        use ajax_core::models::{AgentClient, Task, TaskId};
-        use ajax_core::registry::Registry as _;
+    #[tokio::test]
+    async fn get_task_detail_returns_json_for_existing_handle() {
+        let (_state, cookie, app) = app_with(context_with_task(), TestBridge::default(), "detail");
 
-        let config = ajax_core::config::Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..ajax_core::config::Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        registry
-            .create_task(Task::new(
-                TaskId::new("web/fix-login"),
-                "web",
-                "fix-login",
-                "Fix login",
-                "ajax/fix-login",
-                "main",
-                "/repo/web__worktrees/ajax-fix-login",
-                "ajax-web-fix-login",
-                "worktrunk",
-                AgentClient::Codex,
-            ))
-            .unwrap();
-        let context = CommandContext::new(config, registry);
+        let response = get(&app, &cookie, "/api/tasks/web/fix-login").await;
 
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("detail"),
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
         );
-        let response = run_axum_request(state, "GET", "/api/tasks/web/fix-login", "");
-
-        assert_eq!(response.status_code, 200);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        let body = json_of(response).await;
         assert_eq!(body["qualified_handle"], "web/fix-login");
         assert_eq!(body["title"], "Fix login");
         assert_eq!(body["branch"], "ajax/fix-login");
     }
 
-    #[test]
-    fn axum_task_terminal_requires_browser_session_cookie() {
+    #[tokio::test]
+    async fn axum_task_terminal_requires_browser_session_cookie() {
         let state = super::WebAppState::new(
             context_with_task(),
             OkRunner,
@@ -2887,44 +2257,20 @@ mod tests {
         );
         let app = super::axum_app(state);
 
-        let response = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(async {
-                app.oneshot(
-                    AxumRequest::builder()
-                        .method("GET")
-                        .uri("/api/tasks/web%2Ffix-login/terminal")
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap()
-            });
+        let response = get_public(&app, "/api/tasks/web%2Ffix-login/terminal").await;
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn axum_task_terminal_rejects_non_upgrade_requests() {
-        let state = super::WebAppState::new(
+        let (_state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("terminal-upgrade"),
+            "terminal-upgrade",
         );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
 
-        let response = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/tasks/web%2Ffix-login/terminal")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let response = get(&app, &cookie, "/api/tasks/web%2Ffix-login/terminal").await;
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -2934,76 +2280,60 @@ mod tests {
         );
     }
 
-    #[test]
-    fn axum_task_keys_route_is_not_supported() {
-        let state = super::WebAppState::new(
+    /// Assert a JSON 404 body with the expected `error` string.
+    async fn assert_json_not_found(response: axum::response::Response, error: &str) {
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let body = json_of(response).await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], error);
+    }
+
+    #[tokio::test]
+    async fn axum_task_keys_route_is_not_supported() {
+        let (_state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("terminal-keys-removed"),
+            "terminal-keys-removed",
         );
-        let response = run_axum_request(state, "POST", "/api/tasks/web%2Ffix-login/keys", "{}");
+        let response = post_json(&app, &cookie, "/api/tasks/web%2Ffix-login/keys", "{}").await;
 
-        assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "not found");
+        assert_json_not_found(response, "not found").await;
     }
 
-    #[test]
-    fn axum_task_snapshot_route_is_not_supported() {
-        let state = super::WebAppState::new(
+    #[tokio::test]
+    async fn axum_task_snapshot_route_is_not_supported() {
+        let (_state, cookie, app) = app_with(
             context_with_task(),
-            OkRunner,
             TestBridge::default(),
-            scratch_dir("terminal-snapshot-removed"),
+            "terminal-snapshot-removed",
         );
-        let response = run_axum_request(state, "GET", "/api/tasks/web%2Ffix-login/snapshot", "");
+        let response = get(&app, &cookie, "/api/tasks/web%2Ffix-login/snapshot").await;
 
-        assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "not found");
+        assert_json_not_found(response, "not found").await;
     }
 
-    #[test]
-    fn get_task_detail_returns_text_404_for_unknown_handle() {
+    #[tokio::test]
+    async fn get_task_detail_returns_text_404_for_unknown_handle() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "detail-missing");
 
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("detail-missing"),
-        );
-        let response = run_axum_request(state, "GET", "/api/tasks/web/missing", "");
+        let response = get(&app, &cookie, "/api/tasks/web/missing").await;
 
-        assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "task not found");
+        assert_json_not_found(response, "task not found").await;
     }
 
-    #[test]
-    fn unknown_in_memory_api_path_stays_generic_404() {
+    #[tokio::test]
+    async fn unknown_in_memory_api_path_stays_generic_404() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "missing-api");
 
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("missing-api"),
-        );
-        let response = run_axum_request(state, "GET", "/api/missing", "");
+        let response = get(&app, &cookie, "/api/missing").await;
 
-        assert_eq!(response.status_code, 404);
-        assert_eq!(response.content_type, "application/json; charset=utf-8");
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], "not found");
+        assert_json_not_found(response, "not found").await;
     }
 
     #[test]
@@ -3081,32 +2411,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn post_tasks_endpoint_delegates_to_start_bridge_method() {
+    #[tokio::test]
+    async fn post_tasks_endpoint_delegates_to_start_bridge_method() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("start");
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "start");
 
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state.clone(),
-            "POST",
+        let response = post_json(
+            &app,
+            &cookie,
             "/api/tasks",
             r#"{"repo":"web","title":"Fix login","agent":"codex","request_id":"req-1"}"#,
-        );
+        )
+        .await;
 
-        assert_eq!(response.status_code, 200);
-        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = json_of(response).await;
         assert_eq!(body["ok"], true);
         assert!(body["cockpit"].is_object());
         assert_eq!(
-            state
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .bridge
-                .start,
+            state.shared().bridge.start,
             Some(crate::slices::operate::StartTaskRequest {
                 repo: "web".to_string(),
                 title: "Fix login".to_string(),
@@ -3116,109 +2439,47 @@ mod tests {
         );
     }
 
-    #[test]
-    fn action_endpoint_keeps_start_out_of_bridge() {
+    #[tokio::test]
+    async fn action_endpoint_keeps_start_out_of_bridge() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("native-action");
+        let (state, cookie, app) = app_with(context, TestBridge::default(), "native-action");
 
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let response = run_axum_request(
-            state.clone(),
-            "POST",
+        let response = post_json(
+            &app,
+            &cookie,
             "/api/actions",
             r#"{"task_handle":"web/fix-login","action":"start"}"#,
-        );
+        )
+        .await;
 
-        assert_eq!(response.status_code, 409);
-        assert_eq!(
-            state
-                .shared
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .bridge
-                .operate,
-            None
-        );
-    }
-
-    #[test]
-    fn push_endpoints_are_not_supported() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let runner = OkRunner;
-        let bridge = TestBridge::default();
-        let dir = scratch_dir("push");
-
-        let state = super::WebAppState::new(context, runner, bridge, dir);
-        let config = run_axum_request(state.clone(), "GET", "/api/push/config", "");
-        assert_eq!(config.status_code, 404);
-
-        let subscribe = run_axum_request(
-            state.clone(),
-            "POST",
-            "/api/push/subscribe",
-            r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
-        );
-        assert_eq!(subscribe.status_code, 404);
-
-        let unsubscribe = run_axum_request(
-            state,
-            "POST",
-            "/api/push/unsubscribe",
-            r#"{"endpoint":"https://push.example/x"}"#,
-        );
-        assert_eq!(unsubscribe.status_code, 404);
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(state.shared().bridge.operate, None);
     }
 
     #[tokio::test]
     async fn push_path_does_not_start_nested_runtime() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let state = super::WebAppState::new(
-            context,
-            OkRunner,
-            TestBridge::default(),
-            scratch_dir("push-runtime"),
-        );
-        let session_cookie = browser_session_cookie(&state);
-        let app = super::axum_app(state);
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "push-runtime");
 
-        let config = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/push/config")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .expect("push config request should complete");
+        let config = get(&app, &cookie, "/api/push/config").await;
         assert_eq!(config.status(), StatusCode::NOT_FOUND);
 
-        let subscribe = app
-            .clone()
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/push/subscribe")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .expect("push subscribe request should complete");
+        let subscribe = post_json(
+            &app,
+            &cookie,
+            "/api/push/subscribe",
+            r#"{"endpoint":"https://push.example/x","keys":{"p256dh":"k","auth":"a"}}"#,
+        )
+        .await;
         assert_eq!(subscribe.status(), StatusCode::NOT_FOUND);
 
-        let unsubscribe = app
-            .oneshot(
-                authenticated_request(&session_cookie, "/api/push/unsubscribe")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"endpoint":"https://push.example/x"}"#))
-                    .unwrap(),
-            )
-            .await
-            .expect("push unsubscribe request should complete");
+        let unsubscribe = post_json(
+            &app,
+            &cookie,
+            "/api/push/unsubscribe",
+            r#"{"endpoint":"https://push.example/x"}"#,
+        )
+        .await;
         assert_eq!(unsubscribe.status(), StatusCode::NOT_FOUND);
     }
 
