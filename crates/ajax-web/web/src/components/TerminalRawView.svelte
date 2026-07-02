@@ -36,6 +36,7 @@
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
+  let composerText = $state("");
 
   // Expanded mode hands the terminal the whole screen: on mobile the class
   // hides the task chrome (header/status/actions/details, see styles.css); on
@@ -117,6 +118,15 @@
     if (!ctrlArmed) return data;
     disarmCtrl();
     return controlModify(data);
+  };
+
+  // Composer: batch a whole command locally, then submit it to the PTY as one
+  // input (text + Enter). The raw terminal stays the default input surface.
+  const sendComposer = () => {
+    if (composerText.trim().length === 0) return;
+    sendKey(`${composerText}\r`);
+    composerText = "";
+    focusTerm();
   };
 
   onMount(() => {
@@ -413,48 +423,76 @@
         jumpToBottom();
       }}>New output ↓</button>
   {/if}
-  <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
-    {#each CONTROL_KEYS as key (key.label)}
+  <div
+    class="terminal-bottom-controls"
+    data-testid="terminal-bottom-controls"
+    aria-label="Terminal input controls">
+    <form
+      class="terminal-composer"
+      data-testid="terminal-composer"
+      aria-label="Terminal composer"
+      onsubmit={(event) => {
+        event.preventDefault();
+        sendComposer();
+      }}>
+      <input
+        class="terminal-composer-input"
+        aria-label="Terminal input"
+        autocomplete="off"
+        autocapitalize="off"
+        autocorrect="off"
+        spellcheck="false"
+        bind:value={composerText}
+        placeholder="Send command" />
+      <button
+        type="submit"
+        class="terminal-composer-send"
+        aria-label="Send terminal input"
+        disabled={composerText.trim().length === 0}>Send</button>
+    </form>
+    <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
+      {#each CONTROL_KEYS as key (key.label)}
+        <button
+          type="button"
+          class="terminal-key"
+          onmousedown={(event) => event.preventDefault()}
+          onclick={() => {
+            sendKey(consumeCtrl(key.data));
+            focusTerm();
+          }}>{key.label}</button>
+      {/each}
+      <button
+        type="button"
+        class="terminal-key"
+        class:is-armed={ctrlArmed}
+        aria-pressed={ctrlArmed}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          toggleCtrl();
+          focusTerm();
+        }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
       <button
         type="button"
         class="terminal-key"
         onmousedown={(event) => event.preventDefault()}
+        onclick={() => requestPaste()}>Paste</button>
+      <button
+        type="button"
+        class="terminal-key"
+        aria-label="Hide keyboard"
+        onclick={() => blurTerm()}>⌄</button>
+      <button
+        type="button"
+        class="terminal-key terminal-key-expand"
+        class:is-armed={expanded}
+        aria-label="Expand terminal"
+        aria-pressed={expanded}
+        onmousedown={(event) => event.preventDefault()}
         onclick={() => {
-          sendKey(consumeCtrl(key.data));
-          focusTerm();
-        }}>{key.label}</button>
-    {/each}
-    <button
-      type="button"
-      class="terminal-key"
-      class:is-armed={ctrlArmed}
-      aria-pressed={ctrlArmed}
-      onmousedown={(event) => event.preventDefault()}
-      onclick={() => {
-        toggleCtrl();
-        focusTerm();
-      }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
-    <button
-      type="button"
-      class="terminal-key"
-      onmousedown={(event) => event.preventDefault()}
-      onclick={() => requestPaste()}>Paste</button>
-    <button
-      type="button"
-      class="terminal-key"
-      aria-label="Hide keyboard"
-      onclick={() => blurTerm()}>⌄</button>
-    <button
-      type="button"
-      class="terminal-key terminal-key-expand"
-      class:is-armed={expanded}
-      aria-label="Expand terminal"
-      aria-pressed={expanded}
-      onmousedown={(event) => event.preventDefault()}
-      onclick={() => {
-        setExpanded(!expanded);
-        refitAfterLayout();
-      }}>⛶</button>
+          setExpanded(!expanded);
+          refitAfterLayout();
+        }}>⛶</button>
+    </div>
   </div>
   {#if status !== "connected" || statusDetail || pasteNotice}
     <div class="terminal-status" data-testid="terminal-status">
@@ -551,12 +589,64 @@
     font-weight: 700;
   }
 
+  .terminal-bottom-controls {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+    padding-bottom: max(6px, env(safe-area-inset-bottom));
+    border-top: 1px solid var(--rule);
+    background: var(--paper);
+  }
+
+  .terminal-composer {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 38px;
+  }
+
+  .terminal-composer-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 38px;
+    padding: 7px 10px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: var(--paper-tint);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 16px;
+  }
+
+  .terminal-composer-input:focus {
+    border-color: var(--teal);
+    outline: none;
+  }
+
+  .terminal-composer-send {
+    flex: none;
+    min-height: 38px;
+    padding: 6px 12px;
+    border: 1px solid var(--teal);
+    border-radius: var(--radius-sm);
+    background: var(--teal);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .terminal-composer-send:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .terminal-keys {
     display: flex;
     gap: 6px;
     overflow-x: auto;
-    padding: 6px 8px;
-    border-top: 1px solid var(--rule);
+    padding: 0;
     background: var(--paper);
   }
 

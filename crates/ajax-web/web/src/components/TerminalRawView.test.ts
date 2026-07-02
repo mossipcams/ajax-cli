@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, waitFor, queryByRole } from "@testing-library/svelte";
+import { render, waitFor, queryByRole, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
@@ -426,6 +426,18 @@ describe("TerminalRawView", () => {
     expect(getByLabelText("Task terminal")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='task-terminal-panel']")).toBeInTheDocument();
     expect(container.querySelector(".task-terminal-viewport")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='terminal-bottom-controls']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='terminal-composer']")).toBeInTheDocument();
+  });
+
+  it("keeps the terminal viewport as the internal flex scrollback area", () => {
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*display:\s*flex/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*overflow:\s*hidden/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*flex:\s*1 1 auto/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*min-height:\s*0/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*overflow:\s*hidden/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*flex:\s*none/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*padding-bottom:\s*max\([^;]*env\(safe-area-inset-bottom\)/);
   });
 
   it("closes the socket and disposes xterm on destroy", async () => {
@@ -813,6 +825,28 @@ describe("TerminalRawView", () => {
     await waitFor(() => {
       expect(blur).toHaveBeenCalled();
     });
+  });
+
+  it("sends composer text plus Enter over the raw socket and clears it", async () => {
+    const { getByRole, socket } = mountOpenTerminal();
+    const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
+
+    await fireEvent.input(composer, { target: { value: "cargo nextest run" } });
+    await fireEvent.click(getByRole("button", { name: "Send terminal input" }));
+
+    expect(socket?.send).toHaveBeenCalledWith(
+      JSON.stringify({ type: "input", data: "cargo nextest run\r" }),
+    );
+    expect(composer.value).toBe("");
+  });
+
+  it("does not send an empty composer submission", async () => {
+    const { getByRole, socket } = mountOpenTerminal();
+
+    socket!.send.mockClear();
+    await fireEvent.click(getByRole("button", { name: "Send terminal input" }));
+
+    expect(socket?.send).not.toHaveBeenCalled();
   });
 
   it("pastes clipboard text through the terminal paste path", async () => {

@@ -123,4 +123,21 @@ describe("TaskDetail", () => {
     expect(mobileBlock).not.toBeNull();
     expect(mobileBlock![1]).toMatch(/\.meta-details\s*\{[^}]*display:\s*none/);
   });
+
+  it("defines the mobile task route as a fixed visual-viewport shell", () => {
+    const mobileBlock = taskDetailSource.match(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
+    );
+    expect(mobileBlock).not.toBeNull();
+    const mobileCss = mobileBlock![1];
+
+    expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:[^;]*env\(safe-area-inset-top\)[^;]*env\(safe-area-inset-bottom\)/);
+  });
 });
