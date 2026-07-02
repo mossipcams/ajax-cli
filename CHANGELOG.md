@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.29.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.1...ajax-cli-v0.29.2) (2026-07-02)
+
+
+### Code Refactoring
+
+* **web:** consolidate patch-layered terminal code behind behavior tests ([#282](https://github.com/mossipcams/ajax-cli/issues/282)) ([d4e6428](https://github.com/mossipcams/ajax-cli/commit/d4e64283085cbd3dd6402d6a0ccfd776db6462c8))
+
 ## [0.29.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.0...ajax-cli-v0.29.1) (2026-07-01)
 
 
