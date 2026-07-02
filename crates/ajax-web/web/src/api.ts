@@ -193,8 +193,8 @@ export interface MutationResult {
   error?: ApiError;
 }
 
-export async function postOperation(req: OperationRequest): Promise<MutationResult> {
-  const { response, payload: rawPayload } = await postJson("/api/operations", req);
+async function postMutation(path: string, req: unknown): Promise<MutationResult> {
+  const { response, payload: rawPayload } = await postJson(path, req);
   const payload = assertOperationResponse(rawPayload);
   if (response.ok) return { ok: true, response: payload };
   return {
@@ -204,15 +204,12 @@ export async function postOperation(req: OperationRequest): Promise<MutationResu
   };
 }
 
+export async function postOperation(req: OperationRequest): Promise<MutationResult> {
+  return postMutation("/api/operations", req);
+}
+
 export async function startTask(req: StartTaskRequest): Promise<MutationResult> {
-  const { response, payload: rawPayload } = await postJson("/api/tasks", req);
-  const payload = assertOperationResponse(rawPayload);
-  if (response.ok) return { ok: true, response: payload };
-  return {
-    ok: false,
-    response: payload,
-    error: new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload),
-  };
+  return postMutation("/api/tasks", req);
 }
 
 export async function checkHealth(): Promise<boolean> {

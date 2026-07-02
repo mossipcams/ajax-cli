@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/svelte";
+import { render, waitFor, queryByRole } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalPanel from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
@@ -166,6 +166,89 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function stubMatchMedia(matcher: (query: string) => boolean) {
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn((query: string) => ({
+      matches: matcher(query),
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    })),
+  );
+}
+
+/** Mount the terminal for the standard test handle; expose the socket and the
+ * touch-scroll host alongside the render utils. */
+function mountTerminal() {
+  const utils = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+  const socket = MockWebSocket.instances[0];
+  const host = utils.container.querySelector(".task-terminal-viewport") as HTMLElement;
+  return { ...utils, socket, host };
+}
+
+/** mountTerminal plus a successful socket open. */
+function mountOpenTerminal() {
+  const mounted = mountTerminal();
+  mounted.socket?.emit("open");
+  return mounted;
+}
+
+/** Let the open-triggered post-layout refits (double rAF) settle. */
+const settleFrames = () =>
+  new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+
+/** Simulate the user scrolling away from the bottom of the scrollback. */
+function scrollAwayFromBottom() {
+  bufferActive.baseY = 10;
+  bufferActive.viewportY = 3;
+  onScrollHandler?.(3);
+}
+
+const resizeFramesOf = (socket: MockWebSocket) =>
+  socket.send.mock.calls
+    .map((call) => JSON.parse(call[0] as string))
+    .filter((frame) => frame.type === "resize");
+
+// Raw-first contract: the task terminal is the raw xterm/tmux bridge on every
+// viewport. No Live/snapshot/composer mode may come back as the default.
+describe("raw-first task terminal contract", () => {
+  it("defaults to the raw terminal socket on a mobile viewport", async () => {
+    stubMatchMedia((query) => query.includes("max-width: 767px"));
+
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+      expect(MockWebSocket.instances[0]?.url).toContain("/api/tasks/web%2Ffix-login/terminal");
+    });
+    expect(queryByRole(container, "tablist", { name: "Terminal mode" })).not.toBeInTheDocument();
+  });
+
+  it("defaults to the raw terminal socket on desktop", async () => {
+    stubMatchMedia(() => false);
+
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+
+    await waitFor(() => {
+      expect(MockWebSocket.instances).toHaveLength(1);
+    });
+    expect(queryByRole(container, "tablist", { name: "Terminal mode" })).not.toBeInTheDocument();
+  });
+
+  it("does not render snapshot viewer or mode tabs on any viewport", async () => {
+    stubMatchMedia((query) => query.includes("max-width: 767px"));
+
+    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
+
+    expect(queryByRole(container, "tab", { name: "Live" })).not.toBeInTheDocument();
+    expect(queryByRole(container, "tab", { name: "Raw terminal" })).not.toBeInTheDocument();
+    expect(container.querySelector(".terminal-snapshot-lines")).not.toBeInTheDocument();
+    expect(localStorage.getItem("ajax.terminal.mode")).toBeNull();
+  });
+});
+
 describe("TerminalPanel", () => {
   it("opens the task terminal socket on mount", async () => {
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
@@ -177,8 +260,7 @@ describe("TerminalPanel", () => {
   });
 
   it("writes incoming output frames to the terminal", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
     socket?.emit("message", {
       data: JSON.stringify({ type: "output", data: btoa("hello") }),
     } as MessageEvent);
@@ -191,8 +273,7 @@ describe("TerminalPanel", () => {
   });
 
   it("decodes UTF-8 output frames before writing to the terminal", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
     const bytes = new TextEncoder().encode("λ ready");
     const encoded = btoa(String.fromCharCode(...bytes));
 
@@ -206,8 +287,7 @@ describe("TerminalPanel", () => {
   });
 
   it("decodes Blob websocket messages before writing to the terminal", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
     const payload = JSON.stringify({ type: "output", data: btoa("blob ready") });
 
     socket?.emit("message", {
@@ -220,9 +300,7 @@ describe("TerminalPanel", () => {
   });
 
   it("sends_clear_command_text_and_enter_over_the_raw_socket", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     for (const char of "clear") {
       onDataHandler?.(char);
@@ -242,9 +320,7 @@ describe("TerminalPanel", () => {
   });
 
   it("sends terminal input as JSON frames", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     onDataHandler?.("a");
 
@@ -259,9 +335,7 @@ describe("TerminalPanel", () => {
   });
 
   it("accumulates flushed overlay text across successive keystrokes", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    mountOpenTerminal();
     setFlushed.mockClear();
 
     onDataHandler?.("h");
@@ -274,9 +348,7 @@ describe("TerminalPanel", () => {
   });
 
   it("clears zerolag overlay state on Enter and sends the frame", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     onDataHandler?.("\r");
 
@@ -290,9 +362,7 @@ describe("TerminalPanel", () => {
 
   it("always forwards backspace to the PTY and syncs the overlay", async () => {
     removeChar.mockReturnValueOnce("flushed");
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     onDataHandler?.("\x7f");
 
@@ -310,9 +380,7 @@ describe("TerminalPanel", () => {
     // tracks them as "pending". Backspace must reach the PTY regardless,
     // otherwise the iOS soft-keyboard delete erases only the overlay.
     removeChar.mockReturnValueOnce("pending");
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     onDataHandler?.("\x7f");
 
@@ -358,9 +426,7 @@ describe("TerminalPanel", () => {
   });
 
   it("keeps the newest output in view after writes and viewport resizes", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     scrollToBottom.mockClear();
     socket?.emit("message", {
@@ -376,21 +442,15 @@ describe("TerminalPanel", () => {
   });
 
   it("does not yank the view back down while the user has scrolled up", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
 
     // Let the open-triggered post-layout refits (which unconditionally
     // scroll to bottom) settle before simulating the user scrolling up.
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await settleFrames();
 
     // Simulate the user scrolling away from the bottom of the scrollback.
-    bufferActive.baseY = 10;
-    bufferActive.viewportY = 3;
-    onScrollHandler?.(3);
+    scrollAwayFromBottom();
 
     scrollToBottom.mockClear();
     socket?.emit("message", {
@@ -418,13 +478,9 @@ describe("TerminalPanel", () => {
     socket?.emit("open");
 
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await settleFrames();
 
-    bufferActive.baseY = 10;
-    bufferActive.viewportY = 3;
-    onScrollHandler?.(3);
+    scrollAwayFromBottom();
 
     scrollToBottom.mockClear();
     socket?.emit("message", {
@@ -448,9 +504,7 @@ describe("TerminalPanel", () => {
 
   it("refits immediately but debounces server resize when the visual viewport changes", async () => {
     vi.useFakeTimers();
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(50);
     fit.mockClear();
     socket!.send.mockClear();
@@ -479,18 +533,13 @@ describe("TerminalPanel", () => {
     // overwrites the line below it.
     vi.useFakeTimers();
     Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400); // let the open-path refits settle
     fit.mockClear();
     resize.mockClear();
     socket!.send.mockClear();
 
-    const resizeFrames = () =>
-      socket!.send.mock.calls
-        .map((call) => JSON.parse(call[0] as string))
-        .filter((frame) => frame.type === "resize");
+    const resizeFrames = () => resizeFramesOf(socket!);
 
     // Keyboard opens: the visual viewport shrinks well past the threshold.
     (window.visualViewport as unknown as { height: number }).height = 400;
@@ -528,16 +577,11 @@ describe("TerminalPanel", () => {
   it("flushes exactly one server resize once the keyboard closes", async () => {
     vi.useFakeTimers();
     Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400);
     socket!.send.mockClear();
 
-    const resizeFrames = () =>
-      socket!.send.mock.calls
-        .map((call) => JSON.parse(call[0] as string))
-        .filter((frame) => frame.type === "resize");
+    const resizeFrames = () => resizeFramesOf(socket!);
 
     // Open the keyboard (several animation frames), then close it.
     (window.visualViewport as unknown as { height: number }).height = 400;
@@ -554,18 +598,12 @@ describe("TerminalPanel", () => {
   });
 
   it("does not scroll to bottom on viewport resize while the user is scrolled up", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    mountOpenTerminal();
 
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
+    await settleFrames();
 
-    bufferActive.baseY = 10;
-    bufferActive.viewportY = 3;
-    onScrollHandler?.(3);
+    scrollAwayFromBottom();
     scrollToBottom.mockClear();
 
     dispatchVisualViewport("resize");
@@ -575,8 +613,7 @@ describe("TerminalPanel", () => {
   });
 
   it("runs a second post-layout resize after the socket opens", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
     fit.mockClear();
     socket!.send.mockClear();
 
@@ -598,8 +635,7 @@ describe("TerminalPanel", () => {
 
   it("floors the PTY at 80 columns when the viewport proposes fewer", async () => {
     proposedDimensions = { cols: 55, rows: 30 };
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
 
     socket?.emit("open");
 
@@ -613,8 +649,7 @@ describe("TerminalPanel", () => {
 
   it("keeps a wide fit proposal above the column floor untouched", async () => {
     proposedDimensions = { cols: 120, rows: 40 };
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
 
     socket?.emit("open");
 
@@ -628,8 +663,7 @@ describe("TerminalPanel", () => {
 
   it("falls back to a plain fit when no dimensions can be proposed", async () => {
     proposedDimensions = undefined;
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket } = mountTerminal();
     fit.mockClear();
 
     socket?.emit("open");
@@ -750,9 +784,7 @@ describe("TerminalPanel", () => {
     // iPhone keyboards have no dismiss key and the keyboard-open chrome
     // collapse hides the Back button, so without this key the operator is
     // trapped typing with a half-height terminal.
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole } = mountOpenTerminal();
 
     getByRole("button", { name: "Hide keyboard" }).click();
 
@@ -766,9 +798,7 @@ describe("TerminalPanel", () => {
       value: { readText: vi.fn().mockResolvedValue("git push origin main") },
       configurable: true,
     });
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole } = mountOpenTerminal();
 
     getByRole("button", { name: "Paste" }).click();
 
@@ -800,9 +830,7 @@ describe("TerminalPanel", () => {
   });
 
   it("sends an Escape byte when the Esc key is tapped", async () => {
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, socket } = mountOpenTerminal();
 
     getByRole("button", { name: "Esc" }).click();
 
@@ -814,9 +842,7 @@ describe("TerminalPanel", () => {
   });
 
   it("folds the next letter into a control code after Ctrl is armed", async () => {
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, socket } = mountOpenTerminal();
 
     getByRole("button", { name: "Ctrl" }).click();
     onDataHandler?.("c");
@@ -830,9 +856,7 @@ describe("TerminalPanel", () => {
 
   it("auto-disarms sticky Ctrl after the timeout so a later key is unmodified", async () => {
     vi.useFakeTimers();
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, socket } = mountOpenTerminal();
 
     getByRole("button", { name: /Ctrl/ }).click();
     vi.advanceTimersByTime(4000);
@@ -846,9 +870,7 @@ describe("TerminalPanel", () => {
   });
 
   it("applies an armed Ctrl to a control-bar cursor key, then disarms", async () => {
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, socket } = mountOpenTerminal();
 
     getByRole("button", { name: /Ctrl/ }).click();
     getByRole("button", { name: "←" }).click();
@@ -894,9 +916,7 @@ describe("TerminalPanel", () => {
     // focusTerm() here popped the iOS keyboard mid-toggle — and an open
     // keyboard freezes the grid refit (PTY lockstep), so the expanded area
     // stayed misfit until the keyboard closed. Expand must never focus.
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole } = mountOpenTerminal();
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     focus.mockClear();
 
@@ -909,9 +929,7 @@ describe("TerminalPanel", () => {
   it("refits through the immediate path when expand is toggled", async () => {
     vi.useFakeTimers();
     proposedDimensions = { cols: 55, rows: 30 };
-    const { getByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
     socket!.send.mockClear();
 
@@ -920,10 +938,7 @@ describe("TerminalPanel", () => {
     // Two animation frames, far below the 300ms debounce window.
     vi.advanceTimersByTime(50);
 
-    const resizeFrames = socket!.send.mock.calls
-      .map((call) => JSON.parse(call[0] as string))
-      .filter((frame) => frame.type === "resize");
-    expect(resizeFrames).toContainEqual({ type: "resize", cols: 80, rows: 60 });
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
     vi.useRealTimers();
   });
 
@@ -940,15 +955,7 @@ describe("TerminalPanel", () => {
   it("uses a readable font size on a mobile viewport", async () => {
     // 13px matches desktop: the old 10px default was a column-count lever
     // that the 80-column PTY floor made obsolete.
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn((query: string) => ({
-        matches: query.includes("max-width: 767px"),
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      })),
-    );
+    stubMatchMedia((query) => query.includes("max-width: 767px"));
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
@@ -956,41 +963,19 @@ describe("TerminalPanel", () => {
     });
   });
 
-  it("treats a coarse-pointer landscape phone as mobile for font sizing", async () => {
-    let seenQuery = "";
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn((query: string) => {
-        seenQuery = query;
-        // A landscape iPhone: wider than 767px but coarse-pointer and short.
-        return {
-          matches: query.includes("pointer: coarse"),
-          media: query,
-          addEventListener: vi.fn(),
-          removeEventListener: vi.fn(),
-        };
-      }),
-    );
+  it("gives a coarse-pointer landscape phone the same readable font as portrait", async () => {
+    // A landscape iPhone is wider than the width breakpoint but still a phone;
+    // it must get the readable default, never a squintier one.
+    stubMatchMedia((query) => query.includes("pointer: coarse"));
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
-      // One combined query covers portrait width and landscape phone shape.
-      expect(seenQuery).toContain("max-width: 767px");
-      expect(seenQuery).toContain("(pointer: coarse) and (max-height: 500px)");
       expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
     });
   });
 
   it("uses a compact font size on a desktop viewport", async () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn((query: string) => ({
-        matches: false,
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      })),
-    );
+    stubMatchMedia(() => false);
     render(TerminalPanel, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
@@ -1019,8 +1004,7 @@ describe("TerminalPanel", () => {
   }
 
   it("scrolls local terminal scrollback on touch drag", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     // Drag the finger up ~60px. With no rendered viewport the cell height falls
     // back to 18px, so that is 3 wheel notches toward the newest output.
@@ -1036,8 +1020,7 @@ describe("TerminalPanel", () => {
   });
 
   it("scrolls back into history when the finger drags downward", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 100));
     host.dispatchEvent(makeTouch("touchmove", 160));
@@ -1047,8 +1030,7 @@ describe("TerminalPanel", () => {
   });
 
   it("pans the terminal horizontally on a sideways drag", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
     sizeHostForPan(host);
 
     // Finger moves left 60px with no vertical travel: the canvas pans right.
@@ -1062,8 +1044,7 @@ describe("TerminalPanel", () => {
   });
 
   it("clamps the horizontal pan at the canvas edge", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
     sizeHostForPan(host); // 480px canvas in a 338px viewport → max pan 142
 
     host.dispatchEvent(makeTouch("touchstart", 200, 600));
@@ -1079,8 +1060,7 @@ describe("TerminalPanel", () => {
   });
 
   it("does not pan horizontally during a vertical-only drag", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
     sizeHostForPan(host);
 
     host.dispatchEvent(makeTouch("touchstart", 200));
@@ -1117,8 +1097,7 @@ describe("TerminalPanel", () => {
   });
 
   it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     // Two fingers land 100px apart (base font 13), spread to 150px:
     // 13 * 1.5 = 19.5 → rounds to 20, which is also the clamp ceiling.
@@ -1142,8 +1121,7 @@ describe("TerminalPanel", () => {
   });
 
   it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     // 100px → 20px spread: 13 * 0.2 = 2.6 → clamped up to the 7px floor.
     host.dispatchEvent(
@@ -1164,8 +1142,7 @@ describe("TerminalPanel", () => {
   });
 
   it("keeps scrolling with momentum after a fast drag is released", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     // A fast upward drag (~60px) then release: the drag itself scrolls 3
     // notches (18px fallback cell), and the fling must keep going afterwards.
@@ -1181,8 +1158,7 @@ describe("TerminalPanel", () => {
   });
 
   it("cancels a running fling the moment a new touch lands", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     host.dispatchEvent(makeTouch("touchmove", 140));
@@ -1199,9 +1175,34 @@ describe("TerminalPanel", () => {
     expect(scrollLines.mock.calls.length).toBe(atCancel);
   });
 
+  it("cancels a running fling the moment wheel input arrives", async () => {
+    const { host } = mountTerminal();
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    host.dispatchEvent(makeTouch("touchmove", 140));
+    const dragCalls = scrollLines.mock.calls.length;
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await waitFor(() => {
+      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
+    });
+
+    // Wheel input wins over momentum: the fling stops after the wheel's own
+    // synchronous scroll and never adds another frame.
+    host.dispatchEvent(
+      new WheelEvent("wheel", {
+        deltaY: 1,
+        deltaMode: WheelEvent.DOM_DELTA_LINE,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    const atCancel = scrollLines.mock.calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    expect(scrollLines.mock.calls.length).toBe(atCancel);
+  });
+
   it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     const move = makeTouch("touchmove", 198); // 2px jitter, below the threshold
@@ -1212,8 +1213,7 @@ describe("TerminalPanel", () => {
   });
 
   it("captures touch drags from xterm child layers before they can be swallowed", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
     const layer = appendXtermLayer(host);
     layer.addEventListener("touchmove", (event) => event.stopPropagation());
 
@@ -1294,8 +1294,7 @@ describe("TerminalPanel", () => {
   });
 
   it("intercepts wheel scroll from xterm child layers into local scrollback", async () => {
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
+    const { host } = mountTerminal();
     const layer = appendXtermLayer(host);
     layer.addEventListener("wheel", (event) => event.stopPropagation());
 

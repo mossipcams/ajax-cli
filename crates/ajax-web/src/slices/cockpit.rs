@@ -201,8 +201,8 @@ pub(crate) mod tests {
         commands::CommandContext,
         config::Config,
         models::{
-            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
-            RuntimeObservationSource, SideFlag, Task, TaskId,
+            LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction,
+            RuntimeObservationSource, SideFlag, TaskId,
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry as _},
@@ -224,18 +224,7 @@ pub(crate) mod tests {
     #[test]
     fn browser_cockpit_surfaces_missing_substrate_tasks() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Active;
         task.add_side_flag(SideFlag::TmuxMissing);
         task.live_status = Some(LiveObservation::new(
@@ -273,18 +262,7 @@ pub(crate) mod tests {
     #[test]
     fn browser_cockpit_keeps_removed_tasks_out_of_browser_only_cards() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/old-task"),
-            "web",
-            "old-task",
-            "Old task",
-            "ajax/old-task",
-            "main",
-            "/repo/web__worktrees/ajax-old-task",
-            "ajax-web-old-task",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::task_in("web", "old-task", "Old task");
         task.lifecycle_status = LifecycleStatus::Removed;
         task.add_side_flag(SideFlag::TmuxMissing);
         registry.create_task(task).unwrap();
@@ -306,18 +284,7 @@ pub(crate) mod tests {
     #[test]
     fn task_detail_exposes_runtime_probe_failure_reason() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Active;
         registry.create_task(task).unwrap();
         registry
@@ -345,18 +312,7 @@ pub(crate) mod tests {
     #[test]
     fn task_detail_returns_missing_substrate_task_when_visible_in_cockpit() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Active;
         task.add_side_flag(SideFlag::WorktreeMissing);
         registry.create_task(task).unwrap();
@@ -375,26 +331,11 @@ pub(crate) mod tests {
 
     #[test]
     fn task_detail_surfaces_structured_live_state_for_a_task() {
-        use ajax_core::config::ManagedRepo;
         use ajax_core::models::GitStatus;
 
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
+        let config = crate::test_support::config_with(&["web"]);
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Reviewable;
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
@@ -475,21 +416,10 @@ pub(crate) mod tests {
 
     #[test]
     fn browser_task_card_surfaces_supported_fix_ci_remediation_button() {
-        use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag, Task};
+        use ajax_core::models::{LiveObservation, LiveStatusKind, SideFlag};
         use ajax_core::remediation::FIX_CI;
 
-        let mut source = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut source = crate::test_support::fix_login_task();
         source.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
         source.add_side_flag(SideFlag::TestsFailed);
         let card = TaskCard {
@@ -583,18 +513,7 @@ pub(crate) mod tests {
     #[test]
     fn browser_detail_exposes_repo_and_server_actions() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Reviewable;
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,
@@ -615,18 +534,7 @@ pub(crate) mod tests {
     #[test]
     fn browser_contract_fixture_has_stable_card_shape() {
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Reviewable;
         registry.create_task(task).unwrap();
         let context = CommandContext::new(Config::default(), registry);
@@ -672,30 +580,15 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn browser_contract_context() -> CommandContext<InMemoryRegistry> {
-        use ajax_core::config::ManagedRepo;
         use ajax_core::models::{
             AgentAttempt, AgentClient, AgentRuntimeStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, Task, TaskId,
+            LiveStatusKind,
         };
         use std::time::{Duration, SystemTime};
 
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
+        let config = crate::test_support::config_with(&["web"]);
         let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Reviewable;
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForApproval,

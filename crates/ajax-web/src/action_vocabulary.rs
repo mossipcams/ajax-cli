@@ -157,19 +157,7 @@ mod tests {
     }
 
     fn blocked_ci_task() -> ajax_core::models::Task {
-        use ajax_core::models::{AgentClient, Task};
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/tmp/worktrees/fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
         task.add_side_flag(SideFlag::TestsFailed);
         task

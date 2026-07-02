@@ -666,7 +666,6 @@ main {
     background: var(--paper);
   }
 
-  html.terminal-expanded .task-detail .terminal-primary .terminal-host-shell,
   html.terminal-expanded .task-detail .terminal-primary .terminal-panel {
     height: auto;
     flex: 1 1 auto;

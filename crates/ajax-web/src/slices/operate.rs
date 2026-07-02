@@ -357,33 +357,14 @@ mod tests {
         adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{
-            AgentClient, LifecycleStatus, LiveObservation, LiveStatusKind, Task, TaskId, TmuxStatus,
-        },
-        registry::{InMemoryRegistry, Registry},
+        models::{LifecycleStatus, LiveObservation, LiveStatusKind, TmuxStatus},
+        registry::{InMemoryRegistry, Registry as _},
     };
 
     fn context_with_reviewable_task() -> CommandContext<InMemoryRegistry> {
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.lifecycle_status = LifecycleStatus::Reviewable;
-        registry.create_task(task).unwrap();
-        CommandContext::new(config, registry)
+        crate::test_support::context_with_tasks(&["web"], vec![task])
     }
 
     #[test]
@@ -431,30 +412,13 @@ mod tests {
 
     #[test]
     fn operate_slice_runs_fix_ci_remediation_via_tmux() {
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        let mut registry = InMemoryRegistry::default();
-        let mut task = Task::new(
-            TaskId::new("web/fix-login"),
-            "web",
-            "fix-login",
-            "Fix login",
-            "ajax/fix-login",
-            "main",
-            "/repo/web__worktrees/ajax-fix-login",
-            "ajax-web-fix-login",
-            "worktrunk",
-            AgentClient::Codex,
-        );
+        let mut task = crate::test_support::fix_login_task();
         task.live_status = Some(LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"));
         task.tmux_status = Some(TmuxStatus {
             exists: true,
             session_name: task.tmux_session.clone(),
         });
-        registry.create_task(task).unwrap();
-        let mut context = CommandContext::new(config, registry);
+        let mut context = crate::test_support::context_with_tasks(&["web"], vec![task]);
         let mut runner = RecordingCommandRunner::default();
 
         let home = std::env::temp_dir().join(format!("ajax-skill-{}", std::process::id()));
@@ -671,11 +635,7 @@ mod tests {
     }
 
     fn context_with_managed_repo() -> CommandContext<InMemoryRegistry> {
-        let config = Config {
-            repos: vec![ManagedRepo::new("web", "/repo/web", "main")],
-            ..Config::default()
-        };
-        CommandContext::new(config, InMemoryRegistry::default())
+        crate::test_support::context_with_tasks(&["web"], vec![])
     }
 
     fn context_with_repo_path(repo_path: &std::path::Path) -> CommandContext<InMemoryRegistry> {
