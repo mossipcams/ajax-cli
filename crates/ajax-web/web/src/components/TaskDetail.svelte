@@ -312,6 +312,27 @@
      in styles.css) gets maximum height. Includes landscape phones (coarse
      pointer, short viewport) that exceed the width breakpoint. */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    :global(html.ajax-task-open),
+    :global(html.ajax-task-open body) {
+      overflow: hidden;
+      overscroll-behavior: none;
+      height: var(--app-height, 100dvh);
+    }
+
+    .task-detail {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      height: 100dvh;
+      height: var(--app-height, 100dvh);
+      min-height: 0;
+      padding: env(safe-area-inset-top) calc(16px + env(safe-area-inset-right))
+        env(safe-area-inset-bottom) calc(16px + env(safe-area-inset-left));
+      background: var(--paper);
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+
     .detail-header { margin-bottom: 4px; }
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; }
