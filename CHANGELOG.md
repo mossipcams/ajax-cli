@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.29.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.2...ajax-cli-v0.29.3) (2026-07-02)
+
+
+### Bug Fixes
+
+* add mobile terminal app shell ([#284](https://github.com/mossipcams/ajax-cli/issues/284)) ([6d32ce8](https://github.com/mossipcams/ajax-cli/commit/6d32ce8cf32a799ca602d0c206c217fcd0c03d4c))
+
 ## [0.29.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.1...ajax-cli-v0.29.2) (2026-07-02)
 
 
