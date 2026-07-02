@@ -3,15 +3,18 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { ZerolagInputAddon } from "xterm-zerolag-input";
-  import { openTaskTerminalSocket } from "../api";
-  import { isKeyboardOpen } from "../viewport";
-  import { flingFrames, wheelNotchesFromDrag } from "../terminalTouchScroll";
   import {
-    clampPan,
+    connectTaskTerminal,
+    type TerminalConnection,
+    type TerminalConnectionStatus,
+  } from "../terminalConnection";
+  import { isKeyboardOpen } from "../viewport";
+  import { attachTerminalGestures } from "../terminalGestures";
+  import {
     flooredCols,
-    pinchFontSize,
-    MAX_FONT_SIZE,
-    MIN_FONT_SIZE,
+    persistedFontSize,
+    persistFontSize,
+    DEFAULT_FONT_SIZE,
     MIN_TERMINAL_COLS,
   } from "../terminalGeometry";
   import "@xterm/xterm/css/xterm.css";
@@ -23,9 +26,9 @@
   let { handle }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state();
-  // A dead socket always auto-recovers (scheduleReconnect), so there is no
-  // terminal "disconnected" state — only the reconnecting one.
-  let status = $state<"connecting" | "connected" | "reconnecting">("connecting");
+  // A dead socket always auto-recovers (terminalConnection's backoff), so
+  // there is no terminal "disconnected" state — only the reconnecting one.
+  let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
@@ -113,37 +116,6 @@
     return controlModify(data);
   };
 
-  // The 80-column PTY floor means the font is no longer a column-count lever
-  // (narrow viewports pan instead of wrapping), so every viewport — phone,
-  // landscape phone, desktop — gets the same comfortable cell.
-  // Pinch-to-zoom persists any override.
-  const DEFAULT_FONT_SIZE = 13;
-
-  // Pinch-to-zoom persists the operator's legibility choice; a valid stored
-  // size wins over the per-device default. localStorage can throw (Safari
-  // private mode), so reads/writes are best-effort.
-  const FONT_SIZE_STORAGE_KEY = "ajax.terminal.fontSize";
-  const persistedFontSize = (): number | undefined => {
-    try {
-      const raw = window.localStorage.getItem(FONT_SIZE_STORAGE_KEY);
-      if (!raw) return undefined;
-      const parsed = Number.parseInt(raw, 10);
-      if (!Number.isFinite(parsed) || parsed < MIN_FONT_SIZE || parsed > MAX_FONT_SIZE) {
-        return undefined;
-      }
-      return parsed;
-    } catch {
-      return undefined;
-    }
-  };
-  const persistFontSize = (size: number) => {
-    try {
-      window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size));
-    } catch {
-      // Best-effort: the session still uses the new size.
-    }
-  };
-
   onMount(() => {
     const term = new Terminal({
       cursorBlink: true,
@@ -157,7 +129,6 @@
     });
     const fitAddon = new FitAddon();
     const zerolag = new ZerolagInputAddon();
-    const outputDecoder = new TextDecoder();
     term.loadAddon(fitAddon);
     term.loadAddon(zerolag);
 
@@ -187,28 +158,6 @@
       if (pinnedToBottom) hasUnseenOutput = false;
     });
 
-    // Wheel/touch scrolling always uses Ajax-owned xterm scrollback. Capture
-    // before xterm layers can handle the gesture, and never forward scroll
-    // intent into tmux or the foreground terminal app.
-    const TOUCH_SCROLL_THRESHOLD_PX = 6;
-    let touchActive = false;
-    let touchLastY = 0;
-    let touchAccumPx = 0;
-    let touchLastX = 0;
-    let touchAccumXPx = 0;
-
-    // Two-finger pinch adjusts the font size (the legibility ↔ visible-columns
-    // lever now that the PTY keeps an 80-column floor). The gesture scales
-    // from the size it started at, so a slow pinch can't compound drift.
-    let pinchStartDistance = 0;
-    let pinchBaseFontSize = 0;
-
-    const touchDistance = (touches: TouchList): number =>
-      Math.hypot(
-        touches[0].clientX - touches[1].clientX,
-        touches[0].clientY - touches[1].clientY,
-      );
-
     const cellHeightPx = (): number => {
       const viewport = container?.querySelector<HTMLElement>(".xterm-viewport");
       const height = viewport?.clientHeight ?? 0;
@@ -223,184 +172,25 @@
       }
     };
 
-    // Momentum: a fast release keeps scrolling with decaying inertia (the
-    // synthetic scroll otherwise stops dead the instant the finger lifts).
-    // The frame sequence is precomputed by flingFrames; any new touch or
-    // wheel cancels it so the user always wins.
-    let flingHandle = 0;
-    let flingVelocity = 0; // px per ms, positive = toward newest output
-    let lastMoveTime = 0;
-    let touchScrolled = false;
+    // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
+    // live in terminalGestures; the component only supplies the terminal-side
+    // effects each gesture drives.
+    const detachGestures = container
+      ? attachTerminalGestures(container, {
+          scrollLines: scrollLocalLines,
+          cellHeightPx,
+          fontSize: () => term.options.fontSize ?? DEFAULT_FONT_SIZE,
+          setFontSize: (next) => {
+            term.options.fontSize = next;
+            persistFontSize(next);
+            scheduleDebouncedRefit();
+          },
+        })
+      : () => {};
 
-    const cancelFling = () => {
-      if (flingHandle) {
-        cancelAnimationFrame(flingHandle);
-        flingHandle = 0;
-      }
-    };
-
-    const startFling = (frames: number[]) => {
-      cancelFling();
-      let index = 0;
-      const step = () => {
-        if (index >= frames.length) {
-          flingHandle = 0;
-          return;
-        }
-        const lines = frames[index];
-        index += 1;
-        if (lines !== 0) scrollLocalLines(lines);
-        flingHandle = requestAnimationFrame(step);
-      };
-      flingHandle = requestAnimationFrame(step);
-    };
-
-    const onTouchStart = (event: TouchEvent) => {
-      cancelFling();
-      if (event.touches.length === 2) {
-        touchActive = false;
-        pinchStartDistance = touchDistance(event.touches);
-        pinchBaseFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-        return;
-      }
-      pinchStartDistance = 0;
-      if (event.touches.length !== 1) {
-        touchActive = false;
-        return;
-      }
-      touchActive = true;
-      touchScrolled = false;
-      touchAccumPx = 0;
-      touchAccumXPx = 0;
-      touchLastY = event.touches[0].clientY;
-      touchLastX = event.touches[0].clientX;
-      flingVelocity = 0;
-      lastMoveTime = performance.now();
-    };
-
-    const onTouchMove = (event: TouchEvent) => {
-      if (event.touches.length === 2 && pinchStartDistance > 0) {
-        // Own the pinch so iOS can't page-zoom; font rounding means the
-        // terminal only re-renders when the size crosses a whole pixel.
-        if (event.cancelable) event.preventDefault();
-        const next = pinchFontSize(
-          pinchBaseFontSize,
-          pinchStartDistance,
-          touchDistance(event.touches),
-        );
-        if (next !== term.options.fontSize) {
-          term.options.fontSize = next;
-          persistFontSize(next);
-          scheduleDebouncedRefit();
-        }
-        return;
-      }
-      if (!touchActive || event.touches.length !== 1) return;
-      const touch = event.touches[0];
-      const dy = touchLastY - touch.clientY;
-      touchAccumPx += dy;
-      touchAccumXPx += touchLastX - touch.clientX;
-      touchLastY = touch.clientY;
-      touchLastX = touch.clientX;
-
-      // Release-velocity estimate for the momentum fling; low-passed so one
-      // jittery event can't spike it.
-      const now = performance.now();
-      const dtMs = Math.max(1, now - lastMoveTime);
-      lastMoveTime = now;
-      flingVelocity = 0.8 * (dy / dtMs) + 0.2 * flingVelocity;
-
-      if (
-        Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX &&
-        Math.abs(touchAccumXPx) < TOUCH_SCROLL_THRESHOLD_PX
-      ) {
-        return;
-      }
-      touchScrolled = true;
-
-      // Past the threshold this is a scroll, not a tap, so own the gesture NOW —
-      // before a full cell of movement accumulates. iOS Safari latches native
-      // momentum scrolling in the first pixels of a drag and can't be cancelled
-      // later; preventing default here (rather than only once a whole notch
-      // lands) stops that native scroll from racing our scrollLines() and stops
-      // iOS from synthesizing the click that would pop the keyboard.
-      if (event.cancelable) event.preventDefault();
-
-      // Horizontal component pans the 80-col canvas within the host; the host
-      // is overflow:hidden so only this handler ever moves it.
-      if (touchAccumXPx !== 0 && container) {
-        container.scrollLeft = clampPan(
-          container.scrollLeft + touchAccumXPx,
-          container.scrollWidth,
-          container.clientWidth,
-        );
-        touchAccumXPx = 0;
-      }
-
-      const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, cellHeightPx());
-      touchAccumPx = remainderPx;
-      if (notches === 0) return;
-      scrollLocalLines(notches);
-    };
-
-    const resetTouchState = () => {
-      flingVelocity = 0;
-      touchActive = false;
-      touchAccumPx = 0;
-      touchAccumXPx = 0;
-      pinchStartDistance = 0;
-    };
-
-    const onTouchEnd = () => {
-      // Only a gesture that actually scrolled may fling; a tap with a few
-      // pixels of jitter must stay a tap.
-      if (touchActive && touchScrolled) {
-        const frames = flingFrames(flingVelocity, cellHeightPx());
-        if (frames.length) startFling(frames);
-      }
-      resetTouchState();
-    };
-
-    // touchcancel means the system stole the gesture (e.g. an incoming call
-    // sheet); momentum from a stolen gesture would feel haunted, so reset
-    // without flinging.
-    const onTouchCancel = resetTouchState;
-
-    const onWheel = (event: WheelEvent) => {
-      cancelFling();
-      const lineDelta =
-        event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-          ? Math.trunc(event.deltaY / cellHeightPx())
-          : Math.trunc(event.deltaY);
-      if (lineDelta === 0) return;
-
-      if (event.cancelable) event.preventDefault();
-      scrollLocalLines(lineDelta);
-    };
-
-    const touchStartOptions: AddEventListenerOptions = { passive: true, capture: true };
-    const touchMoveOptions: AddEventListenerOptions = { passive: false, capture: true };
-    const scrollEndOptions: AddEventListenerOptions = { passive: true, capture: true };
-    const wheelOptions: AddEventListenerOptions = { passive: false, capture: true };
-
-    container?.addEventListener("touchstart", onTouchStart, touchStartOptions);
-    container?.addEventListener("touchmove", onTouchMove, touchMoveOptions);
-    container?.addEventListener("touchend", onTouchEnd, scrollEndOptions);
-    container?.addEventListener("touchcancel", onTouchCancel, scrollEndOptions);
-    container?.addEventListener("wheel", onWheel, wheelOptions);
-
-    // Reassigned on every (re)connect; the input/resize closures below read this
-    // binding live, so they always target the current socket.
-    let socket: WebSocket;
-
-    // Mobile Safari drops the WebSocket whenever it backgrounds the tab, and a
-    // failed tmux attach closes it too. A dead socket must recover on its own
-    // (capped backoff) and immediately on foreground, rather than stranding the
-    // user on a frozen pane with the word "closed".
-    let reconnectAttempts = 0;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let disposed = false;
-    const RECONNECT_MAX_DELAY_MS = 15000;
+    // Declared before the refit closures that capture it; assigned once the
+    // callbacks it feeds exist below.
+    let connection: TerminalConnection;
 
     // The iOS keyboard animates the visual viewport shorter over several frames.
     // A tmux-attached client SIGWINCHes the shared window on every resize, so
@@ -411,21 +201,11 @@
     // xterm stays visually correct, and a single resize is flushed once the
     // viewport settles.
     const sendResize = () => {
-      if (socket.readyState !== WebSocket.OPEN) return;
       if (isKeyboardOpen()) return;
-      socket.send(
-        JSON.stringify({
-          type: "resize",
-          cols: term.cols,
-          rows: term.rows,
-        }),
-      );
+      connection.sendResize(term.cols, term.rows);
     };
 
-    sendKey = (data: string) => {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ type: "input", data }));
-    };
+    sendKey = (data: string) => connection.sendInput(data);
     focusTerm = () => term.focus();
     // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
     // collapse hides the Back button; blurring xterm's textarea is the only
@@ -537,23 +317,6 @@
     viewport?.addEventListener("resize", scheduleDebouncedRefit);
     viewport?.addEventListener("scroll", scheduleDebouncedRefit);
 
-    const readMessageData = async (data: unknown): Promise<string> => {
-      if (typeof data === "string") return data;
-      if (data instanceof Blob) {
-        // Every supported browser has Blob.text(), but jsdom's Blob does not —
-        // the FileReader fallback is what the component tests exercise.
-        if ("text" in data && typeof data.text === "function") return data.text();
-        return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
-          reader.addEventListener("error", () => reject(reader.error));
-          reader.readAsText(data);
-        });
-      }
-      if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
-      return String(data);
-    };
-
     const writeOutput = (text: string) => {
       term.write(text);
       if (pinnedToBottom) {
@@ -565,90 +328,30 @@
       zerolag.rerender();
     };
 
-    const onSocketMessage = async (event: MessageEvent) => {
-      const data = await readMessageData(event.data);
-      try {
-        const payload = JSON.parse(data) as { type?: string; data?: string };
-        if (payload.type === "output" && payload.data) {
-          const binary = atob(payload.data);
-          const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-          writeOutput(outputDecoder.decode(bytes, { stream: true }));
-        } else if (payload.type === "error" && "error" in payload && payload.error) {
-          statusDetail = String(payload.error);
-        }
-      } catch {
-        writeOutput(data);
-      }
-    };
-
-    const scheduleReconnect = () => {
-      if (disposed) return;
-      status = "reconnecting";
-      const delay = Math.min(RECONNECT_MAX_DELAY_MS, 1000 * 2 ** reconnectAttempts);
-      reconnectAttempts += 1;
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        if (!disposed) connect();
-      }, delay);
-    };
-
-    const reconnectNow = () => {
-      if (disposed) return;
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-        reconnectTimer = undefined;
-      }
-      reconnectAttempts = 0;
-      status = "connecting";
-      connect();
-    };
-
-    function connect() {
-      socket = openTaskTerminalSocket(handle);
-      socket.addEventListener("open", () => {
-        // A successful open resets the backoff. A fresh tmux attach repaints the
-        // pane and the resize-on-open makes tmux redraw at the real size, so no
-        // explicit refresh frame is needed on reconnect.
-        const isReconnect = reconnectAttempts > 0;
-        reconnectAttempts = 0;
+    connection = connectTaskTerminal(handle, {
+      onOutput: writeOutput,
+      onServerError: (message) => {
+        statusDetail = message;
+      },
+      onStatus: (next) => {
+        status = next;
+      },
+      onOpen: (isReconnect) => {
         statusDetail = "";
-        status = "connected";
         // Keystrokes sent on the previous socket will never be echoed by this
         // new one, so drop the local input overlay; otherwise those characters
         // would linger as ghost text until the next output frame reconciled it.
         if (isReconnect) zerolag.clear();
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term.focus());
-      });
-      socket.addEventListener("message", onSocketMessage);
-      // An error is followed by close; let the close handler own reconnect so we
-      // never schedule it twice.
-      socket.addEventListener("error", () => {});
-      socket.addEventListener("close", () => {
-        if (disposed) return;
-        scheduleReconnect();
-      });
-    }
-
-    // Reconnect immediately when the tab returns to the foreground instead of
-    // waiting out the backoff (mobile Safari kills the socket on background).
-    const onVisibility = () => {
-      if (
-        document.visibilityState === "visible" &&
-        status === "reconnecting"
-      ) {
-        reconnectNow();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisibility);
+      },
+    });
 
     // Exposed to the status banner's manual "Reconnect" button.
-    requestReconnect = reconnectNow;
-
-    connect();
+    requestReconnect = () => connection.reconnectNow();
 
     term.onData((raw) => {
-      if (socket.readyState !== WebSocket.OPEN) return;
+      if (!connection.isOpen()) return;
 
       // Sticky Ctrl folds into this key (letter → control code, cursor key →
       // Ctrl-modified CSI). The folded byte then takes the normal branches, so
@@ -658,7 +361,7 @@
 
       if (data === "\r") {
         zerolag.clear();
-        socket.send(JSON.stringify({ type: "input", data }));
+        connection.sendInput(data);
         return;
       }
 
@@ -668,7 +371,7 @@
         // overlay in sync — the backspace itself must always reach the PTY,
         // otherwise the deleted character lives on in the real buffer.
         zerolag.removeChar();
-        socket.send(JSON.stringify({ type: "input", data }));
+        connection.sendInput(data);
         return;
       }
 
@@ -682,29 +385,21 @@
         zerolag.setFlushed(count + 1, text + data);
       }
 
-      socket.send(JSON.stringify({ type: "input", data }));
+      connection.sendInput(data);
     });
 
     return () => {
-      disposed = true;
       setExpanded(false);
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      document.removeEventListener("visibilitychange", onVisibility);
+      connection.dispose();
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
       viewport?.removeEventListener("resize", scheduleDebouncedRefit);
       viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
-      cancelFling();
-      container?.removeEventListener("touchstart", onTouchStart, touchStartOptions);
-      container?.removeEventListener("touchmove", onTouchMove, touchMoveOptions);
-      container?.removeEventListener("touchend", onTouchEnd, scrollEndOptions);
-      container?.removeEventListener("touchcancel", onTouchCancel, scrollEndOptions);
-      container?.removeEventListener("wheel", onWheel, wheelOptions);
-      socket.close();
+      detachGestures();
       zerolag.dispose();
       term.dispose();
     };
