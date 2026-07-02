@@ -69,17 +69,22 @@ export function connectTaskTerminal(
 
   const onSocketMessage = async (event: MessageEvent) => {
     const data = await readMessageData(event.data);
+    // Only a parse failure may fall back to raw pass-through; a decode or
+    // write failure must surface instead of smearing raw JSON into the
+    // terminal and hiding the bug.
+    let payload: { type?: string; data?: string; error?: unknown };
     try {
-      const payload = JSON.parse(data) as { type?: string; data?: string };
-      if (payload.type === "output" && payload.data) {
-        const binary = atob(payload.data);
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        events.onOutput(outputDecoder.decode(bytes, { stream: true }));
-      } else if (payload.type === "error" && "error" in payload && payload.error) {
-        events.onServerError(String(payload.error));
-      }
+      payload = JSON.parse(data) as { type?: string; data?: string; error?: unknown };
     } catch {
       events.onOutput(data);
+      return;
+    }
+    if (payload.type === "output" && payload.data) {
+      const binary = atob(payload.data);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      events.onOutput(outputDecoder.decode(bytes, { stream: true }));
+    } else if (payload.type === "error" && payload.error) {
+      events.onServerError(String(payload.error));
     }
   };
 

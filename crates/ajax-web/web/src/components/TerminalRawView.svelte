@@ -30,6 +30,9 @@
   // there is no terminal "disconnected" state — only the reconnecting one.
   let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
+  // Clipboard feedback is its own channel: paste outcomes must never clear or
+  // overwrite a bridge-reported error in statusDetail.
+  let pasteNotice = $state("");
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
@@ -165,19 +168,12 @@
       return height > 0 && term.rows > 0 ? height / term.rows : 18;
     };
 
-    const scrollLocalLines = (lines: number) => {
-      const step = lines > 0 ? 1 : -1;
-      for (let i = 0; i < Math.abs(lines); i += 1) {
-        term.scrollLines(step);
-      }
-    };
-
     // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
     // live in terminalGestures; the component only supplies the terminal-side
     // effects each gesture drives.
     const detachGestures = container
       ? attachTerminalGestures(container, {
-          scrollLines: scrollLocalLines,
+          scrollLines: (lines) => term.scrollLines(lines),
           cellHeightPx,
           fontSize: () => term.options.fontSize ?? DEFAULT_FONT_SIZE,
           setFontSize: (next) => {
@@ -211,10 +207,11 @@
     // collapse hides the Back button; blurring xterm's textarea is the only
     // way to hand the screen back to the full-height terminal.
     blurTerm = () => term.blur();
+    // Reading action only: focusing here would pop the iOS keyboard and
+    // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
       term.scrollToBottom();
       hasUnseenOutput = false;
-      term.focus();
     };
     // iOS long-press paste doesn't reliably reach xterm's hidden textarea, so
     // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
@@ -223,18 +220,18 @@
     requestPaste = () => {
       const clipboard = navigator.clipboard;
       if (!clipboard || typeof clipboard.readText !== "function") {
-        statusDetail = "Clipboard unavailable in this browser";
+        pasteNotice = "Clipboard unavailable in this browser";
         return;
       }
       clipboard
         .readText()
         .then((text) => {
           if (text) term.paste(text);
-          statusDetail = "";
+          pasteNotice = "";
           term.focus();
         })
         .catch(() => {
-          statusDetail = "Clipboard read failed — allow paste access and retry";
+          pasteNotice = "Clipboard read failed — allow paste access and retry";
         });
     };
 
@@ -459,11 +456,14 @@
         refitAfterLayout();
       }}>⛶</button>
   </div>
-  {#if status !== "connected" || statusDetail}
+  {#if status !== "connected" || statusDetail || pasteNotice}
     <div class="terminal-status" data-testid="terminal-status">
       <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
       {#if statusDetail}
         <span class="terminal-status-detail">{statusDetail}</span>
+      {/if}
+      {#if pasteNotice}
+        <span class="terminal-status-detail">{pasteNotice}</span>
       {/if}
       {#if status === "reconnecting"}
         <button
