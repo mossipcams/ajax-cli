@@ -135,6 +135,9 @@ describe("TaskDetail", () => {
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:[^;]*env\(safe-area-inset-top\)[^;]*env\(safe-area-inset-bottom\)/);
+    // Full-bleed terminal: the shell keeps only the top inset; the key bar
+    // pads the bottom inset and chrome rows carry their own gutters.
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
+    expect(mobileCss).toMatch(/\.detail-header,\s*\.interact-panel\s*\{[^}]*padding-left:[^;]*env\(safe-area-inset-left\)/);
   });
 });

@@ -5,9 +5,8 @@
    This file holds ONLY what is genuinely global: design tokens, the status tone
    system, base element resets, the shared app chrome (header, connection,
    result, update banner, bottom nav), and selectors used by more than one
-   component (.action, .pill, .empty, .status-dot, .interact-panel,
-   .interact-card-label). Every single-component selector lives in that
-   component's scoped <style> block. */
+   component (.action, .pill, .empty, .status-dot, .interact-panel). Every
+   single-component selector lives in that component's scoped <style> block. */
 :root {
   color-scheme: dark;
 
@@ -520,15 +519,6 @@ main {
   box-shadow: var(--elev-1);
 }
 
-.interact-card-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: var(--label-tracking);
-  text-transform: uppercase;
-  color: var(--ink-muted);
-  margin-bottom: 8px;
-}
-
 .task-detail .terminal-panel,
 .task-detail [data-testid="task-terminal-panel"] {
   flex: 1 1 auto;
@@ -571,37 +561,16 @@ main {
     min-height: 0;
   }
 
-  /* Terminal-first: strip the status/action card down to a minimal strip so the
-     terminal owns the screen. Border/background/padding removed; the redundant
-     summary line and "Next action" label are hidden (still in the DOM for a11y
-     and tests). */
+  /* Terminal-first: strip the action card down to a minimal strip so the
+     terminal owns the screen. Border/background/padding removed; the summary
+     line is hidden by TaskDetail's scoped mobile rules. */
   .interact-panel {
     margin-top: 8px;
-    padding: 0;
+    padding-top: 0;
+    padding-bottom: 0;
     background: transparent;
     border: none;
     box-shadow: none;
-  }
-
-  .interact-state.is-hero {
-    margin-bottom: 8px;
-    padding-bottom: 0;
-    border-bottom: none;
-  }
-
-  .interact-state.is-hero .interact-summary {
-    display: none;
-  }
-
-  .next-action {
-    margin-top: 8px;
-    padding: 0;
-    background: transparent;
-    border: none;
-  }
-
-  .next-action .interact-card-label {
-    display: none;
   }
 
   /* KEYBOARD OPEN — hand the whole visible band to the terminal.

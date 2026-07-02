@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, waitFor, queryByRole, fireEvent } from "@testing-library/svelte";
+import { render, waitFor, queryByRole } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
@@ -397,7 +397,21 @@ describe("TerminalRawView", () => {
     );
     expect(container.querySelector(".task-terminal-viewport")).toBeInTheDocument();
     expect(container.querySelector("[data-testid='terminal-bottom-controls']")).toBeInTheDocument();
-    expect(container.querySelector("[data-testid='terminal-composer']")).toBeInTheDocument();
+    // The composer is gone for good: the raw terminal is the only input surface.
+    expect(container.querySelector("[data-testid='terminal-composer']")).toBeNull();
+  });
+
+  it("pins the fullscreen toggle to the terminal's top-right corner", () => {
+    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
+
+    const toggle = container.querySelector(".terminal-expand-corner");
+    expect(toggle).toBeInTheDocument();
+    expect(toggle?.getAttribute("aria-label")).toBe("Expand terminal");
+    // Overlay, not a key-bar item: absolutely positioned at the panel's top right.
+    expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*position:\s*absolute/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*top:/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*right:/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*position:\s*relative/);
   });
 
   it("keeps the terminal viewport as the internal flex scrollback area", () => {
@@ -803,42 +817,50 @@ describe("TerminalRawView", () => {
     });
   });
 
-  it("sends composer text plus Enter over the raw socket and clears it", async () => {
-    const { getByRole, socket } = await mountOpenTerminal();
-    const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
+  it("snaps to the newest output when the keyboard opens while scrolled up", async () => {
+    // Opening the keyboard means the user is about to type; the view must jump
+    // to the cursor/input row instead of staying parked in scrollback.
+    await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await settleFrames();
 
-    await fireEvent.input(composer, { target: { value: "cargo nextest run" } });
-    await fireEvent.click(getByRole("button", { name: "Send terminal input" }));
+    scrollAwayFromBottom();
+    scrollToBottom.mockClear();
 
-    expect(socket?.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "input", data: "cargo nextest run\r" }),
-    );
-    expect(composer.value).toBe("");
+    setKeyboardOpen(true);
+    dispatchVisualViewport("resize");
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    setKeyboardOpen(false);
   });
 
-  it("does not send an empty composer submission", async () => {
-    const { getByRole, socket } = await mountOpenTerminal();
+  it("does not focus the terminal from a key-bar key, so a closed keyboard stays closed", async () => {
+    // focusTerm() here popped the iOS keyboard: tapping an arrow with the
+    // keyboard down shrank the viewport — the terminal appeared to jump.
+    const { getByRole } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    const focusSpy = vi.spyOn(lastTextarea!, "focus");
+    focus.mockClear();
 
-    socket!.send.mockClear();
-    await fireEvent.click(getByRole("button", { name: "Send terminal input" }));
+    getByRole("button", { name: "←" }).click();
 
-    expect(socket?.send).not.toHaveBeenCalled();
+    expect(focus).not.toHaveBeenCalled();
+    expect(focusSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps composer text when the connection is closed on submit", async () => {
-    const { getByRole, getByTestId, socket } = await mountOpenTerminal();
-    const composer = getByRole("textbox", { name: "Terminal input" }) as HTMLInputElement;
-    const command = "cargo nextest run";
+  it("refocuses without scrolling when a key-bar key is tapped mid-typing", async () => {
+    // While the terminal owns focus, a key-bar tap must keep the keyboard up —
+    // but via preventScroll, so Safari never scroll-chases the hidden textarea.
+    const { getByRole } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    const input = lastTextarea!;
+    document.body.appendChild(input);
+    input.focus();
+    const focusSpy = vi.spyOn(input, "focus");
 
-    await fireEvent.input(composer, { target: { value: command } });
-    socket!.readyState = MockWebSocket.CLOSED;
-    socket!.send.mockClear();
-    await fireEvent.submit(getByTestId("terminal-composer"));
+    getByRole("button", { name: "→" }).click();
 
-    expect(socket?.send).not.toHaveBeenCalledWith(
-      JSON.stringify({ type: "input", data: `${command}\r` }),
-    );
-    expect(composer.value).toBe(command);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    input.remove();
   });
 
   it("pastes clipboard text through the terminal paste path", async () => {
@@ -970,7 +992,7 @@ describe("TerminalRawView", () => {
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
   });
 
-  it("toggles an expanded terminal mode from the key bar", async () => {
+  it("toggles an expanded terminal mode from the corner fullscreen button", async () => {
     const { getByRole, unmount } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const toggle = getByRole("button", { name: "Expand terminal" });
 
@@ -1344,6 +1366,10 @@ describe("TerminalRawView", () => {
     const mobileCss = mobileBlock![1];
 
     expect(mobileCss).toContain(".terminal-host");
+    // Full-bleed on mobile: the panel meets the screen edges, so side/bottom
+    // borders and radii go.
+    expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-radius:\s*0/);
+    expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-left:\s*none/);
     expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*3px 4px/);
