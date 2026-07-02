@@ -50,6 +50,7 @@
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
+  let canSend: () => boolean = () => false;
   let focusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
@@ -124,6 +125,7 @@
   // input (text + Enter). The raw terminal stays the default input surface.
   const sendComposer = () => {
     if (composerText.trim().length === 0) return;
+    if (!canSend()) return;
     sendKey(`${composerText}\r`);
     composerText = "";
     focusTerm();
@@ -212,6 +214,7 @@
     };
 
     sendKey = (data: string) => connection.sendInput(data);
+    canSend = () => connection.isOpen();
     focusTerm = () => term.focus();
     // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
     // collapse hides the Back button; blurring xterm's textarea is the only
