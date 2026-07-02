@@ -16,6 +16,19 @@ const KEYBOARD_CLOSE_DELTA_PX = 100;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
 
 /**
+ * The single keyboard-open truth. `initViewport` maintains the class with
+ * baseline rebasing and open/close hysteresis; every consumer (CSS takeover,
+ * the terminal's PTY-lockstep freeze) must read this same state so they can
+ * never disagree about whether the keyboard is up.
+ */
+export function isKeyboardOpen(): boolean {
+  return (
+    typeof document !== "undefined" &&
+    document.documentElement.classList.contains(KEYBOARD_OPEN_CLASS)
+  );
+}
+
+/**
  * Begin syncing `--app-height` / `keyboard-open` from `visualViewport`.
  * No-ops where `visualViewport` is unavailable. Returns a cleanup function
  * that removes every listener and the state it set.

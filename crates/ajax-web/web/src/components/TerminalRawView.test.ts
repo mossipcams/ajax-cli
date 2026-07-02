@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, waitFor, queryByRole, fireEvent } from "@testing-library/svelte";
 import { tick } from "svelte";
-import TerminalPanel from "./TerminalRawView.svelte";
+import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 
 const write = vi.fn();
@@ -181,7 +181,7 @@ function stubMatchMedia(matcher: (query: string) => boolean) {
 /** Mount the terminal for the standard test handle; expose the socket and the
  * touch-scroll host alongside the render utils. */
 function mountTerminal() {
-  const utils = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+  const utils = render(TerminalRawView, { props: { handle: "web/fix-login" } });
   const socket = MockWebSocket.instances[0];
   const host = utils.container.querySelector(".task-terminal-viewport") as HTMLElement;
   return { ...utils, socket, host };
@@ -210,13 +210,18 @@ const resizeFramesOf = (socket: MockWebSocket) =>
     .map((call) => JSON.parse(call[0] as string))
     .filter((frame) => frame.type === "resize");
 
+/** Net scrollback movement: the behavior contract is how far the view moved,
+ * not how many scrollLines calls delivered it. */
+const linesScrolled = () =>
+  scrollLines.mock.calls.reduce((sum, call) => sum + (call[0] as number), 0);
+
 // Raw-first contract: the task terminal is the raw xterm/tmux bridge on every
 // viewport. No Live/snapshot/composer mode may come back as the default.
 describe("raw-first task terminal contract", () => {
   it("defaults to the raw terminal socket on a mobile viewport", async () => {
     stubMatchMedia((query) => query.includes("max-width: 767px"));
 
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
@@ -228,7 +233,7 @@ describe("raw-first task terminal contract", () => {
   it("defaults to the raw terminal socket on desktop", async () => {
     stubMatchMedia(() => false);
 
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
@@ -239,7 +244,7 @@ describe("raw-first task terminal contract", () => {
   it("does not render snapshot viewer or mode tabs on any viewport", async () => {
     stubMatchMedia((query) => query.includes("max-width: 767px"));
 
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1));
 
     expect(queryByRole(container, "tab", { name: "Live" })).not.toBeInTheDocument();
@@ -249,9 +254,9 @@ describe("raw-first task terminal contract", () => {
   });
 });
 
-describe("TerminalPanel", () => {
+describe("TerminalRawView", () => {
   it("opens the task terminal socket on mount", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect(MockWebSocket.instances).toHaveLength(1);
@@ -283,6 +288,17 @@ describe("TerminalPanel", () => {
 
     await waitFor(() => {
       expect(write).toHaveBeenCalledWith("λ ready");
+    });
+  });
+
+  it("writes a non-JSON frame through as raw text", async () => {
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
+    const socket = MockWebSocket.instances[0];
+
+    socket?.emit("message", { data: "plain text frame" } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("plain text frame");
     });
   });
 
@@ -394,7 +410,7 @@ describe("TerminalPanel", () => {
 
   it("loads ZerolagInputAddon for local echo", async () => {
     const { ZerolagInputAddon } = await import("xterm-zerolag-input");
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect(ZerolagInputAddon).toBeDefined();
@@ -403,7 +419,7 @@ describe("TerminalPanel", () => {
   });
 
   it("exposes stable layout hooks for the task terminal viewport", () => {
-    const { container, getByLabelText } = render(TerminalPanel, {
+    const { container, getByLabelText } = render(TerminalRawView, {
       props: { handle: "web/fix-login" },
     });
 
@@ -425,7 +441,7 @@ describe("TerminalPanel", () => {
   });
 
   it("closes the socket and disposes xterm on destroy", async () => {
-    const { unmount } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { unmount } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
 
     unmount();
@@ -483,7 +499,7 @@ describe("TerminalPanel", () => {
   });
 
   it("shows a New output control while the user is scrolled away from bottom", async () => {
-    const { getByRole, queryByRole } = render(TerminalPanel, {
+    const { getByRole, queryByRole } = render(TerminalRawView, {
       props: { handle: "web/fix-login" },
     });
     const socket = MockWebSocket.instances[0];
@@ -505,10 +521,14 @@ describe("TerminalPanel", () => {
     });
     expect(scrollToBottom).not.toHaveBeenCalled();
 
+    focus.mockClear();
     getByRole("button", { name: "New output ↓" }).click();
 
     expect(scrollToBottom).toHaveBeenCalled();
-    expect(focus).toHaveBeenCalled();
+    // Jumping to the newest output is a *reading* action; focusing here would
+    // pop the iOS keyboard and shrink the very output the user asked to see
+    // (the same contract as the expand toggle).
+    expect(focus).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(queryByRole("button", { name: "New output ↓" })).not.toBeInTheDocument();
     });
@@ -537,6 +557,11 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
+  // Keyboard state is the shared `keyboard-open` class viewport.ts maintains
+  // (the same signal the CSS takeover uses), so the tests drive that class.
+  const setKeyboardOpen = (open: boolean) =>
+    document.documentElement.classList.toggle("keyboard-open", open);
+
   it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
     // The server resize is withheld while the keyboard is open, so the local
     // grid must not shrink either: a grid smaller than the PTY makes tmux
@@ -544,7 +569,6 @@ describe("TerminalPanel", () => {
     // those writes to its bottom row — the TUI input box drifts up and
     // overwrites the line below it.
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
     const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400); // let the open-path refits settle
     fit.mockClear();
@@ -553,10 +577,11 @@ describe("TerminalPanel", () => {
 
     const resizeFrames = () => resizeFramesOf(socket!);
 
-    // Keyboard opens: the visual viewport shrinks well past the threshold.
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    // Keyboard opens: viewport.ts flags it and the viewport resizes.
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(500);
+    setKeyboardOpen(false);
 
     expect(fit).not.toHaveBeenCalled(); // grid untouched while open
     expect(resize).not.toHaveBeenCalled();
@@ -566,21 +591,19 @@ describe("TerminalPanel", () => {
 
   it("anchors the visible crop to the canvas bottom while the keyboard is open", async () => {
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
-    const socket = MockWebSocket.instances[0];
+    const { socket, host } = mountTerminal();
     socket?.emit("open");
     vi.advanceTimersByTime(400);
 
     // The frozen grid is taller than the keyboard-shrunken host; the crop
     // must show the bottom of the canvas (cursor/input row), not the top.
-    const host = container.querySelector(".task-terminal-viewport") as HTMLElement;
     Object.defineProperty(host, "scrollHeight", { value: 800, configurable: true });
     Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
 
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(500);
+    setKeyboardOpen(false);
 
     expect(host.scrollTop).toBe(500);
     vi.useRealTimers();
@@ -588,7 +611,6 @@ describe("TerminalPanel", () => {
 
   it("flushes exactly one server resize once the keyboard closes", async () => {
     vi.useFakeTimers();
-    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
     const { socket } = mountOpenTerminal();
     vi.advanceTimersByTime(400);
     socket!.send.mockClear();
@@ -596,12 +618,12 @@ describe("TerminalPanel", () => {
     const resizeFrames = () => resizeFramesOf(socket!);
 
     // Open the keyboard (several animation frames), then close it.
-    (window.visualViewport as unknown as { height: number }).height = 400;
+    setKeyboardOpen(true);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(100);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(100);
-    (window.visualViewport as unknown as { height: number }).height = 790;
+    setKeyboardOpen(false);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(300);
 
@@ -688,7 +710,7 @@ describe("TerminalPanel", () => {
 
   it("enters reconnecting and opens a new socket after the socket closes", async () => {
     vi.useFakeTimers();
-    const { getByTestId } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { getByTestId } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
     first?.emit("open");
 
@@ -706,7 +728,7 @@ describe("TerminalPanel", () => {
   });
 
   it("reconnects immediately when the tab returns to the foreground", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
     first?.emit("open");
     first!.readyState = MockWebSocket.CLOSED;
@@ -721,7 +743,7 @@ describe("TerminalPanel", () => {
 
   it("backs off with a growing delay that resets after a successful open", async () => {
     vi.useFakeTimers();
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     let sock = MockWebSocket.instances[0];
     sock.emit("open");
@@ -753,7 +775,7 @@ describe("TerminalPanel", () => {
 
   it("clears the local input overlay on reconnect so stale echoes don't linger", async () => {
     vi.useFakeTimers();
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
     first?.emit("open");
 
@@ -770,7 +792,7 @@ describe("TerminalPanel", () => {
   });
 
   it("does not clear the overlay on the very first connect", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
 
     clear.mockClear();
@@ -780,7 +802,7 @@ describe("TerminalPanel", () => {
   });
 
   it("offers a manual reconnect button that opens a new socket", async () => {
-    const { findByRole } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { findByRole } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const first = MockWebSocket.instances[0];
     first?.emit("open");
     first!.readyState = MockWebSocket.CLOSED;
@@ -844,12 +866,33 @@ describe("TerminalPanel", () => {
     });
   });
 
+  it("keeps a server error visible after a successful paste", async () => {
+    // Clipboard feedback and bridge errors are separate channels: a paste
+    // must never clear a server-reported failure it does not own.
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockResolvedValue("ls") },
+      configurable: true,
+    });
+    const { getByRole, getByTestId, socket } = mountOpenTerminal();
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "error", error: "tmux session missing" }),
+    } as MessageEvent);
+    await waitFor(() => {
+      expect(getByTestId("terminal-status").textContent).toContain("tmux session missing");
+    });
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => expect(paste).toHaveBeenCalledWith("ls"));
+    expect(getByTestId("terminal-status").textContent).toContain("tmux session missing");
+  });
+
   it("surfaces a clipboard read failure instead of silently doing nothing", async () => {
     Object.defineProperty(navigator, "clipboard", {
       value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
       configurable: true,
     });
-    const { getByRole, getByTestId } = render(TerminalPanel, {
+    const { getByRole, getByTestId } = render(TerminalRawView, {
       props: { handle: "web/fix-login" },
     });
     const socket = MockWebSocket.instances[0];
@@ -903,6 +946,22 @@ describe("TerminalPanel", () => {
     vi.useRealTimers();
   });
 
+  it("clears the overlay when Enter arrives while Ctrl is armed", async () => {
+    // Ctrl folds letters and cursor keys but leaves Enter as a plain "\r" —
+    // which must still take the normal Enter path (overlay cleared), not
+    // linger as ghost text until the next output frame.
+    const { getByRole, socket } = mountOpenTerminal();
+
+    getByRole("button", { name: /Ctrl/ }).click();
+    clear.mockClear();
+    onDataHandler?.("\r");
+
+    await waitFor(() => {
+      expect(clear).toHaveBeenCalled();
+      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\r" }));
+    });
+  });
+
   it("applies an armed Ctrl to a control-bar cursor key, then disarms", async () => {
     const { getByRole, socket } = mountOpenTerminal();
 
@@ -923,7 +982,7 @@ describe("TerminalPanel", () => {
   });
 
   it("toggles an expanded terminal mode from the key bar", async () => {
-    const { getByRole, unmount } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { getByRole, unmount } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const toggle = getByRole("button", { name: "Expand terminal" });
 
     expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
@@ -977,7 +1036,7 @@ describe("TerminalPanel", () => {
   });
 
   it("disables autocorrect/autocapitalize on the xterm input", async () => {
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect(lastTextarea?.getAttribute("autocapitalize")).toBe("off");
@@ -990,7 +1049,7 @@ describe("TerminalPanel", () => {
     // 13px matches desktop: the old 10px default was a column-count lever
     // that the 80-column PTY floor made obsolete.
     stubMatchMedia((query) => query.includes("max-width: 767px"));
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
@@ -1001,7 +1060,7 @@ describe("TerminalPanel", () => {
     // A landscape iPhone is wider than the width breakpoint but still a phone;
     // it must get the readable default, never a squintier one.
     stubMatchMedia((query) => query.includes("pointer: coarse"));
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
@@ -1010,7 +1069,7 @@ describe("TerminalPanel", () => {
 
   it("uses a compact font size on a desktop viewport", async () => {
     stubMatchMedia(() => false);
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect((terminalOptions as { fontSize: number }).fontSize).toBeLessThan(14);
@@ -1046,8 +1105,7 @@ describe("TerminalPanel", () => {
     const move = makeTouch("touchmove", 140);
     host.dispatchEvent(move);
 
-    expect(scrollLines).toHaveBeenCalledWith(1);
-    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(linesScrolled()).toBe(3);
     // A moved touch is a scroll, not a tap: default is prevented so iOS does
     // not synthesize the click that would pop the keyboard.
     expect(move.defaultPrevented).toBe(true);
@@ -1059,8 +1117,7 @@ describe("TerminalPanel", () => {
     host.dispatchEvent(makeTouch("touchstart", 100));
     host.dispatchEvent(makeTouch("touchmove", 160));
 
-    expect(scrollLines).toHaveBeenCalledWith(-1);
-    expect(scrollLines.mock.calls.length).toBeGreaterThan(0);
+    expect(linesScrolled()).toBe(-3);
   });
 
   it("pans the terminal horizontally on a sideways drag", async () => {
@@ -1114,7 +1171,7 @@ describe("TerminalPanel", () => {
 
   it("applies a persisted font size on mount", async () => {
     window.localStorage.setItem("ajax.terminal.fontSize", "16");
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect((terminalOptions as { fontSize: number }).fontSize).toBe(16);
@@ -1123,7 +1180,7 @@ describe("TerminalPanel", () => {
 
   it("ignores an out-of-range persisted font size and uses the default", async () => {
     window.localStorage.setItem("ajax.terminal.fontSize", "999");
-    render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     await waitFor(() => {
       expect((terminalOptions as { fontSize: number }).fontSize).toBe(13);
@@ -1255,8 +1312,7 @@ describe("TerminalPanel", () => {
     const move = makeTouch("touchmove", 140);
     layer.dispatchEvent(move);
 
-    expect(scrollLines).toHaveBeenCalledWith(1);
-    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(linesScrolled()).toBe(3);
     expect(move.defaultPrevented).toBe(true);
   });
 
@@ -1270,7 +1326,7 @@ describe("TerminalPanel", () => {
         removeEventListener: vi.fn(),
       })),
     );
-    const { container } = render(TerminalPanel, { props: { handle: "web/fix-login" } });
+    const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     const socket = MockWebSocket.instances[0];
     socket?.emit("open");
 
@@ -1283,8 +1339,7 @@ describe("TerminalPanel", () => {
     layer.dispatchEvent(move);
 
     expect(move.defaultPrevented).toBe(true);
-    expect(scrollLines).toHaveBeenCalledWith(1);
-    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(linesScrolled()).toBe(3);
 
     const inputFrames = socket!.send.mock.calls
       .map((call) => JSON.parse(call[0] as string))
@@ -1340,8 +1395,7 @@ describe("TerminalPanel", () => {
     });
     layer.dispatchEvent(wheel);
 
-    expect(scrollLines).toHaveBeenCalledWith(1);
-    expect(scrollLines).toHaveBeenCalledTimes(3);
+    expect(linesScrolled()).toBe(3);
     expect(wheel.defaultPrevented).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { initViewport } from "./viewport";
+import { initViewport, isKeyboardOpen } from "./viewport";
 
 // Drive a fake visualViewport the way TerminalPanel.test.ts does: capture the
 // handlers it registers and replay them after mutating the height.
@@ -102,5 +102,52 @@ describe("initViewport", () => {
     vi.stubGlobal("visualViewport", undefined);
     expect(() => initViewport()()).not.toThrow();
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+  });
+});
+
+describe("isKeyboardOpen", () => {
+  // The one keyboard truth: consumers (the terminal's PTY-lockstep freeze)
+  // must agree with the CSS takeover, which keys off the same class.
+  it("reflects the keyboard-open class initViewport maintains", () => {
+    start();
+    expect(isKeyboardOpen()).toBe(false);
+
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    vvHeight = 800;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+  });
+
+  it("applies close hysteresis so address-bar drift cannot flap the state", () => {
+    start();
+    vvHeight = 480; // 320px delta: clearly a keyboard
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    // Partial recovery (delta 120px) sits between the 100px close and 150px
+    // open thresholds: the keyboard must stay open, not flap.
+    vvHeight = 680;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    vvHeight = 790; // delta 10px: settled closed
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+  });
+
+  it("rebases the baseline after closed-state drift so the next open is detected", () => {
+    start();
+    // Address-bar collapse shrinks the viewport 60px without a keyboard.
+    vvHeight = 740;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(false);
+
+    // A real keyboard measured from the drifted baseline (740 - 560 = 180px).
+    vvHeight = 560;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
   });
 });

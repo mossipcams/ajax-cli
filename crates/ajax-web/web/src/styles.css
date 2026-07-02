@@ -559,29 +559,10 @@ main {
     touch-action: manipulation;
   }
 
-  /* While a task terminal overlay is open, freeze the document so iOS cannot
-     rubber-band or chain-scroll the page behind it (the "scroll fighting").
-     The .ajax-task-open class is toggled by TaskDetail; scoped to mobile so
-     desktop page scrolling and dashboard pull-to-refresh are untouched. */
-  html.ajax-task-open,
-  html.ajax-task-open body {
-    overflow: hidden;
-    overscroll-behavior: none;
-    height: 100%;
-  }
-
-  .task-detail {
-    position: fixed;
-    inset: 0;
-    z-index: 30; /* above .cockpit-chrome (10) and .bottom-nav (20) */
-    height: var(--app-height, 100dvh);
-    min-height: 0;
-    padding: env(safe-area-inset-top) calc(16px + env(safe-area-inset-right))
-      env(safe-area-inset-bottom) calc(16px + env(safe-area-inset-left));
-    background: var(--paper);
-    overflow: hidden;
-    overscroll-behavior: none;
-  }
+  /* The fixed full-screen task shell (html.ajax-task-open document freeze +
+     .task-detail visual-viewport takeover) is owned by TaskDetail.svelte's
+     scoped styles — one source of truth so the html/body height rules cannot
+     conflict. */
 
   /* Let the terminal shrink to fit above the keyboard rather than overflow. */
   .task-detail .terminal-panel,

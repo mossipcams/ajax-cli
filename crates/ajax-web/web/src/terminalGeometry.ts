@@ -17,6 +17,39 @@ export const MIN_TERMINAL_COLS = 80;
 export const MIN_FONT_SIZE = 7;
 export const MAX_FONT_SIZE = 20;
 
+/** The default cell size on every viewport — the 80-column floor made
+ * per-device font sizing obsolete (narrow viewports pan instead of wrap). */
+export const DEFAULT_FONT_SIZE = 13;
+
+const FONT_SIZE_STORAGE_KEY = "ajax.terminal.fontSize";
+
+/**
+ * The operator's persisted pinch-zoom font choice; a valid stored size wins
+ * over the default. localStorage can throw (Safari private mode), so reads
+ * and writes are best-effort.
+ */
+export function persistedFontSize(): number | undefined {
+  try {
+    const raw = window.localStorage.getItem(FONT_SIZE_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < MIN_FONT_SIZE || parsed > MAX_FONT_SIZE) {
+      return undefined;
+    }
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+export function persistFontSize(size: number): void {
+  try {
+    window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size));
+  } catch {
+    // Best-effort: the session still uses the new size.
+  }
+}
+
 /**
  * Raise a fitted column proposal to the column floor. Invalid proposals
  * (absent, non-finite, or non-positive — e.g. pre-layout fits) get the floor.
