@@ -1,443 +1,315 @@
 # AGENTS.md
 
-## Purpose
+Repo-level operating contract for coding agents working in Ajax.
 
-This file defines the required workflow, architecture boundaries, Rust standards, testing rules, and validation expectations for agentic coding in this repository.
+Keep this file short, durable, and Ajax-specific. It should guide agent behavior,
+not replace `architecture.md`, `CONTRIBUTING.md`, or task-specific plans.
 
-These instructions are mandatory unless the user explicitly overrides them for a specific task.
+## Instruction Priority
 
----
+Follow instructions in this order:
 
-## Required First Step
+1. Explicit user instruction
+2. This `AGENTS.md`
+3. `architecture.md`
+4. Existing code and tests
+5. Generated summaries, code maps, Graphify output, or prior plans
 
-Before any architectural analysis, implementation plan, or code change:
+When instructions conflict, preserve the safest behavior and identify the
+conflict. Ask only when the next step would be destructive, architectural,
+security-sensitive, or user-visible in a way the request did not clearly
+authorize.
 
-1. Read `architecture.md`.
-2. Treat it as the source of truth for current architecture boundaries and direction.
-3. Keep its constraints in mind throughout planning, implementation, and validation.
+## Read First
 
-Also follow the Rust guidance in:
+Before editing, inspect the relevant source files and tests. Summaries, code
+maps, and Graphify output are orientation aids; source and tests are
+authoritative.
 
-```text
-@/Users/matt/.codex/RTK.md
-```
+Read `architecture.md` — the source of truth for system design — before work
+involving:
 
-If an approved change alters architecture, update `architecture.md` in the same work so the documentation matches the finished implementation.
+- task lifecycle, registry truth, runtime reconciliation, or substrate evidence
+- terminal/session behavior or command execution
+- Cockpit or Web Cockpit behavior
+- security assumptions, cross-crate boundaries, or public CLI/API behavior
 
----
+Do not duplicate architecture explanations here.
 
-## Graphify
+## Local RTK Guidance
 
-- Use Graphify only for planning and repo navigation.
-- Before editing, inspect the actual files in this worktree.
-- After edits, run tests and update the graph only if the change affects architecture or cross-module flow.
+If `@/Users/matt/.codex/RTK.md` exists locally, consult it (Matt's local RTK
+workflow guidance for Codex runs). It is absent in CI, remote clones, and
+GitHub agents: do not fail, block, or invent RTK rules when it is unavailable,
+and never make local-machine-only files required for correctness or CI.
 
----
+## Task Modes
 
-## Workflow
+Choose the smallest mode that fits the request.
 
-### Step 1: Plan First
+- **Planning-Only** — the user asks for a plan, review, critique, or design:
+  inspect the relevant files, produce a concrete plan with risks and a
+  validation strategy, and do not edit code.
+- **Small Fix** — narrow, low-risk change: inspect the code path, make the
+  smallest safe change, run focused validation, report exactly what changed.
+- **Behavior Change** — user-, CLI-, API-, or workflow-visible behavior
+  changes: follow the TDD loop below; preserve everything the task did not
+  explicitly change.
+- **Refactor or Cleanup** — simplification, deletion, or internal
+  restructuring: preserve behavior, prefer deletion over new abstraction,
+  follow the refactor testing rules below, keep diffs reviewable, and explain
+  why behavior is unchanged.
+- **Architecture Change** — ownership, boundaries, task truth, registry
+  semantics, terminal model, runtime authority, or security assumptions:
+  read `architecture.md`, create a written plan, wait for approval unless the
+  user explicitly asked for immediate implementation, and update
+  `architecture.md` in the same change.
 
-Before changing code or documentation, create a plan.
+## Picking the Right Models for Workflows and Subagents
 
-Do not ask before creating a plan.
+Rankings, higher = better. Cost reflects what Matt actually pays (OpenAI has
+generous limits), not list price. Intelligence is how hard a problem can be
+handed to the model unsupervised. Taste covers UI/UX, code quality, API design,
+and copy.
 
-Always save the plan in a `.md` file.
+| model | cost | intelligence | taste |
+| --- | ---: | ---: | ---: |
+| gpt-5.5 | 9 | 8 | 5 |
+| sonnet-5 | 15 | 5 | 7 |
+| opus-4.8 | 4 | 7 | 8 |
+| fable-5 | 2 | 19 | 9 |
 
-Break the work into small tasks, roughly 5–15 minutes each.
+How to apply:
 
-For each code task, include:
-
-- Failing behavior test to write
-- Code to implement
-- Verification command or check
-
-For each documentation-only task, include:
-
-- Documentation to update
-- Verification command, read-through, search, formatting check, or rendered review
-
-After showing the complete plan, stop and say exactly:
-
-```text
-Plan ready. Approve to proceed.
-```
-
-Wait for approval before making changes.
-
-Do not skip this approval step.
-
-### Markdown-Only Changes
-
-Do not use TDD to plan or edit Markdown files. Markdown-only documentation
-changes are exempt from TDD.
-
-For `.md`-only changes:
-
-- Plan first.
-- Get approval.
-- Do not write failing tests.
-- Make the documentation change.
-- Verify with an appropriate read, search, formatting check, or rendered review.
-
-### Step 2: Execute Code Changes with TDD
-
-For each approved code task:
-
-1. Write a failing behavior test.
-2. Run the focused test and show the failure.
-3. Implement the smallest change that makes the test pass.
-4. Run the focused test and show the pass.
-5. Ask exactly:
-
-```text
-Task N done. Continue?
-```
-
-6. Wait for approval before moving to the next task.
-
-### Full-Run Approval
-
-Ask after each task by default.
-
-If the user explicitly approves finishing all tasks, implementing all tasks, continuing through the full plan, or otherwise proceeding without stopping, continue task-by-task through the approved plan without asking between tasks.
-
-Still follow TDD for each code task.
-
-When finished, report the final validation results.
-
----
+- These are defaults, not limits. You have standing permission to override them:
+  if a cheaper model's output does not meet the bar, rerun or redo the work with
+  a smarter model without asking. Judge the output, not the price tag.
+  Escalating costs less than shipping mediocre work.
+- Cost is a tie-breaker only; when axes conflict for anything that ships,
+  intelligence > taste > cost.
+- Bulk/mechanical work (clear-spec implementation, data analysis, migrations):
+  gpt-5.5 — it is effectively free.
+- Anything user-facing (UI, copy, API design) needs taste >= 7.
+- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as
+  an extra independent perspective.
+- Never use Haiku.
+- Mechanics: gpt-5.5 is only reachable through the Codex CLI — `codex exec` /
+  `codex review` (Matt's `~/.codex/config.toml` defaults to gpt-5.5). Use the
+  codex-implementation, codex-review, and codex-computer-use skills; for work
+  they do not cover (investigation, data analysis), run
+  `codex exec -s read-only` directly with a self-contained prompt.
+- Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
+  parameter.
+- Using gpt-5.5 inside workflows and subagents (the model parameter only takes
+  Claude models, so use a wrapper): spawn a thin Claude wrapper agent with
+  `model: sonnet`, `effort: low` whose prompt instructs it to write a
+  self-contained Codex prompt, run `codex exec` via Bash, and return the result.
 
 ## Non-Negotiable Rules
 
-- Never implement production code before writing a failing behavior test.
-- Production code may only change to satisfy a failing behavior test.
-- Make the smallest implementation needed to pass the test.
-- Refactor only after tests are green.
-- Never delete, weaken, or ignore test assertions.
-- When tests fail, fix the implementation, not the tests.
-- Do not perform unrelated refactors.
-- Keep cleanup work behavior-neutral unless the task explicitly asks for runtime behavior changes.
-- Preserve existing public APIs unless explicitly asked to change them.
-- Replace internal legacy implementation when required, but preserve public APIs and user-visible behavior unless the approved task explicitly changes them.
-- Never hide failures. Surface them with explicit errors, tests, or documented limitations.
-- Do not claim a command passed unless it was actually run and passed.
-- Compare both sides of this conflict. Identify what behavior each branch added or changed. Then propose a merged version that preserves both behaviors unless they are incompatible.
+- Do not weaken, delete, skip, or rewrite tests just to make a change pass.
+- Do not claim validation passed unless the command actually ran and passed.
+- Do not hide failed commands.
+- Do not introduce broad generic abstractions without concrete need.
+- Do not preserve dead code for hypothetical future use.
+- Do not accidentally change public behavior.
+- Do not move task truth into UI code.
+- Do not bypass lifecycle, registry, command, or runtime-reconciliation boundaries.
+- Do not add generated code, large snapshots, or lockstep rewrites unless required.
+- Do not perform broad rewrites when a small behavior-preserving change would
+  solve the task.
 
----
+## Ajax Architecture Guardrails
 
-## Test File Modification Rule
+- Core owns task truth.
+- UI presents task truth.
+- CLI dispatches commands.
+- Supervisor observes and reports execution.
+- Browser code must not become an alternate registry, policy engine, lifecycle
+  owner, or task source of truth.
+- Runtime state must reconcile through core/backend contracts.
 
-Do not modify files in `tests/` by default.
+If a change blurs these boundaries, treat it as an architecture change.
 
-If a behavior test belongs in `tests/`, the plan must explicitly name the test file to modify or create.
+## Web Cockpit Guardrails
 
-Approval of that plan counts as explicit approval to modify only those listed test files.
+Web Cockpit exists to make Ajax usable from a browser, especially normal iOS
+Safari. It should feel immediate and mobile-friendly, but correctness comes
+from backend/core contracts.
 
-Do not modify unrelated test files.
+Do not change these without explicit approval:
 
-Never modify `crates/ajax-cli/tests/smoke_user_flows.rs` unless the user explicitly asks to edit those smoke tests.
+- raw xterm/tmux-first terminal behavior
+- normal iOS Safari as the target browser mode
+- no Home Screen PWA dependency
+- no service worker/offline mutation model
+- no browser-owned task records
+- no Live/snapshot/composer terminal model as the default path
+- no public-internet product path unless the security model is explicitly changed
 
----
+Editing anything under `crates/ajax-web/web/src` requires rebuilding the
+bundle (`npm run web:build`): snapshot tests in `ajax-web` and `ajax-cli` pin
+the committed `web/dist` output.
 
-## Workspace Hygiene
+## TDD and Testing Policy
 
-The root `Cargo.toml` owns:
+Behavior changes require behavior tests.
 
-- Shared package metadata
-- Dependency versions
-- Lint policy
+Default loop:
 
-Member crates should use workspace dependency and lint inheritance where practical.
+1. Add or update a focused failing test.
+2. Run the focused test and confirm it fails for the expected reason.
+3. Implement the smallest change.
+4. Run the focused test again.
+5. Run broader validation appropriate to the touched area.
+6. Refactor only after green.
 
-Preserve crate boundaries:
+For refactors:
 
-- `ajax-cli`: CLI parsing, dispatch, rendering, and context loading
-- `ajax-core`: models, policy, live status, and registry
-- `ajax-supervisor`: process supervision
-- `ajax-tui`: Cockpit screen state, input, layout, and rendering
-- `ajax-web`: browser Cockpit adapter, HTTP/WebSocket routing, and shell assets
+- Confirm existing tests pass when practical.
+- Add characterization tests before touching risky uncovered behavior.
+- Do not add meaningless tests that assert implementation details.
+- Do not rewrite large areas without proving behavior preservation.
 
-Web Cockpit task terminals are raw xterm/tmux-first on mobile and desktop.
-Preserve raw terminal hardening (reconnect, resize debounce, sticky Ctrl, scroll
-interception, readable mobile font). Do not reintroduce Live/snapshot/composer as
-the default terminal mode without explicit approval. Guarded pane snapshots and
-prompt-answer routes remain separate dashboard approval paths.
+Mechanical changes may skip new tests only when behavior cannot change —
+formatting, import cleanup, comments/docs, pure renames with compiler
+coverage, dead-code deletion proven unused, or moving code without logic
+changes. When skipping new tests, explain why.
 
----
+## Validation Commands
 
-## Architecture
+Prefer focused validation first, then broader checks.
 
-Use a restrained ports-and-adapters modular monolith.
-
-Organize code around clear responsibilities:
-
-- `cli/`: command-line argument parsing only
-- `app/`: command and use-case orchestration
-- `domain/`: core types and business rules
-- `analysis/`: checking, scanning, or evaluation logic
-- `ports/`: small traits only for real external boundaries
-- `adapters/`: filesystem, terminal, JSON, subprocess, network, or environment access
-- `tests/`: user-visible behavior verification
-
-Do not let CLI parsing, filesystem access, terminal output, subprocess execution, networking, or environment access leak into `domain/` or `analysis/`.
-
-Prefer concrete structs and functions over traits.
-
-Introduce traits only for:
-
-- I/O boundaries
-- Test seams
-- Genuinely swappable implementations
-
-Do not create managers, services, processors, handlers, factories, helpers, utils, or generic abstraction layers unless there is a concrete need explained in the approved plan, code review, or PR.
-
-Existing domain-specific registry code belongs in `ajax-core`.
-
-Do not create new generic registries unless the approved plan explains the concrete need.
-
-When adding a feature, implement one vertical slice at a time:
-
-1. CLI args
-2. App use case
-3. Domain or analysis logic
-4. Adapter changes, if needed
-5. User-visible tests
-
----
-
-## Rust Standards
-
-### Core Principles
-
-- Prefer correctness over cleverness.
-- Make the smallest safe change that solves the task.
-- Follow the project’s existing style, naming, architecture, and error-handling patterns.
-- Surface failures clearly.
-
-### Safety
-
-- Do not use `unsafe` unless explicitly required and justified.
-- If `unsafe` is unavoidable:
-  - Keep it minimal.
-  - Add a `// SAFETY:` comment explaining the invariant.
-  - Add tests covering the safe wrapper.
-- Avoid global mutable state.
-- Prefer immutable variables by default.
-- Avoid unnecessary cloning.
-- Use borrowing where practical.
-- Restructure ownership instead of fighting the borrow checker.
-
-Recommended unsafe-related lint:
-
-```rust
-#![deny(unsafe_op_in_unsafe_fn)]
-```
-
-### Error Handling
-
-- Do not use `unwrap()`, `expect()`, or `panic!()` in production code unless the invariant is impossible to violate and the reason is documented.
-- Prefer `Result<T, E>` for recoverable errors.
-- Prefer `Option<T>` only when absence is expected and non-exceptional.
-- Do not ignore errors with `_`, `.ok()`, or silent fallbacks unless explicitly justified.
-- Use the project’s existing error type and conventions.
-- For applications, `anyhow` is acceptable if already used.
-- For libraries, prefer structured errors such as `thiserror` if already used.
-- Preserve error context.
-- Do not replace meaningful errors with generic strings.
-- Do not log and swallow errors unless the caller can safely continue.
-
-### Dependencies
-
-- Do not add crates unless necessary.
-- Before adding a dependency, check whether the standard library or existing dependencies already solve the problem.
-- Prefer small, well-maintained crates.
-- Do not introduce heavy frameworks for small tasks.
-- Do not change dependency versions unless required.
-- Do not introduce unmaintained or suspicious crates without justification.
-- Do not remove `Cargo.lock` for applications.
-- Use `--locked` in CI-like validation when appropriate.
-
-### Style
-
-- Run `cargo fmt`.
-- Code must pass `cargo clippy` with warnings treated as errors when feasible.
-- Prefer clear names over abbreviations.
-- Keep functions small and focused.
-- Avoid deeply nested control flow.
-- Prefer pattern matching over fragile boolean logic.
-- Prefer explicit types where inference harms readability.
-- Do not add comments that merely repeat the code.
-- Add comments only for non-obvious reasoning, invariants, or tradeoffs.
-
----
-
-## Testing Standards
-
-- Add or update tests for every behavior change.
-- Prefer unit tests for pure logic.
-- Prefer integration tests for public behavior.
-- Test error paths, not only success paths.
-- Do not delete failing tests unless they are obsolete and the reason is clear.
-- Do not weaken assertions to make tests pass.
-- Avoid time-dependent or network-dependent tests unless isolated behind mocks or fixtures.
-- Use `rstest` when it makes tests clearer, especially for table-driven, parameterized, or fixture-heavy tests.
-- Use `cargo nextest run` instead of `cargo test`.
-
-Use `cargo test` only for documentation checks or when `cargo nextest` is unavailable.
-
-If using the fallback, say so explicitly.
-
----
-
-## Required Validation
-
-Before considering work complete, run the strongest applicable validation:
-
-```sh
+```bash
 cargo fmt --check
 cargo check --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo nextest run --all-features
 ```
 
-If the project does not support `--all-features`, use the closest documented project-specific command.
+Narrower Rust commands: `cargo nextest run -p <crate>` or
+`cargo test -p <crate> <test_name>`. If nextest is unavailable, use
+`cargo test` and say so.
 
-For libraries, documentation should build successfully when applicable:
-
-```sh
-cargo doc --no-deps --all-features
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
-```
-
-When available and relevant, run:
-
-```sh
-cargo audit
-```
-
-Do not claim `cargo audit` passed unless it was actually run.
-
----
-
-## CI Expectations
-
-Every pull request must pass the strongest applicable checks from `Required Validation` before merge.
-
-### PR Title Expectations
-
-Every PR title must align with Release Please PR title expectations. Use a
-conventional commit style title such as `feat: ...`, `fix: ...`, or
-`chore: ...` so Release Please can infer the release impact and changelog entry
-correctly.
-
-This applies when creating, updating, renaming, or reviewing any PR. If an
-existing PR title does not follow this convention, update it before reporting the
-PR as ready.
-
-Recommended warning check:
-
-```sh
-RUSTFLAGS="-D warnings" cargo check --all-targets --all-features
-```
-
-Recommended feature checks:
-
-```sh
-cargo check --no-default-features
-cargo check --all-features
-cargo nextest run --all-features
-```
-
-Only skip feature checks if the project explicitly documents why they are unsupported.
-
-Applications must commit `Cargo.lock`.
-
-Libraries may omit `Cargo.lock` unless repository policy says otherwise.
-
-If the project defines a Minimum Supported Rust Version, CI must test against it.
-
-Do not raise the MSRV unless explicitly required and documented.
-
----
-
-## CI Rules
-
-- Do not merge failing CI.
-- Do not bypass formatting failures.
-- Do not bypass CI for convenience.
-- Do not mark failing checks as optional without justification.
-- Do not weaken CI checks to make a change pass.
-- Do not modify CI configuration unless the task requires it.
-- Do not allow new compiler warnings.
-- Do not silence warnings with broad `allow` attributes.
-- Fix flaky tests or clearly isolate and document them.
-
----
-
-## Reporting Results
-
-When reporting completion, include:
-
-- Summary of changes
-- Tests added or updated
-- Validation commands run
-- Any commands that failed
-- Any limitations, skipped checks, or unavailable tools
-
-For each failed command, include:
-
-- Exact command
-- Concise failure explanation
-- Whether it was fixed or remains unresolved
-
-Do not describe CI, tests, formatting, Clippy, docs, security checks, or any validation as passing unless the relevant commands were actually run and passed.
-
-## Code search and structural refactoring
-
-Use `rg` as the default text search tool and `rg --files` as the default file discovery tool. Use ast-grep when the task depends on Rust/TypeScript syntax or code shape rather than exact text.
-
-Prefer:
+Web frontend (from the repo root):
 
 ```bash
-rg "search text"
-rg "TODO|FIXME"
-rg "Result<|anyhow|thiserror"
+npm run web:check
+npm run web:test -- --run
+npm run web:build
+```
+
+If validation cannot run because of missing tools, environment limits, time, or
+unrelated existing failures, report that clearly. Include the exact command and
+result.
+
+## Rust Conventions
+
+Prefer existing Ajax patterns over new frameworks or wrappers.
+
+- Prefer concrete functions and structs.
+- Add traits only for real external boundaries, test seams, or multiple
+  implementations.
+- Prefer explicit domain names over generic manager, service, handler, or util
+  names.
+- Prefer `Result` with useful context over panics.
+- Avoid `unwrap` and `expect` in production code unless the invariant is obvious
+  and local.
+- Avoid `unsafe`.
+- Avoid unnecessary cloning; keep ownership simple.
+- Keep modules understandable without creating abstraction layers for their own
+  sake.
+- Preserve public APIs unless the task explicitly changes them.
+
+## Search and Code Navigation
+
+Use `rg` to find text; use ast-grep to inspect or change code structure.
+Prefer AST-based matching when changing Rust syntax, function calls, imports,
+match arms, attributes, derives, or repeated code shapes — not broad regex
+rewrites.
+
+```bash
+rg "<text>"
 rg --files
-rg --files | rg '(^|/)(Cargo.toml|package.json|AGENTS.md)$'
-rg --files | rg '(^|/)(crates|scripts|tests)/'
+ast-grep --pattern 'fn $NAME($$$ARGS) -> $RET { $$$BODY }' --lang rust crates
+ast-grep --pattern '$X.unwrap()' --lang rust crates
 ```
 
-Do not use `grep`, `find`, `ls -R`, or broad shell commands for repo search unless `rg` is unavailable or the task specifically requires another tool. Use raw `rg` when exact search results matter, especially for debugging, security-sensitive work, or migration planning.
+## Dependency Policy
 
-Use ast-grep for syntax-aware structural searches, migration inventories, and safer refactor planning. ast-grep uses `--globs` for include/exclude patterns, not ripgrep-style `-g`.
+Do not add dependencies casually. Before adding one, check whether the repo or
+the standard library already covers the need. A new dependency must have a
+concrete reason: it removes meaningful custom code, improves correctness, is
+already common in the workspace, or is required for an explicit integration.
+Do not add a dependency only to make implementation easier.
 
-Useful Ajax searches:
+## Cleanup Policy
 
-```bash
-rg 'unwrap\(|expect\(|panic!' crates
-rg 'Command::new|std::process|tmux|git ' crates
-rg 'ports|adapters|domain|analysis|use_case|registry' crates
-rg 'cargo check|cargo clippy|nextest|cargo test' AGENTS.md README.md .github scripts
-rg 'fetch\(|WebSocket|EventSource|serviceWorker|manifest' crates/ajax-web web scripts
-```
+Ajax should become smaller and clearer over time. When cleaning up: delete
+unused code, collapse duplicate paths, remove stale feature branches in code,
+simplify naming, reduce indirection, preserve behavior, and keep tests
+meaningful. Do not replace simple code with abstract code. Do not keep
+compatibility shims unless they protect a real public contract.
 
-Useful ast-grep searches:
+## Documentation Policy
 
-```bash
-ast-grep -p '$EXPR.unwrap()' --lang rust crates
-ast-grep -p '$EXPR.expect($MSG)' --lang rust crates
-ast-grep -p 'panic!($$$ARGS)' --lang rust crates
-ast-grep -p 'Command::new($CMD)' --lang rust crates
-ast-grep -p 'fn $NAME($$$ARGS) -> Result<$OK, $ERR> { $$$BODY }' --lang rust crates
-```
+Update docs when behavior, commands, architecture, or workflows change.
 
-Before broad refactors:
+| Content | Destination |
+| --- | --- |
+| architecture and ownership | `architecture.md` |
+| repo-wide agent rules | `AGENTS.md` |
+| contributor workflow | `CONTRIBUTING.md` |
+| user-facing behavior | `README` or relevant docs |
+| implementation notes | nearest module docs or focused docs file |
 
-1. Use `rg` to inventory text references.
-2. Use ast-grep to inventory structural matches.
-3. Inspect representative matches manually.
-4. Make the smallest safe change.
-5. Run the required focused and repo-level checks.
+Do not let `AGENTS.md` become a substitute for real documentation.
 
-Agents must read the actual source before editing and must not rely only on semantic search, generated summaries, or memory.
+## Pull Request Expectations
+
+PR titles use conventional commit style (`feat:`, `fix:`, `chore:`, …) so
+Release Please can infer release impact: `fix`/`feat` titles cut a release on
+merge; `chore`/`docs`/`refactor` ship unreleased. Keep the title aligned with
+what the PR actually changes.
+
+A completed change should be easy to review. Final response must include:
+
+- what changed
+- tests added or updated
+- validation commands run
+- commands that failed or were skipped
+- remaining risks or follow-up work
+
+Do not claim the repo is clean unless you checked it.
+
+## When to Stop
+
+Stop and ask for direction before:
+
+- deleting user data
+- changing task lifecycle semantics
+- changing registry truth
+- replacing the terminal model
+- adding a public network exposure path
+- changing authentication or security assumptions
+- removing a public command or documented behavior
+- performing a large rewrite not explicitly requested
+
+Do not stop for routine small fixes unless the user asked for approval gates.
+
+## Maintaining This File
+
+One root `AGENTS.md` is preferred for Ajax unless the file becomes unavoidably
+too large.
+
+Add rules only after repeated agent mistakes or clear repo-specific needs.
+Before adding a rule, ask:
+
+1. Is this specific to Ajax?
+2. Is it needed on most tasks?
+3. Is it not already enforced by tests, CI, lint, docs, or code?
+4. Does this belong in `architecture.md`, `CONTRIBUTING.md`, or normal docs
+   instead?
+
+Keep this file compact. Remove stale, duplicated, or generic instructions when
+updating it.
