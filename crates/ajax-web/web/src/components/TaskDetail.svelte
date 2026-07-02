@@ -31,27 +31,21 @@
   <div class="detail-header" data-mobile-chrome="header">
     <button type="button" class="back" onclick={() => onBack?.()}>← Back</button>
     <h1 class="detail-title">{detail.title || detail.qualified_handle}</h1>
+    <span class="interact-pill tone-{meta.tone}">{meta.label}</span>
   </div>
 
   <section class="interact-panel" data-mobile-chrome="actions">
-    <div class="interact-state is-hero">
-      <span class="interact-pill tone-{meta.tone}">{meta.label}</span>
-      {#if detail.status_explanation}
-        <span class="interact-summary">{detail.status_explanation}</span>
-      {/if}
-    </div>
-
+    {#if detail.status_explanation}
+      <p class="interact-summary">{detail.status_explanation}</p>
+    {/if}
     {#if detail.actions.length}
-      <section class="next-action">
-        <div class="interact-card-label">Next action</div>
-        <ActionBar
-          actions={detail.actions}
-          handle={detail.qualified_handle}
-          {onCockpit}
-          {onResult}
-          {onMutated}
-        />
-      </section>
+      <ActionBar
+        actions={detail.actions}
+        handle={detail.qualified_handle}
+        {onCockpit}
+        {onResult}
+        {onMutated}
+      />
     {/if}
   </section>
 
@@ -133,31 +127,16 @@
     text-transform: none;
     color: var(--ink);
     flex: 1 1 auto;
+    min-width: 0;
     overflow-wrap: anywhere;
   }
 
-  /* INTERACT STATE — status hero ------------------------------------------ */
-  .interact-state {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 12px;
+  .detail-header .interact-pill {
+    flex: none;
+    margin-left: auto;
   }
 
-  .interact-state.is-hero {
-    margin-bottom: 16px;
-    padding-bottom: 14px;
-    border-bottom: 1px solid var(--rule);
-  }
-
-  .interact-state.is-hero .interact-summary {
-    flex-basis: 100%;
-    font-size: 15px;
-    line-height: 1.45;
-    color: var(--ink);
-  }
-
+  /* STATUS PILL — lives in the header row so state is always in view ------- */
   .interact-pill {
     display: inline-flex;
     align-items: center;
@@ -213,20 +192,15 @@
   }
 
   .interact-summary {
-    flex: 1 1 auto;
-    min-width: 0;
-    font-size: 13px;
+    margin: 0 0 12px;
+    font-size: 14px;
+    line-height: 1.45;
     color: var(--ink-soft);
     overflow-wrap: anywhere;
   }
 
-  /* NEXT ACTION ----------------------------------------------------------- */
-  .next-action {
-    margin-top: 14px;
-    padding: 14px 15px;
-    background: var(--paper);
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius-sm);
+  .interact-summary:last-child {
+    margin-bottom: 0;
   }
 
   /* META DETAILS ---------------------------------------------------------- */
@@ -319,6 +293,9 @@
       height: var(--app-height, 100dvh);
     }
 
+    /* The shell keeps only the top safe-area inset: the terminal runs edge to
+       edge below it, and the key bar pads the bottom inset itself
+       (.terminal-bottom-controls). Chrome rows carry their own gutters. */
     .task-detail {
       position: fixed;
       inset: 0;
@@ -326,19 +303,22 @@
       height: 100dvh;
       height: var(--app-height, 100dvh);
       min-height: 0;
-      padding: env(safe-area-inset-top) calc(16px + env(safe-area-inset-right))
-        env(safe-area-inset-bottom) calc(16px + env(safe-area-inset-left));
+      padding: env(safe-area-inset-top) 0 0;
       background: var(--paper);
       overflow: hidden;
       overscroll-behavior: none;
     }
 
+    .detail-header,
+    .interact-panel {
+      padding-left: calc(12px + env(safe-area-inset-left));
+      padding-right: calc(12px + env(safe-area-inset-right));
+    }
+
     .detail-header { margin-bottom: 4px; }
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
-    .detail-title { font-size: 18px; line-height: 1.15; }
-    .interact-state { margin-bottom: 4px; }
-    .interact-state.is-hero { margin-bottom: 4px; padding-bottom: 0; }
-    .next-action { margin-top: 4px; padding: 0; }
+    .detail-title { font-size: 18px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .interact-summary { display: none; }
     /* The mobile task view is a fixed-height band; this disclosure sits below
        the terminal and eats rows. Its facts remain available on desktop. */
     .meta-details { display: none; }

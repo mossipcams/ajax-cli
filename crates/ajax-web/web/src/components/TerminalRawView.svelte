@@ -40,7 +40,6 @@
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
-  let composerText = $state("");
 
   // Expanded mode hands the terminal the whole screen: on mobile the class
   // hides the task chrome (header/status/actions/details, see styles.css); on
@@ -54,8 +53,7 @@
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
-  let canSend: () => boolean = () => false;
-  let focusTerm: () => void = () => {};
+  let refocusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
   let requestPaste: () => void = () => {};
@@ -125,16 +123,6 @@
     return controlModify(data);
   };
 
-  // Composer: batch a whole command locally, then submit it to the PTY as one
-  // input (text + Enter). The raw terminal stays the default input surface.
-  const sendComposer = () => {
-    if (composerText.trim().length === 0) return;
-    if (!canSend()) return;
-    sendKey(`${composerText}\r`);
-    composerText = "";
-    focusTerm();
-  };
-
   onMount(() => {
     let disposed = false;
     let term: Terminal | undefined;
@@ -197,8 +185,14 @@
     };
 
     sendKey = (data: string) => connection.sendInput(data);
-    canSend = () => connection.isOpen();
-    focusTerm = () => term?.focus();
+    // Key-bar taps must never pop the iOS keyboard (a huge viewport jump) or
+    // make Safari scroll-chase the hidden textarea: refocus only when the
+    // terminal already owns focus, and without scrolling.
+    refocusTerm = () => {
+      const input = term?.textarea;
+      if (!input || document.activeElement !== input) return;
+      input.focus({ preventScroll: true });
+    };
     // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
     // collapse hides the Back button; blurring the terminal input is the only
     // way to hand the screen back to the full-height terminal.
@@ -238,8 +232,18 @@
     // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
     // nearly every line. When the floor exceeds what fits, the canvas extends
     // past the right edge and horizontal pan brings it into view.
+    let keyboardWasOpen = false;
     const fitNow = () => {
-      if (isKeyboardOpen()) {
+      const keyboardOpen = isKeyboardOpen();
+      if (keyboardOpen && !keyboardWasOpen) {
+        // Opening the keyboard means the user is about to type: snap the view
+        // to the cursor/input row even if they were reading scrollback, and
+        // follow output from here on.
+        pinnedToBottom = true;
+        hasUnseenOutput = false;
+      }
+      keyboardWasOpen = keyboardOpen;
+      if (keyboardOpen) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and the renderer
@@ -445,6 +449,17 @@
   data-terminal-engine="ghostty"
   aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}></div>
+  <button
+    type="button"
+    class="terminal-expand-corner"
+    class:is-armed={expanded}
+    aria-label="Expand terminal"
+    aria-pressed={expanded}
+    onmousedown={(event) => event.preventDefault()}
+    onclick={() => {
+      setExpanded(!expanded);
+      refitAfterLayout();
+    }}>⛶</button>
   {#if hasUnseenOutput}
     <button
       type="button"
@@ -457,29 +472,6 @@
     class="terminal-bottom-controls"
     data-testid="terminal-bottom-controls"
     aria-label="Terminal input controls">
-    <form
-      class="terminal-composer"
-      data-testid="terminal-composer"
-      aria-label="Terminal composer"
-      onsubmit={(event) => {
-        event.preventDefault();
-        sendComposer();
-      }}>
-      <input
-        class="terminal-composer-input"
-        aria-label="Terminal input"
-        autocomplete="off"
-        autocapitalize="off"
-        autocorrect="off"
-        spellcheck="false"
-        bind:value={composerText}
-        placeholder="Send command" />
-      <button
-        type="submit"
-        class="terminal-composer-send"
-        aria-label="Send terminal input"
-        disabled={composerText.trim().length === 0}>Send</button>
-    </form>
     <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {#each CONTROL_KEYS as key (key.label)}
         <button
@@ -488,7 +480,7 @@
           onmousedown={(event) => event.preventDefault()}
           onclick={() => {
             sendKey(consumeCtrl(key.data));
-            focusTerm();
+            refocusTerm();
           }}>{key.label}</button>
       {/each}
       <button
@@ -499,7 +491,7 @@
         onmousedown={(event) => event.preventDefault()}
         onclick={() => {
           toggleCtrl();
-          focusTerm();
+          refocusTerm();
         }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
       <button
         type="button"
@@ -511,17 +503,6 @@
         class="terminal-key"
         aria-label="Hide keyboard"
         onclick={() => blurTerm()}>⌄</button>
-      <button
-        type="button"
-        class="terminal-key terminal-key-expand"
-        class:is-armed={expanded}
-        aria-label="Expand terminal"
-        aria-pressed={expanded}
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => {
-          setExpanded(!expanded);
-          refitAfterLayout();
-        }}>⛶</button>
     </div>
   </div>
   {#if status !== "connected" || statusDetail || pasteNotice}
@@ -545,6 +526,7 @@
 
 <style>
   .terminal-panel {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
@@ -556,6 +538,38 @@
     overflow: hidden;
   }
 
+  /* Fullscreen toggle pinned to the terminal's top-right corner. Translucent
+     over the canvas; it both enters and exits the expanded takeover, so it must
+     stay visible in either state. */
+  .terminal-expand-corner {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 2;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 4px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--paper) 72%, transparent);
+    color: var(--ink-soft);
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .terminal-expand-corner:hover,
+  .terminal-expand-corner:focus-visible {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+    outline: none;
+  }
+
+  .terminal-expand-corner.is-armed {
+    background: var(--teal-deep);
+    border-color: var(--teal);
+    color: var(--paper);
+  }
+
   /* A landscape phone exceeds the width breakpoint but must not get the
      fixed desktop panel height — its takeover layout flex-fills instead. */
   @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
@@ -565,8 +579,15 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    /* Full-bleed: the task page drops its horizontal padding on mobile so the
+       terminal runs edge to edge; side/bottom borders and radii would read as
+       stray hairlines against the screen edges. */
     .terminal-panel {
       margin-top: 8px;
+      border-left: none;
+      border-right: none;
+      border-bottom: none;
+      border-radius: 0;
     }
 
     .terminal-host {
@@ -628,48 +649,6 @@
     padding-bottom: max(6px, env(safe-area-inset-bottom));
     border-top: 1px solid var(--rule);
     background: var(--paper);
-  }
-
-  .terminal-composer {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 38px;
-  }
-
-  .terminal-composer-input {
-    flex: 1 1 auto;
-    min-width: 0;
-    height: 38px;
-    padding: 7px 10px;
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius-sm);
-    background: var(--paper-tint);
-    color: var(--ink);
-    font-family: var(--mono);
-    font-size: 16px;
-  }
-
-  .terminal-composer-input:focus {
-    border-color: var(--teal);
-    outline: none;
-  }
-
-  .terminal-composer-send {
-    flex: none;
-    min-height: 38px;
-    padding: 6px 12px;
-    border: 1px solid var(--teal);
-    border-radius: var(--radius-sm);
-    background: var(--teal);
-    color: var(--ink);
-    font-size: 12px;
-    font-weight: 700;
-  }
-
-  .terminal-composer-send:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
   }
 
   .terminal-keys {
