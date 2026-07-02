@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.29.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.3...ajax-cli-v0.29.4) (2026-07-02)
+
+
+### Bug Fixes
+
+* **web:** keep composer text when the terminal socket is not open ([#288](https://github.com/mossipcams/ajax-cli/issues/288)) ([d447e67](https://github.com/mossipcams/ajax-cli/commit/d447e67026bd30939563e74cbaa1ded3e5e3f8b4))
+* **web:** terminal keyboard alignment, behavior fixes, module extraction, and [#284](https://github.com/mossipcams/ajax-cli/issues/284) shell CSS conflict fix ([#286](https://github.com/mossipcams/ajax-cli/issues/286)) ([944847f](https://github.com/mossipcams/ajax-cli/commit/944847fca52a0f24d6687000dc956bb3daed4f76))
+
 ## [0.29.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.2...ajax-cli-v0.29.3) (2026-07-02)
 
 
