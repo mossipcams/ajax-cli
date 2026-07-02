@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.30.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.4...ajax-cli-v0.30.0) (2026-07-02)
+
+
+### Features
+
+* migrate web terminal to ghostty ([#289](https://github.com/mossipcams/ajax-cli/issues/289)) ([84198ae](https://github.com/mossipcams/ajax-cli/commit/84198ae560e0cf182fe1a1c8fe8cb7b50d600c96))
+
 ## [0.29.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.29.3...ajax-cli-v0.29.4) (2026-07-02)
 
 
