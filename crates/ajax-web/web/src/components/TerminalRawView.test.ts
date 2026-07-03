@@ -1427,6 +1427,29 @@ describe("TerminalRawView", () => {
     expect(move.defaultPrevented).toBe(true);
   });
 
+  it("does not snap Ghostty back to bottom after a fullscreen scrollback drag", async () => {
+    vi.useFakeTimers();
+    const { getByRole, host } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+    scrollToBottom.mockClear();
+    scrollLines.mockClear();
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 140);
+    host.dispatchEvent(move);
+
+    expect(linesScrolled()).toBe(3);
+    vi.advanceTimersByTime(300);
+    await tick();
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(scrollToBottom).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("uses compact terminal chrome on mobile and desktop", () => {
     // The mobile block covers portrait width AND landscape phones (coarse
     // pointer, short viewport).

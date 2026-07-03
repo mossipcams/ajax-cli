@@ -139,6 +139,17 @@
     // every output frame yanked the view back down the instant a user tried
     // to scroll up — scrolling looked completely broken.
     let pinnedToBottom = true;
+    let snapTimer: ReturnType<typeof setTimeout> | undefined;
+    let snapFrames: number[] = [];
+
+    const cancelExpandedSnap = () => {
+      for (const frame of snapFrames) cancelAnimationFrame(frame);
+      snapFrames = [];
+      if (snapTimer) {
+        clearTimeout(snapTimer);
+        snapTimer = undefined;
+      }
+    };
 
     const hardenMobileTextarea = () => {
       const input = term?.textarea;
@@ -162,7 +173,13 @@
     // effects each gesture drives.
     const detachGestures = container
       ? attachTerminalGestures(container, {
-          scrollLines: (lines) => term?.scrollLines(lines),
+          scrollLines: (lines) => {
+            if (lines !== 0) {
+              pinnedToBottom = false;
+              cancelExpandedSnap();
+            }
+            term?.scrollLines(lines);
+          },
           cellHeightPx,
           fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
           setFontSize: (next) => {
@@ -233,7 +250,6 @@
 
     let refitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
-    let snapTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Fit rows to the container but never let the PTY drop below 80 columns:
     // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
@@ -341,17 +357,22 @@
     // Fullscreen expand must land in the visible band above the iOS keyboard.
     // iOS moves the visual viewport over several frames, so repeat the snap
     // through the first part of that animation instead of trusting one early
-    // layout read.
+    // layout read. Ghostty scroll gestures cancel these pending frames so the
+    // snap cannot fight deliberate scrollback reading.
     snapExpandedView = () => {
+      cancelExpandedSnap();
       snapVisibleTerminal();
-      requestAnimationFrame(() => {
+      const firstFrame = requestAnimationFrame(() => {
+        snapFrames = snapFrames.filter((frame) => frame !== firstFrame);
         if (disposed) return;
         snapVisibleTerminal();
-        requestAnimationFrame(() => {
+        const secondFrame = requestAnimationFrame(() => {
+          snapFrames = snapFrames.filter((frame) => frame !== secondFrame);
           if (!disposed) snapVisibleTerminal();
         });
+        snapFrames.push(secondFrame);
       });
-      if (snapTimer) clearTimeout(snapTimer);
+      snapFrames.push(firstFrame);
       snapTimer = setTimeout(() => {
         snapTimer = undefined;
         if (!disposed) snapVisibleTerminal();
@@ -471,9 +492,9 @@
     return () => {
       disposed = true;
       setExpanded(false);
+      cancelExpandedSnap();
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
-      if (snapTimer) clearTimeout(snapTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
