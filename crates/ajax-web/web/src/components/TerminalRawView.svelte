@@ -41,10 +41,11 @@
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
 
-  // Expanded mode hands the terminal the whole screen: on mobile the class
-  // hides the task chrome (header/status/actions/details, see styles.css); on
-  // desktop it lifts the panel into a fixed full-viewport overlay. The class
-  // lives on <html> so page-level chrome outside this component can react.
+  // Expanded mode focuses the terminal into the visible band: on mobile the
+  // keyboard-open takeover hides task chrome, but manual fullscreen alone keeps
+  // Back/Dashboard reachable (see styles.css); on desktop it lifts the panel
+  // into a fixed full-viewport overlay. The class lives on <html> so page-level
+  // chrome outside this component can react.
   const EXPANDED_CLASS = "terminal-expanded";
   const setExpanded = (next: boolean) => {
     expanded = next;
@@ -60,6 +61,7 @@
   let focusTerm: () => void = () => {};
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
+  let snapExpandedView: () => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -315,6 +317,26 @@
     // for a visible beat.
     refitAfterLayout = schedulePostLayoutRefit;
 
+    // Fullscreen expand must land in the visible band above the iOS keyboard:
+    // reset any document scroll, bottom-anchor the host crop, and follow output.
+    snapExpandedView = () => {
+      pinnedToBottom = true;
+      hasUnseenOutput = false;
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      const scrollingElement = document.scrollingElement;
+      if (scrollingElement) scrollingElement.scrollTop = 0;
+      try {
+        window.scrollTo(0, 0);
+      } catch {
+        // jsdom throws "Not implemented" for scrollTo.
+      }
+      if (container) {
+        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      }
+      term?.scrollToBottom();
+    };
+
     const resizeObserver =
       typeof ResizeObserver !== "undefined" ? new ResizeObserver(scheduleDebouncedRefit) : null;
     if (container && resizeObserver) {
@@ -462,6 +484,7 @@
       const next = !expanded;
       setExpanded(next);
       if (next) {
+        snapExpandedView();
         focusTerm();
       } else {
         blurTerm();

@@ -134,6 +134,7 @@ beforeEach(() => {
   delete (navigator as { clipboard?: unknown }).clipboard;
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vi.stubGlobal("WebSocket", MockWebSocket as unknown as typeof WebSocket);
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
   vi.stubGlobal(
     "ResizeObserver",
     class MockResizeObserver {
@@ -990,6 +991,31 @@ describe("TerminalRawView", () => {
     socket!.send.mockClear();
     onDataHandler?.("x");
     expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
+  });
+
+  it("snaps the visible viewport on expand: document top, host bottom crop, terminal scroll bottom", async () => {
+    vi.useFakeTimers();
+    const { getByRole, host } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400);
+
+    scrollAwayFromBottom();
+    scrollToBottom.mockClear();
+
+    Object.defineProperty(host, "scrollHeight", { value: 800, configurable: true });
+    Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
+    document.documentElement.scrollTop = 120;
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(document.documentElement.scrollTop).toBe(0);
+    if (document.scrollingElement) {
+      expect(document.scrollingElement.scrollTop).toBe(0);
+    }
+    expect(host.scrollTop).toBe(500);
+    expect(scrollToBottom).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("toggles an expanded terminal mode from the corner fullscreen button", async () => {
