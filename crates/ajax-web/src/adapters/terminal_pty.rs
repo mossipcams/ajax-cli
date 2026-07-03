@@ -19,6 +19,7 @@ const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
+const BROWSER_TMUX_TERM: &str = "xterm-256color";
 const SCROLLBACK_HOSTILE_SEQUENCES: &[&[u8]] = &[
     b"\x1b[?47h",
     b"\x1b[?47l",
@@ -104,6 +105,15 @@ pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCo
         program: "tmux".to_string(),
         args: vec!["attach-session".to_string(), "-t".to_string(), target],
     }
+}
+
+fn build_tmux_attach_command(command_plan: &TmuxAttachCommandPlan) -> CommandBuilder {
+    let mut command = CommandBuilder::new(&command_plan.program);
+    for arg in &command_plan.args {
+        command.arg(arg);
+    }
+    command.env("TERM", BROWSER_TMUX_TERM);
+    command
 }
 
 /// A single tmux invocation used to stand up or tear down the isolated client
@@ -352,10 +362,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         }
     };
 
-    let mut command = CommandBuilder::new(&command_plan.program);
-    for arg in &command_plan.args {
-        command.arg(arg);
-    }
+    let command = build_tmux_attach_command(&command_plan);
 
     let child = match pty_pair.slave.spawn_command(command) {
         Ok(child) => child,
@@ -610,6 +617,19 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("evil-handle")));
+    }
+
+    #[test]
+    fn tmux_attach_command_uses_clear_capable_terminal_type() {
+        let plan = attach_plan("web/fix-login");
+        let command_plan = build_tmux_attach_command_plan(&plan);
+
+        let command = build_tmux_attach_command(&command_plan);
+
+        assert_eq!(
+            command.get_env("TERM"),
+            Some(std::ffi::OsStr::new("xterm-256color"))
+        );
     }
 
     #[test]
