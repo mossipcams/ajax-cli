@@ -1679,7 +1679,7 @@ mod tests {
         let mut plan = CommandPlan::new("open task: web/fix-login");
         plan.commands.push(CommandSpec::new(
             "tmux",
-            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+            ["select-window", "-t", "ajax-web-fix-login:task"],
         ));
         plan.commands.push(
             CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
@@ -1697,7 +1697,7 @@ mod tests {
             runner.commands(),
             &[CommandSpec::new(
                 "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ["select-window", "-t", "ajax-web-fix-login:task"]
             )]
         );
         assert_eq!(
@@ -1714,7 +1714,7 @@ mod tests {
         let mut plan = CommandPlan::new("open task: web/fix-login");
         plan.commands.push(CommandSpec::new(
             "tmux",
-            ["select-window", "-t", "ajax-web-fix-login:worktrunk"],
+            ["select-window", "-t", "ajax-web-fix-login:task"],
         ));
         plan.commands.push(
             CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
@@ -1735,7 +1735,7 @@ mod tests {
             runner.commands(),
             &[CommandSpec::new(
                 "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                ["select-window", "-t", "ajax-web-fix-login:task"]
             )]
         );
     }

@@ -7,8 +7,8 @@ mod new_task;
 mod open;
 mod projection;
 mod task_state;
+mod task_window;
 mod teardown;
-mod trunk;
 
 pub use crate::adapters::DoctorEnvironment;
 pub use crate::use_cases::{CommandContext, CommandError, CommandPlan, OpenMode};
@@ -19,13 +19,16 @@ pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
 pub use new_task::{
-    is_agent_send_keys_command, is_git_worktree_add_command, is_worktrunk_new_session_command,
+    is_agent_send_keys_command, is_git_worktree_add_command, is_task_window_new_session_command,
     mark_new_task_provisioning_failed, mark_new_task_provisioning_step_completed,
     mark_new_task_step_completed, new_task_plan, new_task_plan_with_observation, record_new_task,
     start_provisioning_step_for_command, start_task_identity, task_from_new_request,
     NewTaskRequest, StartPlanObservation, StartProvisioningStep,
 };
 pub use open::{mark_task_opened, mark_task_opened_at, open_task_plan};
+pub use task_window::{
+    mark_task_window_repaired, task_window_repair_plan, task_window_repair_plan_with_open_mode,
+};
 pub use teardown::{
     clean_task_plan, drop_op_label, ensure_cleanup_git_status,
     format_drop_remaining_resources_detail, format_drop_teardown_incomplete_message,
@@ -36,7 +39,6 @@ pub use teardown::{
     sweep_cleanup_plan, sweep_trash_commands, DropObservation, DropOp, RepoDropObservationCache,
     ResourceState, DROP_TEARDOWN_ORDER,
 };
-pub use trunk::{mark_task_trunk_repaired, trunk_task_plan, trunk_task_plan_with_open_mode};
 
 use crate::{
     adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec, GitAdapter},
@@ -471,8 +473,9 @@ mod tests {
         merge_task_plan, new_task_plan, next, observe_drop_resources, open_task_plan,
         plan_drop_from_observation, plan_drop_from_observation_for_task,
         refresh_git_substrate_evidence, remove_task_plan, review_queue, status, sweep_cleanup_plan,
-        task_from_new_request, trunk_task_plan, CommandContext, CommandError, DoctorEnvironment,
-        DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState, StartProvisioningStep,
+        task_from_new_request, task_window_repair_plan, CommandContext, CommandError,
+        DoctorEnvironment, DropObservation, DropOp, NewTaskRequest, OpenMode, ResourceState,
+        StartProvisioningStep,
     };
     use crate::{
         adapters::{
@@ -485,7 +488,7 @@ mod tests {
             AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, GitStatus,
             LifecycleStatus, LiveObservation, OperatorAction, RuntimeHealth,
             RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt, Task, TaskId,
-            TmuxStatus, WorktrunkStatus,
+            TaskWindowStatus, TmuxStatus,
         },
         output::CockpitSummary,
         registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
@@ -512,7 +515,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Reviewable;
@@ -596,12 +599,12 @@ mod tests {
             self.inner.update_tmux_status(task_id, status)
         }
 
-        fn update_worktrunk_status(
+        fn update_task_window_status(
             &mut self,
             task_id: &TaskId,
-            status: Option<WorktrunkStatus>,
+            status: Option<TaskWindowStatus>,
         ) -> Result<(), RegistryError> {
-            self.inner.update_worktrunk_status(task_id, status)
+            self.inner.update_task_window_status(task_id, status)
         }
 
         fn apply_live_observation(
@@ -891,10 +894,10 @@ mod tests {
         }
 
         #[test]
-        fn trunk_plan_repairs_generated_tmux_and_worktrunk_states(
+        fn task_window_plan_repairs_generated_tmux_and_task_states(
             worktree_exists in any::<bool>(),
             tmux_exists in any::<bool>(),
-            worktrunk_exists in any::<bool>(),
+            task_window_exists in any::<bool>(),
             points_at_expected_path in any::<bool>()
         ) {
             let mut context = context_with_tasks();
@@ -919,9 +922,9 @@ mod tests {
                 exists: tmux_exists,
                 session_name: task.tmux_session.clone(),
             });
-            task.worktrunk_status = Some(WorktrunkStatus {
-                exists: worktrunk_exists,
-                window_name: task.worktrunk_window.clone(),
+            task.task_window_status = Some(TaskWindowStatus {
+                exists: task_window_exists,
+                window_name: task.task_window.clone(),
                 current_path: if points_at_expected_path {
                     task.worktree_path.clone()
                 } else {
@@ -930,7 +933,7 @@ mod tests {
                 points_at_expected_path,
             });
 
-            let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+            let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
             if !worktree_exists {
                 prop_assert!(plan.commands.is_empty());
@@ -947,7 +950,7 @@ mod tests {
                 &[
                     CommandSpec::new(
                         "tmux",
-                        ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
+                        ["select-window", "-t", "ajax-web-fix-login:task"]
                     ),
                     CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                         .with_mode(CommandMode::InheritStdio),
@@ -966,19 +969,19 @@ mod tests {
                             "-s",
                             "ajax-web-fix-login",
                             "-n",
-                            "worktrunk",
+                            "task",
                             "-c",
                             "/tmp/worktrees/web-fix-login",
                         ],
                     )]
                 );
-            } else if worktrunk_exists && !points_at_expected_path {
+            } else if task_window_exists && !points_at_expected_path {
                 prop_assert_eq!(
                     repair_commands,
                     &[
                         CommandSpec::new(
                             "tmux",
-                            ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
+                            ["kill-window", "-t", "ajax-web-fix-login:task"]
                         ),
                         CommandSpec::new(
                             "tmux",
@@ -987,14 +990,14 @@ mod tests {
                                 "-t",
                                 "ajax-web-fix-login",
                                 "-n",
-                                "worktrunk",
+                                "task",
                                 "-c",
                                 "/tmp/worktrees/web-fix-login",
                             ],
                         ),
                     ]
                 );
-            } else if !worktrunk_exists {
+            } else if !task_window_exists {
                 prop_assert_eq!(
                     repair_commands,
                     &[CommandSpec::new(
@@ -1004,7 +1007,7 @@ mod tests {
                             "-t",
                             "ajax-web-fix-login",
                             "-n",
-                            "worktrunk",
+                            "task",
                             "-c",
                             "/tmp/worktrees/web-fix-login",
                         ],
@@ -1401,7 +1404,7 @@ mod tests {
 
     #[test]
     fn task_summaries_expose_drop_for_invalid_task_evidence() {
-        for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
+        for flag in [SideFlag::TmuxMissing, SideFlag::TaskWindowMissing] {
             let mut context = context_with_tasks();
             let task = context
                 .registry
@@ -1450,7 +1453,7 @@ mod tests {
             SideFlag::WorktreeMissing,
             SideFlag::BranchMissing,
             SideFlag::TmuxMissing,
-            SideFlag::WorktrunkMissing,
+            SideFlag::TaskWindowMissing,
         ] {
             let mut context = context_with_tasks();
             let task = context
@@ -1485,7 +1488,7 @@ mod tests {
             "main",
             "/tmp/worktrees/api-add-cache",
             "ajax-api-add-cache",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
         mergeable.lifecycle_status = LifecycleStatus::Mergeable;
@@ -1510,7 +1513,7 @@ mod tests {
             "main",
             "/tmp/worktrees/api-add-cache",
             "ajax-api-add-cache",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
         mergeable.lifecycle_status = LifecycleStatus::Mergeable;
@@ -1534,7 +1537,7 @@ mod tests {
             "main",
             "/tmp/worktrees/api-add-cache",
             "ajax-api-add-cache",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
         mergeable.lifecycle_status = LifecycleStatus::Mergeable;
@@ -1629,7 +1632,7 @@ mod tests {
             "main",
             "/tmp/worktrees/api-remove-cache",
             "ajax-api-remove-cache",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
         cleanable.lifecycle_status = LifecycleStatus::Cleanable;
@@ -2033,7 +2036,7 @@ mod tests {
                     "-s",
                     "ajax-web-fix-logout",
                     "-n",
-                    "worktrunk",
+                    "task",
                     "-c",
                     "/Users/matt/projects/web__worktrees/ajax-fix-logout"
                 ]
@@ -2041,7 +2044,7 @@ mod tests {
         );
         assert_eq!(plan.commands[4].program, "tmux");
         assert_eq!(plan.commands[4].args[0], "send-keys");
-        assert_eq!(plan.commands[4].args[2], "ajax-web-fix-logout:worktrunk");
+        assert_eq!(plan.commands[4].args[2], "ajax-web-fix-logout:task");
         assert_eq!(
             plan.commands[4].args[3],
             "ajax-cli __agent-runtime --task-id web/fix-logout --state-root .cache/ajax/agent-runtime -- codex --cd /Users/matt/projects/web__worktrees/ajax-fix-logout"
@@ -2143,7 +2146,7 @@ mod tests {
             "/Users/matt/projects/api__worktrees/ajax-ship-oauth-v2"
         );
         assert_eq!(plan.commands[2].args[3], "ajax-api-ship-oauth-v2");
-        assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:worktrunk");
+        assert_eq!(send_keys.args[2], "ajax-api-ship-oauth-v2:task");
         let launch_words = shell_words(&send_keys.args[3]);
         assert_eq!(
             &launch_words[launch_words.len() - 3..],
@@ -2181,7 +2184,7 @@ mod tests {
         let removed_session = removed_duplicate
             .commands
             .iter()
-            .find(|command| super::is_worktrunk_new_session_command(command))
+            .find(|command| super::is_task_window_new_session_command(command))
             .expect("tmux session command");
         assert_eq!(removed_worktree.args[5], "ajax/fix-login");
         assert_eq!(removed_session.args[3], "ajax-web-fix-login");
@@ -2324,14 +2327,14 @@ mod tests {
             Some(TmuxStatus::present("ajax-web-fix-login"))
         );
         assert_eq!(
-            task.worktrunk_status,
-            Some(WorktrunkStatus::present(
-                "worktrunk",
+            task.task_window_status,
+            Some(TaskWindowStatus::present(
+                "task",
                 "/Users/matt/projects/web__worktrees/ajax-fix-login"
             ))
         );
         assert!(!task.has_side_flag(SideFlag::TmuxMissing));
-        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
 
         super::mark_new_task_provisioning_step_completed(
             &mut context,
@@ -2364,7 +2367,7 @@ mod tests {
     }
 
     #[test]
-    fn open_task_plan_targets_worktrunk_directly() {
+    fn open_task_plan_targets_task_directly() {
         let context = context_with_tasks();
 
         let outside_tmux = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
@@ -2374,10 +2377,7 @@ mod tests {
         assert_eq!(
             outside_tmux.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -2385,10 +2385,7 @@ mod tests {
         assert_eq!(
             inside_tmux.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -2396,7 +2393,7 @@ mod tests {
     }
 
     #[test]
-    fn open_use_case_module_targets_worktrunk_directly() {
+    fn open_use_case_module_targets_task_directly() {
         let context = context_with_tasks();
 
         let plan =
@@ -2406,10 +2403,7 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -2584,7 +2578,7 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_still_repairs_missing_tmux_flag() {
+    fn task_window_repair_plan_still_repairs_missing_tmux_flag() {
         let mut context = context_with_tasks();
         context
             .registry
@@ -2592,14 +2586,14 @@ mod tests {
             .unwrap()
             .add_side_flag(SideFlag::TmuxMissing);
 
-        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
         assert!(!plan.commands.is_empty());
         assert!(plan.blocked_reasons.is_empty());
     }
 
     #[test]
-    fn trunk_use_case_module_repairs_missing_tmux_flag() {
+    fn task_window_use_case_module_repairs_missing_tmux_flag() {
         let mut context = context_with_tasks();
         context
             .registry
@@ -2607,14 +2601,14 @@ mod tests {
             .unwrap()
             .add_side_flag(SideFlag::TmuxMissing);
 
-        let plan = super::trunk::trunk_task_plan(&context, "web/fix-login").unwrap();
+        let plan = super::task_window::task_window_repair_plan(&context, "web/fix-login").unwrap();
 
         assert!(!plan.commands.is_empty());
         assert!(plan.blocked_reasons.is_empty());
     }
 
     #[test]
-    fn open_task_plan_blocks_missing_tmux_instead_of_repairing_trunk() {
+    fn open_task_plan_blocks_missing_tmux_instead_of_repairing_task_window() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -2625,7 +2619,7 @@ mod tests {
             exists: false,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = None;
+        task.task_window_status = None;
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::Attach).unwrap();
 
@@ -2665,7 +2659,7 @@ mod tests {
             exists: false,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = None;
+        task.task_window_status = None;
 
         let plan = open_task_plan(&context, "web/fix-login", OpenMode::SwitchClient).unwrap();
 
@@ -2695,8 +2689,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         task.runtime_projection = RuntimeProjection::new(
@@ -2735,8 +2729,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         task.runtime_projection = RuntimeProjection::new(
@@ -2751,10 +2745,7 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -2782,8 +2773,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         task.live_status = Some(LiveObservation::new(LiveStatusKind::Blocked, "blocked"));
@@ -2799,10 +2790,7 @@ mod tests {
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -3307,9 +3295,9 @@ mod tests {
                 task.git_status.as_mut().unwrap().branch_exists = false;
             },
             |task: &mut Task| {
-                task.worktrunk_status = Some(WorktrunkStatus {
+                task.task_window_status = Some(TaskWindowStatus {
                     exists: false,
-                    window_name: task.worktrunk_window.clone(),
+                    window_name: task.task_window.clone(),
                     current_path: task.worktree_path.clone(),
                     points_at_expected_path: false,
                 });
@@ -3339,8 +3327,8 @@ mod tests {
                 exists: true,
                 session_name: task.tmux_session.clone(),
             });
-            task.worktrunk_status = Some(WorktrunkStatus::present(
-                task.worktrunk_window.clone(),
+            task.task_window_status = Some(TaskWindowStatus::present(
+                task.task_window.clone(),
                 task.worktree_path.clone(),
             ));
             arrange(task);
@@ -3626,7 +3614,7 @@ mod tests {
             .get_task_mut(&TaskId::new("task-1"))
             .unwrap();
         task.add_side_flag(SideFlag::TmuxMissing);
-        task.add_side_flag(SideFlag::WorktrunkMissing);
+        task.add_side_flag(SideFlag::TaskWindowMissing);
         let command = CommandSpec::new("tmux", ["kill-session", "-t", "ajax-web-fix-login"]);
 
         let changed =
@@ -3639,9 +3627,9 @@ mod tests {
             .tmux_status
             .as_ref()
             .is_some_and(|status| !status.exists && status.session_name == "ajax-web-fix-login"));
-        assert!(task.worktrunk_status.as_ref().is_some_and(|status| {
+        assert!(task.task_window_status.as_ref().is_some_and(|status| {
             !status.exists
-                && status.window_name == "worktrunk"
+                && status.window_name == "task"
                 && !status.points_at_expected_path
                 && status.current_path == task.worktree_path
         }));
@@ -3650,7 +3638,7 @@ mod tests {
             "missing-substrate flags stay until drop completes so retries stay visible"
         );
         assert!(
-            task.has_side_flag(SideFlag::WorktrunkMissing),
+            task.has_side_flag(SideFlag::TaskWindowMissing),
             "missing-substrate flags stay until drop completes so retries stay visible"
         );
     }
@@ -3745,7 +3733,7 @@ mod tests {
         task.remove_side_flag(SideFlag::NeedsInput);
         task.git_status = None;
         task.tmux_status = None;
-        task.worktrunk_status = None;
+        task.task_window_status = None;
         let mut runner = QueuedRunner::new(vec![output(
             0,
             "## ajax/fix-login...origin/ajax/fix-login\n",
@@ -3776,7 +3764,7 @@ mod tests {
                 && status.untracked_files == 0
         }));
         assert!(task.tmux_status.is_none());
-        assert!(task.worktrunk_status.is_none());
+        assert!(task.task_window_status.is_none());
         assert!(task.live_status.is_none());
     }
 
@@ -4106,33 +4094,33 @@ mod tests {
     }
 
     #[rstest]
-    #[case::worktrunk_side_flag(|task: &mut Task| task.add_side_flag(SideFlag::WorktrunkMissing))]
+    #[case::task_side_flag(|task: &mut Task| task.add_side_flag(SideFlag::TaskWindowMissing))]
     #[case::tmux_status_missing(|task: &mut Task| {
         task.tmux_status = Some(TmuxStatus {
             exists: false,
             session_name: "ajax-web-fix-login".to_string(),
         });
     })]
-    #[case::worktrunk_status_missing(|task: &mut Task| {
+    #[case::task_window_status_missing(|task: &mut Task| {
         task.tmux_status = Some(TmuxStatus {
             exists: true,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: false,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/worktrees/web-fix-login".into(),
             points_at_expected_path: true,
         });
     })]
-    #[case::worktrunk_wrong_path(|task: &mut Task| {
+    #[case::task_wrong_path(|task: &mut Task| {
         task.tmux_status = Some(TmuxStatus {
             exists: true,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: true,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/other".into(),
             points_at_expected_path: false,
         });
@@ -4154,7 +4142,7 @@ mod tests {
     }
 
     #[test]
-    fn open_task_plan_blocks_missing_git_substrate_instead_of_repairing_trunk() {
+    fn open_task_plan_blocks_missing_git_substrate_instead_of_repairing_task_window() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -4173,7 +4161,7 @@ mod tests {
     #[rstest]
     #[case::missing_worktree(|status: &mut GitStatus| status.worktree_exists = false)]
     #[case::missing_branch(|status: &mut GitStatus| status.branch_exists = false)]
-    fn open_task_plan_blocks_missing_git_status_instead_of_repairing_trunk(
+    fn open_task_plan_blocks_missing_git_status_instead_of_repairing_task_window(
         #[case] arrange_git_status: fn(&mut GitStatus),
     ) {
         let mut context = context_with_tasks();
@@ -4288,16 +4276,16 @@ mod tests {
             "tmux session missing",
         ));
 
-        super::mark_task_trunk_repaired(&mut context, "web/fix-login").unwrap();
+        super::mark_task_window_repaired(&mut context, "web/fix-login").unwrap();
 
         let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
         assert!(task
             .tmux_status
             .as_ref()
             .is_some_and(|status| status.exists && status.session_name == "ajax-web-fix-login"));
-        assert!(task.worktrunk_status.as_ref().is_some_and(|status| {
+        assert!(task.task_window_status.as_ref().is_some_and(|status| {
             status.exists
-                && status.window_name == "worktrunk"
+                && status.window_name == "task"
                 && status.points_at_expected_path
                 && status.current_path == task.worktree_path
         }));
@@ -4326,10 +4314,10 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_recreates_missing_tmux_session_with_worktrunk() {
+    fn task_window_repair_plan_recreates_missing_tmux_session_with_task() {
         let context = context_with_tasks();
 
-        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
         assert_eq!(
             plan.commands,
@@ -4342,15 +4330,12 @@ mod tests {
                         "-s",
                         "ajax-web-fix-login",
                         "-n",
-                        "worktrunk",
+                        "task",
                         "-c",
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -4358,10 +4343,10 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_switches_client_when_inside_tmux() {
+    fn task_window_repair_plan_switches_client_when_inside_tmux() {
         let context = context_with_tasks();
 
-        let plan = super::trunk_task_plan_with_open_mode(
+        let plan = super::task_window_repair_plan_with_open_mode(
             &context,
             "web/fix-login",
             OpenMode::SwitchClient,
@@ -4378,7 +4363,7 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_repairs_worktrunk_when_tmux_session_exists() {
+    fn task_window_repair_plan_repairs_task_when_tmux_session_exists() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -4388,22 +4373,19 @@ mod tests {
             exists: true,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: true,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/other".into(),
             points_at_expected_path: false,
         });
 
-        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
         assert_eq!(
             plan.commands,
             vec![
-                CommandSpec::new(
-                    "tmux",
-                    ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["kill-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -4411,15 +4393,12 @@ mod tests {
                         "-t",
                         "ajax-web-fix-login",
                         "-n",
-                        "worktrunk",
+                        "task",
                         "-c",
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]
@@ -4427,7 +4406,7 @@ mod tests {
     }
 
     #[test]
-    fn trunk_task_plan_creates_missing_worktrunk_when_tmux_session_exists() {
+    fn task_window_repair_plan_creates_missing_task_when_tmux_session_exists() {
         let mut context = context_with_tasks();
         let task = context
             .registry
@@ -4437,14 +4416,14 @@ mod tests {
             exists: true,
             session_name: "ajax-web-fix-login".to_string(),
         });
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: false,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/worktrees/web-fix-login".into(),
             points_at_expected_path: false,
         });
 
-        let plan = trunk_task_plan(&context, "web/fix-login").unwrap();
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
         assert_eq!(
             plan.commands,
@@ -4456,15 +4435,12 @@ mod tests {
                         "-t",
                         "ajax-web-fix-login",
                         "-n",
-                        "worktrunk",
+                        "task",
                         "-c",
                         "/tmp/worktrees/web-fix-login"
                     ]
                 ),
-                CommandSpec::new(
-                    "tmux",
-                    ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
                 CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
                     .with_mode(CommandMode::InheritStdio)
             ]

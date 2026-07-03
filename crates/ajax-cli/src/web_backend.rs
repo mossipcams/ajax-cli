@@ -405,7 +405,7 @@ mod tests {
         commands::CommandContext,
         config::{Config, ManagedRepo},
         models::{
-            AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
     };
@@ -980,7 +980,7 @@ mod tests {
                     "main\najax/fix-login\n"
                 }
                 [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\tworktrunk\t/repo/web__worktrees/ajax-fix-login\n"
+                    "ajax-web-fix-login\ttask\t/repo/web__worktrees/ajax-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => "codex is working\n",
                 _ => "",
@@ -1011,7 +1011,7 @@ mod tests {
             "main",
             "/repo/web__worktrees/ajax-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Reviewable;
@@ -1029,8 +1029,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/repo/web__worktrees/ajax-fix-login",
         ));
         context.registry.create_task(task).unwrap();

@@ -28,7 +28,8 @@ mod tests {
         config::{Config, ManagedRepo, TestCommand},
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
-            LiveStatusKind, SideFlag, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+            LiveStatusKind, SideFlag, Task, TaskId, TaskOperationKind, TaskWindowStatus,
+            TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry},
     };
@@ -155,7 +156,7 @@ mod tests {
             "main",
             "/repo/web__worktrees/ajax-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Cleanable;
@@ -173,8 +174,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/repo/web__worktrees/ajax-fix-login",
         ));
         context.registry.create_task(task).unwrap();
@@ -198,7 +199,7 @@ mod tests {
             "main",
             "/repo/web__worktrees/ajax-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Reviewable;
@@ -216,8 +217,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/repo/web__worktrees/ajax-fix-login",
         ));
         context.registry.create_task(task).unwrap();
@@ -228,7 +229,7 @@ mod tests {
         let mut context = context_with_cleanable_task();
         if let Some(task) = context.registry.get_task_mut(&TaskId::new("web/fix-login")) {
             task.tmux_status = None;
-            task.worktrunk_status = None;
+            task.task_window_status = None;
         }
         let mut task = Task::new(
             TaskId::new("web/fix-sidebar"),
@@ -239,7 +240,7 @@ mod tests {
             "main",
             "/repo/web__worktrees/ajax-fix-sidebar",
             "ajax-web-fix-sidebar",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Cleanable;
@@ -374,14 +375,14 @@ mod tests {
             std::path::Path::new("/repo/web__worktrees/ajax-fix-login")
         );
         assert_eq!(intent.tmux_session, "ajax-web-fix-login");
-        assert_eq!(intent.worktrunk_window, "worktrunk");
+        assert_eq!(intent.task_window, "task");
         assert_eq!(intent.selected_agent, AgentClient::Codex);
         assert_eq!(plan.title, "create task: Fix login");
         assert_eq!(plan.commands.len(), 5);
         assert!(crate::commands::is_git_worktree_add_command(
             &plan.commands[1]
         ));
-        assert!(crate::commands::is_worktrunk_new_session_command(
+        assert!(crate::commands::is_task_window_new_session_command(
             &plan.commands[2]
         ));
         assert_eq!(plan.commands[3].program, "sh");
@@ -484,7 +485,7 @@ mod tests {
                 (
                     TaskOperationKind::Start,
                     "agent_command_sent",
-                    "ajax-web-fix-login:worktrunk",
+                    "ajax-web-fix-login:task",
                 ),
             ]
         );
@@ -1186,7 +1187,7 @@ mod tests {
                 "main",
                 "/repo/web__worktrees/ajax-fix-login",
                 "ajax-web-fix-login",
-                "worktrunk",
+                "task",
                 AgentClient::Codex,
             );
             task.lifecycle_status = lifecycle_status;
@@ -1794,7 +1795,7 @@ mod tests {
             .as_ref()
             .is_some_and(|status| !status.exists));
         assert!(task
-            .worktrunk_status
+            .task_window_status
             .as_ref()
             .is_some_and(|status| !status.exists));
     }

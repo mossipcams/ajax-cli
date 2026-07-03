@@ -201,7 +201,7 @@ fn missing_substrate_label(task: &Task) -> Option<&'static str> {
     {
         return Some("tmux session missing");
     }
-    if task.has_side_flag(SideFlag::WorktrunkMissing)
+    if task.has_side_flag(SideFlag::TaskWindowMissing)
         || matches!(
             task.runtime_projection.health,
             crate::models::RuntimeHealth::MissingTaskWindow
@@ -237,7 +237,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }

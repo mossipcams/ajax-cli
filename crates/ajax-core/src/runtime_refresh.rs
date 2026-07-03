@@ -11,7 +11,7 @@ use crate::{
     live::{self, LiveObservation, LiveStatusKind},
     models::{
         AgentClient, GitStatus, LifecycleStatus, RuntimeHealth, RuntimeObservationSource, Task,
-        TaskId, WorktrunkStatus,
+        TaskId, TaskWindowStatus,
     },
     registry::{Registry, RegistryError},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
@@ -225,7 +225,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     .runtime_projection
                     .requires_refresh(SystemTime::now(), RUNTIME_PROJECTION_FRESH_FOR)
                 && task_snapshot
-                    .worktrunk_status
+                    .task_window_status
                     .as_ref()
                     .is_some_and(|status| status.exists && status.points_at_expected_path);
             if has_fresh_complete_command_result_runtime
@@ -240,16 +240,14 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 .registry
                 .update_tmux_status(&task_id, Some(session_status.clone()))
                 .map_err(CommandError::Registry)?;
-            let missing_worktrunk = WorktrunkStatus {
-                exists: false,
-                window_name: task_snapshot.worktrunk_window.clone(),
-                current_path: task_snapshot.worktree_path.clone(),
-                points_at_expected_path: false,
-            };
-            changed |= task_snapshot.worktrunk_status.as_ref() != Some(&missing_worktrunk);
+            let missing_task = TaskWindowStatus::missing(
+                task_snapshot.task_window.clone(),
+                task_snapshot.worktree_path.clone(),
+            );
+            changed |= task_snapshot.task_window_status.as_ref() != Some(&missing_task);
             context
                 .registry
-                .update_worktrunk_status(&task_id, Some(missing_worktrunk))
+                .update_task_window_status(&task_id, Some(missing_task))
                 .map_err(CommandError::Registry)?;
             refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
             if let Some(task) = context.registry.get_task_mut(&task_id) {
@@ -292,45 +290,45 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             continue;
         };
         let all_windows_output_empty = windows_output.trim().is_empty();
-        let mut worktrunk_status = TmuxAdapter::parse_worktrunk_status_for_session(
+        let mut task_window_status = TmuxAdapter::parse_task_window_status_for_session(
             &task_snapshot.tmux_session,
-            &task_snapshot.worktrunk_window,
+            &task_snapshot.task_window,
             &task_snapshot.worktree_path.display().to_string(),
             windows_output,
         );
-        if !worktrunk_status.exists && all_windows_output_empty {
+        if !task_window_status.exists && all_windows_output_empty {
             let windows_command = tmux.list_windows(&task_snapshot.tmux_session);
             if let Ok(output) = runner.run(&windows_command) {
                 if output.status_code == 0 {
-                    worktrunk_status = TmuxAdapter::parse_worktrunk_status(
-                        &task_snapshot.worktrunk_window,
+                    task_window_status = TmuxAdapter::parse_task_window_status(
+                        &task_snapshot.task_window,
                         &task_snapshot.worktree_path.display().to_string(),
                         &output.stdout,
                     );
                 }
             }
         }
-        changed |= task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
+        changed |= task_snapshot.task_window_status.as_ref() != Some(&task_window_status);
 
-        let worktrunk_status_changed =
-            task_snapshot.worktrunk_status.as_ref() != Some(&worktrunk_status);
-        let had_stale_worktrunk_missing =
-            task_snapshot.has_side_flag(crate::models::SideFlag::WorktrunkMissing);
-        changed |= worktrunk_status_changed || had_stale_worktrunk_missing;
+        let task_window_status_changed =
+            task_snapshot.task_window_status.as_ref() != Some(&task_window_status);
+        let had_stale_task_window_missing =
+            task_snapshot.has_side_flag(crate::models::SideFlag::TaskWindowMissing);
+        changed |= task_window_status_changed || had_stale_task_window_missing;
 
-        if worktrunk_status_changed || had_stale_worktrunk_missing {
+        if task_window_status_changed || had_stale_task_window_missing {
             context
                 .registry
-                .update_worktrunk_status(&task_id, Some(worktrunk_status.clone()))
+                .update_task_window_status(&task_id, Some(task_window_status.clone()))
                 .map_err(CommandError::Registry)?;
         }
         refresh_runtime_projection_from_tmux_probe(context, &task_id, &mut changed);
 
-        if !worktrunk_status.exists {
+        if !task_window_status.exists {
             if let Some(task) = context.registry.get_task_mut(&task_id) {
                 live::apply_observation(
                     task,
-                    LiveObservation::new(LiveStatusKind::WorktrunkMissing, "worktrunk missing"),
+                    LiveObservation::new(LiveStatusKind::TaskWindowMissing, "task window missing"),
                 );
                 refresh_cached_annotations(task);
                 changed = true;
@@ -384,7 +382,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 }
                 let previous = task.clone();
                 task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
-                task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
+                task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
                 match source {
                     live::AgentEvidenceSource::Hook => {
                         live::apply_authoritative_observation_at(task, observation, observed_at);
@@ -406,7 +404,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
         }
 
         let pane_command =
-            tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.worktrunk_window);
+            tmux.capture_pane(&task_snapshot.tmux_session, &task_snapshot.task_window);
         let pane_output = match runner.run(&pane_command) {
             Ok(output) if output.status_code == 0 => output.stdout,
             Ok(output) => {
@@ -436,7 +434,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             let live_status_unchanged = task.live_status.as_ref() == Some(&observation);
             let had_recoverable_missing_flag = task
                 .has_side_flag(crate::models::SideFlag::TmuxMissing)
-                || task.has_side_flag(crate::models::SideFlag::WorktrunkMissing);
+                || task.has_side_flag(crate::models::SideFlag::TaskWindowMissing);
             let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                 && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
             if live_status_unchanged && !had_recoverable_missing_flag && !needs_agent_running_flag {
@@ -444,7 +442,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             }
             let previous = task.clone();
             task.remove_side_flag(crate::models::SideFlag::TmuxMissing);
-            task.remove_side_flag(crate::models::SideFlag::WorktrunkMissing);
+            task.remove_side_flag(crate::models::SideFlag::TaskWindowMissing);
             live::apply_observation(task, observation);
             refresh_cached_annotations(task);
             changed |= *task != previous;
@@ -534,7 +532,7 @@ fn should_probe_live_substrate(task: &Task) -> bool {
     ) || has_recoverable_error_live_status(task)
         || task.has_side_flag(crate::models::SideFlag::AgentRunning)
         || task.has_side_flag(crate::models::SideFlag::TmuxMissing)
-        || task.has_side_flag(crate::models::SideFlag::WorktrunkMissing)
+        || task.has_side_flag(crate::models::SideFlag::TaskWindowMissing)
 }
 
 fn has_recoverable_error_live_status(task: &Task) -> bool {
@@ -663,7 +661,7 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
                 repo.default_branch.clone(),
                 worktree.path,
                 tmux_session,
-                "worktrunk",
+                "task",
                 AgentClient::Codex,
             );
             crate::lifecycle::mark_active(&mut task).map_err(|error| {
@@ -684,14 +682,14 @@ fn recover_missing_tasks_from_substrate<R: Registry>(
             });
             task.tmux_status = Some(tmux_status.clone());
             if !tmux_status.exists {
-                task.worktrunk_status = Some(WorktrunkStatus {
+                task.task_window_status = Some(TaskWindowStatus {
                     exists: false,
-                    window_name: task.worktrunk_window.clone(),
+                    window_name: task.task_window.clone(),
                     current_path: task.worktree_path.clone(),
                     points_at_expected_path: false,
                 });
                 task.add_side_flag(crate::models::SideFlag::TmuxMissing);
-                task.add_side_flag(crate::models::SideFlag::WorktrunkMissing);
+                task.add_side_flag(crate::models::SideFlag::TaskWindowMissing);
                 live::apply_observation(
                     &mut task,
                     LiveObservation::new(LiveStatusKind::TmuxMissing, "tmux session missing"),
@@ -766,7 +764,7 @@ mod tests {
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, RuntimeHealth,
             RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt, Task, TaskId,
-            TmuxStatus, WorktrunkStatus,
+            TaskWindowStatus, TmuxStatus,
         },
         registry::{InMemoryRegistry, Registry, RegistryError, RegistryEvent, RegistryEventKind},
     };
@@ -782,7 +780,7 @@ mod tests {
     const TASK_ID: &str = "task-1";
     const TASK_SESSION: &str = "ajax-web-fix-login";
     const TASK_WORKTREE: &str = "/tmp/worktrees/web-fix-login";
-    const TASK_WINDOW: &str = "worktrunk";
+    const TASK_WINDOW: &str = "task";
 
     impl AgentStatusCache for StaticAgentStatusCache {
         fn status_entries_for_session(&self, _session: &str) -> Vec<AgentStatusCacheEntry> {
@@ -821,7 +819,7 @@ mod tests {
                 "worktree /Users/matt/projects/web\nHEAD 1111111\nbranch refs/heads/main\n\nworktree /tmp/worktrees/web-fix-login\nHEAD 2222222\nbranch refs/heads/ajax/fix-login\n\n"
             }
             "-C" if git_branch_list(args) => "main\najax/fix-login\n",
-            "list-windows" => "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n",
+            "list-windows" => "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n",
             "capture-pane" => "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n",
             _ => "",
         }
@@ -915,7 +913,7 @@ mod tests {
         inner: InMemoryRegistry,
         list_tasks_calls: Cell<u32>,
         get_task_calls: Cell<u32>,
-        worktrunk_status_updates: Cell<u32>,
+        task_window_status_updates: Cell<u32>,
     }
 
     impl CountingRegistry {
@@ -924,7 +922,7 @@ mod tests {
                 inner,
                 list_tasks_calls: Cell::new(0),
                 get_task_calls: Cell::new(0),
-                worktrunk_status_updates: Cell::new(0),
+                task_window_status_updates: Cell::new(0),
             }
         }
 
@@ -936,8 +934,8 @@ mod tests {
             self.get_task_calls.get()
         }
 
-        fn worktrunk_status_updates(&self) -> u32 {
-            self.worktrunk_status_updates.get()
+        fn task_window_status_updates(&self) -> u32 {
+            self.task_window_status_updates.get()
         }
     }
 
@@ -997,14 +995,14 @@ mod tests {
             self.inner.update_tmux_status(task_id, status)
         }
 
-        fn update_worktrunk_status(
+        fn update_task_window_status(
             &mut self,
             task_id: &TaskId,
-            status: Option<WorktrunkStatus>,
+            status: Option<TaskWindowStatus>,
         ) -> Result<(), RegistryError> {
-            self.worktrunk_status_updates
-                .set(self.worktrunk_status_updates.get() + 1);
-            self.inner.update_worktrunk_status(task_id, status)
+            self.task_window_status_updates
+                .set(self.task_window_status_updates.get() + 1);
+            self.inner.update_task_window_status(task_id, status)
         }
 
         fn apply_live_observation(
@@ -1045,7 +1043,7 @@ mod tests {
         ));
         task.add_side_flag(SideFlag::AgentRunning);
         task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
-        task.worktrunk_status = Some(WorktrunkStatus::present(TASK_WINDOW, TASK_WORKTREE));
+        task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
         task.runtime_projection = RuntimeProjection::new(
             RuntimeHealth::Healthy,
             SystemTime::now(),
@@ -1065,7 +1063,7 @@ mod tests {
         task.lifecycle_status = LifecycleStatus::Active;
         task.git_status = Some(clean_git_status());
         task.tmux_status = Some(TmuxStatus::present(TASK_SESSION));
-        task.worktrunk_status = Some(WorktrunkStatus::present(TASK_WINDOW, TASK_WORKTREE));
+        task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, TASK_WORKTREE));
         registry.create_task(task).unwrap();
 
         CommandContext::new(config, CountingRegistry::from_registry(registry))
@@ -1102,7 +1100,7 @@ mod tests {
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "list-sessions" => "ajax-other-task\n",
                 [command, ..] if command == "list-windows" => {
-                    "ajax-other-task\tworktrunk\t/tmp/worktrees/web-other-task\n"
+                    "ajax-other-task\ttask\t/tmp/worktrees/web-other-task\n"
                 }
                 [command, ..] if command == "capture-pane" => "",
                 _ => runtime_stdout(&command.args),
@@ -1700,14 +1698,14 @@ mod tests {
     }
 
     #[test]
-    fn missing_session_refresh_updates_worktrunk_evidence_once() {
+    fn missing_session_refresh_updates_task_evidence_once() {
         let mut context = context_with_task_for_missing_session();
         let mut runner = MissingSessionRunner::default();
 
         let changed = refresh_runtime_context(&mut context, &mut runner).unwrap();
 
         assert!(changed);
-        assert_eq!(context.registry.worktrunk_status_updates(), 1);
+        assert_eq!(context.registry.task_window_status_updates(), 1);
         assert!(!runner.commands.iter().any(
             |command| matches!(command.args.as_slice(), [command, ..] if command == "capture-pane")
         ));
@@ -2082,10 +2080,10 @@ mod tests {
         assert!(changed);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert!(task
-            .worktrunk_status
+            .task_window_status
             .as_ref()
             .is_some_and(|status| status.exists && status.points_at_expected_path));
-        assert!(!task.has_side_flag(SideFlag::WorktrunkMissing));
+        assert!(!task.has_side_flag(SideFlag::TaskWindowMissing));
         assert_eq!(
             task.runtime_projection.observation_error.as_deref(),
             Some(
@@ -2188,7 +2186,7 @@ mod tests {
                 let stdout = match command.args.as_slice() {
                     [command, ..] if command == "list-sessions" => "ajax-web-stale-task\n",
                     [command, ..] if command == "list-windows" => {
-                        "ajax-web-stale-task\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                        "ajax-web-stale-task\ttask\t/tmp/worktrees/web-fix-login\n"
                     }
                     [_, repo, subcommand, action, flag]
                         if repo == REPO_PATH
@@ -2269,7 +2267,7 @@ mod tests {
                 let stdout = match command.args.as_slice() {
                     [command, ..] if command == "list-sessions" => "ajax-web-old-name\n",
                     [command, ..] if command == "list-panes" => {
-                        "ajax-web-old-name\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                        "ajax-web-old-name\ttask\t/tmp/worktrees/web-fix-login\n"
                     }
                     [_, repo, subcommand, action, flag]
                         if repo == REPO_PATH
@@ -2367,7 +2365,7 @@ mod tests {
             task.lifecycle_status = LifecycleStatus::Active;
             task.git_status = Some(clean_git_status());
             task.tmux_status = Some(TmuxStatus::present(&session));
-            task.worktrunk_status = Some(WorktrunkStatus::present(TASK_WINDOW, &worktree));
+            task.task_window_status = Some(TaskWindowStatus::present(TASK_WINDOW, &worktree));
             registry.create_task(task).unwrap();
         }
         CommandContext::new(config, registry)

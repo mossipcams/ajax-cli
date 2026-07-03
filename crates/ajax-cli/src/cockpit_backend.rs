@@ -615,7 +615,7 @@ mod tests {
         models::{
             AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
             LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, SideFlag,
-            Task, TaskId, TmuxStatus, WorktrunkStatus,
+            Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry},
@@ -646,7 +646,7 @@ mod tests {
                     "main\najax/fix-login\n"
                 }
                 [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                    "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => "Do you want to proceed? y/n\n",
                 _ => "",
@@ -675,7 +675,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Active;
@@ -748,8 +748,8 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         context
@@ -902,7 +902,7 @@ mod tests {
                     "main\najax/fix-login\n"
                 }
                 [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                    "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => {
                     "• Working (3m 00s • esc to interrupt) · 1 background terminal running · /ps to…\n\n› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-ci\n"
@@ -1013,8 +1013,8 @@ mod tests {
             "merge conflict needs attention",
         ));
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         let mut runner = SpaghettiRecoveryRunner::default();
@@ -1049,7 +1049,7 @@ mod tests {
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
                 [command, ..] if command == "list-windows" => {
-                    "ajax-web-fix-login\tworktrunk\t/tmp/worktrees/web-fix-login\n"
+                    "ajax-web-fix-login\ttask\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => {
                     "› Improve documentation in @filename\n\n  gpt-5.5 high · ~/Desktop/Projects/ajax-cli__worktrees/ajax-spaghetti\n"
@@ -1086,7 +1086,7 @@ mod tests {
                     "ajax-web-existing\najax-web-code\n"
                 }
                 [command, ..] if command == "list-windows" => {
-                    "ajax-web-code\tworktrunk\t/Users/matt/projects/web__worktrees/ajax-code\n"
+                    "ajax-web-code\ttask\t/Users/matt/projects/web__worktrees/ajax-code\n"
                 }
                 [command, ..] if command == "capture-pane" => "codex is working\n",
                 _ => "",
@@ -1116,7 +1116,7 @@ mod tests {
             "main",
             "/Users/matt/projects/web__worktrees/ajax-existing",
             "ajax-web-existing",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         existing.lifecycle_status = LifecycleStatus::Active;
@@ -1193,7 +1193,7 @@ mod tests {
             "main",
             "/Users/matt/projects/web__worktrees/ajax-existing",
             "ajax-web-existing",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         existing.lifecycle_status = LifecycleStatus::Active;
@@ -1239,7 +1239,7 @@ mod tests {
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "list-sessions" => "ajax-web-fix-login\n",
                 [command, ..] if command == "list-windows" => {
-                    "worktrunk\t/tmp/worktrees/web-fix-login\n"
+                    "task\t/tmp/worktrees/web-fix-login\n"
                 }
                 [command, ..] if command == "capture-pane" => "codex is working\n",
                 _ => "",
@@ -1264,9 +1264,9 @@ mod tests {
         task.tmux_status = Some(ajax_core::models::TmuxStatus::present(
             task.tmux_session.clone(),
         ));
-        task.worktrunk_status = Some(ajax_core::models::WorktrunkStatus {
+        task.task_window_status = Some(ajax_core::models::TaskWindowStatus {
             exists: true,
-            window_name: task.worktrunk_window.clone(),
+            window_name: task.task_window.clone(),
             current_path: task.worktree_path.clone(),
             points_at_expected_path: true,
         });
@@ -1330,9 +1330,9 @@ mod tests {
             .expect("fixture task should exist");
         task.lifecycle_status = LifecycleStatus::Cleanable;
         task.tmux_status = Some(TmuxStatus::present(task.tmux_session.clone()));
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: true,
-            window_name: task.worktrunk_window.clone(),
+            window_name: task.task_window.clone(),
             current_path: task.worktree_path.clone(),
             points_at_expected_path: true,
         });
@@ -1381,9 +1381,9 @@ mod tests {
         task.tmux_status = Some(ajax_core::models::TmuxStatus::present(
             task.tmux_session.clone(),
         ));
-        task.worktrunk_status = Some(ajax_core::models::WorktrunkStatus {
+        task.task_window_status = Some(ajax_core::models::TaskWindowStatus {
             exists: true,
-            window_name: task.worktrunk_window.clone(),
+            window_name: task.task_window.clone(),
             current_path: task.worktree_path.clone(),
             points_at_expected_path: true,
         });
@@ -1445,7 +1445,7 @@ mod cockpit_persistence_tests {
             "main",
             format!("/tmp/worktrees/web-{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Active;

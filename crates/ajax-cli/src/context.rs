@@ -514,7 +514,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/web-{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -534,7 +534,7 @@ mod tests {
                 "main",
                 "/tmp/worktrees/web-fix-login",
                 "ajax-web-fix-login",
-                "worktrunk",
+                "task",
                 AgentClient::Codex,
             ))
             .unwrap();

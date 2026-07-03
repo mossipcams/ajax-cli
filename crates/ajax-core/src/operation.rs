@@ -112,7 +112,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = status;

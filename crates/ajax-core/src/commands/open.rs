@@ -30,7 +30,7 @@ pub fn open_task_plan<R: Registry>(
             .as_ref()
             .is_some_and(|status| !status.exists)
         || task
-            .worktrunk_status
+            .task_window_status
             .as_ref()
             .is_some_and(|status| !status.exists || !status.points_at_expected_path)
     {
@@ -54,14 +54,14 @@ pub fn open_task_plan<R: Registry>(
 
     let tmux = TmuxAdapter::new("tmux");
     plan.commands
-        .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
+        .push(tmux.select_window(&task.tmux_session, &task.task_window));
     match mode {
         OpenMode::Attach => plan
             .commands
-            .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window)),
+            .push(tmux.attach_window(&task.tmux_session, &task.task_window)),
         OpenMode::SwitchClient => plan
             .commands
-            .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+            .push(tmux.switch_client_to_window(&task.tmux_session, &task.task_window)),
         OpenMode::NoAttach => unreachable!("handled above"),
     };
 

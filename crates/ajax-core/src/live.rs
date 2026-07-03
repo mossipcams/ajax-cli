@@ -1138,7 +1138,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -1504,7 +1504,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         for status in [
             LiveStatusKind::WorktreeMissing,
             LiveStatusKind::TmuxMissing,
-            LiveStatusKind::WorktrunkMissing,
+            LiveStatusKind::TaskWindowMissing,
         ] {
             let mut task = base_task();
             task.agent_status = AgentRuntimeStatus::Running;
@@ -1742,7 +1742,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         let lifecycle_before = task.lifecycle_status;
         let git_before = task.git_status.clone();
         let tmux_before = task.tmux_status.clone();
-        let worktrunk_before = task.worktrunk_status.clone();
+        let task_before = task.task_window_status.clone();
 
         let classified = classify_pane("Do you want to proceed? y/n\n");
         let reduced = super::reduce_live_observation(
@@ -1755,7 +1755,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         assert_eq!(task.lifecycle_status, lifecycle_before);
         assert_eq!(task.git_status, git_before);
         assert_eq!(task.tmux_status, tmux_before);
-        assert_eq!(task.worktrunk_status, worktrunk_before);
+        assert_eq!(task.task_window_status, task_before);
     }
 
     use super::classify_agent_pane;

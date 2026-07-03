@@ -126,7 +126,7 @@ pub fn execute_remediation<R: Registry>(
         ));
     }
 
-    let spec = tmux.send_agent_command(&task.tmux_session, &task.worktrunk_window, &brief);
+    let spec = tmux.send_agent_command(&task.tmux_session, &task.task_window, &brief);
     let output = runner
         .run(&spec)
         .map_err(|error| RemediationError::CommandRun(error.to_string()))?;
@@ -180,7 +180,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }

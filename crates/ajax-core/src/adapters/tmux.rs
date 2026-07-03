@@ -2,7 +2,7 @@ use super::command::{CommandMode, CommandSpec};
 use std::time::Duration;
 
 const TMUX_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
-use crate::models::{TmuxStatus, WorktrunkStatus};
+use crate::models::{TaskWindowStatus, TmuxStatus};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TmuxAdapter {
@@ -26,7 +26,7 @@ impl TmuxAdapter {
             .with_mode(CommandMode::InheritStdio)
     }
 
-    pub fn new_detached_worktrunk_session(
+    pub fn new_detached_task_session(
         &self,
         session: &str,
         window: &str,
@@ -38,7 +38,7 @@ impl TmuxAdapter {
         )
     }
 
-    pub fn ensure_worktrunk(&self, session: &str, window: &str, path: &str) -> CommandSpec {
+    pub fn ensure_task_window(&self, session: &str, window: &str, path: &str) -> CommandSpec {
         CommandSpec::new(
             &self.program,
             ["new-window", "-t", session, "-n", window, "-c", path],
@@ -138,17 +138,12 @@ impl TmuxAdapter {
         }
     }
 
-    pub fn parse_worktrunk_status(
+    pub fn parse_task_window_status(
         window: &str,
         expected_path: &str,
         list_windows_output: &str,
-    ) -> WorktrunkStatus {
-        let mut status = WorktrunkStatus {
-            exists: false,
-            window_name: window.to_string(),
-            current_path: String::new().into(),
-            points_at_expected_path: false,
-        };
+    ) -> TaskWindowStatus {
+        let mut status = TaskWindowStatus::missing(window, "");
 
         for line in list_windows_output.lines() {
             let Some((window_name, current_path)) = line.split_once('\t') else {
@@ -166,18 +161,13 @@ impl TmuxAdapter {
         status
     }
 
-    pub fn parse_worktrunk_status_for_session(
+    pub fn parse_task_window_status_for_session(
         session: &str,
         window: &str,
         expected_path: &str,
         list_all_windows_output: &str,
-    ) -> WorktrunkStatus {
-        let mut status = WorktrunkStatus {
-            exists: false,
-            window_name: window.to_string(),
-            current_path: String::new().into(),
-            points_at_expected_path: false,
-        };
+    ) -> TaskWindowStatus {
+        let mut status = TaskWindowStatus::missing(window, "");
 
         for line in list_all_windows_output.lines() {
             let mut fields = line.splitn(3, '\t');
@@ -200,7 +190,7 @@ impl TmuxAdapter {
         }
 
         if !status.exists {
-            status = Self::parse_worktrunk_status(window, expected_path, list_all_windows_output);
+            status = Self::parse_task_window_status(window, expected_path, list_all_windows_output);
         }
 
         status

@@ -176,7 +176,7 @@ pub enum SideFlag {
     TestsFailed,
     TmuxMissing,
     WorktreeMissing,
-    WorktrunkMissing,
+    TaskWindowMissing,
     BranchMissing,
     Stale,
     Conflicted,
@@ -187,7 +187,7 @@ pub enum SideFlag {
 pub enum LiveStatusKind {
     WorktreeMissing,
     TmuxMissing,
-    WorktrunkMissing,
+    TaskWindowMissing,
     ShellIdle,
     CommandRunning,
     TestsRunning,
@@ -230,13 +230,13 @@ pub struct Task {
     pub base_branch: String,
     pub worktree_path: PathBuf,
     pub tmux_session: String,
-    pub worktrunk_window: String,
+    pub task_window: String,
     pub selected_agent: AgentClient,
     pub lifecycle_status: LifecycleStatus,
     pub agent_status: AgentRuntimeStatus,
     pub git_status: Option<GitStatus>,
     pub tmux_status: Option<TmuxStatus>,
-    pub worktrunk_status: Option<WorktrunkStatus>,
+    pub task_window_status: Option<TaskWindowStatus>,
     #[serde(default)]
     pub runtime_projection: RuntimeProjection,
     #[serde(default)]
@@ -265,7 +265,7 @@ impl Task {
         base_branch: impl Into<String>,
         worktree_path: impl Into<PathBuf>,
         tmux_session: impl Into<String>,
-        worktrunk_window: impl Into<String>,
+        task_window: impl Into<String>,
         selected_agent: AgentClient,
     ) -> Self {
         let now = SystemTime::now();
@@ -279,13 +279,13 @@ impl Task {
             base_branch: base_branch.into(),
             worktree_path: worktree_path.into(),
             tmux_session: tmux_session.into(),
-            worktrunk_window: worktrunk_window.into(),
+            task_window: task_window.into(),
             selected_agent,
             lifecycle_status: LifecycleStatus::Created,
             agent_status: AgentRuntimeStatus::NotStarted,
             git_status: None,
             tmux_status: None,
-            worktrunk_status: None,
+            task_window_status: None,
             runtime_projection: RuntimeProjection::default(),
             live_status: None,
             live_status_observed_at: None,
@@ -324,7 +324,7 @@ impl Task {
             base_branch: self.base_branch.clone(),
             worktree_path: self.worktree_path.clone(),
             tmux_session: self.tmux_session.clone(),
-            worktrunk_window: self.worktrunk_window.clone(),
+            task_window: self.task_window.clone(),
             selected_agent: self.selected_agent,
         }
     }
@@ -433,15 +433,15 @@ impl Task {
         self.refresh_runtime_projection();
     }
 
-    pub fn apply_worktrunk_status(&mut self, status: Option<WorktrunkStatus>) {
+    pub fn apply_task_window_status(&mut self, status: Option<TaskWindowStatus>) {
         match status.as_ref() {
             Some(status) if status.exists && status.points_at_expected_path => {
-                self.remove_side_flag(SideFlag::WorktrunkMissing);
+                self.remove_side_flag(SideFlag::TaskWindowMissing);
             }
-            Some(_) | None => self.mark_resource_missing(SideFlag::WorktrunkMissing),
+            Some(_) | None => self.mark_resource_missing(SideFlag::TaskWindowMissing),
         }
 
-        self.worktrunk_status = status;
+        self.task_window_status = status;
         self.refresh_runtime_projection();
     }
 
@@ -454,7 +454,7 @@ impl Task {
             &crate::runtime::ObservedTaskRuntime {
                 git_status: self.git_status.clone(),
                 tmux_status: self.tmux_status.clone(),
-                worktrunk_status: self.worktrunk_status.clone(),
+                task_window_status: self.task_window_status.clone(),
             },
             SystemTime::now(),
             source,
@@ -486,7 +486,7 @@ pub struct TaskIntent {
     pub base_branch: String,
     pub worktree_path: PathBuf,
     pub tmux_session: String,
-    pub worktrunk_window: String,
+    pub task_window: String,
     pub selected_agent: AgentClient,
 }
 
@@ -569,7 +569,7 @@ impl SideFlag {
     pub fn is_missing_substrate(self) -> bool {
         matches!(
             self,
-            SideFlag::WorktrunkMissing
+            SideFlag::TaskWindowMissing
                 | SideFlag::TmuxMissing
                 | SideFlag::WorktreeMissing
                 | SideFlag::BranchMissing
@@ -583,7 +583,7 @@ impl LiveStatusKind {
             self,
             LiveStatusKind::WorktreeMissing
                 | LiveStatusKind::TmuxMissing
-                | LiveStatusKind::WorktrunkMissing
+                | LiveStatusKind::TaskWindowMissing
         )
     }
 }
@@ -604,20 +604,29 @@ impl TmuxStatus {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
-pub struct WorktrunkStatus {
+pub struct TaskWindowStatus {
     pub exists: bool,
     pub window_name: String,
     pub current_path: PathBuf,
     pub points_at_expected_path: bool,
 }
 
-impl WorktrunkStatus {
+impl TaskWindowStatus {
     pub fn present(window_name: impl Into<String>, current_path: impl Into<PathBuf>) -> Self {
         Self {
             exists: true,
             window_name: window_name.into(),
             current_path: current_path.into(),
             points_at_expected_path: true,
+        }
+    }
+
+    pub fn missing(window_name: impl Into<String>, expected_path: impl Into<PathBuf>) -> Self {
+        Self {
+            exists: false,
+            window_name: window_name.into(),
+            current_path: expected_path.into(),
+            points_at_expected_path: false,
         }
     }
 }
@@ -882,7 +891,7 @@ impl AnnotationKind {
 pub enum SubstrateGap {
     WorktreeMissing,
     TmuxMissing,
-    WorktrunkMissing,
+    TaskWindowMissing,
     BranchMissing,
 }
 
@@ -909,7 +918,7 @@ impl Evidence {
                 LiveStatusKind::Blocked => "blocked",
                 LiveStatusKind::WorktreeMissing => "worktree missing",
                 LiveStatusKind::TmuxMissing => "tmux missing",
-                LiveStatusKind::WorktrunkMissing => "worktrunk missing",
+                LiveStatusKind::TaskWindowMissing => "task window missing",
                 LiveStatusKind::MergeConflict => "merge conflict",
                 LiveStatusKind::Done => "done",
                 LiveStatusKind::ShellIdle => "shell idle",
@@ -936,7 +945,7 @@ impl Evidence {
                 SideFlag::TestsFailed => "tests failed",
                 SideFlag::TmuxMissing => "tmux missing",
                 SideFlag::WorktreeMissing => "worktree missing",
-                SideFlag::WorktrunkMissing => "worktrunk missing",
+                SideFlag::TaskWindowMissing => "task window missing",
                 SideFlag::BranchMissing => "branch missing",
                 SideFlag::Stale => "stale",
                 SideFlag::Conflicted => "conflicted",
@@ -960,7 +969,7 @@ impl Evidence {
             Evidence::Substrate(gap) => match gap {
                 SubstrateGap::WorktreeMissing => "worktree missing",
                 SubstrateGap::TmuxMissing => "tmux missing",
-                SubstrateGap::WorktrunkMissing => "worktrunk missing",
+                SubstrateGap::TaskWindowMissing => "task window missing",
                 SubstrateGap::BranchMissing => "branch missing",
             },
             Evidence::RuntimeObservationFailed => "status unavailable",
@@ -1014,8 +1023,8 @@ mod tests {
         AgentAttempt, AgentClient, AgentRuntimeStatus, Annotation, AnnotationKind, Evidence,
         GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, OperatorAction, Repo,
         RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag, StepReceipt,
-        StepReceiptIdentity, Task, TaskId, TaskIntent, TaskOperationKind, TmuxStatus,
-        WorktrunkStatus,
+        StepReceiptIdentity, Task, TaskId, TaskIntent, TaskOperationKind, TaskWindowStatus,
+        TmuxStatus,
     };
     use proptest::prelude::*;
     use std::collections::BTreeSet;
@@ -1030,7 +1039,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         )
     }
@@ -1074,7 +1083,7 @@ mod tests {
                 SideFlag::TestsFailed,
                 SideFlag::TmuxMissing,
                 SideFlag::WorktreeMissing,
-                SideFlag::WorktrunkMissing,
+                SideFlag::TaskWindowMissing,
                 SideFlag::BranchMissing,
                 SideFlag::Stale,
                 SideFlag::Conflicted,
@@ -1089,7 +1098,7 @@ mod tests {
             [
                 LiveStatusKind::WorktreeMissing,
                 LiveStatusKind::TmuxMissing,
-                LiveStatusKind::WorktrunkMissing,
+                LiveStatusKind::TaskWindowMissing,
                 LiveStatusKind::ShellIdle,
                 LiveStatusKind::CommandRunning,
                 LiveStatusKind::TestsRunning,
@@ -1120,7 +1129,7 @@ mod tests {
             "main",
             "/tmp/worktrees/generated",
             "ajax-web-generated",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -1135,7 +1144,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{status:?}").to_ascii_lowercase(),
             format!("ajax-web-{status:?}").to_ascii_lowercase(),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = status;
@@ -1199,7 +1208,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
 
@@ -1220,7 +1229,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Reviewable;
@@ -1258,7 +1267,7 @@ mod tests {
                 base_branch: "main".to_string(),
                 worktree_path: std::path::PathBuf::from("/tmp/worktrees/web-fix-login"),
                 tmux_session: "ajax-web-fix-login".to_string(),
-                worktrunk_window: "worktrunk".to_string(),
+                task_window: "task".to_string(),
                 selected_agent: AgentClient::Codex,
             }
         );
@@ -1275,7 +1284,7 @@ mod tests {
             base_branch in text_strategy(),
             worktree_path in text_strategy(),
             tmux_session in text_strategy(),
-            worktrunk_window in text_strategy(),
+            task_window in text_strategy(),
         ) {
             let task = Task::new(
                 TaskId::new(&id),
@@ -1286,7 +1295,7 @@ mod tests {
                 &base_branch,
                 &worktree_path,
                 &tmux_session,
-                &worktrunk_window,
+                &task_window,
                 AgentClient::Codex,
             );
 
@@ -1298,18 +1307,18 @@ mod tests {
             prop_assert_eq!(&task.base_branch, &base_branch);
             prop_assert_eq!(&task.worktree_path, std::path::Path::new(&worktree_path));
             prop_assert_eq!(&task.tmux_session, &tmux_session);
-            prop_assert_eq!(&task.worktrunk_window, &worktrunk_window);
+            prop_assert_eq!(&task.task_window, &task_window);
             prop_assert_eq!(task.qualified_handle(), format!("{repo}/{handle}"));
         }
 
         #[test]
-        fn repo_tmux_and_worktrunk_constructors_preserve_generated_inputs(
+        fn repo_tmux_and_task_constructors_preserve_generated_inputs(
             repo_name in text_strategy(),
             repo_path in text_strategy(),
             default_branch in text_strategy(),
             tmux_session in text_strategy(),
-            worktrunk_window in text_strategy(),
-            worktrunk_path in text_strategy(),
+            task_window in text_strategy(),
+            task_path in text_strategy(),
         ) {
             let repo = Repo::new(&repo_name, &repo_path, &default_branch);
             prop_assert_eq!(repo.name, repo_name);
@@ -1320,11 +1329,11 @@ mod tests {
             prop_assert!(tmux.exists);
             prop_assert_eq!(tmux.session_name, tmux_session);
 
-            let worktrunk = WorktrunkStatus::present(&worktrunk_window, &worktrunk_path);
-            prop_assert!(worktrunk.exists);
-            prop_assert_eq!(worktrunk.window_name, worktrunk_window);
-            prop_assert_eq!(worktrunk.current_path, std::path::Path::new(&worktrunk_path));
-            prop_assert!(worktrunk.points_at_expected_path);
+            let task = TaskWindowStatus::present(&task_window, &task_path);
+            prop_assert!(task.exists);
+            prop_assert_eq!(task.window_name, task_window);
+            prop_assert_eq!(task.current_path, std::path::Path::new(&task_path));
+            prop_assert!(task.points_at_expected_path);
         }
     }
 
@@ -1339,7 +1348,7 @@ mod tests {
             "main",
             "/tmp/worktrees/api-add-cache",
             "ajax-api-add-cache",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
 
@@ -1425,7 +1434,7 @@ mod tests {
             "main",
             "/tmp/worktrees/repair-cockpit",
             "ajax-web-repair-cockpit",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
 
@@ -1457,13 +1466,26 @@ mod tests {
             last_commit: Some("abc123 Fix login".to_string()),
         };
         let tmux = TmuxStatus::present("ajax-web-fix-login");
-        let worktrunk = WorktrunkStatus::present("worktrunk", "/Users/matt/projects/web");
+        let task = TaskWindowStatus::present("task", "/Users/matt/projects/web");
 
         assert_eq!(repo.default_branch, "main");
         assert_eq!(attempt.agent, AgentClient::Codex);
         assert!(git.has_unpushed_work());
         assert!(tmux.exists);
-        assert!(worktrunk.points_at_expected_path);
+        assert!(task.points_at_expected_path);
+    }
+
+    #[test]
+    fn task_window_missing_constructor_records_expected_identity() {
+        let task = TaskWindowStatus::missing("task", "/Users/matt/projects/web");
+
+        assert!(!task.exists);
+        assert_eq!(task.window_name, "task");
+        assert_eq!(
+            task.current_path,
+            std::path::PathBuf::from("/Users/matt/projects/web")
+        );
+        assert!(!task.points_at_expected_path);
     }
 
     #[test]
@@ -1513,9 +1535,9 @@ mod tests {
         );
 
         task.apply_tmux_status(Some(TmuxStatus::present("ajax-web-generated")));
-        task.apply_worktrunk_status(Some(WorktrunkStatus {
+        task.apply_task_window_status(Some(TaskWindowStatus {
             exists: true,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/other".into(),
             points_at_expected_path: false,
         }));
@@ -1524,8 +1546,8 @@ mod tests {
             RuntimeHealth::WrongTaskWindowPath
         );
 
-        task.apply_worktrunk_status(Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.apply_task_window_status(Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/generated",
         )));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);

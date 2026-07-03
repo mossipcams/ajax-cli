@@ -22,7 +22,7 @@ mod tests {
         AgentAdapter, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
         RecordingCommandRunner, TmuxAdapter,
     };
-    use crate::models::{TmuxStatus, WorktrunkStatus};
+    use crate::models::{TaskWindowStatus, TmuxStatus};
     use proptest::prelude::*;
     use std::path::Path;
 
@@ -36,7 +36,7 @@ mod tests {
     }
 
     #[test]
-    fn tmux_adapter_builds_attach_switch_and_worktrunk_commands() {
+    fn tmux_adapter_builds_attach_switch_and_task_commands() {
         let adapter = TmuxAdapter::new("tmux");
 
         assert_eq!(
@@ -50,11 +50,7 @@ mod tests {
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
-            adapter.new_detached_worktrunk_session(
-                "ajax-web-fix-login",
-                "worktrunk",
-                "/tmp/worktree"
-            ),
+            adapter.new_detached_task_session("ajax-web-fix-login", "task", "/tmp/worktree"),
             CommandSpec::new(
                 "tmux",
                 [
@@ -63,14 +59,14 @@ mod tests {
                     "-s",
                     "ajax-web-fix-login",
                     "-n",
-                    "worktrunk",
+                    "task",
                     "-c",
                     "/tmp/worktree"
                 ]
             )
         );
         assert_eq!(
-            adapter.ensure_worktrunk("ajax-web-fix-login", "worktrunk", "/tmp/worktree"),
+            adapter.ensure_task_window("ajax-web-fix-login", "task", "/tmp/worktree"),
             CommandSpec::new(
                 "tmux",
                 [
@@ -78,43 +74,33 @@ mod tests {
                     "-t",
                     "ajax-web-fix-login",
                     "-n",
-                    "worktrunk",
+                    "task",
                     "-c",
                     "/tmp/worktree"
                 ]
             )
         );
         assert_eq!(
-            adapter.kill_window("ajax-web-fix-login", "worktrunk"),
-            CommandSpec::new(
-                "tmux",
-                ["kill-window", "-t", "ajax-web-fix-login:worktrunk"]
-            )
+            adapter.kill_window("ajax-web-fix-login", "task"),
+            CommandSpec::new("tmux", ["kill-window", "-t", "ajax-web-fix-login:task"])
         );
         assert_eq!(
-            adapter.select_window("ajax-web-fix-login", "worktrunk"),
-            CommandSpec::new(
-                "tmux",
-                ["select-window", "-t", "ajax-web-fix-login:worktrunk"]
-            )
+            adapter.select_window("ajax-web-fix-login", "task"),
+            CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"])
         );
         assert_eq!(
-            adapter.switch_client_to_window("ajax-web-fix-login", "worktrunk"),
+            adapter.switch_client_to_window("ajax-web-fix-login", "task"),
             CommandSpec::new("tmux", ["switch-client", "-t", "ajax-web-fix-login"])
                 .with_mode(CommandMode::InheritStdio)
         );
         assert_eq!(
-            adapter.send_agent_command(
-                "ajax-web-fix-login",
-                "worktrunk",
-                "codex --cd /tmp/worktree"
-            ),
+            adapter.send_agent_command("ajax-web-fix-login", "task", "codex --cd /tmp/worktree"),
             CommandSpec::new(
                 "tmux",
                 [
                     "send-keys",
                     "-t",
-                    "ajax-web-fix-login:worktrunk",
+                    "ajax-web-fix-login:task",
                     "codex --cd /tmp/worktree",
                     "Enter"
                 ]
@@ -156,14 +142,14 @@ mod tests {
             .with_timeout(std::time::Duration::from_secs(8))
         );
         assert_eq!(
-            adapter.capture_pane("ajax-web-fix-login", "worktrunk"),
+            adapter.capture_pane("ajax-web-fix-login", "task"),
             CommandSpec::new(
                 "tmux",
                 [
                     "capture-pane",
                     "-p",
                     "-t",
-                    "ajax-web-fix-login:worktrunk",
+                    "ajax-web-fix-login:task",
                     "-S",
                     "-80"
                 ]
@@ -174,7 +160,7 @@ mod tests {
 
     proptest! {
         #[test]
-        fn tmux_adapter_targets_generated_worktrunk_inputs(
+        fn tmux_adapter_targets_generated_task_inputs(
             session in safe_token(),
             window in safe_token(),
             path in safe_path(),
@@ -184,7 +170,7 @@ mod tests {
             let target = format!("{session}:{window}");
 
             prop_assert_eq!(
-                adapter.new_detached_worktrunk_session(&session, &window, &path),
+                adapter.new_detached_task_session(&session, &window, &path),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -200,7 +186,7 @@ mod tests {
                 )
             );
             prop_assert_eq!(
-                adapter.ensure_worktrunk(&session, &window, &path),
+                adapter.ensure_task_window(&session, &window, &path),
                 CommandSpec::new(
                     "tmux",
                     [
@@ -411,38 +397,29 @@ mod tests {
     }
 
     #[test]
-    fn tmux_parsers_detect_session_and_worktrunk_health() {
+    fn tmux_parsers_detect_session_and_task_health() {
         let tmux = TmuxAdapter::parse_session_status(
             "ajax-web-fix-login",
             "ajax-api-add-cache\najax-web-fix-login\n",
         );
-        let worktrunk = TmuxAdapter::parse_worktrunk_status(
-            "worktrunk",
+        let task = TmuxAdapter::parse_task_window_status(
+            "task",
             "/tmp/worktree",
-            "agent\t/tmp/worktree\nworktrunk\t/tmp/worktree\n",
+            "agent\t/tmp/worktree\ntask\t/tmp/worktree\n",
         );
 
         assert_eq!(tmux, TmuxStatus::present("ajax-web-fix-login"));
-        assert_eq!(
-            worktrunk,
-            WorktrunkStatus::present("worktrunk", "/tmp/worktree")
-        );
+        assert_eq!(task, TaskWindowStatus::present("task", "/tmp/worktree"));
     }
 
     #[test]
-    fn tmux_worktrunk_parser_detects_wrong_path() {
-        let worktrunk = TmuxAdapter::parse_worktrunk_status(
-            "worktrunk",
-            "/tmp/worktree",
-            "worktrunk\t/tmp/wrong\n",
-        );
+    fn tmux_task_parser_detects_wrong_path() {
+        let task =
+            TmuxAdapter::parse_task_window_status("task", "/tmp/worktree", "task\t/tmp/wrong\n");
 
-        assert!(worktrunk.exists);
-        assert_eq!(
-            worktrunk.current_path,
-            std::path::PathBuf::from("/tmp/wrong")
-        );
-        assert!(!worktrunk.points_at_expected_path);
+        assert!(task.exists);
+        assert_eq!(task.current_path, std::path::PathBuf::from("/tmp/wrong"));
+        assert!(!task.points_at_expected_path);
     }
 
     #[test]

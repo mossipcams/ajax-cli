@@ -1,8 +1,8 @@
 use std::time::{Duration, SystemTime};
 
 use crate::models::{
-    GitStatus, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, TmuxStatus,
-    WorktrunkStatus,
+    GitStatus, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, TaskWindowStatus,
+    TmuxStatus,
 };
 
 pub const RUNTIME_PROJECTION_FRESH_FOR: Duration = Duration::from_secs(30);
@@ -168,7 +168,7 @@ pub fn reduce_resource_evidence(
 pub struct ObservedTaskRuntime {
     pub git_status: Option<GitStatus>,
     pub tmux_status: Option<TmuxStatus>,
-    pub worktrunk_status: Option<WorktrunkStatus>,
+    pub task_window_status: Option<TaskWindowStatus>,
 }
 
 pub fn reconcile_runtime(
@@ -194,13 +194,13 @@ fn runtime_health(observed: &ObservedTaskRuntime) -> RuntimeHealth {
         return RuntimeHealth::MissingSession;
     }
 
-    let Some(worktrunk_status) = observed.worktrunk_status.as_ref() else {
+    let Some(task_window_status) = observed.task_window_status.as_ref() else {
         return RuntimeHealth::Unobservable;
     };
-    if !worktrunk_status.exists {
+    if !task_window_status.exists {
         return RuntimeHealth::MissingTaskWindow;
     }
-    if !worktrunk_status.points_at_expected_path {
+    if !task_window_status.points_at_expected_path {
         return RuntimeHealth::WrongTaskWindowPath;
     }
 
@@ -214,7 +214,7 @@ mod tests {
         ResourcePresence, RuntimeEvidence, RuntimeEvidenceSource, RuntimeEvidenceStatus,
     };
     use crate::models::{
-        GitStatus, RuntimeHealth, RuntimeObservationSource, TmuxStatus, WorktrunkStatus,
+        GitStatus, RuntimeHealth, RuntimeObservationSource, TaskWindowStatus, TmuxStatus,
     };
     use std::{path::PathBuf, time::SystemTime};
 
@@ -237,12 +237,12 @@ mod tests {
     fn observed(
         git: Option<GitStatus>,
         tmux: Option<TmuxStatus>,
-        worktrunk: Option<WorktrunkStatus>,
+        task: Option<TaskWindowStatus>,
     ) -> ObservedTaskRuntime {
         ObservedTaskRuntime {
             git_status: git,
             tmux_status: tmux,
-            worktrunk_status: worktrunk,
+            task_window_status: task,
         }
     }
 
@@ -253,8 +253,8 @@ mod tests {
         let healthy = observed(
             Some(git_status(true)),
             Some(TmuxStatus::present("ajax-web-fix-login")),
-            Some(WorktrunkStatus::present(
-                "worktrunk",
+            Some(TaskWindowStatus::present(
+                "task",
                 PathBuf::from("/tmp/worktrees/web-fix-login"),
             )),
         );
@@ -286,9 +286,9 @@ mod tests {
                 observed(
                     Some(git_status(true)),
                     Some(TmuxStatus::present("ajax-web-fix-login")),
-                    Some(WorktrunkStatus {
+                    Some(TaskWindowStatus {
                         exists: false,
-                        window_name: "worktrunk".to_string(),
+                        window_name: "task".to_string(),
                         current_path: PathBuf::new(),
                         points_at_expected_path: false,
                     }),
@@ -299,9 +299,9 @@ mod tests {
                 observed(
                     Some(git_status(true)),
                     Some(TmuxStatus::present("ajax-web-fix-login")),
-                    Some(WorktrunkStatus {
+                    Some(TaskWindowStatus {
                         exists: true,
-                        window_name: "worktrunk".to_string(),
+                        window_name: "task".to_string(),
                         current_path: PathBuf::from("/tmp/other"),
                         points_at_expected_path: false,
                     }),

@@ -5,7 +5,7 @@ use crate::{
     lifecycle::force_mark_removed,
     models::{
         AgentRuntimeStatus, LifecycleStatus, SafetyClassification, SideFlag, StepReceipt,
-        StepReceiptStatus, Task, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+        StepReceiptStatus, Task, TaskOperationKind, TaskWindowStatus, TmuxStatus,
     },
     operation::{task_operation_eligibility, OperationEligibility, TaskOperation},
     policy::cleanup_safety,
@@ -45,14 +45,12 @@ pub fn mark_task_cleanup_step_completed<R: Registry>(
             .map_err(CommandError::Registry)?;
         context
             .registry
-            .update_worktrunk_status(
+            .update_task_window_status(
                 &task.id,
-                Some(WorktrunkStatus {
-                    exists: false,
-                    window_name: task.worktrunk_window.clone(),
-                    current_path: task.worktree_path.clone(),
-                    points_at_expected_path: false,
-                }),
+                Some(TaskWindowStatus::missing(
+                    task.task_window.clone(),
+                    task.worktree_path.clone(),
+                )),
             )
             .map_err(CommandError::Registry)?;
         return Ok(true);
@@ -871,7 +869,7 @@ mod tests {
             "main",
             "/repo/web__worktrees/ajax-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Cleanable;

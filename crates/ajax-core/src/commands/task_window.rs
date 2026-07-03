@@ -3,25 +3,25 @@ use super::{CommandContext, CommandError, CommandPlan, OpenMode};
 use crate::{
     adapters::TmuxAdapter,
     live::LiveStatusKind,
-    models::{LifecycleStatus, TmuxStatus, WorktrunkStatus},
+    models::{LifecycleStatus, TaskWindowStatus, TmuxStatus},
     registry::Registry,
 };
 
-pub fn trunk_task_plan<R: Registry>(
+pub fn task_window_repair_plan<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<CommandPlan, CommandError> {
-    trunk_task_plan_with_open_mode(context, qualified_handle, OpenMode::Attach)
+    task_window_repair_plan_with_open_mode(context, qualified_handle, OpenMode::Attach)
 }
 
-pub fn trunk_task_plan_with_open_mode<R: Registry>(
+pub fn task_window_repair_plan_with_open_mode<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
     mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
     let task = find_task(context, qualified_handle)?;
     let tmux = TmuxAdapter::new("tmux");
-    let mut plan = CommandPlan::new(format!("open worktrunk: {qualified_handle}"));
+    let mut plan = CommandPlan::new(format!("open task: {qualified_handle}"));
     if task.lifecycle_status == LifecycleStatus::Removed {
         plan.blocked_reasons.push("task is removed".to_string());
         return Ok(plan);
@@ -43,31 +43,31 @@ pub fn trunk_task_plan_with_open_mode<R: Registry>(
         .as_ref()
         .is_some_and(|status| status.exists);
     if !tmux_session_exists {
-        plan.commands.push(tmux.new_detached_worktrunk_session(
+        plan.commands.push(tmux.new_detached_task_session(
             &task.tmux_session,
-            &task.worktrunk_window,
+            &task.task_window,
             &task.worktree_path.display().to_string(),
         ));
     } else if task
-        .worktrunk_status
+        .task_window_status
         .as_ref()
         .is_some_and(|status| status.exists && !status.points_at_expected_path)
     {
         plan.commands
-            .push(tmux.kill_window(&task.tmux_session, &task.worktrunk_window));
-        plan.commands.push(tmux.ensure_worktrunk(
+            .push(tmux.kill_window(&task.tmux_session, &task.task_window));
+        plan.commands.push(tmux.ensure_task_window(
             &task.tmux_session,
-            &task.worktrunk_window,
+            &task.task_window,
             &task.worktree_path.display().to_string(),
         ));
     } else if task
-        .worktrunk_status
+        .task_window_status
         .as_ref()
         .is_none_or(|status| !status.exists)
     {
-        plan.commands.push(tmux.ensure_worktrunk(
+        plan.commands.push(tmux.ensure_task_window(
             &task.tmux_session,
-            &task.worktrunk_window,
+            &task.task_window,
             &task.worktree_path.display().to_string(),
         ));
     }
@@ -76,21 +76,21 @@ pub fn trunk_task_plan_with_open_mode<R: Registry>(
     }
 
     plan.commands
-        .push(tmux.select_window(&task.tmux_session, &task.worktrunk_window));
+        .push(tmux.select_window(&task.tmux_session, &task.task_window));
     match mode {
         OpenMode::Attach => plan
             .commands
-            .push(tmux.attach_window(&task.tmux_session, &task.worktrunk_window)),
+            .push(tmux.attach_window(&task.tmux_session, &task.task_window)),
         OpenMode::SwitchClient => plan
             .commands
-            .push(tmux.switch_client_to_window(&task.tmux_session, &task.worktrunk_window)),
+            .push(tmux.switch_client_to_window(&task.tmux_session, &task.task_window)),
         OpenMode::NoAttach => unreachable!("handled above"),
     };
 
     Ok(plan)
 }
 
-pub fn mark_task_trunk_repaired<R: Registry>(
+pub fn mark_task_window_repaired<R: Registry>(
     context: &mut CommandContext<R>,
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
@@ -101,10 +101,10 @@ pub fn mark_task_trunk_repaired<R: Registry>(
         .map_err(CommandError::Registry)?;
     context
         .registry
-        .update_worktrunk_status(
+        .update_task_window_status(
             &task.id,
-            Some(WorktrunkStatus::present(
-                task.worktrunk_window,
+            Some(TaskWindowStatus::present(
+                task.task_window,
                 task.worktree_path,
             )),
         )
@@ -113,7 +113,7 @@ pub fn mark_task_trunk_repaired<R: Registry>(
         if task.live_status.as_ref().is_some_and(|status| {
             matches!(
                 status.kind,
-                LiveStatusKind::TmuxMissing | LiveStatusKind::WorktrunkMissing
+                LiveStatusKind::TmuxMissing | LiveStatusKind::TaskWindowMissing
             )
         }) {
             task.live_status = None;

@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, error::Error, fmt, time::SystemTime};
 use crate::lifecycle::{transition_lifecycle, LifecycleTransitionError, LifecycleTransitionReason};
 use crate::models::{
     GitStatus, LifecycleStatus, LiveObservation, SideFlag, StepReceipt, StepReceiptIdentity, Task,
-    TaskId, TmuxStatus, WorktrunkStatus,
+    TaskId, TaskWindowStatus, TmuxStatus,
 };
 use serde::{Deserialize, Serialize};
 
@@ -38,10 +38,10 @@ pub trait Registry {
         task_id: &TaskId,
         status: Option<TmuxStatus>,
     ) -> Result<(), RegistryError>;
-    fn update_worktrunk_status(
+    fn update_task_window_status(
         &mut self,
         task_id: &TaskId,
-        status: Option<WorktrunkStatus>,
+        status: Option<TaskWindowStatus>,
     ) -> Result<(), RegistryError>;
     fn apply_live_observation(
         &mut self,
@@ -190,21 +190,21 @@ impl Registry for InMemoryRegistry {
         Ok(())
     }
 
-    fn update_worktrunk_status(
+    fn update_task_window_status(
         &mut self,
         task_id: &TaskId,
-        status: Option<WorktrunkStatus>,
+        status: Option<TaskWindowStatus>,
     ) -> Result<(), RegistryError> {
         let Some(task) = self.tasks.get_mut(task_id) else {
             return Err(RegistryError::TaskNotFound(task_id.clone()));
         };
 
-        task.apply_worktrunk_status(status);
+        task.apply_task_window_status(status);
         refresh_task_annotations(task);
         self.events.push(RegistryEvent::new(
             task_id.clone(),
             RegistryEventKind::SubstrateChanged,
-            "worktrunk evidence changed",
+            "task evidence changed",
         ));
 
         Ok(())
@@ -386,7 +386,7 @@ mod tests {
     };
     use crate::models::{
         AgentClient, AnnotationKind, GitStatus, LifecycleStatus, LiveObservation, RuntimeHealth,
-        SideFlag, StepReceipt, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+        SideFlag, StepReceipt, Task, TaskId, TaskOperationKind, TaskWindowStatus, TmuxStatus,
     };
 
     fn task(id: &str, repo: &str, handle: &str) -> Task {
@@ -399,7 +399,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{repo}-{handle}"),
             format!("ajax-{repo}-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -639,9 +639,9 @@ mod tests {
             )
             .unwrap();
         registry
-            .update_worktrunk_status(
+            .update_task_window_status(
                 &TaskId::new("task-1"),
-                Some(WorktrunkStatus::present("worktrunk", "/tmp/web")),
+                Some(TaskWindowStatus::present("task", "/tmp/web")),
             )
             .unwrap();
 
@@ -650,7 +650,7 @@ mod tests {
         assert_eq!(events[1].kind, RegistryEventKind::SubstrateChanged);
         assert_eq!(events[1].message, "git evidence changed");
         assert_eq!(events[2].message, "tmux evidence changed");
-        assert_eq!(events[3].message, "worktrunk evidence changed");
+        assert_eq!(events[3].message, "task evidence changed");
     }
 
     #[test]
@@ -688,11 +688,11 @@ mod tests {
             )
             .unwrap();
         registry
-            .update_worktrunk_status(
+            .update_task_window_status(
                 &TaskId::new("task-1"),
-                Some(WorktrunkStatus {
+                Some(TaskWindowStatus {
                     exists: false,
-                    window_name: "worktrunk".to_string(),
+                    window_name: "task".to_string(),
                     current_path: "/tmp/web".into(),
                     points_at_expected_path: false,
                 }),
@@ -707,7 +707,7 @@ mod tests {
             SideFlag::Conflicted,
             SideFlag::Unpushed,
             SideFlag::TmuxMissing,
-            SideFlag::WorktrunkMissing,
+            SideFlag::TaskWindowMissing,
         ] {
             assert!(task.has_side_flag(flag), "missing side flag: {flag:?}");
         }
@@ -737,9 +737,9 @@ mod tests {
             )
             .unwrap();
         registry
-            .update_worktrunk_status(
+            .update_task_window_status(
                 &TaskId::new("task-1"),
-                Some(WorktrunkStatus::present("worktrunk", "/tmp/web")),
+                Some(TaskWindowStatus::present("task", "/tmp/web")),
             )
             .unwrap();
 
@@ -751,7 +751,7 @@ mod tests {
             SideFlag::Conflicted,
             SideFlag::Unpushed,
             SideFlag::TmuxMissing,
-            SideFlag::WorktrunkMissing,
+            SideFlag::TaskWindowMissing,
         ] {
             assert!(!task.has_side_flag(flag), "unexpected side flag: {flag:?}");
         }
@@ -775,7 +775,7 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present("worktrunk", "/tmp/web"));
+        task.task_window_status = Some(TaskWindowStatus::present("task", "/tmp/web"));
 
         registry.create_task(task).unwrap();
 

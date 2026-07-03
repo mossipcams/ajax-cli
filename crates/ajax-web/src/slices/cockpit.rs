@@ -599,7 +599,7 @@ pub(crate) mod tests {
         task.last_activity_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000);
         task.agent_attempts.push(AgentAttempt {
             agent: AgentClient::Codex,
-            launch_target: "worktrunk".to_string(),
+            launch_target: "task".to_string(),
             started_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000),
             finished_at: Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_001_000)),
             status: AgentRuntimeStatus::Done,
