@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.30.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.1...ajax-cli-v0.30.2) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** remove server-issued confirmation-token gate for destructive actions ([#296](https://github.com/mossipcams/ajax-cli/issues/296)) ([b80eacb](https://github.com/mossipcams/ajax-cli/commit/b80eacb882809ff35512595973a5f50f66f69466))
+
 ## [0.30.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.0...ajax-cli-v0.30.1) (2026-07-02)
 
 
