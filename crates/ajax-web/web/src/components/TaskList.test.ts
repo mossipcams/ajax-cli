@@ -15,6 +15,7 @@ const cockpit: BrowserCockpitView = {
       status: "error",
       status_explanation: "CI failed",
       actions: [
+        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
         { action: "fix-ci", label: "Fix CI", destructive: false, confirmation_required: false },
         { action: "drop", label: "Drop", destructive: true, confirmation_required: true },
       ],
@@ -26,7 +27,9 @@ const cockpit: BrowserCockpitView = {
       title: "B",
       status: "running",
       status_explanation: "Agent working",
-      actions: [],
+      actions: [
+        { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
+      ],
     },
     {
       id: "api/c",
@@ -42,11 +45,13 @@ const cockpit: BrowserCockpitView = {
 
 describe("TaskList", () => {
   it("renders the inbox card with explanation and ordered actions", () => {
-    const { container, getByText } = render(TaskList, { props: { cockpit } });
+    const { container, getByText, queryByText } = render(TaskList, { props: { cockpit } });
     const inboxCard = container.querySelector(".inbox-card[data-handle='web/a']");
     expect(inboxCard).not.toBeNull();
     expect(getByText("CI failed")).toBeInTheDocument();
     expect(getByText("Fix CI")).toBeInTheDocument();
+    expect(queryByText("Open")).not.toBeInTheDocument();
+    expect(queryByText("Resume")).not.toBeInTheDocument();
   });
 
   it("renders calm task rows excluding inbox tasks", () => {
@@ -82,6 +87,20 @@ describe("TaskList", () => {
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
 
+  it("opens an inbox task when the card body is tapped", async () => {
+    const onOpenTask = vi.fn();
+    const { container } = render(TaskList, { props: { cockpit, onOpenTask } });
+    await fireEvent.click(container.querySelector(".inbox-card-open-body")!);
+    expect(onOpenTask).toHaveBeenCalledWith("web/a");
+  });
+
+  it("does not reveal resume as a calm-row action", () => {
+    const { container } = render(TaskList, { props: { cockpit } });
+    const wrap = container.querySelector(".task-row-wrap[data-handle='web/b']");
+    expect(wrap).not.toBeNull();
+    expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
+  });
+
   it("reveals a swipe action behind a calm row that has actions", () => {
     const withAction: BrowserCockpitView = {
       ...cockpit,
@@ -107,7 +126,7 @@ describe("TaskList", () => {
     expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
   });
 
-  it("renders no reveal for a calm row without actions", () => {
+  it("renders no reveal for a calm row without non-resume actions", () => {
     const { container } = render(TaskList, { props: { cockpit } });
     const wrap = container.querySelector(".task-row-wrap[data-handle='api/c']");
     expect(wrap).not.toBeNull();
