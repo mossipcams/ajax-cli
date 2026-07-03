@@ -134,7 +134,11 @@ mod tests {
         assert!(compact.contains("scrollbar-width:none"));
         assert!(compact.contains("::-webkit-scrollbar"));
         assert!(compact.contains("html.keyboard-open.task-detail.detail-header"));
-        assert!(!compact.contains("html.terminal-expanded.task-detail.detail-header"));
+        assert!(compact.contains("html.terminal-expanded.task-detail.detail-header"));
+        assert!(compact.contains("html.terminal-expanded.task-detail.terminal-primary"));
+        assert!(compact.contains("html.terminal-expanded.task-detail.terminal-panel"));
+        assert!(compact.contains("position:fixed"));
+        assert!(compact.contains("height:var(--app-height,100dvh)"));
         // Inputs stay >= 16px so iOS Safari does not zoom on focus.
         assert!(compact.contains("font-size:16px"));
         // Mid-century-modern walnut palette tokens.
