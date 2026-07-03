@@ -1016,18 +1016,41 @@ describe("TerminalRawView", () => {
     expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
   });
 
-  it("does not focus the terminal when toggling expand, so the keyboard stays put", async () => {
-    // focusTerm() here popped the iOS keyboard mid-toggle — and an open
-    // keyboard freezes the grid refit (PTY lockstep), so the expanded area
-    // stayed misfit until the keyboard closed. Expand must never focus.
+  it("focuses the terminal on the first fullscreen tap so iOS opens the keyboard", async () => {
     const { getByRole } = await mountOpenTerminal();
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     focus.mockClear();
+    blur.mockClear();
 
     getByRole("button", { name: "Expand terminal" }).click();
     await tick();
 
-    expect(focus).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(blur).not.toHaveBeenCalled();
+  });
+
+  it("blurs the terminal when exiting fullscreen so iOS closes the keyboard", async () => {
+    const { getByRole } = await mountOpenTerminal();
+    const toggle = getByRole("button", { name: "Expand terminal" });
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    focus.mockClear();
+    blur.mockClear();
+
+    toggle.click();
+    await tick();
+    toggle.click();
+    await tick();
+
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(blur).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the terminal hotkey row compact", () => {
+    expect(terminalRawViewSource).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
   });
 
   it("refits through the immediate path when expand is toggled", async () => {
@@ -1356,7 +1379,7 @@ describe("TerminalRawView", () => {
     expect(inputFrames).toHaveLength(0);
   });
 
-  it("uses tighter mobile terminal chrome without changing desktop sizing", () => {
+  it("uses compact terminal chrome on mobile and desktop", () => {
     // The mobile block covers portrait width AND landscape phones (coarse
     // pointer, short viewport).
     const mobileBlock = terminalRawViewSource.match(
@@ -1372,13 +1395,13 @@ describe("TerminalRawView", () => {
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-left:\s*none/);
     expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
-    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*3px 4px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*32px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*2px 8px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*12px/);
+    expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*1px 7px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
 
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
-    expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*40px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
   });
 

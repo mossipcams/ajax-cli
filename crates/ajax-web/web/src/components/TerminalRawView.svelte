@@ -57,6 +57,7 @@
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
   let requestPaste: () => void = () => {};
+  let focusTerm: () => void = () => {};
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
 
@@ -224,6 +225,7 @@
           pasteNotice = "Clipboard read failed — allow paste access and retry";
         });
     };
+    focusTerm = () => term?.focus();
 
     let refitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -457,7 +459,13 @@
     aria-pressed={expanded}
     onmousedown={(event) => event.preventDefault()}
     onclick={() => {
-      setExpanded(!expanded);
+      const next = !expanded;
+      setExpanded(next);
+      if (next) {
+        focusTerm();
+      } else {
+        blurTerm();
+      }
       refitAfterLayout();
     }}>⛶</button>
   {#if hasUnseenOutput}
@@ -596,13 +604,13 @@
 
     .terminal-keys {
       gap: 4px;
-      padding: 3px 4px;
+      padding: 2px 4px;
     }
 
     .terminal-key {
-      min-height: 32px;
-      padding: 2px 8px;
-      font-size: 12px;
+      min-height: 28px;
+      padding: 1px 7px;
+      font-size: 11px;
     }
   }
 
@@ -653,23 +661,23 @@
 
   .terminal-keys {
     display: flex;
-    gap: 6px;
+    gap: 4px;
     overflow-x: auto;
-    padding: 0;
+    padding: 2px 4px;
     background: var(--paper);
   }
 
   .terminal-key {
     flex: none;
-    min-width: 44px;
-    min-height: 40px;
-    padding: 6px 10px;
+    min-width: 38px;
+    min-height: 28px;
+    padding: 3px 7px;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--ink);
     font-family: var(--mono);
-    font-size: 13px;
+    font-size: 11px;
   }
 
   .terminal-key.is-armed {
