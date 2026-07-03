@@ -2,6 +2,19 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.31.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.3...ajax-cli-v0.31.0) (2026-07-03)
+
+
+### Features
+
+* introduce Ajax task window substrate ([#303](https://github.com/mossipcams/ajax-cli/issues/303)) ([dd65f37](https://github.com/mossipcams/ajax-cli/commit/dd65f374fe20d5a7bd7d30c903181af9bc00678c))
+
+
+### Bug Fixes
+
+* **web:** compact dashboard task rows for mobile density ([#301](https://github.com/mossipcams/ajax-cli/issues/301)) ([bb05157](https://github.com/mossipcams/ajax-cli/commit/bb05157d6e659fe8b6174c57faf8664e913b64e9))
+* **web:** remove redundant detail resume action ([#300](https://github.com/mossipcams/ajax-cli/issues/300)) ([c2984b5](https://github.com/mossipcams/ajax-cli/commit/c2984b5cd9e151043a20bef00e620e525eaaf306))
+
 ## [0.30.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.2...ajax-cli-v0.30.3) (2026-07-03)
 
 
