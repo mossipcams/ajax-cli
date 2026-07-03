@@ -584,27 +584,23 @@ main {
      restores the normal terminal-first chrome. */
   html.keyboard-open .task-detail .detail-header,
   html.keyboard-open .task-detail .interact-panel,
-  html.keyboard-open .task-detail .meta-details,
-  html.terminal-expanded .task-detail .detail-header,
-  html.terminal-expanded .task-detail .interact-panel,
-  html.terminal-expanded .task-detail .meta-details {
+  html.keyboard-open .task-detail .meta-details {
     display: none;
   }
 
   /* With the chrome gone the terminal owns the fixed band top-to-bottom; the
      control-key bar stays pinned at its bottom edge, directly above the
-     keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. The manual
-     expand toggle (html.terminal-expanded) reuses the same takeover. */
-  html.keyboard-open .task-detail .terminal-primary,
-  html.terminal-expanded .task-detail .terminal-primary {
+     keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. Manual
+     fullscreen (html.terminal-expanded) keeps Back/Dashboard reachable until
+     the keyboard actually opens. */
+  html.keyboard-open .task-detail .terminal-primary {
     margin-top: 0;
   }
 }
 
 /* EXPANDED TERMINAL (desktop) — the key-bar ⛶ toggle lifts the inline panel
-   into a fixed full-viewport overlay. Mobile — including landscape phones —
-   handles the same class by collapsing the task chrome inside its existing
-   full-screen takeover, so it is excluded here. */
+   into a fixed full-viewport overlay. Mobile keeps task chrome visible unless
+   the soft keyboard is open (see keyboard-open rules above). */
 @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
   html.terminal-expanded .task-detail .terminal-primary {
     position: fixed;
