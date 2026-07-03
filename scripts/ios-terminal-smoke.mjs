@@ -52,6 +52,10 @@ const shot = async (name) => {
   await page.screenshot({ path: path.join(screenshotDir, `${name}.png`), fullPage: true });
 };
 
+const terminalPanel = () => page.locator("[data-testid='task-terminal-panel'][data-terminal-engine='ghostty']");
+const terminalCanvas = () => terminalPanel().locator("canvas");
+const terminalHost = () => page.locator(".task-terminal-viewport");
+
 const metrics = async () =>
   page.evaluate(() => {
     const rect = (selector) => {
@@ -69,6 +73,7 @@ const metrics = async () =>
         clientWidth: element.clientWidth,
         scrollHeight: element.scrollHeight,
         clientHeight: element.clientHeight,
+        scrollTop: element.scrollTop,
       };
     };
 
@@ -97,15 +102,19 @@ const metrics = async () =>
         clientHeight: document.body.clientHeight,
       },
       taskDetail: rect(".task-detail"),
-      terminalPanel: rect(".terminal-panel"),
+      terminalPanel: rect("[data-testid='task-terminal-panel']"),
       terminalHost: rect(".task-terminal-viewport"),
-      xterm: rect(".xterm"),
-      xtermScreen: rect(".xterm-screen"),
-      xtermViewport: rect(".xterm-viewport"),
+      ghosttyCanvas: rect(".task-terminal-viewport canvas"),
       active: {
         tag: document.activeElement?.tagName ?? null,
         className: String(document.activeElement?.className ?? ""),
       },
+      backVisible: (() => {
+        const back = document.querySelector(".detail-header .back");
+        if (!back) return false;
+        const style = window.getComputedStyle(back);
+        return style.display !== "none" && style.visibility !== "hidden";
+      })(),
       text: document.body.innerText.slice(0, 2000),
     };
   });
@@ -123,11 +132,14 @@ const scrollDocumentBy = async (x, y) => {
   );
 };
 
-const scrollTerminalHistoryBy = async (y) => {
-  await page.evaluate((deltaY) => {
-    const viewport = document.querySelector(".xterm-viewport");
-    if (viewport) viewport.scrollTop += deltaY;
-  }, y);
+const swipeTerminalHistory = async () => {
+  const canvas = terminalCanvas();
+  const box = await canvas.boundingBox();
+  assert(box, "ghostty canvas has no bounding box");
+  await canvas.dragTo(canvas, {
+    sourcePosition: { x: box.width / 2, y: box.height * 0.8 },
+    targetPosition: { x: box.width / 2, y: box.height * 0.2 },
+  });
 };
 
 try {
@@ -163,7 +175,7 @@ try {
   assert(openMetrics.root.className.includes("ajax-task-open"), "task-open scroll lock class missing");
   assert(openMetrics.taskDetail, "task detail did not open");
   assert(openMetrics.terminalPanel, "terminal panel missing");
-  assert(openMetrics.xterm, "xterm missing");
+  assert(openMetrics.ghosttyCanvas, "ghostty canvas missing");
   assert(
     openMetrics.terminalPanel.top < 170,
     `terminal starts too low: ${openMetrics.terminalPanel.top}`,
@@ -173,23 +185,60 @@ try {
     "document should not be scrollable while task terminal is open",
   );
   assert(
-    openMetrics.xterm.scrollWidth <= openMetrics.terminalHost.clientWidth + 24,
-    `xterm overflows host: xterm ${openMetrics.xterm.scrollWidth}, host ${openMetrics.terminalHost.clientWidth}`,
+    openMetrics.ghosttyCanvas.width <= openMetrics.terminalHost.clientWidth + 24,
+    `ghostty canvas overflows host: canvas ${openMetrics.ghosttyCanvas.width}, host ${openMetrics.terminalHost.clientWidth}`,
   );
 
-  await scrollTerminalHistoryBy(-900);
+  const expandBtn = page.getByRole("button", { name: "Expand terminal" });
+  assert(await expandBtn.isVisible(), "fullscreen toggle is not visible");
+  await expandBtn.click();
+  await page.waitForTimeout(800);
+  await shot("03-terminal-expanded");
+
+  const expandedMetrics = await metrics();
+  assert(
+    expandedMetrics.root.className.includes("terminal-expanded"),
+    "terminal-expanded class missing after fullscreen tap",
+  );
+  assert(expandedMetrics.backVisible, "Back button hidden after expand without keyboard-open takeover");
+  assert(expandedMetrics.ghosttyCanvas, "ghostty canvas missing after expand");
+  assert(
+    expandedMetrics.ghosttyCanvas.bottom <= (expandedMetrics.viewport.visualHeight ?? expandedMetrics.viewport.innerHeight) + 2,
+    `terminal canvas extends below visible band: bottom ${expandedMetrics.ghosttyCanvas.bottom}`,
+  );
+  assert(
+    (expandedMetrics.root.scrollTop ?? 0) === 0,
+    "document scroll should reset to top on fullscreen expand",
+  );
+
+  await expandBtn.click();
+  await page.waitForTimeout(800);
+  await shot("04-terminal-collapsed");
+
+  const collapsedMetrics = await metrics();
+  assert(
+    !collapsedMetrics.root.className.includes("terminal-expanded"),
+    "terminal-expanded class stuck after collapse",
+  );
+  assert(collapsedMetrics.backVisible, "Back button not reachable after exiting fullscreen");
+  assert(
+    await page.getByRole("navigation", { name: "Mobile navigation" }).getByRole("button", { name: "Dashboard", exact: true }).isVisible(),
+    "Dashboard nav is not reachable after exiting fullscreen",
+  );
+
+  await swipeTerminalHistory();
   await page.waitForTimeout(500);
-  await shot("03-terminal-history-scroll");
+  await shot("05-terminal-history-scroll");
   const historyMetrics = await metrics();
   assert((historyMetrics.root.scrollTop ?? 0) === 0, "terminal history scroll moved the page");
 
-  const xtermBox = await page.locator(".xterm").boundingBox();
-  assert(xtermBox, "xterm has no bounding box");
-  await page.touchscreen.tap(xtermBox.x + xtermBox.width / 2, xtermBox.y + xtermBox.height / 2);
+  const canvasBox = await terminalCanvas().boundingBox();
+  assert(canvasBox, "ghostty canvas has no bounding box");
+  await page.touchscreen.tap(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
   await page.keyboard.type(typeText);
   if (pressEnter) await page.keyboard.press("Enter");
   await page.waitForTimeout(1_500);
-  await shot("04-terminal-after-typing");
+  await shot("06-terminal-after-typing");
 
   const typedMetrics = await metrics();
   assert(typedMetrics.active.tag === "TEXTAREA", "terminal textarea did not retain focus after typing");
@@ -230,14 +279,14 @@ try {
         (await action.innerText()).toLowerCase().includes("confirm"),
         `${label} did not enter confirmation state`,
       );
-      await page.locator(".xterm").click();
+      await terminalCanvas().click();
       await page.waitForTimeout(150);
     }
   }
 
   await page.getByRole("button", { name: /back/i }).click();
   await page.waitForTimeout(1_000);
-  await shot("05-dashboard-after-back");
+  await shot("07-dashboard-after-back");
   const bottomNav = page.getByRole("navigation", { name: "Mobile navigation" });
   assert(
     await bottomNav.getByRole("button", { name: "New", exact: true }).isVisible(),
@@ -260,6 +309,8 @@ try {
         screenshots: screenshotDir,
         metrics: {
           open: openMetrics,
+          expanded: expandedMetrics,
+          collapsed: collapsedMetrics,
           afterHistoryScroll: historyMetrics,
           afterTyping: typedMetrics,
           final: finalMetrics,

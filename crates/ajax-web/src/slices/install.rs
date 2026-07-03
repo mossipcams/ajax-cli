@@ -85,7 +85,6 @@ mod tests {
             "href=\"/manifest.webmanifest\"",
             "rel=\"apple-touch-icon\"",
             "href=\"/icons/icon-192.png\"",
-            "apple-mobile-web-app-capable",
         ] {
             assert!(
                 !shell.contains(retired),
@@ -105,6 +104,24 @@ mod tests {
     }
 
     #[test]
+    fn shell_advertises_safe_pwa_browser_metadata_without_install_surface() {
+        let shell = browser_shell();
+        for meta in [
+            "name=\"color-scheme\"",
+            "name=\"theme-color\"",
+            "name=\"mobile-web-app-capable\"",
+            "apple-mobile-web-app-capable",
+            "apple-mobile-web-app-title",
+            "apple-mobile-web-app-status-bar-style",
+        ] {
+            assert!(
+                shell.contains(meta),
+                "browser shell should include safe PWA metadata: {meta}"
+            );
+        }
+    }
+
+    #[test]
     fn stylesheet_preserves_the_safari_first_visual_language() {
         // Compare without internal spaces so the assertions survive CSS
         // minification (`scrollbar-width:none` vs `scrollbar-width: none`).
@@ -116,6 +133,8 @@ mod tests {
         assert!(compact.contains("env(safe-area-inset-bottom)"));
         assert!(compact.contains("scrollbar-width:none"));
         assert!(compact.contains("::-webkit-scrollbar"));
+        assert!(compact.contains("html.keyboard-open.task-detail.detail-header"));
+        assert!(!compact.contains("html.terminal-expanded.task-detail.detail-header"));
         // Inputs stay >= 16px so iOS Safari does not zoom on focus.
         assert!(compact.contains("font-size:16px"));
         // Mid-century-modern walnut palette tokens.

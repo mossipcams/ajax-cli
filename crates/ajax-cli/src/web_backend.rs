@@ -432,8 +432,13 @@ mod tests {
         // inbox, task rows, settings, etc. are rendered client-side.
         assert!(html.contains("id=\"app\""));
         assert!(html.contains("type=\"module\""));
+        assert!(html.contains("name=\"theme-color\""));
+        assert!(html.contains("name=\"color-scheme\""));
+        assert!(html.contains("name=\"mobile-web-app-capable\""));
+        assert!(html.contains("apple-mobile-web-app-capable"));
+        assert!(html.contains("apple-mobile-web-app-title"));
+        assert!(html.contains("apple-mobile-web-app-status-bar-style"));
         assert!(!html.contains("href=\"/manifest.webmanifest\""));
-        assert!(!html.contains("apple-mobile-web-app-capable"));
         for legacy in [
             "id=\"inbox\"",
             "id=\"repos\"",
