@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.5...ajax-cli-v0.32.6) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** set terminal type for tmux attach ([#318](https://github.com/mossipcams/ajax-cli/issues/318)) ([b84bfe9](https://github.com/mossipcams/ajax-cli/commit/b84bfe991ebb49f870fb3740acc9dc51a55fa992))
+
 ## [0.32.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.4...ajax-cli-v0.32.5) (2026-07-03)
 
 
