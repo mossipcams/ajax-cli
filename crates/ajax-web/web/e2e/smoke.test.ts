@@ -151,8 +151,15 @@ async function mockTerminalWebSocket(page: Page) {
         this.listeners[type] = (this.listeners[type] ?? []).filter((item) => item !== handler);
       }
 
-      send(data: string) {
-        frames.push(JSON.parse(data));
+      send(data: string | ArrayBuffer | ArrayBufferView) {
+        if (typeof data === "string") {
+          frames.push(JSON.parse(data));
+          return;
+        }
+        const bytes = ArrayBuffer.isView(data)
+          ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+          : new Uint8Array(data);
+        frames.push({ type: "input", data: new TextDecoder().decode(bytes) });
       }
 
       close() {

@@ -44,6 +44,7 @@ export function connectTaskTerminal(
   let status: TerminalConnectionStatus = "connecting";
   // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
   const outputDecoder = new TextDecoder();
+  const inputEncoder = new TextEncoder();
 
   const setStatus = (next: TerminalConnectionStatus) => {
     status = next;
@@ -146,7 +147,7 @@ export function connectTaskTerminal(
     isOpen: () => socket.readyState === WebSocket.OPEN,
     sendInput(data: string) {
       if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ type: "input", data }));
+      socket.send(inputEncoder.encode(data));
     },
     sendResize(cols: number, rows: number) {
       if (socket.readyState !== WebSocket.OPEN) return;
