@@ -149,7 +149,7 @@
         <div class="task-list">
           {#each group.cards as card (card.qualified_handle)}
             {@const meta = statusMeta(card.status)}
-            {@const revealAction = card.actions?.[0]}
+            {@const revealAction = card.actions.find((action) => action.action !== "resume")}
             <div class="task-row-wrap" data-handle={card.qualified_handle}>
               {#if revealAction}
                 <div class="task-row-reveal" style="width: {SWIPE_REVEAL_WIDTH}px">

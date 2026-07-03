@@ -15,6 +15,7 @@
   let { card, severity = 999, onOpenTask, onCockpit, onResult, onMutated }: Props = $props();
 
   let meta = $derived(statusMeta(card.status));
+  let actions = $derived(card.actions.filter((action) => action.action !== "resume"));
 </script>
 
 <article
@@ -39,15 +40,12 @@
 
   <div class="inbox-card-actions">
     <ActionBar
-      actions={card.actions}
+      {actions}
       handle={card.qualified_handle}
       {onCockpit}
       {onResult}
       {onMutated}
     />
-    <button type="button" class="action" onclick={() => onOpenTask?.(card.qualified_handle)}>
-      Open
-    </button>
   </div>
 </article>
 

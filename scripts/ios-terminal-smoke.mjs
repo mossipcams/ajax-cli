@@ -155,7 +155,7 @@ try {
 
   const taskCard = page.locator(`[data-handle="${handle}"]`).first();
   await taskCard.scrollIntoViewIfNeeded();
-  await taskCard.locator("button").filter({ hasText: "Open" }).click();
+  await taskCard.click();
   await page.waitForTimeout(4_000);
   await shot("02-task-open");
 
