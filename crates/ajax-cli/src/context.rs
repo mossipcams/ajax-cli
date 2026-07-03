@@ -396,13 +396,6 @@ fn merge_same_task_facts(
         return Ok(None);
     };
 
-    if attention_facts_changed(disk_fields, baseline_fields)
-        && attention_facts_changed(memory_fields, baseline_fields)
-        && !attention_facts_match(disk_fields, memory_fields)
-    {
-        return Ok(None);
-    }
-
     let mut merged_fields = disk_fields.clone();
     for (field, memory_value) in memory_fields {
         let baseline_value = baseline_fields.get(field);
@@ -421,31 +414,6 @@ fn merge_same_task_facts(
         .map(Some)
         .map_err(|error| CliError::ContextSave(format!("state merge failed: {error}")))
 }
-
-fn attention_facts_changed(
-    task: &serde_json::Map<String, serde_json::Value>,
-    baseline: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    ATTENTION_FACT_FIELDS
-        .iter()
-        .any(|field| task.get(*field) != baseline.get(*field))
-}
-
-fn attention_facts_match(
-    left: &serde_json::Map<String, serde_json::Value>,
-    right: &serde_json::Map<String, serde_json::Value>,
-) -> bool {
-    ATTENTION_FACT_FIELDS
-        .iter()
-        .all(|field| left.get(*field) == right.get(*field))
-}
-
-const ATTENTION_FACT_FIELDS: &[&str] = &[
-    "agent_status",
-    "live_status",
-    "live_status_observed_at",
-    "attention_acknowledged_at",
-];
 
 fn prevent_accidental_empty_overwrite(
     paths: &CliContextPaths,
@@ -1053,9 +1021,9 @@ mod tests {
     }
 
     #[test]
-    fn save_context_reports_conflict_for_concurrent_ack_and_live_status_change() {
+    fn save_context_merges_concurrent_ack_and_live_status_change() {
         let root = std::env::temp_dir().join(format!(
-            "ajax-context-ack-conflict-{}-{}",
+            "ajax-context-ack-merge-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -1073,15 +1041,19 @@ mod tests {
 
         // Native writer changes the same task's live status.
         let mut tracked = load_tracked_context(&paths).unwrap();
-        tracked
-            .context
-            .registry
-            .get_task_mut(&TaskId::new("web/fix-login"))
-            .expect("native task")
-            .live_status = Some(ajax_core::models::LiveObservation::new(
-            ajax_core::models::LiveStatusKind::AgentRunning,
-            "agent running",
-        ));
+        let observed_at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_800);
+        {
+            let native_task = tracked
+                .context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .expect("native task");
+            native_task.live_status = Some(ajax_core::models::LiveObservation::new(
+                ajax_core::models::LiveStatusKind::AgentRunning,
+                "agent running",
+            ));
+            native_task.live_status_observed_at = Some(observed_at);
+        }
 
         // Concurrent writer records an acknowledgment and persists first.
         let acknowledged_at = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_900);
@@ -1095,11 +1067,8 @@ mod tests {
             .unwrap();
         thread::sleep(Duration::from_millis(20));
 
-        let error = save_tracked_context(&paths, &mut tracked).unwrap_err();
-        assert!(error.to_string().contains("state conflict"));
-        assert!(error.to_string().contains("web/fix-login"));
+        save_tracked_context(&paths, &mut tracked).expect("concurrent ack and live status merge");
 
-        // The first writer's acknowledgment is preserved; no last-writer-wins.
         let reloaded = load_context(&paths).expect("reload");
         let reloaded_task = reloaded
             .registry
@@ -1109,7 +1078,7 @@ mod tests {
             reloaded_task.attention_acknowledged_at,
             Some(acknowledged_at)
         );
-        assert_ne!(
+        assert_eq!(
             reloaded_task.live_status.as_ref().map(|status| status.kind),
             Some(ajax_core::models::LiveStatusKind::AgentRunning)
         );
