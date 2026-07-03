@@ -205,7 +205,7 @@ Safari.
 
 Do not change these without explicit approval:
 
-- raw xterm/tmux-first terminal behavior
+- raw Ghostty/tmux-first terminal behavior
 - normal iOS Safari as the target browser mode
 - no Home Screen PWA dependency
 - no service worker/offline mutation model
