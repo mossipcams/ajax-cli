@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.31.0...ajax-cli-v0.32.0) (2026-07-03)
+
+
+### Features
+
+* release task window migration cleanup ([#305](https://github.com/mossipcams/ajax-cli/issues/305)) ([159536d](https://github.com/mossipcams/ajax-cli/commit/159536d334c569097fba0490fa1f6a019f100343))
+
 ## [0.31.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.3...ajax-cli-v0.31.0) (2026-07-03)
 
 
