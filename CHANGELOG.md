@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.6...ajax-cli-v0.32.7) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** reduce iOS terminal input lag ([#320](https://github.com/mossipcams/ajax-cli/issues/320)) ([5be4da1](https://github.com/mossipcams/ajax-cli/commit/5be4da1a7b20768adb9cd76fd28bc227db98eca0))
+
 ## [0.32.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.5...ajax-cli-v0.32.6) (2026-07-03)
 
 
