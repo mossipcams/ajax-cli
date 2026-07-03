@@ -2,6 +2,7 @@
   import type { BrowserCockpitView, BrowserTaskDetail } from "../types";
   import { statusMeta } from "../state";
   import { copyText } from "../diagnostics";
+  import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
   import TerminalRawView from "./TerminalRawView.svelte";
 
@@ -16,6 +17,7 @@
   let { detail, onBack, onCockpit, onResult, onMutated }: Props = $props();
 
   let meta = $derived(statusMeta(detail.status));
+  let actions = $derived(visibleTaskActions(detail.actions));
   let metaOpen = $state(false);
 
   // Lock document scroll while the (mobile) full-screen terminal overlay is
@@ -38,9 +40,9 @@
     {#if detail.status_explanation}
       <p class="interact-summary">{detail.status_explanation}</p>
     {/if}
-    {#if detail.actions.length}
+    {#if actions.length}
       <ActionBar
-        actions={detail.actions}
+        {actions}
         handle={detail.qualified_handle}
         {onCockpit}
         {onResult}

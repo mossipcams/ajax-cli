@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BrowserCockpitView, BrowserTaskCard } from "../types";
   import { statusMeta, severityBucket } from "../state";
+  import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
 
   interface Props {
@@ -15,7 +16,7 @@
   let { card, severity = 999, onOpenTask, onCockpit, onResult, onMutated }: Props = $props();
 
   let meta = $derived(statusMeta(card.status));
-  let actions = $derived(card.actions.filter((action) => action.action !== "resume"));
+  let actions = $derived(visibleTaskActions(card.actions));
 </script>
 
 <article

@@ -90,6 +90,22 @@ describe("TaskDetail", () => {
     expect(getByText("Review")).toBeInTheDocument();
   });
 
+  it("removes redundant resume from task detail actions", () => {
+    const { getByText, queryByText } = render(TaskDetail, {
+      props: {
+        detail: detail({
+          actions: [
+            { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
+            { action: "review", label: "Review", destructive: false, confirmation_required: false },
+          ],
+        }),
+      },
+    });
+
+    expect(queryByText("Resume")).not.toBeInTheDocument();
+    expect(getByText("Review")).toBeInTheDocument();
+  });
+
   it("renders the task terminal panel for the qualified handle", () => {
     const { getByTestId } = render(TaskDetail, { props: { detail: detail() } });
     expect(getByTestId("task-terminal-panel")).toBeInTheDocument();
