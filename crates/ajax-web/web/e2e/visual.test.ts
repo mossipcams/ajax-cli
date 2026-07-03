@@ -122,30 +122,28 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const activePill = page.locator(".project-pill.is-active").first();
   expect(await bg(activePill)).toBe(MUSTARD);
 
-  // Inbox card: a painted surface (solid paper, or the severity gradient) plus a
-  // 3px tone (mustard for "waiting") left rule.
-  const inboxCard = page.locator(".inbox-card").first();
-  const cardStyle = await inboxCard.evaluate((el) => {
+  // Inbox row: a compact task-row (same shape as the calm list) with a tone
+  // (mustard for "waiting") left accent instead of separate card chrome.
+  const inboxRow = page.locator(".task-row.is-inbox").first();
+  const rowStyle = await inboxRow.evaluate((el) => {
     const s = getComputedStyle(el);
     return {
       bg: s.backgroundColor,
-      image: s.backgroundImage,
       leftWidth: s.borderLeftWidth,
       leftColor: s.borderLeftColor,
     };
   });
-  expect(cardStyle.bg !== TRANSPARENT || cardStyle.image !== "none").toBe(true);
-  expect(cardStyle.leftWidth).toBe("3px");
-  expect(cardStyle.leftColor).toBe(MUSTARD);
+  expect(rowStyle.bg).not.toBe(TRANSPARENT);
+  expect(rowStyle.leftWidth).toBe("3px");
+  expect(rowStyle.leftColor).toBe(MUSTARD);
 
-  // Status badge paints with the tone color (waiting -> mustard), not default ink.
-  const badge = page.locator(".status-badge").first();
-  expect(await badge.evaluate((el) => getComputedStyle(el).color)).toBe(MUSTARD);
+  // Status label paints with the tone color (waiting -> mustard), not default ink.
+  const status = page.locator(".task-row-status").first();
+  expect(await status.evaluate((el) => getComputedStyle(el).color)).toBe(MUSTARD);
 
-  // Task rows have the list padding (would be 0 if unstyled). Padding follows
-  // the 4px spacing scale (--space-3).
+  // Task rows have the compact list padding (would be 0 if unstyled).
   const row = page.locator(".task-row").first();
-  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("12px");
+  expect(await row.evaluate((el) => getComputedStyle(el).paddingTop)).toBe("10px");
 
   // New-task row is the dashed CTA.
   const newTaskRow = page.locator(".new-task-row");

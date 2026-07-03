@@ -1,8 +1,7 @@
 <script lang="ts">
-  import type { BrowserCockpitView } from "../types";
+  import type { BrowserCockpitView, BrowserTaskCard } from "../types";
   import { filterByProject, sortCards, statusMeta } from "../state";
   import { visibleTaskActions } from "../taskActions";
-  import TaskCard from "./TaskCard.svelte";
   import ActionBar from "./ActionBar.svelte";
   import { swipeReveal } from "../gestures/swipeRevealAction";
   import { SWIPE_REVEAL_WIDTH } from "../gestures/swipeReveal";
@@ -115,22 +114,58 @@
   </nav>
 {/if}
 
+{#snippet taskRow(card: BrowserTaskCard, isInbox: boolean)}
+  {@const meta = statusMeta(card.status)}
+  {@const revealAction = visibleTaskActions(card.actions)[0]}
+  <div class="task-row-wrap" data-handle={card.qualified_handle}>
+    {#if revealAction}
+      <div class="task-row-reveal" style="width: {SWIPE_REVEAL_WIDTH}px">
+        <ActionBar
+          actions={[revealAction]}
+          handle={card.qualified_handle}
+          {onCockpit}
+          {onResult}
+          {onMutated}
+        />
+      </div>
+    {/if}
+    <button
+      type="button"
+      class="task-row tone-{meta.tone}"
+      class:is-inbox={isInbox}
+      class:is-revealed={(offsets[card.qualified_handle] ?? 0) > 0}
+      data-handle={card.qualified_handle}
+      style="transform: translateX(-{offsets[card.qualified_handle] ?? 0}px)"
+      onclick={() => rowTap(card.qualified_handle)}
+      use:swipeReveal={revealAction
+        ? {
+            onOffset: (offset) => setOffset(card.qualified_handle, offset),
+            onOpenChange: () => {},
+          }
+        : {}}
+    >
+      <span class="status-dot tone-{meta.tone}" aria-hidden="true"></span>
+      <div class="task-row-main">
+        <span class="task-row-handle">{card.qualified_handle}</span>
+        {#if card.status_explanation && card.status_explanation.toLowerCase() !== meta.label.toLowerCase()}
+          <span class="task-row-sub">{card.status_explanation}</span>
+        {/if}
+      </div>
+      <span class="task-row-status">{meta.label}</span>
+      <span class="task-row-chevron">›</span>
+    </button>
+  </div>
+{/snippet}
+
 {#if inboxItems.length}
   <section class="group inbox" aria-live="polite">
     <div class="section-head attention">
       <span class="section-head-title">Needs you</span>
       <span class="section-head-count">{inboxItems.length}</span>
     </div>
-    <div class="inbox-list">
+    <div class="task-list">
       {#each inboxItems as entry (entry.card.qualified_handle)}
-        <TaskCard
-          card={entry.card}
-          severity={entry.item.severity}
-          {onOpenTask}
-          {onCockpit}
-          {onResult}
-          {onMutated}
-        />
+        {@render taskRow(entry.card, true)}
       {/each}
     </div>
   </section>
@@ -149,45 +184,7 @@
         {/if}
         <div class="task-list">
           {#each group.cards as card (card.qualified_handle)}
-            {@const meta = statusMeta(card.status)}
-            {@const revealAction = visibleTaskActions(card.actions)[0]}
-            <div class="task-row-wrap" data-handle={card.qualified_handle}>
-              {#if revealAction}
-                <div class="task-row-reveal" style="width: {SWIPE_REVEAL_WIDTH}px">
-                  <ActionBar
-                    actions={[revealAction]}
-                    handle={card.qualified_handle}
-                    {onCockpit}
-                    {onResult}
-                    {onMutated}
-                  />
-                </div>
-              {/if}
-              <button
-                type="button"
-                class="task-row tone-{meta.tone}"
-                class:is-revealed={(offsets[card.qualified_handle] ?? 0) > 0}
-                data-handle={card.qualified_handle}
-                style="transform: translateX(-{offsets[card.qualified_handle] ?? 0}px)"
-                onclick={() => rowTap(card.qualified_handle)}
-                use:swipeReveal={revealAction
-                  ? {
-                      onOffset: (offset) => setOffset(card.qualified_handle, offset),
-                      onOpenChange: () => {},
-                    }
-                  : {}}
-              >
-                <span class="status-dot tone-{meta.tone}" aria-hidden="true"></span>
-                <div class="task-row-main">
-                  <span class="task-row-handle">{card.qualified_handle}</span>
-                  {#if card.status_explanation && card.status_explanation.toLowerCase() !== meta.label.toLowerCase()}
-                    <span class="task-row-sub">{card.status_explanation}</span>
-                  {/if}
-                </div>
-                <span class="task-row-status">{meta.label}</span>
-                <span class="task-row-chevron">›</span>
-              </button>
-            </div>
+            {@render taskRow(card, false)}
           {/each}
         </div>
       </section>
@@ -206,7 +203,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 6px;
-    margin: 4px 0 18px;
+    margin: 4px 0 14px;
     -ms-overflow-style: none;
     scrollbar-width: none;
   }
@@ -252,7 +249,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    margin: 26px 0 12px;
+    margin: 16px 0 10px;
     padding-bottom: 8px;
     border-bottom: 1px solid var(--rule);
   }
@@ -298,15 +295,9 @@
     color: #1c1714;
   }
 
-  /* INBOX LIST — grid of attention cards (cards styled in TaskCard) -------- */
-  .inbox-list {
-    display: grid;
-    gap: 10px;
-  }
-
-  /* CALM TASK LIST — light, glanceable rows -------------------------------- */
+  /* TASK LIST — light, glanceable rows shared by the inbox and calm groups - */
   .task-group + .task-group {
-    margin-top: 16px;
+    margin-top: 12px;
   }
 
   .task-group-title {
@@ -356,8 +347,8 @@
     align-items: center;
     gap: var(--space-3);
     width: 100%;
-    min-height: 56px;
-    padding: var(--space-3) var(--space-4);
+    min-height: 48px;
+    padding: 10px var(--space-4);
     background: var(--paper-tint);
     border: none;
     color: var(--ink);
@@ -374,6 +365,15 @@
 
   .task-row:active {
     background: var(--paper-high);
+  }
+
+  /* "Needs you" rows get a tone-colored left accent instead of separate card
+     chrome — one compact row style shared with the calm list. Background stays
+     the same opaque --paper-tint as calm rows (not tone-bg mixed in, which is
+     translucent and would let the swipe-hidden action bleed through). */
+  .task-row.is-inbox {
+    padding-left: calc(var(--space-4) - 3px);
+    border-left: 3px solid var(--tone, var(--rule-strong));
   }
 
   .task-row-main {
