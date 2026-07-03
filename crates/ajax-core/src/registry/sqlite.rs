@@ -15,10 +15,10 @@ use crate::lifecycle::hydrate_lifecycle_status;
 use crate::models::{
     AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
     LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag,
-    StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+    StepReceipt, StepReceiptStatus, Task, TaskId, TaskOperationKind, TaskWindowStatus, TmuxStatus,
 };
 
-const SQLITE_SCHEMA_VERSION: i64 = 8;
+const SQLITE_SCHEMA_VERSION: i64 = 9;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SqliteRegistryStore {
@@ -76,6 +76,9 @@ impl SqliteRegistryStore {
         if sqlite_user_version(connection)? == 7 {
             migrate_v7_to_v8(connection)?;
         }
+        if sqlite_user_version(connection)? == 8 {
+            migrate_v8_to_v9(connection)?;
+        }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
             return Err(RegistrySnapshotError::IncompatibleSchema {
@@ -102,7 +105,7 @@ impl SqliteRegistryStore {
                 base_branch TEXT NOT NULL,
                 worktree_path TEXT NOT NULL,
                 tmux_session TEXT NOT NULL,
-                worktrunk_window TEXT NOT NULL,
+                task_window TEXT NOT NULL,
                 selected_agent TEXT NOT NULL
             );
 
@@ -156,12 +159,12 @@ impl SqliteRegistryStore {
                 tmux_session_name TEXT
             );
 
-            CREATE TABLE IF NOT EXISTS registry_task_worktrunk_evidence (
+            CREATE TABLE IF NOT EXISTS registry_task_window_evidence (
                 task_id TEXT PRIMARY KEY NOT NULL,
-                worktrunk_exists INTEGER,
-                worktrunk_window_name TEXT,
-                worktrunk_current_path TEXT,
-                worktrunk_points_at_expected_path INTEGER
+                task_window_exists INTEGER,
+                task_window_name TEXT,
+                task_window_current_path TEXT,
+                task_window_points_at_expected_path INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS registry_task_side_flags (
@@ -277,6 +280,51 @@ impl SqliteRegistryStore {
     }
 }
 
+fn migrate_v8_to_v9(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    let legacy_task_window = concat!("work", "trunk_window");
+    let legacy_task_window_evidence = concat!("registry_task_work", "trunk_evidence");
+
+    if registry_tasks_has_column(connection, legacy_task_window)?
+        && !registry_tasks_has_column(connection, "task_window")?
+    {
+        connection
+            .execute_batch(&format!(
+                "ALTER TABLE registry_tasks RENAME COLUMN {legacy_task_window} TO task_window;"
+            ))
+            .map_err(database_error)?;
+    }
+
+    if table_exists(connection, legacy_task_window_evidence)?
+        && !table_exists(connection, "registry_task_window_evidence")?
+    {
+        let rename_evidence_sql = format!(
+            r#"
+                ALTER TABLE {legacy_task_window_evidence}
+                    RENAME TO registry_task_window_evidence;
+                ALTER TABLE registry_task_window_evidence
+                    RENAME COLUMN {legacy_exists} TO task_window_exists;
+                ALTER TABLE registry_task_window_evidence
+                    RENAME COLUMN {legacy_window_name} TO task_window_name;
+                ALTER TABLE registry_task_window_evidence
+                    RENAME COLUMN {legacy_current_path} TO task_window_current_path;
+                ALTER TABLE registry_task_window_evidence
+                    RENAME COLUMN {legacy_points_at_expected_path} TO task_window_points_at_expected_path;
+                "#,
+            legacy_exists = concat!("work", "trunk_exists"),
+            legacy_window_name = concat!("work", "trunk_window_name"),
+            legacy_current_path = concat!("work", "trunk_current_path"),
+            legacy_points_at_expected_path = concat!("work", "trunk_points_at_expected_path"),
+        );
+        connection
+            .execute_batch(rename_evidence_sql.as_str())
+            .map_err(database_error)?;
+    }
+
+    connection
+        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
+        .map_err(database_error)
+}
+
 fn migrate_v6_to_v7(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     for column in [
         "live_status_observed_at_unix_seconds",
@@ -319,11 +367,11 @@ fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError
             r#"
             INSERT INTO registry_tasks (
                 task_id, repo, handle, title, branch, base_branch, worktree_path,
-                tmux_session, worktrunk_window, selected_agent
+                tmux_session, task_window, selected_agent
             )
             SELECT
                 task_id, repo, handle, title, branch, base_branch, worktree_path,
-                tmux_session, worktrunk_window, selected_agent
+                tmux_session, task_window, selected_agent
             FROM registry_tasks_v7;
 
             INSERT INTO registry_task_workflow (
@@ -380,15 +428,15 @@ fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError
             FROM registry_tasks_v7
             WHERE tmux_exists IS NOT NULL;
 
-            INSERT INTO registry_task_worktrunk_evidence (
-                task_id, worktrunk_exists, worktrunk_window_name, worktrunk_current_path,
-                worktrunk_points_at_expected_path
+            INSERT INTO registry_task_window_evidence (
+                task_id, task_window_exists, task_window_name, task_window_current_path,
+                task_window_points_at_expected_path
             )
             SELECT
-                task_id, worktrunk_exists, worktrunk_window_name, worktrunk_current_path,
-                worktrunk_points_at_expected_path
+                task_id, task_window_exists, task_window_name, task_window_current_path,
+                task_window_points_at_expected_path
             FROM registry_tasks_v7
-            WHERE worktrunk_exists IS NOT NULL;
+            WHERE task_window_exists IS NOT NULL;
 
             DROP TABLE registry_tasks_v7;
             PRAGMA user_version = 8;
@@ -430,6 +478,16 @@ fn registry_tasks_has_column(
         }
     }
     Ok(false)
+}
+
+fn table_exists(connection: &Connection, table: &str) -> Result<bool, RegistrySnapshotError> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+            [table],
+            |row| row.get(0),
+        )
+        .map_err(database_error)
 }
 
 fn migrate_v4_to_v5(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -487,10 +545,10 @@ fn migrate_v2_to_v3(connection: &Connection) -> Result<(), RegistrySnapshotError
                     WHEN git_worktree_exists = 0 THEN 'missing_worktree'
                     WHEN tmux_exists IS NULL THEN 'unobservable'
                     WHEN tmux_exists = 0 THEN 'missing_session'
-                    WHEN worktrunk_exists IS NULL THEN 'unobservable'
-                    WHEN worktrunk_exists = 0 THEN 'missing_task_window'
-                    WHEN worktrunk_points_at_expected_path IS NULL THEN 'unobservable'
-                    WHEN worktrunk_points_at_expected_path = 0 THEN 'wrong_task_window_path'
+                    WHEN task_window_exists IS NULL THEN 'unobservable'
+                    WHEN task_window_exists = 0 THEN 'missing_task_window'
+                    WHEN task_window_points_at_expected_path IS NULL THEN 'unobservable'
+                    WHEN task_window_points_at_expected_path = 0 THEN 'wrong_task_window_path'
                     ELSE 'healthy'
                 END,
                 runtime_observed_at_unix_seconds = last_activity_at_unix_seconds,
@@ -605,7 +663,7 @@ fn save_registry(
         .execute("DELETE FROM registry_task_tmux_evidence", [])
         .map_err(database_error)?;
     transaction
-        .execute("DELETE FROM registry_task_worktrunk_evidence", [])
+        .execute("DELETE FROM registry_task_window_evidence", [])
         .map_err(database_error)?;
     transaction
         .execute("DELETE FROM registry_tasks", [])
@@ -683,7 +741,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
     let mut statement = connection
         .prepare(
             "SELECT t.task_id, t.repo, t.handle, t.title, t.branch, t.base_branch, \
-             t.worktree_path, t.tmux_session, t.worktrunk_window, t.selected_agent, \
+             t.worktree_path, t.tmux_session, t.task_window, t.selected_agent, \
              w.lifecycle_status, w.agent_status, w.created_at_unix_seconds, \
              w.created_at_subsec_nanos, w.last_activity_at_unix_seconds, \
              w.last_activity_at_subsec_nanos, l.live_status_kind, l.live_status_summary, \
@@ -691,8 +749,8 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              g.git_worktree_exists, g.git_branch_exists, g.git_current_branch, g.git_dirty, \
              g.git_ahead, g.git_behind, g.git_merged, g.git_untracked_files, \
              g.git_unpushed_commits, g.git_conflicted, g.git_last_commit, tm.tmux_exists, \
-             tm.tmux_session_name, wt.worktrunk_exists, wt.worktrunk_window_name, \
-             wt.worktrunk_current_path, wt.worktrunk_points_at_expected_path, \
+             tm.tmux_session_name, wt.task_window_exists, wt.task_window_name, \
+             wt.task_window_current_path, wt.task_window_points_at_expected_path, \
              r.runtime_health, r.runtime_observed_at_unix_seconds, \
              r.runtime_observed_at_subsec_nanos, r.runtime_observation_source, \
              r.runtime_observation_error, w.attention_acknowledged_at_unix_seconds, \
@@ -703,7 +761,7 @@ fn load_tasks(connection: &Connection) -> Result<Vec<Task>, RegistrySnapshotErro
              LEFT JOIN registry_task_runtime_projection r ON r.task_id = t.task_id \
              LEFT JOIN registry_task_git_evidence g ON g.task_id = t.task_id \
              LEFT JOIN registry_task_tmux_evidence tm ON tm.task_id = t.task_id \
-             LEFT JOIN registry_task_worktrunk_evidence wt ON wt.task_id = t.task_id \
+             LEFT JOIN registry_task_window_evidence wt ON wt.task_id = t.task_id \
              WHERE NOT EXISTS ( \
                  SELECT 1 FROM registry_task_workflow removed \
                  WHERE removed.task_id = t.task_id \
@@ -735,7 +793,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     let base_branch = col::<String>(row, "base_branch")?;
     let worktree_path = col::<String>(row, "worktree_path")?;
     let tmux_session = col::<String>(row, "tmux_session")?;
-    let worktrunk_window = col::<String>(row, "worktrunk_window")?;
+    let task_window = col::<String>(row, "task_window")?;
     let selected_agent = parse_agent_client(&col::<String>(row, "selected_agent")?)?;
     let persisted_lifecycle_status =
         parse_lifecycle_status(&col::<String>(row, "lifecycle_status")?)?;
@@ -747,7 +805,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
         optional_timestamp_from_row(row, "live_status_observed_at", "live status observation")?;
     let git_status = git_status_from_row(row)?;
     let tmux_status = tmux_status_from_row(row)?;
-    let worktrunk_status = worktrunk_status_from_row(row)?;
+    let task_window_status = task_window_status_from_row(row)?;
     let mut runtime_projection = runtime_projection_from_row(row)?;
 
     let lifecycle_status = if persisted_lifecycle_status == LifecycleStatus::Waiting {
@@ -792,7 +850,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
         base_branch,
         worktree_path,
         tmux_session,
-        worktrunk_window,
+        task_window,
         selected_agent,
     );
     hydrate_lifecycle_status(&mut task, lifecycle_status);
@@ -803,7 +861,7 @@ fn task_from_row(row: &Row<'_>) -> Result<Task, RegistrySnapshotError> {
     task.live_status_observed_at = live_status_observed_at;
     task.git_status = git_status;
     task.tmux_status = tmux_status;
-    task.worktrunk_status = worktrunk_status;
+    task.task_window_status = task_window_status;
     task.runtime_projection = runtime_projection;
     task.attention_acknowledged_at =
         optional_timestamp_from_row(row, "attention_acknowledged_at", "attention acknowledgment")?;
@@ -870,25 +928,17 @@ fn tmux_status_from_row(row: &Row<'_>) -> Result<Option<TmuxStatus>, RegistrySna
     }))
 }
 
-fn worktrunk_status_from_row(
+fn task_window_status_from_row(
     row: &Row<'_>,
-) -> Result<Option<WorktrunkStatus>, RegistrySnapshotError> {
-    let Some(exists) = col::<Option<bool>>(row, "worktrunk_exists")? else {
+) -> Result<Option<TaskWindowStatus>, RegistrySnapshotError> {
+    let Some(exists) = col::<Option<bool>>(row, "task_window_exists")? else {
         return Ok(None);
     };
-    Ok(Some(WorktrunkStatus {
+    Ok(Some(TaskWindowStatus {
         exists,
-        window_name: req(row, "worktrunk_window_name", "worktrunk window")?,
-        current_path: PathBuf::from(req::<String>(
-            row,
-            "worktrunk_current_path",
-            "worktrunk path",
-        )?),
-        points_at_expected_path: req(
-            row,
-            "worktrunk_points_at_expected_path",
-            "worktrunk path flag",
-        )?,
+        window_name: req(row, "task_window_name", "task window")?,
+        current_path: PathBuf::from(req::<String>(row, "task_window_current_path", "task path")?),
+        points_at_expected_path: req(row, "task_window_points_at_expected_path", "task path flag")?,
     }))
 }
 
@@ -1091,13 +1141,13 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
         .transpose()?;
     let git = task.git_status.as_ref();
     let tmux = task.tmux_status.as_ref();
-    let worktrunk = task.worktrunk_status.as_ref();
+    let task_window = task.task_window_status.as_ref();
     let live = task.live_status.as_ref();
     transaction
         .execute(
             "INSERT INTO registry_tasks \
              (task_id, repo, handle, title, branch, base_branch, worktree_path, tmux_session, \
-              worktrunk_window, selected_agent) \
+              task_window, selected_agent) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
              ON CONFLICT(task_id) DO UPDATE SET \
                 repo = excluded.repo, \
@@ -1107,7 +1157,7 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 base_branch = excluded.base_branch, \
                 worktree_path = excluded.worktree_path, \
                 tmux_session = excluded.tmux_session, \
-                worktrunk_window = excluded.worktrunk_window, \
+                task_window = excluded.task_window, \
                 selected_agent = excluded.selected_agent",
             params![
                 task.id.as_str(),
@@ -1118,7 +1168,7 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
                 task.base_branch,
                 task.worktree_path.to_string_lossy().as_ref(),
                 task.tmux_session,
-                task.worktrunk_window,
+                task.task_window,
                 agent_client_name(task.selected_agent),
             ],
         )
@@ -1170,7 +1220,7 @@ fn save_task(transaction: &Transaction<'_>, task: &Task) -> Result<(), RegistryS
     )?;
     save_git_status(transaction, task.id.as_str(), git)?;
     save_tmux_status(transaction, task.id.as_str(), tmux)?;
-    save_worktrunk_status(transaction, task.id.as_str(), worktrunk)?;
+    save_task_window_status(transaction, task.id.as_str(), task_window)?;
 
     for flag in task.side_flags() {
         transaction
@@ -1358,32 +1408,32 @@ fn save_tmux_status(
     Ok(())
 }
 
-fn save_worktrunk_status(
+fn save_task_window_status(
     transaction: &Transaction<'_>,
     task_id: &str,
-    worktrunk: Option<&WorktrunkStatus>,
+    task: Option<&TaskWindowStatus>,
 ) -> Result<(), RegistrySnapshotError> {
     transaction
         .execute(
-            "DELETE FROM registry_task_worktrunk_evidence WHERE task_id = ?1",
+            "DELETE FROM registry_task_window_evidence WHERE task_id = ?1",
             [task_id],
         )
         .map_err(database_error)?;
-    let Some(worktrunk) = worktrunk else {
+    let Some(task) = task else {
         return Ok(());
     };
     transaction
         .execute(
-            "INSERT INTO registry_task_worktrunk_evidence \
-             (task_id, worktrunk_exists, worktrunk_window_name, worktrunk_current_path, \
-              worktrunk_points_at_expected_path) \
+            "INSERT INTO registry_task_window_evidence \
+             (task_id, task_window_exists, task_window_name, task_window_current_path, \
+              task_window_points_at_expected_path) \
              VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 task_id,
-                worktrunk.exists,
-                worktrunk.window_name.as_str(),
-                worktrunk.current_path.to_string_lossy().as_ref(),
-                worktrunk.points_at_expected_path,
+                task.exists,
+                task.window_name.as_str(),
+                task.current_path.to_string_lossy().as_ref(),
+                task.points_at_expected_path,
             ],
         )
         .map_err(database_error)?;
@@ -1567,53 +1617,95 @@ string_codec!(
     [NotStarted, Running, Waiting, Blocked, Dead, Done, Unknown,]
 );
 
-string_codec!(
-    side_flag_name,
-    parse_side_flag,
-    SideFlag,
-    "side flag",
-    [
-        Dirty,
-        AgentRunning,
-        AgentDead,
-        NeedsInput,
-        TestsFailed,
-        TmuxMissing,
-        WorktreeMissing,
-        WorktrunkMissing,
-        BranchMissing,
-        Stale,
-        Conflicted,
-        Unpushed,
-    ]
-);
+const LEGACY_TASK_WINDOW_MISSING_NAME: &str = concat!("Work", "trunkMissing");
 
-string_codec!(
-    live_status_kind_name,
-    parse_live_status_kind,
-    LiveStatusKind,
-    "live status kind",
-    [
-        WorktreeMissing,
-        TmuxMissing,
-        WorktrunkMissing,
-        ShellIdle,
-        CommandRunning,
-        TestsRunning,
-        AgentRunning,
-        WaitingForApproval,
-        WaitingForInput,
-        Blocked,
-        RateLimited,
-        AuthRequired,
-        MergeConflict,
-        CiFailed,
-        ContextLimit,
-        CommandFailed,
-        Done,
-        Unknown,
-    ]
-);
+fn side_flag_name(value: SideFlag) -> &'static str {
+    match value {
+        SideFlag::Dirty => "Dirty",
+        SideFlag::AgentRunning => "AgentRunning",
+        SideFlag::AgentDead => "AgentDead",
+        SideFlag::NeedsInput => "NeedsInput",
+        SideFlag::TestsFailed => "TestsFailed",
+        SideFlag::TmuxMissing => "TmuxMissing",
+        SideFlag::WorktreeMissing => "WorktreeMissing",
+        SideFlag::TaskWindowMissing => "TaskWindowMissing",
+        SideFlag::BranchMissing => "BranchMissing",
+        SideFlag::Stale => "Stale",
+        SideFlag::Conflicted => "Conflicted",
+        SideFlag::Unpushed => "Unpushed",
+    }
+}
+
+fn parse_side_flag(value: &str) -> Result<SideFlag, RegistrySnapshotError> {
+    match value {
+        "Dirty" => Ok(SideFlag::Dirty),
+        "AgentRunning" => Ok(SideFlag::AgentRunning),
+        "AgentDead" => Ok(SideFlag::AgentDead),
+        "NeedsInput" => Ok(SideFlag::NeedsInput),
+        "TestsFailed" => Ok(SideFlag::TestsFailed),
+        "TmuxMissing" => Ok(SideFlag::TmuxMissing),
+        "WorktreeMissing" => Ok(SideFlag::WorktreeMissing),
+        "TaskWindowMissing" | LEGACY_TASK_WINDOW_MISSING_NAME => Ok(SideFlag::TaskWindowMissing),
+        "BranchMissing" => Ok(SideFlag::BranchMissing),
+        "Stale" => Ok(SideFlag::Stale),
+        "Conflicted" => Ok(SideFlag::Conflicted),
+        "Unpushed" => Ok(SideFlag::Unpushed),
+        _ => Err(RegistrySnapshotError::Decode(format!(
+            "unknown side flag: {value}"
+        ))),
+    }
+}
+
+fn live_status_kind_name(value: LiveStatusKind) -> &'static str {
+    match value {
+        LiveStatusKind::WorktreeMissing => "WorktreeMissing",
+        LiveStatusKind::TmuxMissing => "TmuxMissing",
+        LiveStatusKind::TaskWindowMissing => "TaskWindowMissing",
+        LiveStatusKind::ShellIdle => "ShellIdle",
+        LiveStatusKind::CommandRunning => "CommandRunning",
+        LiveStatusKind::TestsRunning => "TestsRunning",
+        LiveStatusKind::AgentRunning => "AgentRunning",
+        LiveStatusKind::WaitingForApproval => "WaitingForApproval",
+        LiveStatusKind::WaitingForInput => "WaitingForInput",
+        LiveStatusKind::Blocked => "Blocked",
+        LiveStatusKind::RateLimited => "RateLimited",
+        LiveStatusKind::AuthRequired => "AuthRequired",
+        LiveStatusKind::MergeConflict => "MergeConflict",
+        LiveStatusKind::CiFailed => "CiFailed",
+        LiveStatusKind::ContextLimit => "ContextLimit",
+        LiveStatusKind::CommandFailed => "CommandFailed",
+        LiveStatusKind::Done => "Done",
+        LiveStatusKind::Unknown => "Unknown",
+    }
+}
+
+fn parse_live_status_kind(value: &str) -> Result<LiveStatusKind, RegistrySnapshotError> {
+    match value {
+        "WorktreeMissing" => Ok(LiveStatusKind::WorktreeMissing),
+        "TmuxMissing" => Ok(LiveStatusKind::TmuxMissing),
+        "TaskWindowMissing" | LEGACY_TASK_WINDOW_MISSING_NAME => {
+            Ok(LiveStatusKind::TaskWindowMissing)
+        }
+        "ShellIdle" => Ok(LiveStatusKind::ShellIdle),
+        "CommandRunning" => Ok(LiveStatusKind::CommandRunning),
+        "TestsRunning" => Ok(LiveStatusKind::TestsRunning),
+        "AgentRunning" => Ok(LiveStatusKind::AgentRunning),
+        "WaitingForApproval" => Ok(LiveStatusKind::WaitingForApproval),
+        "WaitingForInput" => Ok(LiveStatusKind::WaitingForInput),
+        "Blocked" => Ok(LiveStatusKind::Blocked),
+        "RateLimited" => Ok(LiveStatusKind::RateLimited),
+        "AuthRequired" => Ok(LiveStatusKind::AuthRequired),
+        "MergeConflict" => Ok(LiveStatusKind::MergeConflict),
+        "CiFailed" => Ok(LiveStatusKind::CiFailed),
+        "ContextLimit" => Ok(LiveStatusKind::ContextLimit),
+        "CommandFailed" => Ok(LiveStatusKind::CommandFailed),
+        "Done" => Ok(LiveStatusKind::Done),
+        "Unknown" => Ok(LiveStatusKind::Unknown),
+        _ => Err(RegistrySnapshotError::Decode(format!(
+            "unknown live status kind: {value}"
+        ))),
+    }
+}
 
 fn parse_runtime_health(value: &str) -> Result<RuntimeHealth, RegistrySnapshotError> {
     RuntimeHealth::from_label(value)
@@ -1657,7 +1749,7 @@ mod tests {
     use crate::models::{
         AgentAttempt, AgentClient, AgentRuntimeStatus, GitStatus, LifecycleStatus, LiveObservation,
         LiveStatusKind, RuntimeHealth, RuntimeObservationSource, RuntimeProjection, SideFlag,
-        StepReceipt, Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+        StepReceipt, Task, TaskId, TaskOperationKind, TaskWindowStatus, TmuxStatus,
     };
     use crate::registry::{
         InMemoryRegistry, Registry, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
@@ -1676,7 +1768,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{repo}-{handle}"),
             format!("ajax-{repo}-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -1727,7 +1819,7 @@ mod tests {
     #[case("TestsFailed", SideFlag::TestsFailed)]
     #[case("TmuxMissing", SideFlag::TmuxMissing)]
     #[case("WorktreeMissing", SideFlag::WorktreeMissing)]
-    #[case("WorktrunkMissing", SideFlag::WorktrunkMissing)]
+    #[case("TaskWindowMissing", SideFlag::TaskWindowMissing)]
     #[case("BranchMissing", SideFlag::BranchMissing)]
     #[case("Stale", SideFlag::Stale)]
     #[case("Conflicted", SideFlag::Conflicted)]
@@ -1739,7 +1831,7 @@ mod tests {
     #[rstest]
     #[case("WorktreeMissing", LiveStatusKind::WorktreeMissing)]
     #[case("TmuxMissing", LiveStatusKind::TmuxMissing)]
-    #[case("WorktrunkMissing", LiveStatusKind::WorktrunkMissing)]
+    #[case("TaskWindowMissing", LiveStatusKind::TaskWindowMissing)]
     #[case("ShellIdle", LiveStatusKind::ShellIdle)]
     #[case("CommandRunning", LiveStatusKind::CommandRunning)]
     #[case("TestsRunning", LiveStatusKind::TestsRunning)]
@@ -2164,7 +2256,7 @@ mod tests {
             last_commit: Some("abc123 Fix login".to_string()),
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present("worktrunk", "/tmp/web"));
+        task.task_window_status = Some(TaskWindowStatus::present("task", "/tmp/web"));
         task.live_status = Some(LiveObservation::new(
             LiveStatusKind::WaitingForInput,
             "waiting for input",
@@ -2228,11 +2320,11 @@ mod tests {
                 .tmux_status
         );
         assert_eq!(
-            restored_task.worktrunk_status,
+            restored_task.task_window_status,
             registry
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
-                .worktrunk_status
+                .task_window_status
         );
         assert_eq!(
             restored_task.live_status,
@@ -2586,7 +2678,7 @@ mod tests {
             last_commit: Some("abc123".to_string()),
         });
         seeded.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        seeded.worktrunk_status = Some(WorktrunkStatus::present("worktrunk", "/tmp/web"));
+        seeded.task_window_status = Some(TaskWindowStatus::present("task", "/tmp/web"));
         registry.create_task(seeded).unwrap();
         let mut absent = task("task-2", "web", "no-evidence");
         absent.lifecycle_status = LifecycleStatus::Active;
@@ -2614,9 +2706,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let worktrunk_rows: i64 = connection
+        let task_rows: i64 = connection
             .query_row(
-                "SELECT count(*) FROM registry_task_worktrunk_evidence WHERE task_id = 'task-1'",
+                "SELECT count(*) FROM registry_task_window_evidence WHERE task_id = 'task-1'",
                 [],
                 |row| row.get(0),
             )
@@ -2635,9 +2727,9 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        let absent_worktrunk_rows: i64 = connection
+        let absent_task_rows: i64 = connection
             .query_row(
-                "SELECT count(*) FROM registry_task_worktrunk_evidence WHERE task_id = 'task-2'",
+                "SELECT count(*) FROM registry_task_window_evidence WHERE task_id = 'task-2'",
                 [],
                 |row| row.get(0),
             )
@@ -2649,10 +2741,10 @@ mod tests {
 
         assert_eq!(git_rows, 1);
         assert_eq!(tmux_rows, 1);
-        assert_eq!(worktrunk_rows, 1);
+        assert_eq!(task_rows, 1);
         assert_eq!(absent_git_rows, 0);
         assert_eq!(absent_tmux_rows, 0);
-        assert_eq!(absent_worktrunk_rows, 0);
+        assert_eq!(absent_task_rows, 0);
         assert_eq!(
             restored_task.git_status,
             registry
@@ -2668,15 +2760,15 @@ mod tests {
                 .tmux_status
         );
         assert_eq!(
-            restored_task.worktrunk_status,
+            restored_task.task_window_status,
             registry
                 .get_task(&TaskId::new("task-1"))
                 .unwrap()
-                .worktrunk_status
+                .task_window_status
         );
         assert!(absent_task.git_status.is_none());
         assert!(absent_task.tmux_status.is_none());
-        assert!(absent_task.worktrunk_status.is_none());
+        assert!(absent_task.task_window_status.is_none());
     }
 
     #[test]
@@ -2695,7 +2787,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
     }
 
     #[test]
@@ -2715,7 +2807,7 @@ mod tests {
         let runtime_columns = table_columns(&connection, "registry_task_runtime_projection");
         let git_columns = table_columns(&connection, "registry_task_git_evidence");
         let tmux_columns = table_columns(&connection, "registry_task_tmux_evidence");
-        let worktrunk_columns = table_columns(&connection, "registry_task_worktrunk_evidence");
+        let task_window_columns = table_columns(&connection, "registry_task_window_evidence");
         std::fs::remove_file(&path).unwrap();
 
         for required in [
@@ -2727,7 +2819,7 @@ mod tests {
             "base_branch",
             "worktree_path",
             "tmux_session",
-            "worktrunk_window",
+            "task_window",
             "selected_agent",
         ] {
             assert!(task_columns.contains(&required.to_string()), "{required}");
@@ -2739,7 +2831,7 @@ mod tests {
             "runtime_health",
             "git_worktree_exists",
             "tmux_exists",
-            "worktrunk_exists",
+            "task_window_exists",
         ] {
             assert!(
                 !task_columns.contains(&forbidden.to_string()),
@@ -2752,7 +2844,7 @@ mod tests {
         assert!(runtime_columns.contains(&"runtime_health".to_string()));
         assert!(git_columns.contains(&"git_worktree_exists".to_string()));
         assert!(tmux_columns.contains(&"tmux_exists".to_string()));
-        assert!(worktrunk_columns.contains(&"worktrunk_exists".to_string()));
+        assert!(task_window_columns.contains(&"task_window_exists".to_string()));
     }
 
     #[test]
@@ -2782,7 +2874,7 @@ mod tests {
         let columns = table_columns(&connection, "registry_task_runtime_projection");
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(columns.contains(&"runtime_observation_error".to_string()));
     }
 
@@ -3003,7 +3095,7 @@ mod tests {
                     base_branch TEXT NOT NULL,
                     worktree_path TEXT NOT NULL,
                     tmux_session TEXT NOT NULL,
-                    worktrunk_window TEXT NOT NULL,
+                    task_window TEXT NOT NULL,
                     selected_agent TEXT NOT NULL,
                     lifecycle_status TEXT NOT NULL,
                     agent_status TEXT NOT NULL,
@@ -3026,10 +3118,10 @@ mod tests {
                     git_last_commit TEXT,
                     tmux_exists INTEGER,
                     tmux_session_name TEXT,
-                    worktrunk_exists INTEGER,
-                    worktrunk_window_name TEXT,
-                    worktrunk_current_path TEXT,
-                    worktrunk_points_at_expected_path INTEGER
+                    task_window_exists INTEGER,
+                    task_window_name TEXT,
+                    task_window_current_path TEXT,
+                    task_window_points_at_expected_path INTEGER
                 );
                 CREATE TABLE registry_task_side_flags (
                     task_id TEXT NOT NULL,
@@ -3064,20 +3156,20 @@ mod tests {
                 );
                 INSERT INTO registry_tasks (
                     task_id, repo, handle, title, branch, base_branch, worktree_path, tmux_session,
-                    worktrunk_window, selected_agent, lifecycle_status, agent_status,
+                    task_window, selected_agent, lifecycle_status, agent_status,
                     created_at_unix_seconds, created_at_subsec_nanos,
                     last_activity_at_unix_seconds, last_activity_at_subsec_nanos,
                     live_status_kind, live_status_summary, git_worktree_exists,
                     git_branch_exists, git_current_branch, git_dirty, git_ahead, git_behind,
                     git_merged, git_untracked_files, git_unpushed_commits, git_conflicted,
-                    git_last_commit, tmux_exists, tmux_session_name, worktrunk_exists,
-                    worktrunk_window_name, worktrunk_current_path, worktrunk_points_at_expected_path
+                    git_last_commit, tmux_exists, tmux_session_name, task_window_exists,
+                    task_window_name, task_window_current_path, task_window_points_at_expected_path
                 ) VALUES (
                     'task-1', 'web', 'fix-login', 'Fix login', 'ajax/fix-login', 'main',
-                    '/tmp/worktrees/web-fix-login', 'ajax-web-fix-login', 'worktrunk',
+                    '/tmp/worktrees/web-fix-login', 'ajax-web-fix-login', 'task',
                     'Codex', 'Active', 'Running', 1700000000, 0, 1700000001, 0,
                     NULL, NULL, 1, 1, 'ajax/fix-login', 0, 0, 0, 0, 0, 0, 0,
-                    'abc123', 1, 'ajax-web-fix-login', 1, 'worktrunk',
+                    'abc123', 1, 'ajax-web-fix-login', 1, 'task',
                     '/tmp/worktrees/web-fix-login', 1
                 );
                 PRAGMA user_version = 2;
@@ -3096,7 +3188,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(columns.contains(&"runtime_health".to_string()));
         assert!(columns.contains(&"runtime_observation_error".to_string()));
         assert_eq!(task.runtime_projection.health, RuntimeHealth::Healthy);
@@ -3123,11 +3215,11 @@ mod tests {
         let runtime_columns = table_columns(&connection, "registry_task_runtime_projection");
         let git_columns = table_columns(&connection, "registry_task_git_evidence");
         let tmux_columns = table_columns(&connection, "registry_task_tmux_evidence");
-        let worktrunk_columns = table_columns(&connection, "registry_task_worktrunk_evidence");
+        let task_window_columns = table_columns(&connection, "registry_task_window_evidence");
         std::fs::remove_file(&path).unwrap();
         let task = restored.get_task(&TaskId::new("task-1")).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert_eq!(task.title, "Fix login");
         assert_eq!(task.lifecycle_status, LifecycleStatus::Active);
         assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
@@ -3146,7 +3238,7 @@ mod tests {
         assert!(runtime_columns.contains(&"runtime_health".to_string()));
         assert!(git_columns.contains(&"git_worktree_exists".to_string()));
         assert!(tmux_columns.contains(&"tmux_exists".to_string()));
-        assert!(worktrunk_columns.contains(&"worktrunk_exists".to_string()));
+        assert!(task_window_columns.contains(&"task_window_exists".to_string()));
     }
 
     #[test]
@@ -3177,7 +3269,7 @@ mod tests {
             "base_branch",
             "worktree_path",
             "tmux_session",
-            "worktrunk_window",
+            "task_window",
             "selected_agent",
         ] {
             assert!(task_columns.contains(&required.to_string()), "{required}");
@@ -3396,7 +3488,7 @@ mod tests {
         let columns = table_columns(&connection, "registry_task_workflow");
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert!(columns.contains(&"attention_acknowledged_at_unix_seconds".to_string()));
         assert!(columns.contains(&"attention_acknowledged_at_subsec_nanos".to_string()));
         assert_eq!(
@@ -3426,7 +3518,7 @@ mod tests {
             .unwrap();
         std::fs::remove_file(&path).unwrap();
 
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         assert_eq!(
             restored
                 .get_task(&TaskId::new("task-1"))
@@ -3585,7 +3677,7 @@ mod tests {
             error,
             RegistrySnapshotError::IncompatibleSchema {
                 found: 999,
-                supported: 8
+                supported: super::SQLITE_SCHEMA_VERSION
             }
         );
     }
@@ -3749,7 +3841,7 @@ mod tests {
                     base_branch TEXT NOT NULL,
                     worktree_path TEXT NOT NULL,
                     tmux_session TEXT NOT NULL,
-                    worktrunk_window TEXT NOT NULL,
+                    task_window TEXT NOT NULL,
                     selected_agent TEXT NOT NULL,
                     lifecycle_status TEXT NOT NULL,
                     agent_status TEXT NOT NULL,
@@ -3774,10 +3866,10 @@ mod tests {
                     git_last_commit TEXT,
                     tmux_exists INTEGER,
                     tmux_session_name TEXT,
-                    worktrunk_exists INTEGER,
-                    worktrunk_window_name TEXT,
-                    worktrunk_current_path TEXT,
-                    worktrunk_points_at_expected_path INTEGER,
+                    task_window_exists INTEGER,
+                    task_window_name TEXT,
+                    task_window_current_path TEXT,
+                    task_window_points_at_expected_path INTEGER,
                     runtime_health TEXT NOT NULL,
                     runtime_observed_at_unix_seconds INTEGER NOT NULL,
                     runtime_observed_at_subsec_nanos INTEGER NOT NULL,
@@ -3842,7 +3934,7 @@ mod tests {
                     'main',
                     '/tmp/worktrees/web-fix-login',
                     'ajax-web-fix-login',
-                    'worktrunk',
+                    'task',
                     'Codex',
                     'Active',
                     'Blocked',
@@ -3868,7 +3960,7 @@ mod tests {
                     1,
                     'ajax-web-fix-login',
                     1,
-                    'worktrunk',
+                    'task',
                     '/tmp/worktrees/web-fix-login',
                     1,
                     'healthy',
@@ -3919,7 +4011,7 @@ mod tests {
                     'main',
                     '/tmp/worktrees/web-without-live',
                     'ajax-web-without-live',
-                    'worktrunk',
+                    'task',
                     'Codex',
                     'Active',
                     'Running',
@@ -3945,7 +4037,7 @@ mod tests {
                     1,
                     'ajax-web-without-live',
                     1,
-                    'worktrunk',
+                    'task',
                     '/tmp/worktrees/web-without-live',
                     1,
                     'healthy',

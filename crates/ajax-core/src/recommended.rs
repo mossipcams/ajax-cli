@@ -66,7 +66,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             LiveStatusKind::Blocked => "blocked",
             LiveStatusKind::WorktreeMissing => "worktree_missing",
             LiveStatusKind::TmuxMissing => "tmux_missing",
-            LiveStatusKind::WorktrunkMissing => "worktrunk_missing",
+            LiveStatusKind::TaskWindowMissing => "task_window_missing",
             LiveStatusKind::MergeConflict => "merge_conflict",
             LiveStatusKind::CiFailed => "ci_failed",
             LiveStatusKind::Done => "done",
@@ -93,7 +93,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
             SideFlag::TestsFailed => "tests_failed",
             SideFlag::TmuxMissing => "tmux_missing",
             SideFlag::WorktreeMissing => "worktree_missing",
-            SideFlag::WorktrunkMissing => "worktrunk_missing",
+            SideFlag::TaskWindowMissing => "task_window_missing",
             SideFlag::BranchMissing => "branch_missing",
             SideFlag::Stale => "stale",
             SideFlag::Conflicted => "conflicted",
@@ -117,7 +117,7 @@ pub(crate) fn evidence_label(evidence: &Evidence) -> &'static str {
         Evidence::Substrate(gap) => match gap {
             crate::models::SubstrateGap::WorktreeMissing => "worktree_missing",
             crate::models::SubstrateGap::TmuxMissing => "tmux_missing",
-            crate::models::SubstrateGap::WorktrunkMissing => "worktrunk_missing",
+            crate::models::SubstrateGap::TaskWindowMissing => "task_window_missing",
             crate::models::SubstrateGap::BranchMissing => "branch_missing",
         },
         Evidence::RuntimeObservationFailed => "runtime_observation_failed",
@@ -207,7 +207,7 @@ fn has_only_shell_substrate_gap(task: &Task) -> bool {
 
 fn task_is_known_invalid(task: &Task) -> bool {
     task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::TaskWindowMissing)
         || task.has_side_flag(SideFlag::WorktreeMissing)
         || task.has_side_flag(SideFlag::BranchMissing)
         || task
@@ -219,7 +219,7 @@ fn task_is_known_invalid(task: &Task) -> bool {
             .as_ref()
             .is_some_and(|status| !status.worktree_exists || !status.branch_exists)
         || task
-            .worktrunk_status
+            .task_window_status
             .as_ref()
             .is_some_and(|status| !status.exists || !status.points_at_expected_path)
         || task.live_status.as_ref().is_some_and(|live| {
@@ -227,7 +227,7 @@ fn task_is_known_invalid(task: &Task) -> bool {
                 live.kind,
                 LiveStatusKind::WorktreeMissing
                     | LiveStatusKind::TmuxMissing
-                    | LiveStatusKind::WorktrunkMissing
+                    | LiveStatusKind::TaskWindowMissing
             )
         })
 }
@@ -250,8 +250,8 @@ pub fn primary_blocker_reason(task: &Task) -> Option<&'static str> {
     if task.has_side_flag(SideFlag::AgentDead) {
         return Some("agent appears dead");
     }
-    if task.has_side_flag(SideFlag::WorktrunkMissing) {
-        return Some("worktrunk missing");
+    if task.has_side_flag(SideFlag::TaskWindowMissing) {
+        return Some("task window missing");
     }
     if task.has_side_flag(SideFlag::TmuxMissing) {
         return Some("tmux session missing");
@@ -283,7 +283,7 @@ fn blocker_reason_for_live(kind: LiveStatusKind) -> Option<&'static str> {
         LiveStatusKind::Blocked => Some("agent is blocked"),
         LiveStatusKind::WorktreeMissing => Some("worktree missing"),
         LiveStatusKind::TmuxMissing => Some("tmux session missing"),
-        LiveStatusKind::WorktrunkMissing => Some("worktrunk missing"),
+        LiveStatusKind::TaskWindowMissing => Some("task window missing"),
         _ => None,
     }
 }
@@ -295,7 +295,7 @@ mod tests {
         lifecycle::{mark_active, mark_reviewable},
         models::{
             AgentClient, GitStatus, LifecycleStatus, OperatorAction, RuntimeHealth,
-            RuntimeObservationSource, SideFlag, Task, TaskId, TmuxStatus, WorktrunkStatus,
+            RuntimeObservationSource, SideFlag, Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
     };
 
@@ -309,7 +309,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn operator_actions_prefer_drop_when_shell_substrate_is_missing() {
-        for flag in [SideFlag::TmuxMissing, SideFlag::WorktrunkMissing] {
+        for flag in [SideFlag::TmuxMissing, SideFlag::TaskWindowMissing] {
             let mut t = clean_reviewable_task("reviewable");
             t.add_side_flag(flag);
 
@@ -387,7 +387,7 @@ mod tests {
     fn invalid_tasks_prefer_drop_for_removal() {
         for make_invalid in [
             |task: &mut Task| task.add_side_flag(SideFlag::TmuxMissing),
-            |task: &mut Task| task.add_side_flag(SideFlag::WorktrunkMissing),
+            |task: &mut Task| task.add_side_flag(SideFlag::TaskWindowMissing),
             |task: &mut Task| task.add_side_flag(SideFlag::WorktreeMissing),
             |task: &mut Task| task.add_side_flag(SideFlag::BranchMissing),
             |task: &mut Task| {
@@ -397,17 +397,17 @@ mod tests {
                 });
             },
             |task: &mut Task| {
-                task.worktrunk_status = Some(WorktrunkStatus {
+                task.task_window_status = Some(TaskWindowStatus {
                     exists: false,
-                    window_name: task.worktrunk_window.clone(),
+                    window_name: task.task_window.clone(),
                     current_path: task.worktree_path.clone(),
                     points_at_expected_path: false,
                 });
             },
             |task: &mut Task| {
-                task.worktrunk_status = Some(WorktrunkStatus {
+                task.task_window_status = Some(TaskWindowStatus {
                     exists: true,
-                    window_name: task.worktrunk_window.clone(),
+                    window_name: task.task_window.clone(),
                     current_path: "/tmp/wrong".into(),
                     points_at_expected_path: false,
                 });

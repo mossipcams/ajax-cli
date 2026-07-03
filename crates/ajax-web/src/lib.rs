@@ -35,7 +35,7 @@ pub(crate) mod test_support {
             "main",
             format!("/repo/{repo}__worktrees/ajax-{handle}"),
             format!("ajax-{repo}-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }

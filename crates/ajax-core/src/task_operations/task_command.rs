@@ -75,7 +75,7 @@ pub fn execute_task_command_operation<R: Registry>(
             true
         }
         TaskCommandKind::Repair => {
-            commands::mark_task_trunk_repaired(context, qualified_handle)
+            commands::mark_task_window_repaired(context, qualified_handle)
                 .map_err(|error| (error, true))?;
             commands::mark_task_check_succeeded(context, qualified_handle)
                 .map_err(|error| (error, true))?;
@@ -190,7 +190,8 @@ fn repair_task_plan<R: Registry>(
     qualified_handle: &str,
     open_mode: OpenMode,
 ) -> Result<CommandPlan, CommandError> {
-    let mut plan = commands::trunk_task_plan_with_open_mode(context, qualified_handle, open_mode)?;
+    let mut plan =
+        commands::task_window_repair_plan_with_open_mode(context, qualified_handle, open_mode)?;
     plan.title = format!("repair task: {qualified_handle}");
     if let Ok(check_plan) = commands::check_task_plan(context, qualified_handle) {
         plan.commands.extend(check_plan.commands);

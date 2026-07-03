@@ -94,12 +94,12 @@ pub struct TmuxAttachCommandPlan {
     pub args: Vec<String>,
 }
 
-pub fn tmux_attach_target(session: &str, worktrunk_window: &str) -> String {
-    format!("{session}:{worktrunk_window}")
+pub fn tmux_attach_target(session: &str, task_window: &str) -> String {
+    format!("{session}:{task_window}")
 }
 
 pub fn build_tmux_attach_command_plan(plan: &TerminalAttachPlan) -> TmuxAttachCommandPlan {
-    let target = tmux_attach_target(&plan.tmux_session, &plan.worktrunk_window);
+    let target = tmux_attach_target(&plan.tmux_session, &plan.task_window);
     TmuxAttachCommandPlan {
         program: "tmux".to_string(),
         args: vec!["attach-session".to_string(), "-t".to_string(), target],
@@ -159,12 +159,12 @@ fn build_isolated_attach_plan_with_token(
 ) -> IsolatedAttachPlan {
     let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
     // Reuse the shared attach builder against the ephemeral session so the
-    // "never attach through the browser handle" and worktrunk-window guarantees
+    // "never attach through the browser handle" and task-window guarantees
     // are preserved for the isolated client too.
     let ephemeral_plan = TerminalAttachPlan {
         qualified_handle: plan.qualified_handle.clone(),
         tmux_session: ephemeral.clone(),
-        worktrunk_window: plan.worktrunk_window.clone(),
+        task_window: plan.task_window.clone(),
     };
     IsolatedAttachPlan {
         setup: vec![TmuxCommand::new([
@@ -531,7 +531,7 @@ mod tests {
         TerminalAttachPlan {
             qualified_handle: handle.to_string(),
             tmux_session: "ajax-web-fix-login".to_string(),
-            worktrunk_window: "worktrunk".to_string(),
+            task_window: "task".to_string(),
         }
     }
 
@@ -579,7 +579,7 @@ mod tests {
     }
 
     #[test]
-    fn tmux_attach_command_plan_uses_registered_session_and_worktrunk_target() {
+    fn tmux_attach_command_plan_uses_registered_session_and_task_target() {
         let plan = attach_plan("web/fix-login");
 
         let command_plan = build_tmux_attach_command_plan(&plan);
@@ -590,7 +590,7 @@ mod tests {
             vec![
                 "attach-session".to_string(),
                 "-t".to_string(),
-                "ajax-web-fix-login:worktrunk".to_string(),
+                "ajax-web-fix-login:task".to_string(),
             ]
         );
         assert!(!command_plan
@@ -605,7 +605,7 @@ mod tests {
 
         let command_plan = build_tmux_attach_command_plan(&plan);
 
-        assert_eq!(command_plan.args[2], "ajax-web-fix-login:worktrunk");
+        assert_eq!(command_plan.args[2], "ajax-web-fix-login:task");
         assert!(!command_plan
             .args
             .iter()
@@ -636,21 +636,21 @@ mod tests {
                 ],
             }]
         );
-        // Attach targets the ephemeral session's worktrunk window, never the
+        // Attach targets the ephemeral session's task window, never the
         // browser handle and never the shared session directly.
         assert_eq!(
             isolated.attach.args,
             vec![
                 "attach-session".to_string(),
                 "-t".to_string(),
-                format!("{ephemeral}:worktrunk"),
+                format!("{ephemeral}:task"),
             ]
         );
         assert!(!isolated
             .attach
             .args
             .iter()
-            .any(|arg| arg == "ajax-web-fix-login:worktrunk"));
+            .any(|arg| arg == "ajax-web-fix-login:task"));
         assert!(!isolated
             .attach
             .args

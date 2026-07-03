@@ -546,7 +546,7 @@ case "${1:-}" in
   list-windows)
     session="${3:-}"
     if [[ -f "$sessions/$session" ]]; then
-      printf 'worktrunk\t%s\n' "$(cat "$sessions/$session")"
+      printf 'task\t%s\n' "$(cat "$sessions/$session")"
     fi
     ;;
   capture-pane)
@@ -803,14 +803,14 @@ fn smoke_new_execute_creates_active_task_environment() {
     );
     assert!(
         log.contains(&format!(
-            "tmux new-session -d -s ajax-web-fix-login -n worktrunk -c {}",
+            "tmux new-session -d -s ajax-web-fix-login -n task -c {}",
             worktree.display()
         )),
         "fake tmux log should include session creation:\n{log}"
     );
     assert!(
         log.contains(&format!(
-            "tmux send-keys -t ajax-web-fix-login:worktrunk ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
+            "tmux send-keys -t ajax-web-fix-login:task ajax-cli __agent-runtime --task-id web/fix-login --state-root {} -- codex --cd {} Enter",
             sandbox.root.join("cache/agent-runtime").display(),
             worktree.display(),
         )),
@@ -845,16 +845,16 @@ fn smoke_open_and_trunk_are_idempotent_repairs() {
 
     let log = sandbox.command_log();
     assert!(
-        log.matches("tmux select-window -t ajax-web-fix-login:worktrunk")
+        log.matches("tmux select-window -t ajax-web-fix-login:task")
             .count()
             >= 3,
-        "open should select the worktrunk window each time:\n{log}"
+        "open should select the task window each time:\n{log}"
     );
     assert!(
-        log.matches("tmux select-window -t ajax-web-fix-login:worktrunk")
+        log.matches("tmux select-window -t ajax-web-fix-login:task")
             .count()
             >= 5,
-        "open and trunk should idempotently target the worktrunk window:\n{log}"
+        "open and trunk should idempotently target the task window:\n{log}"
     );
     assert!(
         log.contains("tmux attach-session -t ajax-web-fix-login")
@@ -1156,11 +1156,11 @@ fn smoke_partial_new_failure_remains_visible_and_recoverable() {
         worktree.display()
     )));
     assert!(log.contains(&format!(
-        "tmux new-session -d -s ajax-web-fix-login -n worktrunk -c {}",
+        "tmux new-session -d -s ajax-web-fix-login -n task -c {}",
         worktree.display()
     )));
     assert!(
-        !log.contains("tmux send-keys -t ajax-web-fix-login:worktrunk"),
+        !log.contains("tmux send-keys -t ajax-web-fix-login:task"),
         "agent launch should not run after tmux session creation fails:\n{log}"
     );
 }

@@ -107,7 +107,7 @@ fn start_step_receipt(task: &Task, step: StartProvisioningStep) -> StepReceipt {
         }
         StartProvisioningStep::AgentCommandSent => (
             "agent_command_sent",
-            format!("{}:{}", task.tmux_session, task.worktrunk_window),
+            format!("{}:{}", task.tmux_session, task.task_window),
         ),
     };
 

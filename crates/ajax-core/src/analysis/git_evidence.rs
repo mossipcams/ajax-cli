@@ -168,7 +168,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             crate::models::AgentClient::Codex,
         );
 

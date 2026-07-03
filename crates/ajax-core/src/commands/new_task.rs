@@ -5,7 +5,7 @@ use crate::{
     lifecycle::mark_provisioning,
     models::{
         AgentAttempt, AgentClient, GitStatus, LifecycleStatus, RuntimeObservationSource, SideFlag,
-        Task, TaskId, TaskOperationKind, TmuxStatus, WorktrunkStatus,
+        Task, TaskId, TaskOperationKind, TaskWindowStatus, TmuxStatus,
     },
     registry::{Registry, RegistryError},
 };
@@ -16,6 +16,7 @@ use std::{
 
 const HUSKY_GUARD: &str =
     "if [ -f package.json ] && [ -f .husky/pre-commit ]; then npm exec --yes husky; fi";
+pub const DEFAULT_TASK_WINDOW_NAME: &str = "task";
 pub const ORIGIN_FETCH_FRESH_FOR: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -123,9 +124,9 @@ pub fn new_task_plan_with_observation<R: Registry>(
             CommandSpec::new("sh", ["-lc", graphify_command.as_str()]).with_cwd(&worktree_path),
         );
     }
-    plan.commands.push(tmux.new_detached_worktrunk_session(
+    plan.commands.push(tmux.new_detached_task_session(
         &tmux_session,
-        "worktrunk",
+        DEFAULT_TASK_WINDOW_NAME,
         &worktree_path_string,
     ));
     plan.commands.push(setup_task_environment_command(
@@ -133,8 +134,11 @@ pub fn new_task_plan_with_observation<R: Registry>(
         &worktree_path_string,
         repo.bootstrap.as_deref(),
     ));
-    plan.commands
-        .push(tmux.send_agent_command(&tmux_session, "worktrunk", &command_line(&launch)));
+    plan.commands.push(tmux.send_agent_command(
+        &tmux_session,
+        DEFAULT_TASK_WINDOW_NAME,
+        &command_line(&launch),
+    ));
 
     Ok(plan)
 }
@@ -173,7 +177,7 @@ pub fn task_from_new_request<R: Registry>(
         repo.default_branch.clone(),
         worktree_path,
         tmux_session,
-        "worktrunk",
+        DEFAULT_TASK_WINDOW_NAME,
         agent_from_name(&request.agent),
     );
     mark_provisioning(&mut task).map_err(|error| {
@@ -316,10 +320,10 @@ pub fn mark_new_task_provisioning_step_completed<R: Registry>(
                 .map_err(CommandError::Registry)?;
             context
                 .registry
-                .update_worktrunk_status(
+                .update_task_window_status(
                     task_id,
-                    Some(WorktrunkStatus::present(
-                        task.worktrunk_window,
+                    Some(TaskWindowStatus::present(
+                        task.task_window,
                         task.worktree_path,
                     )),
                 )
@@ -354,7 +358,7 @@ pub fn is_git_worktree_add_command(command: &CommandSpec) -> bool {
             .any(|window| window == ["worktree", "add"])
 }
 
-pub fn is_worktrunk_new_session_command(command: &CommandSpec) -> bool {
+pub fn is_task_window_new_session_command(command: &CommandSpec) -> bool {
     command.program == "tmux" && command.args.first().is_some_and(|arg| arg == "new-session")
 }
 
@@ -365,7 +369,7 @@ pub fn is_agent_send_keys_command(command: &CommandSpec) -> bool {
 pub fn start_provisioning_step_for_command(command: &CommandSpec) -> Option<StartProvisioningStep> {
     if is_git_worktree_add_command(command) {
         Some(StartProvisioningStep::WorktreeCreated)
-    } else if is_worktrunk_new_session_command(command) {
+    } else if is_task_window_new_session_command(command) {
         Some(StartProvisioningStep::TaskSessionCreated)
     } else if is_agent_send_keys_command(command) {
         Some(StartProvisioningStep::AgentCommandSent)
@@ -529,7 +533,7 @@ fn validate_managed_repo_name(repo: &str) -> Result<(), CommandError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_git_worktree_add_command, is_worktrunk_new_session_command,
+        is_git_worktree_add_command, is_task_window_new_session_command,
         mark_new_task_provisioning_step_completed, new_task_plan, new_task_plan_with_observation,
         record_new_task, task_from_new_request, NewTaskRequest, StartPlanObservation,
         StartProvisioningStep,
@@ -945,7 +949,8 @@ mod tests {
             .with_cwd("/repo/web__worktrees/ajax-fix-login")
         );
         assert!(is_git_worktree_add_command(&plan.commands[1]));
-        assert!(is_worktrunk_new_session_command(&plan.commands[3]));
+        assert!(is_task_window_new_session_command(&plan.commands[3]));
+        assert_eq!(plan.commands[3].args[5], "task");
     }
 
     #[test]
@@ -1048,7 +1053,7 @@ mod tests {
             .as_ref()
             .is_some_and(|status| status.exists));
         assert!(task
-            .worktrunk_status
+            .task_window_status
             .as_ref()
             .is_some_and(|status| status.exists && status.points_at_expected_path));
         assert_eq!(task.lifecycle_status, LifecycleStatus::Provisioning);

@@ -41,14 +41,14 @@ mod tests {
             vec![
                 "send-keys",
                 "-t",
-                "ajax-web-fix-login:worktrunk",
+                "ajax-web-fix-login:task",
                 "approve it",
                 "Enter",
             ]
         );
         assert_eq!(
             commands[1].args,
-            vec!["send-keys", "-t", "ajax-web-fix-login:worktrunk", "C-c",]
+            vec!["send-keys", "-t", "ajax-web-fix-login:task", "C-c",]
         );
     }
 }

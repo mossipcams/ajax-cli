@@ -79,8 +79,8 @@ fn apply_reduced_observation(
         LiveStatusKind::TmuxMissing => {
             task.mark_resource_missing(SideFlag::TmuxMissing);
         }
-        LiveStatusKind::WorktrunkMissing => {
-            task.mark_resource_missing(SideFlag::WorktrunkMissing);
+        LiveStatusKind::TaskWindowMissing => {
+            task.mark_resource_missing(SideFlag::TaskWindowMissing);
         }
         LiveStatusKind::AgentRunning
         | LiveStatusKind::CommandRunning
@@ -225,7 +225,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Claude,
         );
         task.lifecycle_status = LifecycleStatus::Active;
@@ -300,7 +300,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.lifecycle_status = LifecycleStatus::Active;

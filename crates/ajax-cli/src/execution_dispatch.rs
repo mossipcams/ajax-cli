@@ -261,7 +261,7 @@ fn read_context_needs_live_refresh(context: &CommandContext<InMemoryRegistry>) -
 #[cfg(feature = "interactive")]
 fn read_task_needs_live_refresh(task: &Task, now: SystemTime) -> bool {
     if task.has_side_flag(SideFlag::TmuxMissing)
-        || task.has_side_flag(SideFlag::WorktrunkMissing)
+        || task.has_side_flag(SideFlag::TaskWindowMissing)
         || task.has_side_flag(SideFlag::WorktreeMissing)
     {
         return true;

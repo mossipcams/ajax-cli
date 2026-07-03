@@ -6,7 +6,7 @@ use ajax_core::{commands::CommandContext, registry::Registry};
 pub struct TerminalAttachPlan {
     pub qualified_handle: String,
     pub tmux_session: String,
-    pub worktrunk_window: String,
+    pub task_window: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,7 +33,7 @@ pub fn prepare_task_terminal<R: Registry>(
     Ok(TerminalAttachPlan {
         qualified_handle: qualified_handle.to_string(),
         tmux_session: task.tmux_session.clone(),
-        worktrunk_window: task.worktrunk_window.clone(),
+        task_window: task.task_window.clone(),
     })
 }
 
@@ -54,14 +54,14 @@ mod tests {
     }
 
     #[test]
-    fn prepare_task_terminal_returns_registered_session_and_worktrunk_target() {
+    fn prepare_task_terminal_returns_registered_session_and_task_target() {
         let context = context_with_task();
 
         let plan = prepare_task_terminal(&context, "web/fix-login").expect("plan");
 
         assert_eq!(plan.qualified_handle, "web/fix-login");
         assert_eq!(plan.tmux_session, "ajax-web-fix-login");
-        assert_eq!(plan.worktrunk_window, "worktrunk");
+        assert_eq!(plan.task_window, "task");
     }
 
     #[test]

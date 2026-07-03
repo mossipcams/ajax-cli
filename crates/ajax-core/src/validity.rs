@@ -5,8 +5,8 @@ pub enum TaskValidityIssue {
     MissingTmuxSession,
     MissingWorktree,
     MissingBranch,
-    MissingWorktrunk,
-    WorktrunkWrongPath,
+    MissingTaskWindow,
+    TaskWindowWrongPath,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -47,10 +47,10 @@ pub fn task_validity(task: &Task) -> TaskValidity {
         issues.push(TaskValidityIssue::MissingBranch);
     }
 
-    match task.worktrunk_status.as_ref() {
+    match task.task_window_status.as_ref() {
         Some(status) if status.exists && status.points_at_expected_path => {}
-        Some(status) if status.exists => issues.push(TaskValidityIssue::WorktrunkWrongPath),
-        _ => issues.push(TaskValidityIssue::MissingWorktrunk),
+        Some(status) if status.exists => issues.push(TaskValidityIssue::TaskWindowWrongPath),
+        _ => issues.push(TaskValidityIssue::MissingTaskWindow),
     }
 
     TaskValidity { issues }
@@ -59,7 +59,7 @@ pub fn task_validity(task: &Task) -> TaskValidity {
 #[cfg(test)]
 mod tests {
     use super::{task_validity, TaskValidityIssue};
-    use crate::models::{AgentClient, GitStatus, Task, TaskId, TmuxStatus, WorktrunkStatus};
+    use crate::models::{AgentClient, GitStatus, Task, TaskId, TaskWindowStatus, TmuxStatus};
 
     fn valid_task() -> Task {
         let mut task = Task::new(
@@ -71,7 +71,7 @@ mod tests {
             "main",
             "/tmp/worktrees/web-fix-login",
             "ajax-web-fix-login",
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
         task.git_status = Some(GitStatus {
@@ -88,15 +88,15 @@ mod tests {
             last_commit: None,
         });
         task.tmux_status = Some(TmuxStatus::present("ajax-web-fix-login"));
-        task.worktrunk_status = Some(WorktrunkStatus::present(
-            "worktrunk",
+        task.task_window_status = Some(TaskWindowStatus::present(
+            "task",
             "/tmp/worktrees/web-fix-login",
         ));
         task
     }
 
     #[test]
-    fn task_is_valid_when_sql_tmux_worktree_branch_and_worktrunk_align() {
+    fn task_is_valid_when_sql_tmux_worktree_branch_and_task_align() {
         let validity = task_validity(&valid_task());
 
         assert!(validity.is_valid());
@@ -112,9 +112,9 @@ mod tests {
         });
         task.git_status.as_mut().unwrap().worktree_exists = false;
         task.git_status.as_mut().unwrap().branch_exists = false;
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: false,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/worktrees/web-fix-login".into(),
             points_at_expected_path: false,
         });
@@ -128,23 +128,26 @@ mod tests {
                 TaskValidityIssue::MissingTmuxSession,
                 TaskValidityIssue::MissingWorktree,
                 TaskValidityIssue::MissingBranch,
-                TaskValidityIssue::MissingWorktrunk,
+                TaskValidityIssue::MissingTaskWindow,
             ]
         );
     }
 
     #[test]
-    fn task_validity_reports_worktrunk_wrong_path() {
+    fn task_validity_reports_task_wrong_path() {
         let mut task = valid_task();
-        task.worktrunk_status = Some(WorktrunkStatus {
+        task.task_window_status = Some(TaskWindowStatus {
             exists: true,
-            window_name: "worktrunk".to_string(),
+            window_name: "task".to_string(),
             current_path: "/tmp/wrong".into(),
             points_at_expected_path: false,
         });
 
         let validity = task_validity(&task);
 
-        assert_eq!(validity.issues, vec![TaskValidityIssue::WorktrunkWrongPath]);
+        assert_eq!(
+            validity.issues,
+            vec![TaskValidityIssue::TaskWindowWrongPath]
+        );
     }
 }

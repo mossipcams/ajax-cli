@@ -198,7 +198,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         )
     }

@@ -186,14 +186,14 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. Schema version 8 splits the
+SQLite is the fast read model for Ajax task state. Schema version 9 splits the
 registry into focused tables: `registry_tasks` stores durable task intent;
 `registry_task_workflow` stores lifecycle, agent runtime status, activity
 timestamps, and attention acknowledgment; `registry_task_live_status` stores
 the optional live-status kind, summary, and observation timestamp;
 `registry_task_runtime_projection` stores reduced runtime health, source,
 observed-at, and optional probe error; `registry_task_git_evidence`,
-`registry_task_tmux_evidence`, and `registry_task_worktrunk_evidence` store the
+`registry_task_tmux_evidence`, and `registry_task_window_evidence` store the
 cached substrate observations; and `registry_events`, `step_receipts`, and
 `registry_meta` keep typed history, operation evidence, and revision state.
 Both workflow timestamps and observation timestamps use nullable typed
@@ -283,7 +283,7 @@ rules:
 - **In-memory registry** — authoritative for the running CLI or web process
   between SQLite reloads.
 - **SQLite persistence** — stores durable operator intent. Active tasks with
-  credible git worktree evidence persist even when tmux/worktrunk substrate is
+  credible git worktree evidence persist even when tmux/ task window substrate is
   missing so Cockpit can offer drop/retry without recreate loops.
 - **Substrate observation** — git/tmux/pane probes update flags and live status
   on existing rows; they must not fight persistence or silently duplicate tasks.
@@ -371,7 +371,7 @@ Command modules are split by use case:
 - `commands/open.rs`
 - `commands/projection.rs`
 - `commands/teardown.rs`
-- `commands/trunk.rs`
+- `commands/task_window.rs`
 - `commands/lookup.rs`
 
 The public CLI vocabulary is operator-facing: `start`, `resume`, `repair`,
@@ -461,7 +461,7 @@ task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
 then open the embedded raw terminal for the selected task on both mobile and
 desktop. The browser submits only an Ajax task handle; `ajax-web` resolves that
-handle to the registered `tmux_session` and attaches to the fixed `worktrunk`
+handle to the registered `tmux_session` and attaches to the fixed ` task window`
 target. The browser must not accept raw tmux target names or make pane captures,
 snapshot viewers, key-send endpoints, or answer routes the default task
 interaction path.
@@ -615,7 +615,7 @@ service worker, install icon, or offline cache surface.
 
 Owns task-handle-to-terminal attach planning for the browser raw terminal bridge.
 The slice resolves a qualified Ajax task handle to the registered
-`tmux_session` and fixed `worktrunk` window target. It does not accept raw
+`tmux_session` and fixed ` task window` window target. It does not accept raw
 tmux session names from the browser and does not own task lifecycle or registry
 truth. The browser task terminal is raw Ghostty/tmux-first on mobile and
 desktop; do not reintroduce Live/snapshot/composer as the default terminal mode

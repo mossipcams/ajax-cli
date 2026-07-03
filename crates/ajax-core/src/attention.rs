@@ -144,7 +144,7 @@ fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationK
         | LiveStatusKind::ContextLimit => Some(AnnotationKind::NeedsMe),
         LiveStatusKind::WorktreeMissing
         | LiveStatusKind::TmuxMissing
-        | LiveStatusKind::WorktrunkMissing
+        | LiveStatusKind::TaskWindowMissing
         | LiveStatusKind::MergeConflict
         | LiveStatusKind::CommandFailed
         | LiveStatusKind::Blocked => Some(AnnotationKind::Broken),
@@ -164,7 +164,7 @@ fn annotation_kind_for_side_flag(flag: SideFlag) -> Option<AnnotationKind> {
         SideFlag::AgentDead => Some(AnnotationKind::Broken),
         SideFlag::TmuxMissing
         | SideFlag::WorktreeMissing
-        | SideFlag::WorktrunkMissing
+        | SideFlag::TaskWindowMissing
         | SideFlag::BranchMissing
         | SideFlag::Conflicted => Some(AnnotationKind::Broken),
         SideFlag::TestsFailed => Some(AnnotationKind::Broken),
@@ -206,7 +206,7 @@ fn substrate_gap_for_side_flag(flag: SideFlag) -> Option<SubstrateGap> {
     match flag {
         SideFlag::WorktreeMissing => Some(SubstrateGap::WorktreeMissing),
         SideFlag::TmuxMissing => Some(SubstrateGap::TmuxMissing),
-        SideFlag::WorktrunkMissing => Some(SubstrateGap::WorktrunkMissing),
+        SideFlag::TaskWindowMissing => Some(SubstrateGap::TaskWindowMissing),
         SideFlag::BranchMissing => Some(SubstrateGap::BranchMissing),
         _ => None,
     }
@@ -217,7 +217,7 @@ fn substrate_gap_for_runtime_health(health: RuntimeHealth) -> Option<SubstrateGa
         RuntimeHealth::MissingWorktree => Some(SubstrateGap::WorktreeMissing),
         RuntimeHealth::MissingSession => Some(SubstrateGap::TmuxMissing),
         RuntimeHealth::MissingTaskWindow | RuntimeHealth::WrongTaskWindowPath => {
-            Some(SubstrateGap::WorktrunkMissing)
+            Some(SubstrateGap::TaskWindowMissing)
         }
         RuntimeHealth::Healthy | RuntimeHealth::Unobservable => None,
     }
@@ -242,7 +242,7 @@ mod tests {
             "main",
             format!("/tmp/worktrees/{handle}"),
             format!("ajax-web-{handle}"),
-            "worktrunk",
+            "task",
             AgentClient::Codex,
         );
 

@@ -6,7 +6,7 @@ use crate::{
 };
 use std::time::Duration;
 
-const DEFAULT_WORKTRUNK_WINDOW: &str = "worktrunk";
+const DEFAULT_WORKTRUNK_WINDOW: &str = "task";
 const PANE_COMMAND_TIMEOUT: Duration = Duration::from_secs(8);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -412,7 +412,7 @@ last line\n";
                 "-p",
                 "-e",
                 "-t",
-                "ajax-web-fix-login:worktrunk",
+                "ajax-web-fix-login:task",
                 "-S",
                 "-200",
             ]
@@ -565,7 +565,7 @@ last line\n";
             vec![
                 "send-keys",
                 "-t",
-                "ajax-web-fix-login:worktrunk",
+                "ajax-web-fix-login:task",
                 "approve it",
                 "Enter",
             ]
@@ -581,7 +581,7 @@ last line\n";
         assert_eq!(outcome, SendKeysOutcome { submitted: true });
         assert_eq!(
             runner.commands[0].args,
-            vec!["send-keys", "-t", "ajax-web-fix-login:worktrunk", "Enter",]
+            vec!["send-keys", "-t", "ajax-web-fix-login:task", "Enter",]
         );
     }
 
