@@ -74,10 +74,7 @@ impl SqliteRegistryStore {
             migrate_v6_to_v7(connection)?;
         }
         if sqlite_user_version(connection)? == 7 {
-            migrate_v7_to_v8(connection)?;
-        }
-        if sqlite_user_version(connection)? == 8 {
-            migrate_v8_to_v9(connection)?;
+            migrate_v7_to_current_schema(connection)?;
         }
         let user_version = sqlite_user_version(connection)?;
         if user_version > 0 && user_version != SQLITE_SCHEMA_VERSION {
@@ -86,13 +83,13 @@ impl SqliteRegistryStore {
                 supported: SQLITE_SCHEMA_VERSION,
             });
         }
-        SqliteRegistryStore::create_v8_schema(connection)?;
+        SqliteRegistryStore::create_current_schema(connection)?;
         connection
             .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
             .map_err(database_error)
     }
 
-    fn create_v8_schema(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+    fn create_current_schema(connection: &Connection) -> Result<(), RegistrySnapshotError> {
         connection
             .execute_batch(
                 r#"
@@ -280,51 +277,6 @@ impl SqliteRegistryStore {
     }
 }
 
-fn migrate_v8_to_v9(connection: &Connection) -> Result<(), RegistrySnapshotError> {
-    let legacy_task_window = concat!("work", "trunk_window");
-    let legacy_task_window_evidence = concat!("registry_task_work", "trunk_evidence");
-
-    if registry_tasks_has_column(connection, legacy_task_window)?
-        && !registry_tasks_has_column(connection, "task_window")?
-    {
-        connection
-            .execute_batch(&format!(
-                "ALTER TABLE registry_tasks RENAME COLUMN {legacy_task_window} TO task_window;"
-            ))
-            .map_err(database_error)?;
-    }
-
-    if table_exists(connection, legacy_task_window_evidence)?
-        && !table_exists(connection, "registry_task_window_evidence")?
-    {
-        let rename_evidence_sql = format!(
-            r#"
-                ALTER TABLE {legacy_task_window_evidence}
-                    RENAME TO registry_task_window_evidence;
-                ALTER TABLE registry_task_window_evidence
-                    RENAME COLUMN {legacy_exists} TO task_window_exists;
-                ALTER TABLE registry_task_window_evidence
-                    RENAME COLUMN {legacy_window_name} TO task_window_name;
-                ALTER TABLE registry_task_window_evidence
-                    RENAME COLUMN {legacy_current_path} TO task_window_current_path;
-                ALTER TABLE registry_task_window_evidence
-                    RENAME COLUMN {legacy_points_at_expected_path} TO task_window_points_at_expected_path;
-                "#,
-            legacy_exists = concat!("work", "trunk_exists"),
-            legacy_window_name = concat!("work", "trunk_window_name"),
-            legacy_current_path = concat!("work", "trunk_current_path"),
-            legacy_points_at_expected_path = concat!("work", "trunk_points_at_expected_path"),
-        );
-        connection
-            .execute_batch(rename_evidence_sql.as_str())
-            .map_err(database_error)?;
-    }
-
-    connection
-        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
-        .map_err(database_error)
-}
-
 fn migrate_v6_to_v7(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     for column in [
         "live_status_observed_at_unix_seconds",
@@ -353,7 +305,7 @@ fn migrate_v6_to_v7(connection: &Connection) -> Result<(), RegistrySnapshotError
         .map_err(database_error)
 }
 
-fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError> {
+fn migrate_v7_to_current_schema(connection: &Connection) -> Result<(), RegistrySnapshotError> {
     connection
         .execute_batch(
             r#"
@@ -361,7 +313,7 @@ fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError
             "#,
         )
         .map_err(database_error)?;
-    SqliteRegistryStore::create_v8_schema(connection)?;
+    SqliteRegistryStore::create_current_schema(connection)?;
     connection
         .execute_batch(
             r#"
@@ -439,9 +391,11 @@ fn migrate_v7_to_v8(connection: &Connection) -> Result<(), RegistrySnapshotError
             WHERE task_window_exists IS NOT NULL;
 
             DROP TABLE registry_tasks_v7;
-            PRAGMA user_version = 8;
             "#,
         )
+        .map_err(database_error)?;
+    connection
+        .pragma_update(None, "user_version", SQLITE_SCHEMA_VERSION)
         .map_err(database_error)
 }
 
@@ -478,16 +432,6 @@ fn registry_tasks_has_column(
         }
     }
     Ok(false)
-}
-
-fn table_exists(connection: &Connection, table: &str) -> Result<bool, RegistrySnapshotError> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
-            [table],
-            |row| row.get(0),
-        )
-        .map_err(database_error)
 }
 
 fn migrate_v4_to_v5(connection: &Connection) -> Result<(), RegistrySnapshotError> {
@@ -1617,8 +1561,6 @@ string_codec!(
     [NotStarted, Running, Waiting, Blocked, Dead, Done, Unknown,]
 );
 
-const LEGACY_TASK_WINDOW_MISSING_NAME: &str = concat!("Work", "trunkMissing");
-
 fn side_flag_name(value: SideFlag) -> &'static str {
     match value {
         SideFlag::Dirty => "Dirty",
@@ -1645,7 +1587,7 @@ fn parse_side_flag(value: &str) -> Result<SideFlag, RegistrySnapshotError> {
         "TestsFailed" => Ok(SideFlag::TestsFailed),
         "TmuxMissing" => Ok(SideFlag::TmuxMissing),
         "WorktreeMissing" => Ok(SideFlag::WorktreeMissing),
-        "TaskWindowMissing" | LEGACY_TASK_WINDOW_MISSING_NAME => Ok(SideFlag::TaskWindowMissing),
+        "TaskWindowMissing" => Ok(SideFlag::TaskWindowMissing),
         "BranchMissing" => Ok(SideFlag::BranchMissing),
         "Stale" => Ok(SideFlag::Stale),
         "Conflicted" => Ok(SideFlag::Conflicted),
@@ -1683,9 +1625,7 @@ fn parse_live_status_kind(value: &str) -> Result<LiveStatusKind, RegistrySnapsho
     match value {
         "WorktreeMissing" => Ok(LiveStatusKind::WorktreeMissing),
         "TmuxMissing" => Ok(LiveStatusKind::TmuxMissing),
-        "TaskWindowMissing" | LEGACY_TASK_WINDOW_MISSING_NAME => {
-            Ok(LiveStatusKind::TaskWindowMissing)
-        }
+        "TaskWindowMissing" => Ok(LiveStatusKind::TaskWindowMissing),
         "ShellIdle" => Ok(LiveStatusKind::ShellIdle),
         "CommandRunning" => Ok(LiveStatusKind::CommandRunning),
         "TestsRunning" => Ok(LiveStatusKind::TestsRunning),
@@ -2340,7 +2280,7 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_registry_store_round_trips_task_intent_and_workflow_from_v8_tables() {
+    fn sqlite_registry_store_round_trips_task_intent_and_workflow_from_normalized_tables() {
         let mut registry = InMemoryRegistry::default();
         let mut task = task("task-1", "web", "fix-login");
         task.lifecycle_status = LifecycleStatus::Waiting;
@@ -2960,7 +2900,7 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_registry_store_preserves_side_tables_with_v8_schema() {
+    fn sqlite_registry_store_preserves_side_tables_with_normalized_schema() {
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
@@ -3195,11 +3135,11 @@ mod tests {
     }
 
     #[test]
-    fn sqlite_registry_store_migrates_v7_wide_tasks_to_v8_normalized_tables() {
+    fn sqlite_registry_store_migrates_v7_wide_tasks_to_current_normalized_tables() {
         let path = std::env::temp_dir().join(format!(
             "ajax-registry-store-{}-{}.db",
             std::process::id(),
-            "sqlite-v7-to-v8-migration"
+            "sqlite-v7-to-current-migration"
         ));
         seed_v7_database(&path);
         let store = SqliteRegistryStore::new(&path);
