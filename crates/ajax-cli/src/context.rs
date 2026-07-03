@@ -555,7 +555,9 @@ mod tests {
 
     #[test]
     fn load_context_preserves_resolved_runtime_paths() {
-        let runtime_paths = RuntimePathRequest::new("/Users/matt")
+        let root =
+            std::env::temp_dir().join(format!("ajax-context-runtime-paths-{}", std::process::id()));
+        let runtime_paths = RuntimePathRequest::new(&root)
             .with_cli_profile("dev")
             .resolve();
         let paths = CliContextPaths::from_runtime_paths(runtime_paths.clone());
@@ -565,6 +567,8 @@ mod tests {
         assert_eq!(paths.config_file, runtime_paths.config_file);
         assert_eq!(paths.state_file, runtime_paths.state_db);
         assert_eq!(context.runtime_paths, runtime_paths);
+
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
