@@ -603,10 +603,7 @@ checks browser capability limits, delegates valid work to the existing core task
 operations, and returns the refreshed Cockpit projection. Unsupported
 capabilities return typed adapter capability outcomes rather than duplicated
 lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
-when the operator needs full interactive attach. Destructive browser actions use
-server-issued, one-time confirmation tokens in addition to client-side confirm
-dialogs, so a forged request cannot perform the destructive operation without
-first completing the server confirmation challenge.
+when the operator needs full interactive attach.
 
 ### `ajax-web::slices::install`
 

@@ -16,7 +16,6 @@ use axum::{
     serve::Listener,
     Json, Router,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -219,7 +218,6 @@ struct OperationCoordinator {
     completed_request_ids: VecDeque<String>,
     in_flight_requests: BTreeSet<String>,
     in_flight_tasks: BTreeSet<String>,
-    confirmation_tokens: HashMap<String, String>,
 }
 
 /// Why a mutation could not enter the in-flight gate.
@@ -230,11 +228,6 @@ enum GateRejection {
     Conflict,
 }
 
-enum ConfirmationGate {
-    Confirmed,
-    Required(String),
-}
-
 impl OperationCoordinator {
     fn completed_response(&self, request_id: &str) -> Option<Response> {
         self.completed.get(request_id).cloned()
@@ -242,24 +235,6 @@ impl OperationCoordinator {
 
     fn has_in_flight_mutation(&self) -> bool {
         !self.in_flight_requests.is_empty() || !self.in_flight_tasks.is_empty()
-    }
-
-    fn check_confirmation(
-        &mut self,
-        task_handle: &str,
-        action: &str,
-        provided_token: Option<&str>,
-    ) -> Result<ConfirmationGate, WebError> {
-        let key = confirmation_key(task_handle, action);
-        if let Some(expected) = self.confirmation_tokens.get(&key) {
-            if provided_token == Some(expected.as_str()) {
-                self.confirmation_tokens.remove(&key);
-                return Ok(ConfirmationGate::Confirmed);
-            }
-        }
-        let token = new_confirmation_token()?;
-        self.confirmation_tokens.insert(key, token.clone());
-        Ok(ConfirmationGate::Required(token))
     }
 
     /// Claim the single-mutation gate for this request/task pair, or explain
@@ -314,18 +289,6 @@ impl OperationCoordinator {
     }
 }
 
-fn confirmation_key(task_handle: &str, action: &str) -> String {
-    format!("{task_handle}\0{action}")
-}
-
-fn new_confirmation_token() -> Result<String, WebError> {
-    let mut bytes = [0_u8; 32];
-    getrandom::fill(&mut bytes).map_err(|error| {
-        WebError::CommandFailed(format!("failed to generate confirmation token: {error}"))
-    })?;
-    Ok(URL_SAFE_NO_PAD.encode(bytes))
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiAccess {
     Public,
@@ -357,7 +320,7 @@ where
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
-        .route("/api/server/restart", post(axum_server_restart::<C, B>))
+        .route("/api/server/restart", post(axum_server_restart))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
@@ -555,51 +518,8 @@ async fn axum_version() -> AxumResponse {
     )
 }
 
-async fn axum_server_restart<C, B>(
-    State(state): State<WebAppState<C, B>>,
-    body: Bytes,
-) -> AxumResponse
-where
-    C: CommandRunner + Clone + Send + 'static,
-    B: RuntimeBridge<C> + Clone + Send + 'static,
-{
-    let request = match server_restart_request(&body) {
-        Ok(request) => request,
-        Err(error) => {
-            return json_value_response(
-                400,
-                serde_json::json!({
-                    "ok": false,
-                    "error": format!("json parse failed: {error}"),
-                }),
-            );
-        }
-    };
-    let confirmation = {
-        let mut operations = state.operations();
-        operations.check_confirmation("__server", "restart", request.confirmation_token.as_deref())
-    };
-    match confirmation {
-        Ok(ConfirmationGate::Confirmed) => {}
-        Ok(ConfirmationGate::Required(token)) => {
-            return restart_confirmation_required_response(&token);
-        }
-        Err(error) => return web_error_response(error),
-    }
+async fn axum_server_restart() -> AxumResponse {
     handle_server_restart().into_axum_response()
-}
-
-#[derive(Default, Deserialize)]
-struct ServerRestartRequest {
-    #[serde(default)]
-    confirmation_token: Option<String>,
-}
-
-fn server_restart_request(body: &Bytes) -> Result<ServerRestartRequest, serde_json::Error> {
-    if body.is_empty() {
-        return Ok(ServerRestartRequest::default());
-    }
-    serde_json::from_slice(body)
 }
 
 fn handle_server_restart() -> Response {
@@ -609,18 +529,6 @@ fn handle_server_restart() -> Response {
         content_type: "application/json; charset=utf-8",
         body: br#"{"ok":true,"restarting":true}"#.to_vec(),
     }
-}
-
-fn restart_confirmation_required_response(token: &str) -> AxumResponse {
-    json_value_response(
-        409,
-        serde_json::json!({
-            "ok": false,
-            "state_changed": false,
-            "error": "confirmation required — tap again to confirm",
-            "confirmation_token": token,
-        }),
-    )
 }
 
 async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
@@ -900,28 +808,6 @@ where
     };
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();
-    if let Some(request_id) = request_id.as_deref() {
-        if let Some(response) = state.operations().completed_response(request_id) {
-            return response.into_axum_response();
-        }
-    }
-    if action_requires_server_confirmation(&request.action) {
-        let confirmation = {
-            let mut operations = state.operations();
-            operations.check_confirmation(
-                &request.task_handle,
-                &request.action,
-                request.confirmation_token.as_deref(),
-            )
-        };
-        match confirmation {
-            Ok(ConfirmationGate::Confirmed) => {}
-            Ok(ConfirmationGate::Required(token)) => {
-                return confirmation_required_response(&state, &request, &token);
-            }
-            Err(error) => return web_error_response(error),
-        }
-    }
     if let Err(rejection) = state
         .operations()
         .try_begin(request_id.as_deref(), &task_key)
@@ -997,8 +883,6 @@ struct MobileActionRequest {
     request_id: Option<String>,
     task_handle: String,
     action: String,
-    #[serde(default)]
-    confirmation_token: Option<String>,
 }
 
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
@@ -1082,32 +966,6 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
         message,
         state_changed: false,
     })
-}
-
-fn action_requires_server_confirmation(action: &str) -> bool {
-    OperatorAction::from_label(action).is_some_and(|action| action == OperatorAction::Drop)
-}
-
-fn confirmation_required_response<C, B>(
-    state: &WebAppState<C, B>,
-    request: &MobileActionRequest,
-    token: &str,
-) -> AxumResponse {
-    let cockpit = {
-        let guard = state.shared();
-        cockpit::browser_cockpit_view(&guard.context)
-    };
-    json_value_response(
-        409,
-        serde_json::json!({
-            "ok": false,
-            "request_id": request.request_id.as_deref(),
-            "state_changed": false,
-            "error": "confirmation required — tap again to confirm",
-            "confirmation_token": token,
-            "cockpit": cockpit,
-        }),
-    )
 }
 
 fn supported_web_agent(agent: &str) -> bool {
@@ -2073,68 +1931,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn destructive_action_requires_server_confirmation_token_before_bridge() {
-        let (state, cookie, app) = app_with(
-            context_with_task(),
-            TestBridge::default(),
-            "drop-confirmation-required",
-        );
-
-        let response = post_json(
-            &app,
-            &cookie,
-            "/api/operations",
-            r#"{"request_id":"drop-1","task_handle":"web/fix-login","action":"drop"}"#,
-        )
-        .await;
-
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = json_of(response).await;
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["state_changed"], false);
-        assert_eq!(body["request_id"], "drop-1");
-        assert!(body["confirmation_token"]
-            .as_str()
-            .is_some_and(|token| !token.is_empty()));
-        assert_eq!(state.shared().bridge.operate_count, 0);
-    }
-
-    #[tokio::test]
-    async fn destructive_action_accepts_issued_confirmation_token_once() {
-        let (state, cookie, app) = app_with(
-            context_with_task(),
-            TestBridge::default(),
-            "drop-confirmation-token",
-        );
-        let first = post_json(
-            &app,
-            &cookie,
-            "/api/operations",
-            r#"{"request_id":"drop-token-1","task_handle":"web/fix-login","action":"drop"}"#,
-        )
-        .await;
-        let first_body = json_of(first).await;
-        let token = first_body["confirmation_token"].as_str().unwrap();
-        let confirmed = serde_json::json!({
-            "request_id": "drop-token-2",
-            "task_handle": "web/fix-login",
-            "action": "drop",
-            "confirmation_token": token,
-        })
-        .to_string();
-
-        let response = post_json(&app, &cookie, "/api/operations", &confirmed).await;
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(state.shared().bridge.operate_count, 1);
-
-        let replay = post_json(&app, &cookie, "/api/operations", &confirmed).await;
-
-        assert_eq!(replay.status(), StatusCode::OK);
-        assert_eq!(state.shared().bridge.operate_count, 1);
-    }
-
-    #[tokio::test]
     async fn operation_endpoint_returns_refreshed_cockpit_on_bridge_error() {
         let (_state, cookie, app) = app_with(
             context_with_task(),
@@ -2649,32 +2445,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_restart_endpoint_requires_confirmation_token() {
+    async fn server_restart_endpoint_returns_restarting_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let (_state, cookie, app) =
-            app_with(context, TestBridge::default(), "restart-confirm-required");
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart");
 
         let response = post_json(&app, &cookie, "/api/server/restart", "").await;
-
-        assert_eq!(response.status(), StatusCode::CONFLICT);
-        let body = json_of(response).await;
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["state_changed"], false);
-        assert!(body["confirmation_token"]
-            .as_str()
-            .is_some_and(|token| !token.is_empty()));
-    }
-
-    #[tokio::test]
-    async fn server_restart_endpoint_accepts_issued_confirmation_token() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart-confirmed");
-        let first = post_json(&app, &cookie, "/api/server/restart", "").await;
-        let first_body = json_of(first).await;
-        let token = first_body["confirmation_token"].as_str().unwrap();
-        let body = serde_json::json!({ "confirmation_token": token }).to_string();
-
-        let response = post_json(&app, &cookie, "/api/server/restart", &body).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_of(response).await;

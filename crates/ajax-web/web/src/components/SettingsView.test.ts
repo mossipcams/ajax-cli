@@ -29,22 +29,6 @@ describe("SettingsView", () => {
     expect(onRestarted).toHaveBeenCalledOnce();
   });
 
-  it("resubmits restart with the server confirmation token", async () => {
-    const spy = vi
-      .spyOn(api, "restartServer")
-      .mockResolvedValueOnce({ ok: false, confirmation_token: "restart-token" })
-      .mockResolvedValueOnce({ ok: true, restarting: true });
-    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
-    const { getByText } = render(SettingsView);
-
-    await fireEvent.click(getByText("Restart server"));
-    await fireEvent.click(getByText("Tap to confirm"));
-
-    expect(spy).toHaveBeenCalledTimes(2);
-    expect(spy).toHaveBeenNthCalledWith(1);
-    expect(spy).toHaveBeenNthCalledWith(2, "restart-token");
-  });
-
   it("reports a timeout when the server does not return", async () => {
     vi.spyOn(api, "restartServer").mockResolvedValue({});
     vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);

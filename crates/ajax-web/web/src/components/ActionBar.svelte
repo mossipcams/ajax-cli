@@ -38,27 +38,14 @@
     return action.label;
   }
 
-  function needsConfirmation(action: WebAction): boolean {
-    return action.destructive || action.confirmation_required;
-  }
-
-  async function submit(action: WebAction, request_id: string, confirmation_token?: string) {
-    return postOperation({
-      task_handle: handle,
-      action: action.action,
-      request_id,
-      ...(confirmation_token ? { confirmation_token } : {}),
-    });
-  }
-
   async function run(action: WebAction) {
     runningAction = action.action;
     try {
-      const request_id = requestId();
-      let result = await submit(action, request_id);
-      if (!result.ok && needsConfirmation(action) && result.response.confirmation_token) {
-        result = await submit(action, request_id, result.response.confirmation_token);
-      }
+      const result = await postOperation({
+        task_handle: handle,
+        action: action.action,
+        request_id: requestId(),
+      });
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {
         onResult?.(`${action.label} completed`, result.response.output, false);
@@ -79,7 +66,7 @@
 
   function handleClick(action: WebAction) {
     if (runningAction) return;
-    const needsConfirm = needsConfirmation(action);
+    const needsConfirm = action.destructive || action.confirmation_required;
     if (needsConfirm && pendingAction !== action.action) {
       clearConfirm();
       pendingAction = action.action;
