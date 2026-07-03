@@ -41,10 +41,9 @@
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
 
-  // Expanded mode focuses the terminal into the visible band: on mobile the
-  // keyboard-open takeover hides task chrome, but manual fullscreen alone keeps
-  // Back/Dashboard reachable (see styles.css); on desktop it lifts the panel
-  // into a fixed full-viewport overlay. The class lives on <html> so page-level
+  // Expanded mode gives the terminal a fixed visual-viewport layer. On mobile
+  // that layer owns the PWA screen above the keyboard; on desktop it lifts the
+  // panel into a full-viewport overlay. The class lives on <html> so page-level
   // chrome outside this component can react.
   const EXPANDED_CLASS = "terminal-expanded";
   const setExpanded = (next: boolean) => {
@@ -148,6 +147,7 @@
       input.setAttribute("autocorrect", "off");
       input.setAttribute("autocomplete", "off");
       input.setAttribute("spellcheck", "false");
+      input.style.fontSize = "16px";
     };
 
     const cellHeightPx = (): number => {
@@ -196,10 +196,13 @@
       if (!input || document.activeElement !== input) return;
       input.focus({ preventScroll: true });
     };
-    // iPhone keyboards can't dismiss themselves and the keyboard-open chrome
-    // collapse hides the Back button; blurring the terminal input is the only
-    // way to hand the screen back to the full-height terminal.
-    blurTerm = () => term?.blur();
+    focusTerm = () => term?.textarea?.focus({ preventScroll: true });
+    // iPhone keyboards can't dismiss themselves; directly blurring the hidden
+    // input is the reliable way to close the soft keyboard after fullscreen.
+    blurTerm = () => {
+      term?.textarea?.blur();
+      term?.blur();
+    };
     // Reading action only: focusing here would pop the iOS keyboard and
     // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
@@ -227,10 +230,10 @@
           pasteNotice = "Clipboard read failed — allow paste access and retry";
         });
     };
-    focusTerm = () => term?.focus();
 
     let refitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
+    let snapTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Fit rows to the container but never let the PTY drop below 80 columns:
     // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
@@ -317,9 +320,7 @@
     // for a visible beat.
     refitAfterLayout = schedulePostLayoutRefit;
 
-    // Fullscreen expand must land in the visible band above the iOS keyboard:
-    // reset any document scroll, bottom-anchor the host crop, and follow output.
-    snapExpandedView = () => {
+    const snapVisibleTerminal = () => {
       pinnedToBottom = true;
       hasUnseenOutput = false;
       document.documentElement.scrollTop = 0;
@@ -335,6 +336,26 @@
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
       }
       term?.scrollToBottom();
+    };
+
+    // Fullscreen expand must land in the visible band above the iOS keyboard.
+    // iOS moves the visual viewport over several frames, so repeat the snap
+    // through the first part of that animation instead of trusting one early
+    // layout read.
+    snapExpandedView = () => {
+      snapVisibleTerminal();
+      requestAnimationFrame(() => {
+        if (disposed) return;
+        snapVisibleTerminal();
+        requestAnimationFrame(() => {
+          if (!disposed) snapVisibleTerminal();
+        });
+      });
+      if (snapTimer) clearTimeout(snapTimer);
+      snapTimer = setTimeout(() => {
+        snapTimer = undefined;
+        if (!disposed) snapVisibleTerminal();
+      }, 260);
     };
 
     const resizeObserver =
@@ -452,6 +473,7 @@
       setExpanded(false);
       if (refitFrame) cancelAnimationFrame(refitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
+      if (snapTimer) clearTimeout(snapTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
@@ -484,8 +506,8 @@
       const next = !expanded;
       setExpanded(next);
       if (next) {
-        snapExpandedView();
         focusTerm();
+        snapExpandedView();
       } else {
         blurTerm();
       }

@@ -1047,11 +1047,13 @@ describe("TerminalRawView", () => {
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     focus.mockClear();
     blur.mockClear();
+    const focusSpy = vi.spyOn(lastTextarea!, "focus");
 
     getByRole("button", { name: "Expand terminal" }).click();
     await tick();
 
-    expect(focus).toHaveBeenCalledTimes(1);
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(focus).not.toHaveBeenCalled();
     expect(blur).not.toHaveBeenCalled();
   });
 
@@ -1061,6 +1063,7 @@ describe("TerminalRawView", () => {
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
     focus.mockClear();
     blur.mockClear();
+    const blurSpy = vi.spyOn(lastTextarea!, "blur");
 
     toggle.click();
     await tick();
@@ -1069,6 +1072,7 @@ describe("TerminalRawView", () => {
 
     expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(blurSpy).toHaveBeenCalledTimes(1);
     expect(blur).toHaveBeenCalledTimes(1);
   });
 
@@ -1102,6 +1106,7 @@ describe("TerminalRawView", () => {
       expect(lastTextarea?.getAttribute("autocapitalize")).toBe("off");
       expect(lastTextarea?.getAttribute("autocorrect")).toBe("off");
       expect(lastTextarea?.getAttribute("spellcheck")).toBe("false");
+      expect(lastTextarea?.style.fontSize).toBe("16px");
     });
   });
 
@@ -1403,6 +1408,23 @@ describe("TerminalRawView", () => {
       .map((call) => JSON.parse(call[0] as string))
       .filter((frame) => frame.type === "input");
     expect(inputFrames).toHaveLength(0);
+  });
+
+  it("keeps terminal scrollback draggable while fullscreen is active", async () => {
+    const { getByRole, host } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    scrollLines.mockClear();
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    const move = makeTouch("touchmove", 140);
+    host.dispatchEvent(move);
+
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
+    expect(linesScrolled()).toBe(3);
+    expect(move.defaultPrevented).toBe(true);
   });
 
   it("uses compact terminal chrome on mobile and desktop", () => {

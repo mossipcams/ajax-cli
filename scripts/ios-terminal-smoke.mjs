@@ -200,8 +200,12 @@ try {
     expandedMetrics.root.className.includes("terminal-expanded"),
     "terminal-expanded class missing after fullscreen tap",
   );
-  assert(expandedMetrics.backVisible, "Back button hidden after expand without keyboard-open takeover");
+  assert(!expandedMetrics.backVisible, "Back button should be hidden while terminal fullscreen owns the PWA viewport");
   assert(expandedMetrics.ghosttyCanvas, "ghostty canvas missing after expand");
+  assert(
+    expandedMetrics.terminalPanel.top <= (expandedMetrics.viewport.visualOffsetTop ?? 0) + 48,
+    `fullscreen terminal starts too low: ${expandedMetrics.terminalPanel.top}`,
+  );
   assert(
     expandedMetrics.ghosttyCanvas.bottom <= (expandedMetrics.viewport.visualHeight ?? expandedMetrics.viewport.innerHeight) + 2,
     `terminal canvas extends below visible band: bottom ${expandedMetrics.ghosttyCanvas.bottom}`,
