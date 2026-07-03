@@ -453,6 +453,49 @@
       zeroLagStyle = next ? cursorOverlayStyle() : "";
     };
 
+    let optimisticPrintableAhead = "";
+    let optimisticBackspacesAhead = 0;
+
+    const appendZeroLagInput = (data: string) => {
+      flushSync(() => {
+        setZeroLagInput(zeroLagInput + data);
+      });
+    };
+
+    const trimZeroLagInput = () => {
+      flushSync(() => {
+        setZeroLagInput(zeroLagInput.slice(0, -1));
+      });
+    };
+
+    const clearZeroLagInput = () => {
+      flushSync(() => {
+        setZeroLagInput("");
+      });
+    };
+
+    const handleTextareaBeforeInput = (event: InputEvent) => {
+      if (event.inputType === "insertText" && event.data) {
+        optimisticPrintableAhead += event.data;
+        appendZeroLagInput(event.data);
+        return;
+      }
+      if (event.inputType === "deleteContentBackward") {
+        optimisticBackspacesAhead += 1;
+        trimZeroLagInput();
+        return;
+      }
+      if (event.inputType === "insertLineBreak") {
+        clearZeroLagInput();
+      }
+    };
+
+    const consumeOptimisticPrintable = (data: string): boolean => {
+      if (!optimisticPrintableAhead.startsWith(data)) return false;
+      optimisticPrintableAhead = optimisticPrintableAhead.slice(data.length);
+      return true;
+    };
+
     const handleTerminalData = (raw: string) => {
       if (!connection.isOpen()) return;
 
@@ -463,25 +506,25 @@
       const data = consumeCtrl(raw);
 
       if (data === "\r") {
-        flushSync(() => {
-          setZeroLagInput("");
-        });
+        clearZeroLagInput();
         connection.sendInput(data);
         return;
       }
 
       if (data === "\x7f") {
-        flushSync(() => {
-          setZeroLagInput(zeroLagInput.slice(0, -1));
-        });
+        if (optimisticBackspacesAhead > 0) {
+          optimisticBackspacesAhead -= 1;
+        } else {
+          trimZeroLagInput();
+        }
         connection.sendInput(data);
         return;
       }
 
       if (data.length === 1 && data.charCodeAt(0) >= 32) {
-        flushSync(() => {
-          setZeroLagInput(zeroLagInput + data);
-        });
+        if (!consumeOptimisticPrintable(data)) {
+          appendZeroLagInput(data);
+        }
       }
 
       connection.sendInput(data);
@@ -512,6 +555,7 @@
       term.loadAddon(fitAddon);
       term.open(container);
       hardenMobileTextarea();
+      term.textarea?.addEventListener("beforeinput", handleTextareaBeforeInput);
       terminalSubscriptions.push(
         term.onScroll(() => {
           pinnedToBottom = term ? term.getViewportY() <= 0 : true;
@@ -537,6 +581,7 @@
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
+      term?.textarea?.removeEventListener("beforeinput", handleTextareaBeforeInput);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
@@ -753,6 +798,7 @@
 
   .terminal-zero-lag-input {
     position: absolute;
+    z-index: 1;
     left: 8px;
     bottom: 8px;
     max-width: calc(100% - 16px);

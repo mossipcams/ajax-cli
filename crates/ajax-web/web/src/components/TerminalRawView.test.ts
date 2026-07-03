@@ -206,6 +206,18 @@ const inputPayloadsOf = (socket: MockWebSocket) =>
     .filter((payload): payload is ArrayBufferView => ArrayBuffer.isView(payload))
     .map((payload) => new TextDecoder().decode(payload));
 
+const dispatchTextareaBeforeInput = (inputType: string, data: string | null = null) => {
+  if (!lastTextarea) throw new Error("terminal textarea was not mounted");
+  lastTextarea.dispatchEvent(
+    new InputEvent("beforeinput", {
+      bubbles: true,
+      cancelable: true,
+      data,
+      inputType,
+    }),
+  );
+};
+
 /** Net scrollback movement: the behavior contract is how far the view moved,
  * not how many scrollLines calls delivered it. */
 const linesScrolled = () =>
@@ -368,6 +380,51 @@ describe("TerminalRawView", () => {
     await waitFor(() => {
       expect(container.querySelector("[data-testid='terminal-zero-lag-input']")).toBeNull();
     });
+  });
+
+  it("shows textarea input locally before Ghostty emits terminal data", async () => {
+    const { container, socket } = await mountOpenTerminal();
+
+    dispatchTextareaBeforeInput("insertText", "h");
+
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")?.textContent).toBe(
+      "h",
+    );
+    expect(socket?.send).not.toHaveBeenCalled();
+  });
+
+  it("renders the optimistic echo above the terminal canvas", () => {
+    expect(terminalRawViewSource).toMatch(/\.terminal-zero-lag-input\s*\{[^}]*z-index:\s*1/);
+  });
+
+  it("does not duplicate optimistic text when Ghostty emits matching data", async () => {
+    const { container, socket } = await mountOpenTerminal();
+
+    dispatchTextareaBeforeInput("insertText", "h");
+    onDataHandler?.("h");
+
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")?.textContent).toBe(
+      "h",
+    );
+    await waitFor(() => {
+      expect(inputPayloadsOf(socket!)).toContain("h");
+    });
+  });
+
+  it("updates textarea optimistic input for backspace and enter", async () => {
+    const { container } = await mountOpenTerminal();
+
+    dispatchTextareaBeforeInput("insertText", "h");
+    dispatchTextareaBeforeInput("insertText", "i");
+    dispatchTextareaBeforeInput("deleteContentBackward");
+
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")?.textContent).toBe(
+      "h",
+    );
+
+    dispatchTextareaBeforeInput("insertLineBreak");
+
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")).toBeNull();
   });
 
   it("sends Enter as a raw terminal frame", async () => {
