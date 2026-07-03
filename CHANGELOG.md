@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.30.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.2...ajax-cli-v0.30.3) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** remove redundant task open controls ([#298](https://github.com/mossipcams/ajax-cli/issues/298)) ([8ae673d](https://github.com/mossipcams/ajax-cli/commit/8ae673d19ab0e082f44a11ff16ca3bdcaca97cc3))
+
 ## [0.30.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.30.1...ajax-cli-v0.30.2) (2026-07-03)
 
 
