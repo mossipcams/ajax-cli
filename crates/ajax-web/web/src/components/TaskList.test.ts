@@ -44,11 +44,15 @@ const cockpit: BrowserCockpitView = {
 };
 
 describe("TaskList", () => {
-  it("renders the inbox card with explanation and ordered actions", () => {
+  it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
     const { container, getByText, queryByText } = render(TaskList, { props: { cockpit } });
-    const inboxCard = container.querySelector(".inbox-card[data-handle='web/a']");
-    expect(inboxCard).not.toBeNull();
+    const inboxRow = container.querySelector(".task-row.is-inbox[data-handle='web/a']");
+    expect(inboxRow).not.toBeNull();
     expect(getByText("CI failed")).toBeInTheDocument();
+    // The first non-resume action is reachable via swipe-reveal, same affordance
+    // as calm rows — no permanently-visible action-button row.
+    const wrap = container.querySelector(".task-row-wrap[data-handle='web/a']");
+    expect(wrap!.querySelector(".task-row-reveal")).not.toBeNull();
     expect(getByText("Fix CI")).toBeInTheDocument();
     expect(queryByText("Open")).not.toBeInTheDocument();
     expect(queryByText("Resume")).not.toBeInTheDocument();
@@ -58,8 +62,9 @@ describe("TaskList", () => {
     const { container } = render(TaskList, { props: { cockpit } });
     expect(container.querySelector(".task-row[data-handle='web/b']")).not.toBeNull();
     expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
-    // web/a is in the inbox, not the calm list.
-    expect(container.querySelector(".task-row[data-handle='web/a']")).toBeNull();
+    // web/a renders inside the "Needs you" group, not the calm "Tasks" group.
+    expect(container.querySelector(".group.tasks [data-handle='web/a']")).toBeNull();
+    expect(container.querySelector(".group.inbox [data-handle='web/a']")).not.toBeNull();
   });
 
   it("offers project pills and reports selection", async () => {
@@ -87,10 +92,10 @@ describe("TaskList", () => {
     expect(onOpenTask).toHaveBeenCalledWith("api/c");
   });
 
-  it("opens an inbox task when the card body is tapped", async () => {
+  it("opens an inbox task when the row is tapped", async () => {
     const onOpenTask = vi.fn();
     const { container } = render(TaskList, { props: { cockpit, onOpenTask } });
-    await fireEvent.click(container.querySelector(".inbox-card-open-body")!);
+    await fireEvent.click(container.querySelector(".task-row[data-handle='web/a']")!);
     expect(onOpenTask).toHaveBeenCalledWith("web/a");
   });
 
