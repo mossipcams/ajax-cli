@@ -235,9 +235,15 @@ export async function waitForServerOnline(
   return false;
 }
 
-export async function restartServer(): Promise<OperationResponse> {
-  const { response, payload: rawPayload } = await postJson("/api/server/restart", {});
+export async function restartServer(confirmation_token?: string): Promise<OperationResponse> {
+  const { response, payload: rawPayload } = await postJson(
+    "/api/server/restart",
+    confirmation_token ? { confirmation_token } : {},
+  );
   const payload = assertOperationResponse(rawPayload);
+  if (!response.ok && payload.confirmation_token) {
+    return payload;
+  }
   if (!response.ok) {
     throw new ApiError(classifyStatus(response.status), payload.error || `HTTP ${response.status}`, response.status, payload);
   }

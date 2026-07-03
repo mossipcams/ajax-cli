@@ -118,6 +118,7 @@ export interface OperationRequest {
   task_handle: string;
   action: string;
   request_id: string;
+  confirmation_token?: string;
 }
 
 /** Operation/start envelopes return a refreshed projection on state change. */
@@ -128,6 +129,7 @@ export interface OperationResponse {
   cockpit?: BrowserCockpitView;
   output?: string | null;
   error?: string | null;
+  confirmation_token?: string;
   restarting?: boolean;
 }
 

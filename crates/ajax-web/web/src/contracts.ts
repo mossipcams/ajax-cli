@@ -115,6 +115,12 @@ export function assertOperationResponse(value: unknown): OperationResponse {
   }
   assertOptionalNullableString(value, "output");
   assertOptionalNullableString(value, "error");
+  if (
+    value.confirmation_token !== undefined &&
+    typeof value.confirmation_token !== "string"
+  ) {
+    throw new IncompatibleResponseError("operation.confirmation_token is not a string");
+  }
   if (value.restarting !== undefined && typeof value.restarting !== "boolean") {
     throw new IncompatibleResponseError("operation.restarting is not a boolean");
   }

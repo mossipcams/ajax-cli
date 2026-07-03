@@ -9,13 +9,14 @@ use axum::{
     extract::{
         ws::WebSocketUpgrade, FromRequestParts, Path as AxumPath, Request as AxumRequest, State,
     },
-    http::{header, Uri},
+    http::{header, HeaderMap, Uri},
     middleware::{from_fn_with_state, Next},
     response::Response as AxumResponse,
     routing::{get, post},
     serve::Listener,
     Json, Router,
 };
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use serde::Deserialize;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -28,7 +29,11 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     action_vocabulary::supported_web_action,
-    adapters::{browser_session::BrowserSession, server, tls},
+    adapters::{
+        browser_session::BrowserSession,
+        cloudflare_access::{CloudflareAccessConfig, CloudflareAccessError},
+        server, tls,
+    },
     slices::{cockpit, install},
     WebError,
 };
@@ -51,6 +56,7 @@ pub struct WebAppState<C, B> {
     cockpit_refresh_lock: Arc<tokio::sync::Mutex<()>>,
     state_dir: Arc<PathBuf>,
     browser_session: Arc<BrowserSession>,
+    cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
 }
 
 struct WebSharedState<C, B> {
@@ -76,6 +82,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             cockpit_refresh_lock: Arc::clone(&self.cockpit_refresh_lock),
             state_dir: Arc::clone(&self.state_dir),
             browser_session: Arc::clone(&self.browser_session),
+            cloudflare_access: Arc::clone(&self.cloudflare_access),
         }
     }
 }
@@ -157,6 +164,7 @@ impl<C, B> WebAppState<C, B> {
             cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(BrowserSession::test_default()),
+            cloudflare_access: Arc::new(None),
         }
     }
 
@@ -167,6 +175,7 @@ impl<C, B> WebAppState<C, B> {
         state_dir: PathBuf,
     ) -> Result<Self, WebError> {
         let browser_session = BrowserSession::load_or_create(&state_dir)?;
+        let cloudflare_access = CloudflareAccessConfig::from_env()?;
         Ok(Self {
             shared: Arc::new(Mutex::new(WebSharedState {
                 context,
@@ -179,7 +188,16 @@ impl<C, B> WebAppState<C, B> {
             cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(browser_session),
+            cloudflare_access: Arc::new(cloudflare_access),
         })
+    }
+
+    #[cfg(test)]
+    fn with_cloudflare_access_for_test(self, config: CloudflareAccessConfig) -> Self {
+        Self {
+            cloudflare_access: Arc::new(Some(config)),
+            ..self
+        }
     }
 
     fn cached_cockpit_response(&self) -> Option<Response> {
@@ -201,6 +219,7 @@ struct OperationCoordinator {
     completed_request_ids: VecDeque<String>,
     in_flight_requests: BTreeSet<String>,
     in_flight_tasks: BTreeSet<String>,
+    confirmation_tokens: HashMap<String, String>,
 }
 
 /// Why a mutation could not enter the in-flight gate.
@@ -211,6 +230,11 @@ enum GateRejection {
     Conflict,
 }
 
+enum ConfirmationGate {
+    Confirmed,
+    Required(String),
+}
+
 impl OperationCoordinator {
     fn completed_response(&self, request_id: &str) -> Option<Response> {
         self.completed.get(request_id).cloned()
@@ -218,6 +242,24 @@ impl OperationCoordinator {
 
     fn has_in_flight_mutation(&self) -> bool {
         !self.in_flight_requests.is_empty() || !self.in_flight_tasks.is_empty()
+    }
+
+    fn check_confirmation(
+        &mut self,
+        task_handle: &str,
+        action: &str,
+        provided_token: Option<&str>,
+    ) -> Result<ConfirmationGate, WebError> {
+        let key = confirmation_key(task_handle, action);
+        if let Some(expected) = self.confirmation_tokens.get(&key) {
+            if provided_token == Some(expected.as_str()) {
+                self.confirmation_tokens.remove(&key);
+                return Ok(ConfirmationGate::Confirmed);
+            }
+        }
+        let token = new_confirmation_token()?;
+        self.confirmation_tokens.insert(key, token.clone());
+        Ok(ConfirmationGate::Required(token))
     }
 
     /// Claim the single-mutation gate for this request/task pair, or explain
@@ -272,6 +314,18 @@ impl OperationCoordinator {
     }
 }
 
+fn confirmation_key(task_handle: &str, action: &str) -> String {
+    format!("{task_handle}\0{action}")
+}
+
+fn new_confirmation_token() -> Result<String, WebError> {
+    let mut bytes = [0_u8; 32];
+    getrandom::fill(&mut bytes).map_err(|error| {
+        WebError::CommandFailed(format!("failed to generate confirmation token: {error}"))
+    })?;
+    Ok(URL_SAFE_NO_PAD.encode(bytes))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ApiAccess {
     Public,
@@ -303,7 +357,7 @@ where
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
-        .route("/api/server/restart", post(axum_server_restart))
+        .route("/api/server/restart", post(axum_server_restart::<C, B>))
         .route("/api/cockpit", get(axum_cockpit::<C, B>))
         .route("/api/tasks", post(axum_start_task::<C, B>))
         .route(
@@ -457,12 +511,24 @@ where
     if api_access_policy(request.method().as_str(), path) == ApiAccess::Public {
         return next.run(request).await;
     }
+    if let Some(config) = state.cloudflare_access.as_ref() {
+        if let Err(error) = config.verify_headers(request.headers()) {
+            return cloudflare_access_error_response(error);
+        }
+    }
     if state.browser_session.is_present(request.headers()) {
         return next.run(request).await;
     }
     json_value_response(
         401,
         serde_json::json!({ "ok": false, "error": "browser session required" }),
+    )
+}
+
+fn cloudflare_access_error_response(error: CloudflareAccessError) -> AxumResponse {
+    json_value_response(
+        error.status_code(),
+        serde_json::json!({ "ok": false, "error": error.client_message() }),
     )
 }
 
@@ -489,8 +555,51 @@ async fn axum_version() -> AxumResponse {
     )
 }
 
-async fn axum_server_restart() -> AxumResponse {
+async fn axum_server_restart<C, B>(
+    State(state): State<WebAppState<C, B>>,
+    body: Bytes,
+) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let request = match server_restart_request(&body) {
+        Ok(request) => request,
+        Err(error) => {
+            return json_value_response(
+                400,
+                serde_json::json!({
+                    "ok": false,
+                    "error": format!("json parse failed: {error}"),
+                }),
+            );
+        }
+    };
+    let confirmation = {
+        let mut operations = state.operations();
+        operations.check_confirmation("__server", "restart", request.confirmation_token.as_deref())
+    };
+    match confirmation {
+        Ok(ConfirmationGate::Confirmed) => {}
+        Ok(ConfirmationGate::Required(token)) => {
+            return restart_confirmation_required_response(&token);
+        }
+        Err(error) => return web_error_response(error),
+    }
     handle_server_restart().into_axum_response()
+}
+
+#[derive(Default, Deserialize)]
+struct ServerRestartRequest {
+    #[serde(default)]
+    confirmation_token: Option<String>,
+}
+
+fn server_restart_request(body: &Bytes) -> Result<ServerRestartRequest, serde_json::Error> {
+    if body.is_empty() {
+        return Ok(ServerRestartRequest::default());
+    }
+    serde_json::from_slice(body)
 }
 
 fn handle_server_restart() -> Response {
@@ -500,6 +609,18 @@ fn handle_server_restart() -> Response {
         content_type: "application/json; charset=utf-8",
         body: br#"{"ok":true,"restarting":true}"#.to_vec(),
     }
+}
+
+fn restart_confirmation_required_response(token: &str) -> AxumResponse {
+    json_value_response(
+        409,
+        serde_json::json!({
+            "ok": false,
+            "state_changed": false,
+            "error": "confirmation required — tap again to confirm",
+            "confirmation_token": token,
+        }),
+    )
 }
 
 async fn axum_cockpit<C, B>(State(state): State<WebAppState<C, B>>) -> AxumResponse
@@ -617,6 +738,9 @@ where
     {
         return text_axum_response(400, "websocket upgrade required");
     }
+    if !websocket_origin_allowed(req.headers()) {
+        return text_axum_response(403, "websocket origin forbidden");
+    }
 
     let plan = {
         let guard = state.shared();
@@ -648,6 +772,34 @@ where
     })
 }
 
+fn websocket_origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
+        return false;
+    };
+    origin_authority(origin).is_some_and(|authority| authority.eq_ignore_ascii_case(host))
+}
+
+fn origin_authority(origin: &str) -> Option<&str> {
+    let (scheme, rest) = origin.split_once("://")?;
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let authority = rest.split('/').next()?;
+    if authority.is_empty() || authority.contains('@') || authority.contains('\\') {
+        return None;
+    }
+    Some(authority)
+}
+
 async fn axum_task_post<C, B>(
     State(_state): State<WebAppState<C, B>>,
     AxumPath(_handle): AxumPath<String>,
@@ -676,6 +828,16 @@ where
         return json_value_response(
             400,
             serde_json::json!({ "ok": false, "error": "request_id is required" }),
+        );
+    }
+    if !supported_web_agent(&request.agent) {
+        return json_value_response(
+            400,
+            serde_json::json!({
+                "ok": false,
+                "request_id": request_id,
+                "error": format!("unsupported agent: {}", request.agent),
+            }),
         );
     }
     let task_key = ajax_core::commands::start_task_identity(&request.repo, &request.title)
@@ -738,6 +900,28 @@ where
     };
     let request_id = request.request_id.clone();
     let task_key = request.task_handle.clone();
+    if let Some(request_id) = request_id.as_deref() {
+        if let Some(response) = state.operations().completed_response(request_id) {
+            return response.into_axum_response();
+        }
+    }
+    if action_requires_server_confirmation(&request.action) {
+        let confirmation = {
+            let mut operations = state.operations();
+            operations.check_confirmation(
+                &request.task_handle,
+                &request.action,
+                request.confirmation_token.as_deref(),
+            )
+        };
+        match confirmation {
+            Ok(ConfirmationGate::Confirmed) => {}
+            Ok(ConfirmationGate::Required(token)) => {
+                return confirmation_required_response(&state, &request, &token);
+            }
+            Err(error) => return web_error_response(error),
+        }
+    }
     if let Err(rejection) = state
         .operations()
         .try_begin(request_id.as_deref(), &task_key)
@@ -813,6 +997,8 @@ struct MobileActionRequest {
     request_id: Option<String>,
     task_handle: String,
     action: String,
+    #[serde(default)]
+    confirmation_token: Option<String>,
 }
 
 fn handle_refreshed_cockpit_request<C: CommandRunner>(
@@ -898,6 +1084,36 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
     })
 }
 
+fn action_requires_server_confirmation(action: &str) -> bool {
+    OperatorAction::from_label(action).is_some_and(|action| action == OperatorAction::Drop)
+}
+
+fn confirmation_required_response<C, B>(
+    state: &WebAppState<C, B>,
+    request: &MobileActionRequest,
+    token: &str,
+) -> AxumResponse {
+    let cockpit = {
+        let guard = state.shared();
+        cockpit::browser_cockpit_view(&guard.context)
+    };
+    json_value_response(
+        409,
+        serde_json::json!({
+            "ok": false,
+            "request_id": request.request_id.as_deref(),
+            "state_changed": false,
+            "error": "confirmation required — tap again to confirm",
+            "confirmation_token": token,
+            "cockpit": cockpit,
+        }),
+    )
+}
+
+fn supported_web_agent(agent: &str) -> bool {
+    matches!(agent, "codex" | "claude" | "cursor")
+}
+
 fn handle_start_task_request<C: CommandRunner>(
     request: crate::slices::operate::StartTaskRequest,
     context: &mut CommandContext<InMemoryRegistry>,
@@ -925,10 +1141,11 @@ mod tests {
         http::{Request as AxumRequest, StatusCode},
     };
     use std::{
+        collections::BTreeSet,
         io::{Read, Write},
         sync::atomic::{AtomicUsize, Ordering},
         sync::{Arc, Condvar, Mutex},
-        time::Duration,
+        time::{Duration, SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::Notify;
     use tower::ServiceExt;
@@ -1104,6 +1321,63 @@ mod tests {
         ))
     }
 
+    const TEST_CF_ACCESS_ISSUER: &str = "https://test.cloudflareaccess.com";
+    const TEST_CF_ACCESS_AUD: &str = "test-audience";
+    const TEST_CF_ACCESS_SECRET: &[u8] = b"ajax-test-cloudflare-access-secret";
+
+    fn cloudflare_access_config_for_test(
+        allowed_emails: Option<&[&str]>,
+    ) -> super::CloudflareAccessConfig {
+        let allowed_emails = allowed_emails.map(|emails| {
+            emails
+                .iter()
+                .map(|email| email.to_ascii_lowercase())
+                .collect::<BTreeSet<_>>()
+        });
+        super::CloudflareAccessConfig::hmac_for_test(
+            TEST_CF_ACCESS_ISSUER,
+            TEST_CF_ACCESS_AUD,
+            TEST_CF_ACCESS_SECRET,
+            allowed_emails,
+        )
+    }
+
+    #[derive(serde::Serialize)]
+    struct TestCloudflareAccessClaims {
+        aud: Vec<String>,
+        iss: String,
+        exp: u64,
+        nbf: u64,
+        iat: u64,
+        email: String,
+        #[serde(rename = "type")]
+        token_type: String,
+    }
+
+    fn cloudflare_access_token_for_test(email: &str) -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let claims = TestCloudflareAccessClaims {
+            aud: vec![TEST_CF_ACCESS_AUD.to_string()],
+            iss: TEST_CF_ACCESS_ISSUER.to_string(),
+            exp: now + 300,
+            nbf: now.saturating_sub(60),
+            iat: now,
+            email: email.to_string(),
+            token_type: "app".to_string(),
+        };
+        let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256);
+        header.kid = Some("test-key".to_string());
+        jsonwebtoken::encode(
+            &header,
+            &claims,
+            &jsonwebtoken::EncodingKey::from_secret(TEST_CF_ACCESS_SECRET),
+        )
+        .unwrap()
+    }
+
     fn browser_session_cookie<C, B>(state: &super::WebAppState<C, B>) -> String {
         state.browser_session.cookie_pair()
     }
@@ -1163,6 +1437,44 @@ mod tests {
                     .body(Body::empty())
                     .unwrap(),
             )
+            .await
+            .unwrap()
+    }
+
+    async fn get_with_access(
+        app: &axum::Router,
+        cookie: &str,
+        path: &str,
+        token: &str,
+    ) -> axum::response::Response {
+        app.clone()
+            .oneshot(
+                authenticated_request(cookie, path)
+                    .header("cf-access-jwt-assertion", token)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    }
+
+    async fn websocket_get(
+        app: &axum::Router,
+        cookie: &str,
+        path: &str,
+        origin: Option<&str>,
+    ) -> axum::response::Response {
+        let mut request = authenticated_request(cookie, path)
+            .header("host", "localhost")
+            .header("connection", "upgrade")
+            .header("upgrade", "websocket")
+            .header("sec-websocket-version", "13")
+            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+        if let Some(origin) = origin {
+            request = request.header("origin", origin);
+        }
+        app.clone()
+            .oneshot(request.body(Body::empty()).unwrap())
             .await
             .unwrap()
     }
@@ -1407,6 +1719,49 @@ mod tests {
         assert!(!guard.bridge.refreshed);
         assert_eq!(guard.bridge.operate_count, 0);
         assert_eq!(guard.bridge.start_count, 0);
+    }
+
+    #[tokio::test]
+    async fn cloudflare_access_enabled_rejects_missing_jwt_on_protected_routes() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("cf-access-missing"),
+        )
+        .with_cloudflare_access_for_test(cloudflare_access_config_for_test(None));
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+
+        let response = get(&app, &cookie, "/api/cockpit").await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body = json_of(response).await;
+        assert_eq!(body["ok"], false);
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("Cloudflare Access"));
+    }
+
+    #[tokio::test]
+    async fn cloudflare_access_enabled_accepts_valid_jwt_on_protected_routes() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let state = super::WebAppState::new(
+            context,
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("cf-access-valid"),
+        )
+        .with_cloudflare_access_for_test(cloudflare_access_config_for_test(None));
+        let cookie = browser_session_cookie(&state);
+        let app = super::axum_app(state);
+        let token = cloudflare_access_token_for_test("operator@example.com");
+
+        let response = get_with_access(&app, &cookie, "/api/cockpit", &token).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
     }
 
     #[tokio::test]
@@ -1675,6 +2030,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn axum_task_start_rejects_unsupported_agent_before_bridge() {
+        let (state, cookie, app) = app_with(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            TestBridge::default(),
+            "axum-start-agent-allowlist",
+        );
+
+        let response = post_json(
+            &app,
+            &cookie,
+            "/api/tasks",
+            r#"{"request_id":"start-shell","repo":"web","title":"Fix login","agent":"/bin/sh"}"#,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let json = json_of(response).await;
+        assert_eq!(json["ok"], false);
+        assert!(json["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("unsupported agent"));
+        assert_eq!(state.shared().bridge.start_count, 0);
+    }
+
+    #[tokio::test]
     async fn axum_operation_parse_errors_are_json() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
         let (_state, cookie, app) = app_with(context, TestBridge::default(), "axum-json-error");
@@ -1689,6 +2070,68 @@ mod tests {
         let json = json_of(response).await;
         assert_eq!(json["ok"], false);
         assert!(json["error"].as_str().unwrap_or_default().contains("json"));
+    }
+
+    #[tokio::test]
+    async fn destructive_action_requires_server_confirmation_token_before_bridge() {
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "drop-confirmation-required",
+        );
+
+        let response = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"drop-1","task_handle":"web/fix-login","action":"drop"}"#,
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = json_of(response).await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["state_changed"], false);
+        assert_eq!(body["request_id"], "drop-1");
+        assert!(body["confirmation_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()));
+        assert_eq!(state.shared().bridge.operate_count, 0);
+    }
+
+    #[tokio::test]
+    async fn destructive_action_accepts_issued_confirmation_token_once() {
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "drop-confirmation-token",
+        );
+        let first = post_json(
+            &app,
+            &cookie,
+            "/api/operations",
+            r#"{"request_id":"drop-token-1","task_handle":"web/fix-login","action":"drop"}"#,
+        )
+        .await;
+        let first_body = json_of(first).await;
+        let token = first_body["confirmation_token"].as_str().unwrap();
+        let confirmed = serde_json::json!({
+            "request_id": "drop-token-2",
+            "task_handle": "web/fix-login",
+            "action": "drop",
+            "confirmation_token": token,
+        })
+        .to_string();
+
+        let response = post_json(&app, &cookie, "/api/operations", &confirmed).await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(state.shared().bridge.operate_count, 1);
+
+        let replay = post_json(&app, &cookie, "/api/operations", &confirmed).await;
+
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert_eq!(state.shared().bridge.operate_count, 1);
     }
 
     #[tokio::test]
@@ -2206,11 +2649,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_restart_endpoint_returns_restarting_json() {
+    async fn server_restart_endpoint_requires_confirmation_token() {
         let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-        let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart");
+        let (_state, cookie, app) =
+            app_with(context, TestBridge::default(), "restart-confirm-required");
 
         let response = post_json(&app, &cookie, "/api/server/restart", "").await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let body = json_of(response).await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["state_changed"], false);
+        assert!(body["confirmation_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn server_restart_endpoint_accepts_issued_confirmation_token() {
+        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
+        let (_state, cookie, app) = app_with(context, TestBridge::default(), "restart-confirmed");
+        let first = post_json(&app, &cookie, "/api/server/restart", "").await;
+        let first_body = json_of(first).await;
+        let token = first_body["confirmation_token"].as_str().unwrap();
+        let body = serde_json::json!({ "confirmation_token": token }).to_string();
+
+        let response = post_json(&app, &cookie, "/api/server/restart", &body).await;
 
         assert_eq!(response.status(), StatusCode::OK);
         let body = json_of(response).await;
@@ -2293,6 +2757,41 @@ mod tests {
             std::str::from_utf8(&body).unwrap(),
             "websocket upgrade required"
         );
+    }
+
+    #[tokio::test]
+    async fn axum_task_terminal_rejects_cross_site_websocket_origin() {
+        let (_state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "terminal-cross-origin",
+        );
+
+        let response = websocket_get(
+            &app,
+            &cookie,
+            "/api/tasks/web%2Ffix-login/terminal",
+            Some("https://evil.example"),
+        )
+        .await;
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "websocket origin forbidden"
+        );
+    }
+
+    #[test]
+    fn websocket_origin_policy_accepts_same_origin_host() {
+        let request = AxumRequest::builder()
+            .header("host", "localhost")
+            .header("origin", "https://localhost")
+            .body(Body::empty())
+            .unwrap();
+
+        assert!(super::websocket_origin_allowed(request.headers()));
     }
 
     /// Assert a JSON 404 body with the expected `error` string.

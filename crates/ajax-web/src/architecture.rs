@@ -1,11 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rust_arkitect::dsl::{
-        architectural_rules::ArchitecturalRules, arkitect::Arkitect, project::Project,
-    };
-    use rust_arkitect::{
-        rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
-    };
+    use std::path::{Path, PathBuf};
 
     const SLICES: [&str; 4] = ["cockpit", "install", "operate", "pane"];
     const ADAPTERS: [&str; 4] = ["assets", "http", "tls", "tmux_input"];
@@ -15,118 +10,71 @@ mod tests {
     #[test]
     fn each_web_adapter_does_not_depend_on_slices_or_runtime() {
         for adapter in ADAPTERS {
-            let project = Project::from_current_crate();
             let forbidden_slices = forbidden_paths_for_slices(&SLICES);
             let forbidden_runtime = forbidden_runtime_dependencies();
             let forbidden = forbidden_slices
                 .iter()
                 .chain(forbidden_runtime.iter())
-                .map(String::as_str)
+                .cloned()
                 .collect::<Vec<_>>();
             let module = format!("ajax-web::adapters::{adapter}");
 
-            #[rustfmt::skip]
-            let rules = ArchitecturalRules::define()
-                .rules_for_module(module.as_str())
-                    .it_must_not_depend_on(&forbidden)
-                .build();
-
-            let result = Arkitect::ensure_that(project).complies_with(rules);
-
-            assert!(
-                result.is_ok(),
-                "architecture violations in adapter `{adapter}`: {:#?}",
-                result.err().unwrap_or_default()
-            );
+            assert_module_does_not_depend_on(&module, &forbidden, "adapter", adapter);
         }
     }
 
     #[test]
     fn action_vocabulary_does_not_depend_on_slices_or_runtime() {
-        let project = Project::from_current_crate();
         let forbidden_slices = forbidden_paths_for_slices(&SLICES);
         let forbidden_runtime = forbidden_runtime_dependencies();
         let forbidden = forbidden_slices
             .iter()
             .chain(forbidden_runtime.iter())
-            .map(String::as_str)
+            .cloned()
             .collect::<Vec<_>>();
 
-        #[rustfmt::skip]
-        let rules = ArchitecturalRules::define()
-            .rules_for_module("ajax-web::action_vocabulary")
-                .it_must_not_depend_on(&forbidden)
-            .build();
-
-        let result = Arkitect::ensure_that(project).complies_with(rules);
-
-        assert!(
-            result.is_ok(),
-            "architecture violations in action_vocabulary: {:#?}",
-            result.err().unwrap_or_default()
+        assert_module_does_not_depend_on(
+            "ajax-web::action_vocabulary",
+            &forbidden,
+            "module",
+            "action_vocabulary",
         );
     }
 
     #[test]
     fn each_web_slice_is_isolated_from_sibling_slices_and_runtime() {
         for slice in SLICES {
-            let project = Project::from_current_crate();
             let forbidden_siblings = forbidden_paths_for_sibling_slices(slice);
             let forbidden_runtime = forbidden_runtime_dependencies();
             let forbidden = forbidden_siblings
                 .iter()
                 .chain(forbidden_runtime.iter())
-                .map(String::as_str)
+                .cloned()
                 .collect::<Vec<_>>();
             let module = format!("ajax-web::slices::{slice}");
 
-            let rules = ArchitecturalRules::define()
-                .rules_for_module(module.as_str())
-                .it_must_not_depend_on(&forbidden)
-                .build();
-
-            let result = Arkitect::ensure_that(project).complies_with(rules);
-
-            assert!(
-                result.is_ok(),
-                "architecture violations in slice `{slice}`: {:#?}",
-                result.err().unwrap_or_default()
-            );
+            assert_module_does_not_depend_on(&module, &forbidden, "slice", slice);
         }
     }
 
     #[test]
     fn architecture_rule_rejects_cross_slice_dependency() {
-        let file = RustFile::from_content(
-            "src/slices/cockpit.rs",
-            "ajax-web::slices::cockpit",
-            "use crate::slices::operate::OperateRequest;",
-        );
-        let rule = MustNotDependOnRule::new(
-            "ajax-web::slices::cockpit".to_string(),
-            forbidden_paths_for_sibling_slices("cockpit"),
-        );
-
         assert!(
-            rule.apply(&file).is_err(),
+            source_mentions_dependency(
+                "use crate::slices::operate::OperateRequest;",
+                &forbidden_paths_for_sibling_slices("cockpit")
+            ),
             "web slices must be independent of sibling slices"
         );
     }
 
     #[test]
     fn architecture_rule_rejects_adapter_importing_specific_slice() {
-        let file = RustFile::from_content(
-            "src/adapters/http.rs",
-            "ajax-web::adapters::http",
-            "use crate::slices::install::browser_shell;",
-        );
-        let rule = MustNotDependOnRule::new(
-            "ajax-web::adapters::http".to_string(),
-            forbidden_paths_for_slices(&["install"]),
-        );
-
         assert!(
-            rule.apply(&file).is_err(),
+            source_mentions_dependency(
+                "use crate::slices::install::browser_shell;",
+                &forbidden_paths_for_slices(&["install"])
+            ),
             "web adapter mechanisms must not import any specific slice"
         );
     }
@@ -157,5 +105,66 @@ mod tests {
             .iter()
             .map(|dependency| (*dependency).to_string())
             .collect()
+    }
+
+    fn assert_module_does_not_depend_on(
+        module: &str,
+        forbidden: &[String],
+        kind: &str,
+        name: &str,
+    ) {
+        let violations = module_sources(module)
+            .into_iter()
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(&path).unwrap();
+                source_mentions_dependency(&source, forbidden).then_some(path)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            violations.is_empty(),
+            "architecture violations in {kind} `{name}`: {violations:#?}"
+        );
+    }
+
+    fn module_sources(module: &str) -> Vec<PathBuf> {
+        let relative = module.split("::").skip(1).collect::<Vec<_>>().join("/");
+        let file = PathBuf::from("src").join(format!("{relative}.rs"));
+        let dir = PathBuf::from("src").join(relative);
+        let mut sources = Vec::new();
+        if file.exists() {
+            sources.push(file);
+        }
+        if dir.exists() {
+            collect_rust_files(&dir, &mut sources);
+        }
+        sources
+    }
+
+    fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    fn source_mentions_dependency(source: &str, forbidden: &[String]) -> bool {
+        forbidden
+            .iter()
+            .any(|dependency| source_mentions_path(source, dependency))
+    }
+
+    fn source_mentions_path(source: &str, dependency: &str) -> bool {
+        if source.contains(dependency) {
+            return true;
+        }
+        let Some((parent, child)) = dependency.rsplit_once("::") else {
+            return false;
+        };
+        source.contains(&format!("{parent}::{{")) && source.contains(child)
     }
 }
