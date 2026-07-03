@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.0...ajax-cli-v0.32.1) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** improve terminal fullscreen tapping ([#307](https://github.com/mossipcams/ajax-cli/issues/307)) ([0777c37](https://github.com/mossipcams/ajax-cli/commit/0777c3788146c0edfeeeea7bee9d8028d6fc426f))
+
 ## [0.32.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.31.0...ajax-cli-v0.32.0) (2026-07-03)
 
 
