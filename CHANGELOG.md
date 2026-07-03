@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.2...ajax-cli-v0.32.3) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** refine pwa terminal fullscreen ([#311](https://github.com/mossipcams/ajax-cli/issues/311)) ([dac821a](https://github.com/mossipcams/ajax-cli/commit/dac821a3f5db844ce08e28bc540adb35283f08c5))
+
 ## [0.32.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.1...ajax-cli-v0.32.2) (2026-07-03)
 
 
