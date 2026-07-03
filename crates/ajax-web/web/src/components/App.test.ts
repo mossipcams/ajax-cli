@@ -67,6 +67,7 @@ describe("App shell", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -170,6 +171,34 @@ describe("App shell", () => {
     expect(typeof idleCb).toBe("function");
     idleCb!();
     await vi.waitFor(() => expect(hitVersion()).toBe(true));
+  });
+
+  it("surfaces an update banner when the API version changes", async () => {
+    vi.useFakeTimers();
+    let versionCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+      if (path === "/api/version") {
+        versionCalls += 1;
+        return Promise.resolve(jsonResponse({ version: versionCalls === 1 ? "v1" : "v2" }));
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { container } = render(App);
+    const banner = container.querySelector(".update-banner") as HTMLButtonElement;
+
+    expect(banner.hidden).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(versionCalls).toBe(1));
+    expect(banner.hidden).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(30000);
+
+    await vi.waitFor(() => expect(banner.hidden).toBe(false));
+    expect(banner).toHaveTextContent("Update ready — tap to reload");
   });
 
   it("reports reachable cockpit HTTP failures as disconnected", async () => {
