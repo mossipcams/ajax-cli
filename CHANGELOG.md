@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.3...ajax-cli-v0.32.4) (2026-07-03)
+
+
+### Bug Fixes
+
+* **web:** keep ghostty fullscreen scroll interactive ([#313](https://github.com/mossipcams/ajax-cli/issues/313)) ([62a05f0](https://github.com/mossipcams/ajax-cli/commit/62a05f00bca6e100ebd374d7a4f94ccc86b78215))
+
 ## [0.32.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.2...ajax-cli-v0.32.3) (2026-07-03)
 
 
