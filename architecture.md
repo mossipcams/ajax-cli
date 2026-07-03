@@ -186,7 +186,7 @@ tasks and events to command, output, CLI, and Cockpit boundaries.
 Durable registry state is backed by SQLite through `SqliteRegistryStore`.
 Transient and test state use `InMemoryRegistry`.
 
-SQLite is the fast read model for Ajax task state. Schema version 9 splits the
+SQLite is the fast read model for Ajax task state. Schema version 9 stores the
 registry into focused tables: `registry_tasks` stores durable task intent;
 `registry_task_workflow` stores lifecycle, agent runtime status, activity
 timestamps, and attention acknowledgment; `registry_task_live_status` stores
@@ -197,7 +197,7 @@ observed-at, and optional probe error; `registry_task_git_evidence`,
 cached substrate observations; and `registry_events`, `step_receipts`, and
 `registry_meta` keep typed history, operation evidence, and revision state.
 Both workflow timestamps and observation timestamps use nullable typed
-seconds/nanoseconds columns with strict pair validation. `migrate_v7_to_v8`
+seconds/nanoseconds columns with strict pair validation. `migrate_v7_to_current_schema`
 renames the wide v7 task table, copies the data into the normalized tables, and
 drops the temporary legacy table in one migration pass. Older migrations still
 remain available for databases created before v7, and concurrent acknowledgment
