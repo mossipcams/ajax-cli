@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BrowserCockpitView } from "../types";
   import { filterByProject, sortCards, statusMeta } from "../state";
+  import { visibleTaskActions } from "../taskActions";
   import TaskCard from "./TaskCard.svelte";
   import ActionBar from "./ActionBar.svelte";
   import { swipeReveal } from "../gestures/swipeRevealAction";
@@ -149,7 +150,7 @@
         <div class="task-list">
           {#each group.cards as card (card.qualified_handle)}
             {@const meta = statusMeta(card.status)}
-            {@const revealAction = card.actions.find((action) => action.action !== "resume")}
+            {@const revealAction = visibleTaskActions(card.actions)[0]}
             <div class="task-row-wrap" data-handle={card.qualified_handle}>
               {#if revealAction}
                 <div class="task-row-reveal" style="width: {SWIPE_REVEAL_WIDTH}px">
