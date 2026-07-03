@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { flushSync, onMount } from "svelte";
   import { Ghostty, Terminal, FitAddon, type IDisposable } from "ghostty-web";
   import {
     connectTaskTerminal,
@@ -40,6 +40,8 @@
   let ctrlArmed = $state(false);
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
+  let zeroLagInput = $state("");
+  let zeroLagStyle = $state("");
 
   // Expanded mode gives the terminal a fixed visual-viewport layer. On mobile
   // that layer owns the PWA screen above the keyboard; on desktop it lifts the
@@ -401,6 +403,8 @@
 
     const writeOutput = (text: string) => {
       writeToTerminal(text);
+      zeroLagInput = "";
+      zeroLagStyle = "";
       if (pinnedToBottom) {
         term?.scrollToBottom();
       } else {
@@ -418,6 +422,8 @@
       },
       onOpen: () => {
         statusDetail = "";
+        zeroLagInput = "";
+        zeroLagStyle = "";
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term?.focus());
       },
@@ -425,6 +431,27 @@
 
     // Exposed to the status banner's manual "Reconnect" button.
     requestReconnect = () => connection.reconnectNow();
+
+    const cursorOverlayStyle = (): string => {
+      const canvas = container?.querySelector<HTMLElement>("canvas");
+      const active = term?.buffer.active as { cursorX?: number; cursorY?: number } | undefined;
+      if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
+        return "";
+      }
+      const cellWidth = canvas.clientWidth / term.cols;
+      const cellHeight = canvas.clientHeight / term.rows;
+      if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) {
+        return "";
+      }
+      const left = Math.max(0, active.cursorX) * cellWidth;
+      const top = Math.max(0, active.cursorY) * cellHeight;
+      return `left: ${left}px; top: ${top}px;`;
+    };
+
+    const setZeroLagInput = (next: string) => {
+      zeroLagInput = next;
+      zeroLagStyle = next ? cursorOverlayStyle() : "";
+    };
 
     const handleTerminalData = (raw: string) => {
       if (!connection.isOpen()) return;
@@ -436,13 +463,25 @@
       const data = consumeCtrl(raw);
 
       if (data === "\r") {
+        flushSync(() => {
+          setZeroLagInput("");
+        });
         connection.sendInput(data);
         return;
       }
 
       if (data === "\x7f") {
+        flushSync(() => {
+          setZeroLagInput(zeroLagInput.slice(0, -1));
+        });
         connection.sendInput(data);
         return;
+      }
+
+      if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        flushSync(() => {
+          setZeroLagInput(zeroLagInput + data);
+        });
       }
 
       connection.sendInput(data);
@@ -515,7 +554,17 @@
   data-testid="task-terminal-panel"
   data-terminal-engine="ghostty"
   aria-label="Task terminal">
-  <div class="terminal-host task-terminal-viewport" bind:this={container}></div>
+  <div class="terminal-host task-terminal-viewport" bind:this={container}>
+    {#if zeroLagInput}
+      <div
+        class="terminal-zero-lag-input"
+        data-testid="terminal-zero-lag-input"
+        aria-hidden="true"
+        style={zeroLagStyle}>
+        {zeroLagInput}
+      </div>
+    {/if}
+  </div>
   <button
     type="button"
     class="terminal-expand-corner"
@@ -681,6 +730,7 @@
   }
 
   .terminal-host {
+    position: relative;
     flex: 1 1 auto;
     min-height: 0;
     padding: 8px;
@@ -699,6 +749,21 @@
        touch. none keeps every touchmove cancelable and hands the whole gesture
        to our handler. */
     touch-action: none;
+  }
+
+  .terminal-zero-lag-input {
+    position: absolute;
+    left: 8px;
+    bottom: 8px;
+    max-width: calc(100% - 16px);
+    overflow: hidden;
+    color: #f4eee0;
+    font-family: ui-monospace, SF Mono, Menlo, monospace;
+    font-size: 16px;
+    line-height: 1.2;
+    pointer-events: none;
+    text-shadow: 0 0 6px #1c1714;
+    white-space: pre;
   }
 
   .terminal-new-output {

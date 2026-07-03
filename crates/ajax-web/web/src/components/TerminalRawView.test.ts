@@ -200,6 +200,12 @@ const resizeFramesOf = (socket: MockWebSocket) =>
     .map((call) => JSON.parse(call[0] as string))
     .filter((frame) => frame.type === "resize");
 
+const inputPayloadsOf = (socket: MockWebSocket) =>
+  socket.send.mock.calls
+    .map((call) => call[0])
+    .filter((payload): payload is ArrayBufferView => ArrayBuffer.isView(payload))
+    .map((payload) => new TextDecoder().decode(payload));
+
 /** Net scrollback movement: the behavior contract is how far the view moved,
  * not how many scrollLines calls delivered it. */
 const linesScrolled = () =>
@@ -320,26 +326,17 @@ describe("TerminalRawView", () => {
     onDataHandler?.("\r");
 
     await waitFor(() => {
-      for (const char of "clear") {
-        expect(socket?.send).toHaveBeenCalledWith(
-          JSON.stringify({ type: "input", data: char }),
-        );
-      }
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\r" }),
-      );
+      expect(inputPayloadsOf(socket!)).toEqual(["c", "l", "e", "a", "r", "\r"]);
     });
   });
 
-  it("sends terminal input as JSON frames", async () => {
+  it("sends terminal input as binary frames", async () => {
     const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("a");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "a" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("a");
     });
   });
 
@@ -350,8 +347,26 @@ describe("TerminalRawView", () => {
     onDataHandler?.("i");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "h" }));
-      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "i" }));
+      expect(inputPayloadsOf(socket!)).toEqual(expect.arrayContaining(["h", "i"]));
+    });
+  });
+
+  it("shows printable input locally before the PTY echo returns", async () => {
+    const { container, socket } = await mountOpenTerminal();
+
+    onDataHandler?.("h");
+    onDataHandler?.("i");
+
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")?.textContent).toBe(
+      "hi",
+    );
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("hi") }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='terminal-zero-lag-input']")).toBeNull();
     });
   });
 
@@ -361,9 +376,7 @@ describe("TerminalRawView", () => {
     onDataHandler?.("\r");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\r" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("\r");
     });
   });
 
@@ -373,9 +386,7 @@ describe("TerminalRawView", () => {
     onDataHandler?.("\x7f");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\x7f" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("\x7f");
     });
   });
 
@@ -927,9 +938,7 @@ describe("TerminalRawView", () => {
     getByRole("button", { name: "Esc" }).click();
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\x1b" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("\x1b");
     });
   });
 
@@ -940,9 +949,7 @@ describe("TerminalRawView", () => {
     onDataHandler?.("c");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\x03" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("\x03");
     });
   });
 
@@ -956,8 +963,8 @@ describe("TerminalRawView", () => {
     onDataHandler?.("c");
 
     // The arm expired, so "c" is sent literally, not folded to \x03.
-    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "c" }));
-    expect(socket?.send).not.toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\x03" }));
+    expect(inputPayloadsOf(socket!)).toContain("c");
+    expect(inputPayloadsOf(socket!)).not.toContain("\x03");
     vi.useRealTimers();
   });
 
@@ -970,7 +977,7 @@ describe("TerminalRawView", () => {
     onDataHandler?.("\r");
 
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "\r" }));
+      expect(inputPayloadsOf(socket!)).toContain("\r");
     });
   });
 
@@ -982,15 +989,13 @@ describe("TerminalRawView", () => {
 
     // Ctrl+← becomes the Ctrl-modified CSI cursor sequence.
     await waitFor(() => {
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "input", data: "\x1b[1;5D" }),
-      );
+      expect(inputPayloadsOf(socket!)).toContain("\x1b[1;5D");
     });
 
     // The arm was consumed: a following key is unmodified.
     socket!.send.mockClear();
     onDataHandler?.("x");
-    expect(socket?.send).toHaveBeenCalledWith(JSON.stringify({ type: "input", data: "x" }));
+    expect(inputPayloadsOf(socket!)).toContain("x");
   });
 
   it("snaps the visible viewport on expand: document top, host bottom crop, terminal scroll bottom", async () => {
