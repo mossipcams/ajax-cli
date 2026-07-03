@@ -95,6 +95,9 @@ pub fn start_task_with_checkpoint<R: Registry>(
             "start requires a non-empty task title",
         ));
     }
+    if !supported_start_agent(&request.agent) {
+        return Err(OperateError::UnsupportedCapability("unsupported agent"));
+    }
 
     let core_request = NewTaskRequest {
         repo: request.repo,
@@ -135,6 +138,10 @@ fn start_plan_observation<R: Registry>(
         .and_then(|repo| origin_fetch_age(&repo.path));
 
     commands::StartPlanObservation { origin_fetch_age }
+}
+
+fn supported_start_agent(agent: &str) -> bool {
+    matches!(agent, "codex" | "claude" | "cursor")
 }
 
 fn execute_task_command<R: Registry>(
@@ -565,6 +572,31 @@ mod tests {
         assert_eq!(
             error,
             OperateError::UnsupportedCapability("start requires a non-empty task title")
+        );
+        assert!(runner.commands().is_empty());
+        assert!(context.registry.list_tasks().is_empty());
+    }
+
+    #[test]
+    fn start_task_rejects_unsupported_agent() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        let error = super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "/bin/sh".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            OperateError::UnsupportedCapability("unsupported agent")
         );
         assert!(runner.commands().is_empty());
         assert!(context.registry.list_tasks().is_empty());

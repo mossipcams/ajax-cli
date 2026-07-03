@@ -1,59 +1,35 @@
 #[cfg(test)]
 mod tests {
-    use rust_arkitect::dsl::{
-        architectural_rules::ArchitecturalRules, arkitect::Arkitect, project::Project,
-    };
-    use rust_arkitect::{
-        rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
-    };
+    use std::path::{Path, PathBuf};
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-tui::runtime", "crate::runtime"];
 
     #[test]
     fn cockpit_pieces_do_not_depend_on_runtime() {
-        let project = Project::from_current_crate();
-
-        #[rustfmt::skip]
-        let rules = ArchitecturalRules::define()
-            .rules_for_module("ajax-tui::actions")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::cockpit_state")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::input")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::layout")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::navigation")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::palette")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .rules_for_module("ajax-tui::rendering")
-                .it_must_not_depend_on(&FORBIDDEN_RUNTIME_DEPENDENCIES)
-            .build();
-
-        let result = Arkitect::ensure_that(project).complies_with(rules);
-
-        assert!(
-            result.is_ok(),
-            "architecture violations: {:#?}",
-            result.err().unwrap_or_default()
-        );
+        for module in [
+            "actions",
+            "cockpit_state",
+            "input",
+            "layout",
+            "navigation",
+            "palette",
+            "rendering",
+        ] {
+            assert_module_does_not_depend_on(
+                &format!("ajax-tui::{module}"),
+                &forbidden_runtime_dependencies(),
+                module,
+            );
+        }
     }
 
     #[test]
     fn architecture_rule_rejects_cockpit_state_importing_runtime() {
-        let file = RustFile::from_content(
-            "src/cockpit_state.rs",
-            "ajax-tui::cockpit_state",
-            "use crate::runtime::run_interactive;",
-        );
-        let rule = MustNotDependOnRule::new(
-            "ajax-tui::cockpit_state".to_string(),
-            forbidden_runtime_dependencies(),
-        );
-
         assert!(
-            rule.apply(&file).is_err(),
+            source_mentions_dependency(
+                "use crate::runtime::run_interactive;",
+                &forbidden_runtime_dependencies()
+            ),
             "Cockpit state must remain testable without depending on the runtime event loop"
         );
     }
@@ -63,5 +39,61 @@ mod tests {
             .iter()
             .map(|dependency| (*dependency).to_string())
             .collect()
+    }
+
+    fn assert_module_does_not_depend_on(module: &str, forbidden: &[String], name: &str) {
+        let violations = module_sources(module)
+            .into_iter()
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(&path).unwrap();
+                source_mentions_dependency(&source, forbidden).then_some(path)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            violations.is_empty(),
+            "architecture violations in `{name}`: {violations:#?}"
+        );
+    }
+
+    fn module_sources(module: &str) -> Vec<PathBuf> {
+        let relative = module.split("::").skip(1).collect::<Vec<_>>().join("/");
+        let file = PathBuf::from("src").join(format!("{relative}.rs"));
+        let dir = PathBuf::from("src").join(relative);
+        let mut sources = Vec::new();
+        if file.exists() {
+            sources.push(file);
+        }
+        if dir.exists() {
+            collect_rust_files(&dir, &mut sources);
+        }
+        sources
+    }
+
+    fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    fn source_mentions_dependency(source: &str, forbidden: &[String]) -> bool {
+        forbidden
+            .iter()
+            .any(|dependency| source_mentions_path(source, dependency))
+    }
+
+    fn source_mentions_path(source: &str, dependency: &str) -> bool {
+        if source.contains(dependency) {
+            return true;
+        }
+        let Some((parent, child)) = dependency.rsplit_once("::") else {
+            return false;
+        };
+        source.contains(&format!("{parent}::{{")) && source.contains(child)
     }
 }

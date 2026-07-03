@@ -79,6 +79,18 @@ describe("assertOperationResponse", () => {
     expect(response.ok).toBe(true);
   });
 
+  it("accepts a server confirmation token on conflict responses", () => {
+    const response = assertOperationResponse({
+      ok: false,
+      request_id: "drop-1",
+      state_changed: false,
+      error: "confirmation required",
+      confirmation_token: "confirm-token",
+    });
+
+    expect(response.confirmation_token).toBe("confirm-token");
+  });
+
   it("rejects a malformed nested cockpit projection", () => {
     expect(() =>
       assertOperationResponse({
@@ -96,5 +108,8 @@ describe("assertOperationResponse", () => {
     expect(() => assertOperationResponse({ ok: false, error: 42 })).toThrow(
       IncompatibleResponseError,
     );
+    expect(() =>
+      assertOperationResponse({ ok: false, confirmation_token: 42 }),
+    ).toThrow(IncompatibleResponseError);
   });
 });

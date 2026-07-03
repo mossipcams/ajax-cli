@@ -24,4 +24,3 @@ crossterm = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
-rust_arkitect = { workspace = true }

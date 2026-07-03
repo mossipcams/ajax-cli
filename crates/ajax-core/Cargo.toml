@@ -22,4 +22,3 @@ toml = { workspace = true }
 [dev-dependencies]
 proptest = { workspace = true }
 rstest = { workspace = true }
-rust_arkitect = { workspace = true }

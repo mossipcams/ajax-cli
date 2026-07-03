@@ -29,7 +29,10 @@
     restarting = true;
     restartStatus = "Restarting…";
     try {
-      await restartServer();
+      const response = await restartServer();
+      if (response.confirmation_token) {
+        await restartServer(response.confirmation_token);
+      }
     } catch {
       // A connection drop during restart is expected.
     }

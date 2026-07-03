@@ -2,9 +2,22 @@
 
 use crate::WebError;
 use axum::{
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response as AxumResponse},
 };
+
+const CONTENT_SECURITY_POLICY: &str = concat!(
+    "default-src 'self'; ",
+    "base-uri 'none'; ",
+    "frame-ancestors 'none'; ",
+    "form-action 'none'; ",
+    "object-src 'none'; ",
+    "connect-src 'self' ws: wss:; ",
+    "script-src 'self' 'wasm-unsafe-eval'; ",
+    "style-src 'self' 'unsafe-inline'; ",
+    "img-src 'self' data:; ",
+    "font-src 'self' data:"
+);
 
 pub struct Request<'a> {
     pub method: &'a str,
@@ -107,6 +120,7 @@ pub fn bytes_axum_response(
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
     apply_no_store(&mut response);
+    apply_security_headers(&mut response);
     response
 }
 
@@ -126,9 +140,29 @@ pub fn apply_no_store(response: &mut AxumResponse) {
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
 }
 
+fn apply_security_headers(response: &mut AxumResponse) {
+    let headers = response.headers_mut();
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(CONTENT_SECURITY_POLICY),
+    );
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{json_response, text_response};
+    use super::{json_response, json_value_response, text_response};
 
     #[test]
     fn http_adapter_builds_json_and_text_responses() {
@@ -144,5 +178,21 @@ mod tests {
             serde_json::from_slice::<serde_json::Value>(&json.body).unwrap(),
             serde_json::json!({ "ok": true })
         );
+    }
+
+    #[test]
+    fn axum_responses_include_security_headers() {
+        let response = json_value_response(200, serde_json::json!({ "ok": true }));
+
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert_eq!(response.headers()["referrer-policy"], "no-referrer");
+        assert_eq!(
+            response.headers()["permissions-policy"],
+            "camera=(), microphone=(), geolocation=()"
+        );
+        assert!(response.headers()["content-security-policy"]
+            .to_str()
+            .unwrap()
+            .contains("frame-ancestors 'none'"));
     }
 }

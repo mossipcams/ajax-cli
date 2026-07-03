@@ -522,15 +522,22 @@ operations or replay mutations after reload.
 Web API access follows an explicit adapter-level API access policy. Non-API
 shell and asset routes are public, `/api/health` is public for reachability
 checks, and `POST /api/session` is public only as a browser-session bootstrap on
-the private listener. Live-control API routes such as `/api/cockpit`,
-`/api/version`, `/api/server/restart`, `/api/operations`, `/api/tasks`, and the
-task terminal WebSocket route require the server-issued, HttpOnly, Secure,
-same-origin browser-session cookie. The HTML shell sets the cookie on normal
-loads, and `POST /api/session` exists only to renew or bootstrap that same
-cookie when a live browser shell receives a `401` from a protected API route.
-Session renewal does not authenticate public clients, create browser-owned task
-state, persist pending work, cache operational data, or replay mutations. It is
-a transport recovery mechanism for the host-native private listener.
+the private listener. When Web Cockpit is deliberately placed behind Cloudflare
+Access, runtime configuration may require protected routes to validate
+`Cf-Access-Jwt-Assertion` against the configured issuer, audience, and JWKS
+before accepting the browser-session cookie. Cloudflare Access narrows the
+supported external exposure model; it does not make direct origin bypass safe,
+so operators must still protect the origin with Cloudflare Tunnel, firewalling,
+or equivalent origin access controls. Live-control API routes such as
+`/api/cockpit`, `/api/version`, `/api/server/restart`, `/api/operations`,
+`/api/tasks`, and the task terminal WebSocket route require the server-issued,
+HttpOnly, Secure, same-origin browser-session cookie. The HTML shell sets the
+cookie on normal loads, and `POST /api/session` exists only to renew or
+bootstrap that same cookie when a live browser shell receives a `401` from a
+protected API route. Session renewal does not authenticate public clients,
+create browser-owned task state, persist pending work, cache operational data,
+or replay mutations. It is a transport recovery mechanism for the host-native
+private listener.
 
 The app must function correctly without a service worker. If a service worker
 is kept, it is non-critical and limited to cleanup or safe static assets. It
@@ -596,7 +603,10 @@ checks browser capability limits, delegates valid work to the existing core task
 operations, and returns the refreshed Cockpit projection. Unsupported
 capabilities return typed adapter capability outcomes rather than duplicated
 lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
-when the operator needs full interactive attach.
+when the operator needs full interactive attach. Destructive browser actions use
+server-issued, one-time confirmation tokens in addition to client-side confirm
+dialogs, so a forged request cannot perform the destructive operation without
+first completing the server confirmation challenge.
 
 ### `ajax-web::slices::install`
 
@@ -628,7 +638,9 @@ frontend modules do not own task truth or tmux target selection.
 Owns the PTY/tmux attach mechanism behind the protected task terminal
 WebSocket route. It builds attach commands only from registered task evidence,
 forwards terminal I/O over bounded WebSocket frames, and closes the PTY when
-the browser socket disconnects.
+the browser socket disconnects. Browser task terminal WebSocket upgrades require
+a same-origin `Origin` that matches the request `Host` in addition to the
+normal protected-route session and Cloudflare Access checks.
 
 ### `ajax-web::runtime`
 

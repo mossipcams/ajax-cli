@@ -1,11 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rust_arkitect::dsl::{
-        architectural_rules::ArchitecturalRules, arkitect::Arkitect, project::Project,
-    };
-    use rust_arkitect::{
-        rule::Rule, rules::must_not_depend_on::MustNotDependOnRule, rust_file::RustFile,
-    };
+    use std::path::{Path, PathBuf};
 
     const SLICES: [&str; 2] = ["pane", "review"];
 
@@ -14,84 +9,44 @@ mod tests {
     #[test]
     fn each_substrate_mechanism_does_not_depend_on_any_slice() {
         for mechanism in SUBSTRATE_MECHANISMS {
-            let project = Project::from_current_crate();
             let forbidden = forbidden_paths_for_slices(&SLICES);
-            let forbidden_refs = forbidden.iter().map(String::as_str).collect::<Vec<_>>();
             let module = format!("ajax-core::{mechanism}");
 
-            let rules = ArchitecturalRules::define()
-                .rules_for_module(module.as_str())
-                .it_must_not_depend_on(&forbidden_refs)
-                .build();
-
-            let result = Arkitect::ensure_that(project).complies_with(rules);
-
-            assert!(
-                result.is_ok(),
-                "architecture violations in mechanism `{mechanism}`: {:#?}",
-                result.err().unwrap_or_default()
-            );
+            assert_module_does_not_depend_on(&module, &forbidden, "mechanism", mechanism);
         }
     }
 
     #[test]
     fn each_slice_is_isolated_from_sibling_slices() {
         for slice in SLICES {
-            let project = Project::from_current_crate();
             let forbidden = forbidden_paths_for_sibling_slices(slice);
             if forbidden.is_empty() {
                 continue;
             }
-            let forbidden_refs = forbidden.iter().map(String::as_str).collect::<Vec<_>>();
             let module = format!("ajax-core::slices::{slice}");
 
-            let rules = ArchitecturalRules::define()
-                .rules_for_module(module.as_str())
-                .it_must_not_depend_on(&forbidden_refs)
-                .build();
-
-            let result = Arkitect::ensure_that(project).complies_with(rules);
-
-            assert!(
-                result.is_ok(),
-                "architecture violations in slice `{slice}`: {:#?}",
-                result.err().unwrap_or_default()
-            );
+            assert_module_does_not_depend_on(&module, &forbidden, "slice", slice);
         }
     }
 
     #[test]
     fn architecture_rule_rejects_use_crate_slices_dependency() {
-        let file = RustFile::from_content(
-            "src/adapters/example.rs",
-            "ajax-core::adapters::example",
-            "use crate::slices::review;",
-        );
-        let rule = MustNotDependOnRule::new(
-            "ajax-core::adapters".to_string(),
-            forbidden_paths_for_slices(&["review"]),
-        );
-
         assert!(
-            rule.apply(&file).is_err(),
+            source_mentions_dependency(
+                "use crate::slices::review;",
+                &forbidden_paths_for_slices(&["review"])
+            ),
             "mechanism modules must not be allowed to import specific slice modules"
         );
     }
 
     #[test]
     fn architecture_rule_rejects_direct_crate_slices_dependency() {
-        let file = RustFile::from_content(
-            "src/adapters/example.rs",
-            "ajax-core::adapters::example",
-            "fn example() { crate::slices::review::review_task_plan(); }",
-        );
-        let rule = MustNotDependOnRule::new(
-            "ajax-core::adapters".to_string(),
-            forbidden_paths_for_slices(&["review"]),
-        );
-
         assert!(
-            rule.apply(&file).is_err(),
+            source_mentions_dependency(
+                "fn example() { crate::slices::review::review_task_plan(); }",
+                &forbidden_paths_for_slices(&["review"])
+            ),
             "mechanism modules must not be allowed to call specific slice modules directly"
         );
     }
@@ -224,5 +179,66 @@ mod tests {
             .filter(|sibling| *sibling != slice)
             .collect::<Vec<_>>();
         forbidden_paths_for_slices(&siblings)
+    }
+
+    fn assert_module_does_not_depend_on(
+        module: &str,
+        forbidden: &[String],
+        kind: &str,
+        name: &str,
+    ) {
+        let violations = module_sources(module)
+            .into_iter()
+            .filter_map(|path| {
+                let source = std::fs::read_to_string(&path).unwrap();
+                source_mentions_dependency(&source, forbidden).then_some(path)
+            })
+            .collect::<Vec<_>>();
+
+        assert!(
+            violations.is_empty(),
+            "architecture violations in {kind} `{name}`: {violations:#?}"
+        );
+    }
+
+    fn module_sources(module: &str) -> Vec<PathBuf> {
+        let relative = module.split("::").skip(1).collect::<Vec<_>>().join("/");
+        let file = PathBuf::from("src").join(format!("{relative}.rs"));
+        let dir = PathBuf::from("src").join(relative);
+        let mut sources = Vec::new();
+        if file.exists() {
+            sources.push(file);
+        }
+        if dir.exists() {
+            collect_rust_files(&dir, &mut sources);
+        }
+        sources
+    }
+
+    fn collect_rust_files(dir: &Path, files: &mut Vec<PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_rust_files(&path, files);
+            } else if path.extension().is_some_and(|extension| extension == "rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    fn source_mentions_dependency(source: &str, forbidden: &[String]) -> bool {
+        forbidden
+            .iter()
+            .any(|dependency| source_mentions_path(source, dependency))
+    }
+
+    fn source_mentions_path(source: &str, dependency: &str) -> bool {
+        if source.contains(dependency) {
+            return true;
+        }
+        let Some((parent, child)) = dependency.rsplit_once("::") else {
+            return false;
+        };
+        source.contains(&format!("{parent}::{{")) && source.contains(child)
     }
 }
