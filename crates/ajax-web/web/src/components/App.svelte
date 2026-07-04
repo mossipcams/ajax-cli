@@ -139,6 +139,14 @@
     });
   });
 
+  // Lock dashboard/project document scroll on mobile; task route keeps its own
+  // terminal scroll container.
+  $effect(() => {
+    const open = route.kind === "dashboard" || route.kind === "project";
+    document.documentElement.classList.toggle("ajax-dashboard-open", open);
+    return () => document.documentElement.classList.remove("ajax-dashboard-open");
+  });
+
   function go(hash: string) {
     location.hash = hash;
   }
@@ -272,6 +280,24 @@
 {/if}
 
 <style>
+  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    /* Dashboard/project routes: freeze the document and scroll inside <main>. */
+    :global(html.ajax-dashboard-open),
+    :global(html.ajax-dashboard-open body) {
+      overflow: hidden;
+      overscroll-behavior: none;
+      height: var(--app-height, 100dvh);
+    }
+
+    :global(html.ajax-dashboard-open) :global(main) {
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      height: var(--app-height, 100dvh);
+      box-sizing: border-box;
+      padding-bottom: calc(72px + env(safe-area-inset-bottom));
+    }
+  }
+
   /* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
   .pull-indicator {
     display: flex;

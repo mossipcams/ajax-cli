@@ -5,6 +5,7 @@ import { initViewport, isKeyboardOpen } from "./viewport";
 // handlers it registers and replay them after mutating the height.
 const vvListeners: Record<string, Array<() => void>> = {};
 let vvHeight = 800;
+let vvOffsetTop = 0;
 
 function dispatchVV(type: string) {
   for (const handler of vvListeners[type] ?? []) handler();
@@ -22,12 +23,16 @@ function start(): () => void {
 beforeEach(() => {
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vvHeight = 800;
+  vvOffsetTop = 0;
   disposers = [];
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
   vi.stubGlobal("visualViewport", {
     get height() {
       return vvHeight;
+    },
+    get offsetTop() {
+      return vvOffsetTop;
     },
     addEventListener: (type: string, handler: () => void) => {
       (vvListeners[type] ??= []).push(handler);
@@ -49,6 +54,19 @@ describe("initViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
+  it("sets --app-top from visualViewport offsetTop on init", () => {
+    vvOffsetTop = 44;
+    start();
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("44px");
+  });
+
+  it("updates --app-top when the visual viewport scrolls", () => {
+    start();
+    vvOffsetTop = 72;
+    dispatchVV("scroll");
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("72px");
+  });
+
   it("flags keyboard-open and shrinks --app-height when the viewport collapses", () => {
     start();
     vvHeight = 480; // keyboard ~320px tall
@@ -67,12 +85,12 @@ describe("initViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
-  it("snaps the document scroll back to top while the keyboard is open", () => {
+  it("does not snap document scroll while the keyboard is open", () => {
     start();
     vvHeight = 480;
     dispatchVV("resize");
     window.dispatchEvent(new Event("scroll"));
-    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(window.scrollTo).not.toHaveBeenCalled();
   });
 
   it("leaves document scroll alone when the keyboard is closed", () => {
@@ -89,13 +107,15 @@ describe("initViewport", () => {
     expect(prevent).toHaveBeenCalled();
   });
 
-  it("removes the keyboard-open class and --app-height on cleanup", () => {
+  it("removes the keyboard-open class, --app-height, and --app-top on cleanup", () => {
     const dispose = initViewport();
+    vvOffsetTop = 36;
     vvHeight = 480;
     dispatchVV("resize");
     dispose();
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(false);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("");
   });
 
   it("no-ops without visualViewport", () => {

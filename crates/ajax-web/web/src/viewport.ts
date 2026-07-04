@@ -14,6 +14,8 @@
 const KEYBOARD_OPEN_DELTA_PX = 150;
 const KEYBOARD_CLOSE_DELTA_PX = 100;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
+const APP_HEIGHT_VAR = "--app-height";
+const APP_TOP_VAR = "--app-top";
 
 /**
  * The single keyboard-open truth. `initViewport` maintains the class with
@@ -42,9 +44,17 @@ export function initViewport(): () => void {
   let keyboardOpen = false;
 
   const setAppHeight = (height: number) => {
-    root.style.setProperty("--app-height", `${height}px`);
+    root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
   };
-  setAppHeight(vv.height);
+  const setAppTop = (offsetTop: number) => {
+    root.style.setProperty(APP_TOP_VAR, `${offsetTop}px`);
+  };
+
+  const syncViewportGeometry = () => {
+    setAppHeight(vv.height);
+    setAppTop(vv.offsetTop ?? 0);
+  };
+  syncViewportGeometry();
 
   const onViewportResize = () => {
     const current = vv.height;
@@ -59,14 +69,8 @@ export function initViewport(): () => void {
     // Keep --app-height pinned to the visible band. While the keyboard is closed
     // this also tracks address-bar / orientation changes and re-bases the
     // threshold so the next keyboard open is measured from the right height.
-    setAppHeight(current);
+    syncViewportGeometry();
     if (!keyboardOpen) baselineHeight = current;
-  };
-
-  // iOS scrolls the document to chase the terminal's hidden textarea when the keyboard
-  // opens; snap it back so the fixed terminal layer never slides off-screen.
-  const onWindowScroll = () => {
-    if (keyboardOpen) window.scrollTo(0, 0);
   };
 
   // Suppress pinch / double-tap zoom (iOS ignores user-scalable=no since iOS 10).
@@ -74,17 +78,16 @@ export function initViewport(): () => void {
 
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
-  window.addEventListener("scroll", onWindowScroll);
   document.addEventListener("gesturestart", onGesture);
   document.addEventListener("gesturechange", onGesture);
 
   return () => {
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
-    window.removeEventListener("scroll", onWindowScroll);
     document.removeEventListener("gesturestart", onGesture);
     document.removeEventListener("gesturechange", onGesture);
     root.classList.remove(KEYBOARD_OPEN_CLASS);
-    root.style.removeProperty("--app-height");
+    root.style.removeProperty(APP_HEIGHT_VAR);
+    root.style.removeProperty(APP_TOP_VAR);
   };
 }
