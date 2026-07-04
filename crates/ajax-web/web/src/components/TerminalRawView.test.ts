@@ -1383,6 +1383,35 @@ describe("TerminalRawView", () => {
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("7");
   });
 
+  it("clamps horizontal pan after pinch refit shrinks the canvas", async () => {
+    const { host } = await mountTerminal();
+    sizeHostForPan(host, 900, 338);
+    host.scrollLeft = 500;
+
+    vi.useFakeTimers();
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 75, y: 100 },
+        { x: 225, y: 100 },
+      ]),
+    );
+
+    sizeHostForPan(host, 480, 338);
+
+    await vi.advanceTimersByTimeAsync(50);
+    vi.advanceTimersByTime(300);
+    await tick();
+
+    expect(host.scrollLeft).toBe(142);
+    vi.useRealTimers();
+  });
+
   it("keeps scrolling with momentum after a fast drag is released", async () => {
     const { host } = await mountTerminal();
 
