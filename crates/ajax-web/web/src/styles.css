@@ -603,7 +603,7 @@ main {
 
   html.terminal-expanded .task-detail .terminal-primary {
     position: fixed;
-    top: 0;
+    top: var(--app-top, 0px);
     right: 0;
     left: 0;
     z-index: 45;

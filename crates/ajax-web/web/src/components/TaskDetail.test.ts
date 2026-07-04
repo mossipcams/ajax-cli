@@ -147,9 +147,14 @@ describe("TaskDetail", () => {
     expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/);
     expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
+    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
+
+    expect(taskDetailSource).toMatch(
+      /:global\(html\.terminal-expanded\)\s*\.task-detail \.terminal-primary\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/,
+    );
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
     // Full-bleed terminal: the shell keeps only the top inset; the key bar
     // pads the bottom inset and chrome rows carry their own gutters.

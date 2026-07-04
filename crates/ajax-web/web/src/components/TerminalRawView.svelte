@@ -401,10 +401,18 @@
       term.write(text);
     };
 
+    let optimisticPrintableAhead = "";
+    let optimisticBackspacesAhead = 0;
+
     const writeOutput = (text: string) => {
       writeToTerminal(text);
-      zeroLagInput = "";
-      zeroLagStyle = "";
+      const pendingOptimistic = zeroLagInput;
+      if (pendingOptimistic && text.includes(pendingOptimistic)) {
+        optimisticPrintableAhead = "";
+        optimisticBackspacesAhead = 0;
+        zeroLagInput = "";
+        zeroLagStyle = "";
+      }
       if (pinnedToBottom) {
         term?.scrollToBottom();
       } else {
@@ -422,6 +430,8 @@
       },
       onOpen: () => {
         statusDetail = "";
+        optimisticPrintableAhead = "";
+        optimisticBackspacesAhead = 0;
         zeroLagInput = "";
         zeroLagStyle = "";
         schedulePostLayoutRefit();
@@ -453,9 +463,6 @@
       zeroLagStyle = next ? cursorOverlayStyle() : "";
     };
 
-    let optimisticPrintableAhead = "";
-    let optimisticBackspacesAhead = 0;
-
     const appendZeroLagInput = (data: string) => {
       flushSync(() => {
         setZeroLagInput(zeroLagInput + data);
@@ -470,6 +477,8 @@
 
     const clearZeroLagInput = () => {
       flushSync(() => {
+        optimisticPrintableAhead = "";
+        optimisticBackspacesAhead = 0;
         setZeroLagInput("");
       });
     };

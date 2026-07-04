@@ -300,7 +300,10 @@
        (.terminal-bottom-controls). Chrome rows carry their own gutters. */
     .task-detail {
       position: fixed;
-      inset: 0;
+      top: var(--app-top, 0px);
+      right: 0;
+      bottom: auto;
+      left: 0;
       z-index: 30;
       height: 100dvh;
       height: var(--app-height, 100dvh);
@@ -328,6 +331,10 @@
       display: flex;
       flex: 1 1 auto;
       min-height: 0;
+    }
+
+    :global(html.terminal-expanded) .task-detail .terminal-primary {
+      top: var(--app-top, 0px);
     }
   }
 

@@ -393,6 +393,30 @@ describe("TerminalRawView", () => {
     expect(socket?.send).not.toHaveBeenCalled();
   });
 
+  it("keeps optimistic input visible through unrelated output until PTY echo arrives", async () => {
+    const { container, socket } = await mountOpenTerminal();
+
+    dispatchTextareaBeforeInput("insertText", "h");
+    dispatchTextareaBeforeInput("insertText", "i");
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("status bar redraw") }),
+    } as MessageEvent);
+
+    await waitFor(() => expect(write).toHaveBeenCalledWith("status bar redraw"));
+    expect(container.querySelector("[data-testid='terminal-zero-lag-input']")?.textContent).toBe(
+      "hi",
+    );
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("hi") }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-testid='terminal-zero-lag-input']")).toBeNull();
+    });
+  });
+
   it("renders the optimistic echo above the terminal canvas", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-zero-lag-input\s*\{[^}]*z-index:\s*1/);
   });

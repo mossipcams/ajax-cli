@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
+import { tick } from "svelte";
 import App from "./App.svelte";
+import appSource from "./App.svelte?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
@@ -96,6 +98,37 @@ describe("App shell", () => {
     const { container } = render(App);
     expect(container.querySelector("[data-outlet='dashboard']")).toBeInTheDocument();
     expect(container.querySelector("[data-outlet='settings']")).toBeNull();
+  });
+
+  it("locks dashboard document scroll on mobile via ajax-dashboard-open", async () => {
+    const { unmount } = render(App);
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
+
+    setHash("#/settings");
+    await tick();
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
+
+    setHash("#/");
+    await tick();
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
+
+    setHash("#/p/web");
+    await tick();
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
+
+    setHash("#/t/web%2Ffix-login");
+    await tick();
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
+
+    unmount();
+    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
+
+    expect(appSource).toMatch(
+      /:global\(html\.ajax-dashboard-open\),\s*:global\(html\.ajax-dashboard-open body\)\s*\{[^}]*overflow:\s*hidden/,
+    );
+    expect(appSource).toMatch(
+      /:global\(html\.ajax-dashboard-open\)\s*:global\(main\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/,
+    );
   });
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
