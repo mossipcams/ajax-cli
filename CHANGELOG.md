@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.8...ajax-cli-v0.32.9) (2026-07-04)
+
+
+### Bug Fixes
+
+* **web:** stabilize mobile terminal viewport ([#324](https://github.com/mossipcams/ajax-cli/issues/324)) ([7a7d1f1](https://github.com/mossipcams/ajax-cli/commit/7a7d1f1a2fd29ad002ef570a084e80f677e3dcfc))
+
 ## [0.32.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.7...ajax-cli-v0.32.8) (2026-07-03)
 
 
