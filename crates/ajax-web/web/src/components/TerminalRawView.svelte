@@ -10,6 +10,7 @@
   import { attachTerminalGestures } from "../terminalGestures";
   import {
     flooredCols,
+    clampPan,
     persistedFontSize,
     persistFontSize,
     DEFAULT_FONT_SIZE,
@@ -258,6 +259,10 @@
     // nearly every line. When the floor exceeds what fits, the canvas extends
     // past the right edge and horizontal pan brings it into view.
     let keyboardWasOpen = false;
+    const clampHorizontalPan = () => {
+      if (!container) return;
+      container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
+    };
     const fitNow = () => {
       const keyboardOpen = isKeyboardOpen();
       if (keyboardOpen && !keyboardWasOpen) {
@@ -291,6 +296,7 @@
         // jsdom / pre-layout paints propose nothing; plain fit is the best guess.
         fitAddon.fit();
       }
+      clampHorizontalPan();
       if (pinnedToBottom) term.scrollToBottom();
     };
 
