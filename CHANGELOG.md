@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.10...ajax-cli-v0.32.11) (2026-07-04)
+
+
+### Bug Fixes
+
+* **web:** refit terminal after pinch layout settles ([#328](https://github.com/mossipcams/ajax-cli/issues/328)) ([5e992d8](https://github.com/mossipcams/ajax-cli/commit/5e992d8c833113a5a868a309827268c11ded4575))
+
 ## [0.32.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.9...ajax-cli-v0.32.10) (2026-07-04)
 
 
