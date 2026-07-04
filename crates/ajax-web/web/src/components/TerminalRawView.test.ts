@@ -1412,6 +1412,40 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
+  it("refits again after pinch layout settles to the screen dimensions", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 55, rows: 30 };
+    const { host, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400);
+    resize.mockClear();
+    socket!.send.mockClear();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 75, y: 100 },
+        { x: 225, y: 100 },
+      ]),
+    );
+
+    vi.advanceTimersByTime(16);
+    expect(resize).toHaveBeenCalledWith(80, 30);
+
+    proposedDimensions = { cols: 100, rows: 42 };
+    vi.advanceTimersByTime(16);
+
+    expect(resize).toHaveBeenCalledWith(100, 42);
+
+    vi.advanceTimersByTime(300);
+    expect(resizeFramesOf(socket!)).toEqual([{ type: "resize", cols: 100, rows: 42 }]);
+    vi.useRealTimers();
+  });
+
   it("keeps scrolling with momentum after a fast drag is released", async () => {
     const { host } = await mountTerminal();
 
