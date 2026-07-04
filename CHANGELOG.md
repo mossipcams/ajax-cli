@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.32.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.9...ajax-cli-v0.32.10) (2026-07-04)
+
+
+### Bug Fixes
+
+* **web:** clamp terminal pan after refit ([#326](https://github.com/mossipcams/ajax-cli/issues/326)) ([226d468](https://github.com/mossipcams/ajax-cli/commit/226d46854e995d78bb2d739306c6f5c877bfc123))
+
 ## [0.32.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.32.8...ajax-cli-v0.32.9) (2026-07-04)
 
 
