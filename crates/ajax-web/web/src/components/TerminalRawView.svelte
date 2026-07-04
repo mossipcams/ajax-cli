@@ -188,7 +188,7 @@
           setFontSize: (next) => {
             if (term) term.options.fontSize = next;
             persistFontSize(next);
-            scheduleDebouncedRefit();
+            scheduleFontSizeRefit();
           },
         })
       : () => {};
@@ -252,6 +252,7 @@
     };
 
     let refitFrame = 0;
+    let fontSizeRefitFrame = 0;
     let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Fit rows to the container but never let the PTY drop below 80 columns:
@@ -331,6 +332,15 @@
         sendResize();
         viewportResizeTimer = undefined;
       }, 300);
+    };
+
+    const scheduleFontSizeRefit = () => {
+      if (fontSizeRefitFrame) cancelAnimationFrame(fontSizeRefitFrame);
+      scheduleDebouncedRefit();
+      fontSizeRefitFrame = requestAnimationFrame(() => {
+        fontSizeRefitFrame = 0;
+        if (!disposed) scheduleDebouncedRefit();
+      });
     };
 
     const schedulePostLayoutRefit = () => {
@@ -592,6 +602,7 @@
       setExpanded(false);
       cancelExpandedSnap();
       if (refitFrame) cancelAnimationFrame(refitFrame);
+      if (fontSizeRefitFrame) cancelAnimationFrame(fontSizeRefitFrame);
       if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
