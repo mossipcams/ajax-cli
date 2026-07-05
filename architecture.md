@@ -626,9 +626,13 @@ The browser terminal frontend lives in `crates/ajax-web/web`. `TaskDetail.svelte
 mounts `TerminalRawView.svelte`; `TerminalRawView.svelte` uses `ghostty-web`
 with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
 task-terminal WebSocket lifecycle and reconnect behavior, and
-`terminalGestures.ts` plus `terminalGeometry.ts` keep mobile scrolling, panning,
-pinch font sizing, and keyboard-safe fitting local to the browser shell. These
-frontend modules do not own task truth or tmux target selection.
+`terminalGestures.ts`, `terminalGeometry.ts`, and `terminalRefit.ts` keep mobile
+scrolling, panning, fit-to-width font sizing, keyboard-safe fitting, and refit
+scheduling local to the browser shell. The font auto-shrinks (to a readable
+minimum) so the 80-column PTY floor fits the viewport width, and pinch-zoom
+adjusts it within that same bound, so terminal text stays on-screen without
+horizontal panning except below the minimum font size. These frontend modules
+do not own task truth or tmux target selection.
 
 ### `ajax-web::adapters::terminal_pty`
 

@@ -3,9 +3,11 @@
  *
  * On a phone the viewport fits far fewer than the ~80 columns the hosted
  * tmux/Claude Code TUI assumes, so instead of letting the PTY shrink (and the
- * output wrap), the grid keeps a column floor and the canvas extends past the
- * screen edge. These helpers own the column floor, the horizontal pan clamp,
- * and the pinch-distance → font-size mapping so the gesture wiring in
+ * output wrap), the grid keeps a column floor and the font shrinks until the
+ * floor fits the screen; only when even the smallest readable font overflows
+ * does the canvas extend past the edge and horizontal pan take over. These
+ * helpers own the column floor, the fit-to-width font cap, the horizontal pan
+ * clamp, and the pinch-distance → font-size mapping so the gesture wiring in
  * TerminalRawView stays thin and the math stays unit-testable.
  */
 
@@ -72,6 +74,35 @@ export function clampPan(panPx: number, contentPx: number, viewportPx: number): 
   }
   const maxPan = Math.max(0, contentPx - viewportPx);
   return Math.min(Math.max(panPx, 0), maxPan);
+}
+
+/**
+ * The largest font size at which `minCols` columns still fit the width that
+ * currently holds `proposedCols` columns at `currentFontSize`. Cell width
+ * scales linearly with font size, so the host width is
+ * `proposedCols * cellWidth(currentFontSize)` and the cap follows as
+ * `floor(currentFontSize * proposedCols / minCols)`, clamped to the readable
+ * font range. Invalid measurements (absent/non-positive proposals or font
+ * sizes — e.g. pre-layout fits) return `max`: no measurement, no constraint.
+ */
+export function fitCapFontSize(
+  currentFontSize: number,
+  proposedCols: number | undefined,
+  minCols: number,
+  min: number = MIN_FONT_SIZE,
+  max: number = MAX_FONT_SIZE,
+): number {
+  if (
+    proposedCols === undefined ||
+    !Number.isFinite(proposedCols) ||
+    proposedCols <= 0 ||
+    !Number.isFinite(currentFontSize) ||
+    currentFontSize <= 0
+  ) {
+    return max;
+  }
+  const cap = Math.floor((currentFontSize * proposedCols) / minCols);
+  return Math.min(Math.max(cap, min), max);
 }
 
 /**

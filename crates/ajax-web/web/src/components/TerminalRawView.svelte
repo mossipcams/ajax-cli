@@ -8,12 +8,15 @@
   } from "../terminalConnection";
   import { isKeyboardOpen } from "../viewport";
   import { attachTerminalGestures } from "../terminalGestures";
+  import { createRefitScheduler } from "../terminalRefit";
   import {
     flooredCols,
     clampPan,
+    fitCapFontSize,
     persistedFontSize,
     persistFontSize,
     DEFAULT_FONT_SIZE,
+    MAX_FONT_SIZE,
     MIN_TERMINAL_COLS,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
@@ -171,6 +174,22 @@
       return height > 0 && term && term.rows > 0 ? height / term.rows : 18;
     };
 
+    // The operator's font size — persisted pinch choice or the default. The
+    // live font may sit below it: fitNow shrinks the rendered size whenever
+    // the 80-column floor would overflow the host width, and climbs back
+    // toward this choice when the viewport widens again.
+    let chosenFontSize = persistedFontSize() ?? DEFAULT_FONT_SIZE;
+
+    // Largest font at which the column floor still fits the host width, from
+    // the fit addon's column proposal at the current font. No proposal (jsdom,
+    // pre-layout) means no constraint.
+    const fitFontCap = (): number =>
+      fitCapFontSize(
+        term?.options.fontSize ?? DEFAULT_FONT_SIZE,
+        fitAddon?.proposeDimensions()?.cols,
+        MIN_TERMINAL_COLS,
+      );
+
     // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
     // live in terminalGestures; the component only supplies the terminal-side
     // effects each gesture drives.
@@ -185,7 +204,9 @@
           },
           cellHeightPx,
           fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
+          maxFontSize: fitFontCap,
           setFontSize: (next) => {
+            chosenFontSize = next;
             if (term) term.options.fontSize = next;
             persistFontSize(next);
             scheduleFontSizeRefit();
@@ -251,14 +272,12 @@
         });
     };
 
-    let refitFrame = 0;
-    let fontSizeRefitFrame = 0;
-    let viewportResizeTimer: ReturnType<typeof setTimeout> | undefined;
-
     // Fit rows to the container but never let the PTY drop below 80 columns:
     // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
-    // nearly every line. When the floor exceeds what fits, the canvas extends
-    // past the right edge and horizontal pan brings it into view.
+    // nearly every line. When the floor exceeds what fits, the font shrinks
+    // to keep every column on screen; only when even the minimum font
+    // overflows does the canvas extend past the right edge, with horizontal
+    // pan bringing it into view.
     let keyboardWasOpen = false;
     const clampHorizontalPan = () => {
       if (!container) return;
@@ -291,6 +310,25 @@
       if (!term || !fitAddon) return;
       if (container) container.scrollTop = 0;
       const proposed = fitAddon.proposeDimensions();
+      // Fit-to-width: the font tracks the operator's chosen size but shrinks
+      // as far as the readable minimum so the 80-column floor fits the host —
+      // a narrow screen must not hide half of every line off the right edge
+      // (horizontal pan remains only for the sub-minimum overflow). Growth
+      // back (rotating to a wider viewport) is one step per pass and stops a
+      // pixel short of the cap: integer cell metrics make the cap jitter ±1
+      // between adjacent font sizes, and a margin-less grow would oscillate
+      // against the shrink rule.
+      const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+      const cap = fitCapFontSize(currentFont, proposed?.cols, MIN_TERMINAL_COLS);
+      const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
+      const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
+      const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
+      if (nextFont !== currentFont) {
+        term.options.fontSize = nextFont;
+        // Renderer cell metrics settle after a size change; refit next frame
+        // so rows/cols and the server resize reflect the new font.
+        scheduleDebouncedRefit();
+      }
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
         term.resize(flooredCols(proposed.cols, MIN_TERMINAL_COLS), proposed.rows);
       } else {
@@ -301,54 +339,14 @@
       if (pinnedToBottom) term.scrollToBottom();
     };
 
-    // Connection-time refit: the PTY must learn the real size immediately (the
-    // keyboard is never open at connect), so send without debouncing.
-    const scheduleImmediateRefit = () => {
-      if (disposed) return;
-      if (refitFrame) cancelAnimationFrame(refitFrame);
-      refitFrame = requestAnimationFrame(() => {
-        refitFrame = 0;
-        if (disposed) return;
-        fitNow();
-        sendResize();
-      });
-    };
-
-    // Event-driven refit (container/window/orientation/keyboard): fit locally
-    // right away, but coalesce the server resize behind a debounce so a burst —
-    // e.g. the keyboard animation — collapses into a single frame after things
-    // settle (and is dropped entirely while the keyboard is open).
-    const scheduleDebouncedRefit = () => {
-      if (disposed) return;
-      if (refitFrame) cancelAnimationFrame(refitFrame);
-      refitFrame = requestAnimationFrame(() => {
-        refitFrame = 0;
-        if (disposed) return;
-        fitNow();
-      });
-
-      if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
-      viewportResizeTimer = setTimeout(() => {
-        sendResize();
-        viewportResizeTimer = undefined;
-      }, 300);
-    };
-
-    const scheduleFontSizeRefit = () => {
-      if (fontSizeRefitFrame) cancelAnimationFrame(fontSizeRefitFrame);
-      scheduleDebouncedRefit();
-      fontSizeRefitFrame = requestAnimationFrame(() => {
-        fontSizeRefitFrame = 0;
-        if (!disposed) scheduleDebouncedRefit();
-      });
-    };
-
-    const schedulePostLayoutRefit = () => {
-      scheduleImmediateRefit();
-      requestAnimationFrame(() => {
-        if (!disposed) scheduleImmediateRefit();
-      });
-    };
+    // When to fit and when to tell the PTY (frame coalescing, the resize
+    // debounce, font-metric settling) is terminalRefit's policy; this
+    // component only supplies the two effects. Stable wrappers because the
+    // debounced one is also an event listener removed by identity.
+    const refitScheduler = createRefitScheduler({ fit: fitNow, sendResize });
+    const scheduleDebouncedRefit = () => refitScheduler.scheduleDebounced();
+    const scheduleFontSizeRefit = () => refitScheduler.scheduleFontSize();
+    const schedulePostLayoutRefit = () => refitScheduler.schedulePostLayout();
     // Discrete layout jumps (the ⛶ expand toggle) refit through the immediate
     // path: waiting out the debounce leaves the grid misfit in the new space
     // for a visible beat.
@@ -601,9 +599,7 @@
       disposed = true;
       setExpanded(false);
       cancelExpandedSnap();
-      if (refitFrame) cancelAnimationFrame(refitFrame);
-      if (fontSizeRefitFrame) cancelAnimationFrame(fontSizeRefitFrame);
-      if (viewportResizeTimer) clearTimeout(viewportResizeTimer);
+      refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
