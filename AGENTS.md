@@ -60,7 +60,9 @@ remote-agent execution.
 
 ## Task Modes
 
-Choose the smallest mode that fits the request.
+Choose the smallest mode that fits the request. Bounded Small Fix and Behavior
+Change work defaults to Cursor implementation via the `cursor-delegate` skill;
+see Cursor Delegate.
 
 ### Planning-Only
 
@@ -132,8 +134,10 @@ How to apply:
   Escalating costs less than shipping mediocre work.
 - Cost is a tie-breaker only; when axes conflict for anything that ships,
   intelligence > taste > cost.
-- Bulk/mechanical work (clear-spec implementation, data analysis, migrations):
-  gpt-5.5 - it is effectively free.
+- Bounded in-repo implementation: delegate to Cursor via the `cursor-delegate`
+  skill by default (see Cursor Delegate below).
+- Bulk/mechanical work (data analysis, large mechanical migrations): gpt-5.5 -
+  it is effectively free.
 - Anything user-facing (UI, copy, API design) needs taste >= 7.
 - Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as
   an extra independent perspective.
@@ -152,21 +156,50 @@ How to apply:
 
 ## Cursor Delegate
 
-Use the `cursor-delegate` skill when a task is bounded enough to hand to Cursor
-CLI in the current worktree and Codex can remain the planner, reviewer, and
-final approver.
+Cursor CLI, driven through the `cursor-delegate` skill, is the default
+implementation worker for bounded changes in the current worktree. The
+orchestrating agent remains the planner, reviewer, and final approver: plan
+the change, hand Cursor a narrow work order, then review its diff before
+accepting anything.
 
-Good fits:
+Pick the skill mode that matches the task:
 
-- implementing an approved plan or narrow feature/fix
-- fixing a clear small bug or failing test with minimal edits
-- adding or updating tests only
-- sending a focused follow-up after Codex reviews Cursor's first diff
-- asking Cursor for a read-only second-pass review
+- `implement` — an approved plan or bounded feature/fix (Behavior Change work)
+- `small-fix` — a narrow bug or failing test needing minimal edits (Small Fix
+  work)
+- `test-only` — add or update tests without implementing the fix (the
+  failing-test step of TDD)
+- `resume` — a focused follow-up after reviewing Cursor's previous diff
+- `review` — a read-only second opinion; Cursor must not edit files
 
-Do not use it for vague discovery, broad architecture planning, large refactors
-without a written plan, security-sensitive changes without human review, tasks
-requiring private external access, or changes outside the current worktree.
+Delegation quality lives in the prompt. Give Cursor a work order, not a wish:
+
+- name the files and code paths to touch
+- state the expected behavior and the tests to add or update
+- state what must not change (public behavior, unrelated files, architecture)
+- include the validation commands from this file that Cursor should run
+
+One bounded task per delegation. Split larger work into sequential
+`implement` → `resume` rounds rather than one broad prompt.
+
+After Cursor returns, review before accepting:
+
+1. Read the diff and check it against the requested scope.
+2. Confirm tests were added or updated when applicable.
+3. Run validation yourself; do not trust Cursor's claim alone.
+4. Send unrelated or overly broad edits back via `resume` instead of quietly
+   fixing them.
+5. Never commit, push, or report done solely because Cursor finished.
+
+Implement directly only when the change is smaller than the work order needed
+to describe it, when Cursor CLI is unavailable (report that instead of
+silently taking over), or when the task is on the do-not-delegate list:
+
+- vague discovery or broad architecture planning
+- large refactors without a written plan
+- security-sensitive changes without human review
+- tasks requiring credentials or private external access
+- changes outside the current worktree
 
 ## Non-Negotiable Rules
 
