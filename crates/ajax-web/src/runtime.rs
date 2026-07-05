@@ -617,7 +617,13 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    if let Some(task_handle) = handle.strip_suffix("/terminal") {
+    if req.uri().path().ends_with("/terminal") {
+        let Some(task_handle) = handle.strip_suffix("/terminal") else {
+            return json_value_response(
+                404,
+                serde_json::json!({ "ok": false, "error": "not found" }),
+            );
+        };
         return axum_task_terminal(State(state), task_handle.to_string(), req).await;
     }
     if handle.ends_with("/snapshot") {
@@ -2499,6 +2505,26 @@ mod tests {
         assert_eq!(body["qualified_handle"], "web/fix-login");
         assert_eq!(body["title"], "Fix login");
         assert_eq!(body["branch"], "ajax/fix-login");
+    }
+
+    #[tokio::test]
+    async fn get_task_detail_allows_encoded_handle_named_terminal() {
+        let task = crate::test_support::task_in("ajax-cli", "terminal", "Terminal");
+        let context = crate::test_support::context_with_tasks(&["ajax-cli"], vec![task]);
+        let (_state, cookie, app) =
+            app_with(context, TestBridge::default(), "detail-terminal-handle");
+
+        let response = get(&app, &cookie, "/api/tasks/ajax-cli%2Fterminal").await;
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["content-type"],
+            "application/json; charset=utf-8"
+        );
+        let body = json_of(response).await;
+        assert_eq!(body["qualified_handle"], "ajax-cli/terminal");
+        assert_eq!(body["title"], "Terminal");
+        assert_eq!(body["branch"], "ajax/terminal");
     }
 
     #[tokio::test]
