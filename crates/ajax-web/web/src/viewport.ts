@@ -76,16 +76,27 @@ export function initViewport(): () => void {
   // Suppress pinch / double-tap zoom (iOS ignores user-scalable=no since iOS 10).
   const onGesture = (event: Event) => event.preventDefault();
 
+  const onTouchMovePinchGuard = (event: TouchEvent) => {
+    const scale = (event as TouchEvent & { scale?: number }).scale;
+    if (typeof scale === "number" && scale !== 1) {
+      event.preventDefault();
+    }
+  };
+
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
   document.addEventListener("gesturestart", onGesture);
   document.addEventListener("gesturechange", onGesture);
+  document.addEventListener("gestureend", onGesture);
+  document.addEventListener("touchmove", onTouchMovePinchGuard, { passive: false });
 
   return () => {
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     document.removeEventListener("gesturestart", onGesture);
     document.removeEventListener("gesturechange", onGesture);
+    document.removeEventListener("gestureend", onGesture);
+    document.removeEventListener("touchmove", onTouchMovePinchGuard);
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     root.style.removeProperty(APP_HEIGHT_VAR);
     root.style.removeProperty(APP_TOP_VAR);
