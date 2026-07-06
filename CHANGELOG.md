@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.3...ajax-cli-v0.34.4) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** widen terminal shell and remove fit gutters ([#347](https://github.com/mossipcams/ajax-cli/issues/347)) ([621355b](https://github.com/mossipcams/ajax-cli/commit/621355b2c7971ae9220961af20314df4c88b57d8))
+
 ## [0.34.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.2...ajax-cli-v0.34.3) (2026-07-06)
 
 
