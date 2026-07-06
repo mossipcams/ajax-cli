@@ -636,19 +636,15 @@ main {
     z-index: 40; /* above .cockpit-chrome (10) and .bottom-nav (20) */
     display: flex;
     flex-direction: column;
-    padding: 0;
+    padding: 16px;
     background: var(--paper);
   }
 
-  /* Edge-to-edge: fullscreen means the grid reaches the viewport edges; a
-     border or radius here reads as a stray frame floating at the screen rim. */
   html.terminal-expanded .task-detail .terminal-primary .terminal-panel {
     height: auto;
     flex: 1 1 auto;
     min-height: 0;
     margin-top: 0;
-    border: none;
-    border-radius: 0;
   }
 }
 
