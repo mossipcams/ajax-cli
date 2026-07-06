@@ -20,13 +20,6 @@
   let actions = $derived(visibleTaskActions(detail.actions));
   let metaOpen = $state(false);
 
-  // Lock document scroll while the (mobile) full-screen terminal overlay is
-  // mounted so iOS can't rubber-band / chain-scroll the page behind it. The
-  // lock CSS is mobile-only, so desktop is unaffected.
-  $effect(() => {
-    document.documentElement.classList.add("ajax-task-open");
-    return () => document.documentElement.classList.remove("ajax-task-open");
-  });
 </script>
 
 <div class="task-detail is-terminal-first">
@@ -288,8 +281,10 @@
      in styles.css) gets maximum height. Includes landscape phones (coarse
      pointer, short viewport) that exceed the width breakpoint. */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    :global(html.ajax-task-open),
-    :global(html.ajax-task-open body) {
+    :global(html.terminal-expanded),
+    :global(html.terminal-expanded body),
+    :global(html.keyboard-open),
+    :global(html.keyboard-open body) {
       overflow: hidden;
       overscroll-behavior: none;
       height: var(--app-height, 100dvh);
