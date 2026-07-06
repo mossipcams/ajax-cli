@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.5...ajax-cli-v0.35.0) (2026-07-06)
+
+
+### Features
+
+* **web:** migrate to rcarmo/ghostty-web and edge-to-edge fullscreen terminal ([#353](https://github.com/mossipcams/ajax-cli/issues/353)) ([f54ec11](https://github.com/mossipcams/ajax-cli/commit/f54ec11af3349d249a87a005107c20337c405474))
+
+
+### Reverts
+
+* **web:** terminal width takeover changes ([#351](https://github.com/mossipcams/ajax-cli/issues/351)) ([4d93dd8](https://github.com/mossipcams/ajax-cli/commit/4d93dd8e5d642f9b26e053beb59c5cbb7e74a394))
+
 ## [0.34.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.4...ajax-cli-v0.34.5) (2026-07-06)
 
 
