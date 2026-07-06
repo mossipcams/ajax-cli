@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.33.2...ajax-cli-v0.34.0) (2026-07-06)
+
+
+### Features
+
+* **web:** fit terminal geometry to viewport width ([#339](https://github.com/mossipcams/ajax-cli/issues/339)) ([2ac0340](https://github.com/mossipcams/ajax-cli/commit/2ac034011cbfcf3fdee283f5dfb97f8fa6e23e63))
+
 ## [0.33.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.33.1...ajax-cli-v0.33.2) (2026-07-06)
 
 
