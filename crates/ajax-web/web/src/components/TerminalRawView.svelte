@@ -15,9 +15,13 @@
     fitCapFontSize,
     persistedFontSize,
     persistFontSize,
+    persistedGeometryMode,
+    persistGeometryMode,
     DEFAULT_FONT_SIZE,
     MAX_FONT_SIZE,
     MIN_TERMINAL_COLS,
+    FIT_TERMINAL_COLS,
+    type GeometryMode,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const GHOSTTY_SCROLLBAR_RESERVATION_PX = 15;
@@ -49,6 +53,7 @@
   // overwrite a bridge-reported error in statusDetail.
   let pasteNotice = $state("");
   let ctrlArmed = $state(false);
+  let geometryMode = $state<GeometryMode>(persistedGeometryMode() ?? "fit");
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
   let zeroLagInput = $state("");
@@ -187,6 +192,8 @@
     // toward this choice when the viewport widens again.
     let chosenFontSize = persistedFontSize() ?? DEFAULT_FONT_SIZE;
 
+    const colsFloor = () => (geometryMode === "wide" ? MIN_TERMINAL_COLS : FIT_TERMINAL_COLS);
+
     const cssPx = (style: CSSStyleDeclaration, property: string): number => {
       const value = Number.parseFloat(style.getPropertyValue(property));
       return Number.isFinite(value) ? value : 0;
@@ -224,7 +231,7 @@
       return fitCapFontSize(
         currentFont,
         Math.floor(usableWidth / cellWidth),
-        MIN_TERMINAL_COLS,
+        colsFloor(),
       );
     };
 
@@ -233,7 +240,7 @@
       fitCapFontSize(
         term?.options.fontSize ?? DEFAULT_FONT_SIZE,
         fitAddon?.proposeDimensions()?.cols,
-        MIN_TERMINAL_COLS,
+        colsFloor(),
       );
 
     // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
@@ -318,12 +325,14 @@
         });
     };
 
-    // Fit rows to the container but never let the PTY drop below 80 columns:
-    // the hosted tmux/Claude Code TUI assumes ~80, and a narrower PTY wraps
-    // nearly every line. When the floor exceeds what fits, the font shrinks
-    // to keep every column on screen; only when even the minimum font
-    // overflows does the canvas extend past the right edge, with horizontal
-    // pan bringing it into view.
+    // Fit rows to the container; the column floor depends on geometry mode.
+    // Fit mode sizes the PTY to the visible width (40-col safety floor) so
+    // phones get a readable grid without horizontal panning. Wide mode keeps
+    // the classic 80-column floor: the hosted tmux/Claude Code TUI assumes
+    // ~80, and a narrower PTY wraps nearly every line. When the floor exceeds
+    // what fits, the font shrinks to keep every column on screen; only when
+    // even the minimum font overflows does the canvas extend past the right
+    // edge, with horizontal pan bringing it into view.
     let keyboardWasOpen = false;
     const clampHorizontalPan = () => {
       if (!container) return;
@@ -365,7 +374,7 @@
       // between adjacent font sizes, and a margin-less grow would oscillate
       // against the shrink rule.
       const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-      const cap = hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, MIN_TERMINAL_COLS);
+      const cap = hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, colsFloor());
       const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
       const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
       const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
@@ -376,7 +385,7 @@
         scheduleDebouncedRefit();
       }
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
-        term.resize(flooredCols(proposed.cols, MIN_TERMINAL_COLS), proposed.rows);
+        term.resize(flooredCols(proposed.cols, colsFloor()), proposed.rows);
       } else {
         // jsdom / pre-layout paints propose nothing; plain fit is the best guess.
         fitAddon.fit();
@@ -734,6 +743,19 @@
         class="terminal-key"
         onmousedown={(event) => event.preventDefault()}
         onclick={() => requestPaste()}>Paste</button>
+      <button
+        type="button"
+        class="terminal-key"
+        class:is-armed={geometryMode === "wide"}
+        aria-pressed={geometryMode === "wide"}
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => {
+          const next = geometryMode === "wide" ? "fit" : "wide";
+          geometryMode = next;
+          persistGeometryMode(next);
+          refitAfterLayout();
+          refocusTerm();
+        }}>Wide</button>
       <button
         type="button"
         class="terminal-key"

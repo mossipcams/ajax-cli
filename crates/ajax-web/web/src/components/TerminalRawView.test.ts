@@ -761,6 +761,7 @@ describe("TerminalRawView", () => {
   });
 
   it("floors the PTY at 80 columns when the viewport proposes fewer", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 55, rows: 30 };
     const { socket } = await mountTerminal();
 
@@ -1188,6 +1189,7 @@ describe("TerminalRawView", () => {
 
   it("refits through the immediate path when expand is toggled", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 55, rows: 30 };
     const { getByRole, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
@@ -1359,6 +1361,7 @@ describe("TerminalRawView", () => {
     // 48 columns fit at the 13px default, so 80 columns need 7px: the fit
     // must shrink the font instead of hiding a third of every line off the
     // right edge.
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 48, rows: 30 };
     await mountTerminal();
 
@@ -1374,6 +1377,7 @@ describe("TerminalRawView", () => {
     // host to the 80-column floor, proposeDimensions can report the current
     // floor instead of the phone-visible width. The cap must still use the
     // clipped host width, where 384px holds 48 cells at the 13px font.
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     terminalHostClientWidth = 384;
     proposedDimensions = { cols: 80, rows: 30 };
     await mountTerminal();
@@ -1386,6 +1390,7 @@ describe("TerminalRawView", () => {
 
   it("restores the operator's font once a wider viewport fits it again", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 48, rows: 30 };
     const { socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open refits: font clamped to 7
@@ -1406,6 +1411,7 @@ describe("TerminalRawView", () => {
   it("caps a pinch spread at the size where the column floor still fits", async () => {
     // 100 columns fit at 13px, so 80 columns fit up to 16px: a pinch that
     // asks for more stops there instead of pushing text off-screen.
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
     const { host } = await mountTerminal();
 
@@ -1472,6 +1478,7 @@ describe("TerminalRawView", () => {
   });
 
   it("lets pinch shrink from the clipped host width when Ghostty proposes the floor grid", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     terminalHostClientWidth = 384;
     proposedDimensions = { cols: 80, rows: 30 };
     const { host } = await mountTerminal();
@@ -1494,6 +1501,7 @@ describe("TerminalRawView", () => {
   });
 
   it("clamps horizontal pan after pinch refit shrinks the canvas", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     const { host } = await mountTerminal();
     sizeHostForPan(host, 900, 338);
     host.scrollLeft = 500;
@@ -1520,6 +1528,68 @@ describe("TerminalRawView", () => {
 
     expect(host.scrollLeft).toBe(142);
     vi.useRealTimers();
+  });
+
+  it("resizes the PTY to the fitted columns below 80 in fit mode", async () => {
+    proposedDimensions = { cols: 48, rows: 30 };
+    const { socket } = await mountTerminal();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(48, 30);
+      expect(liveOptions?.fontSize).toBe(13);
+      expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 48, rows: 30 });
+    });
+  });
+
+  it("floors fit mode at 40 columns", async () => {
+    proposedDimensions = { cols: 12, rows: 30 };
+    const { socket } = await mountTerminal();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(40, 30);
+    });
+  });
+
+  it("keeps the 80-column floor after toggling wide mode", async () => {
+    proposedDimensions = { cols: 48, rows: 30 };
+    const { getByRole, socket } = await mountOpenTerminal();
+    await settleFrames();
+    resize.mockClear();
+    socket!.send.mockClear();
+
+    proposedDimensions = { cols: 55, rows: 30 };
+    getByRole("button", { name: "Wide" }).click();
+    await settleFrames();
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(80, 30);
+    });
+  });
+
+  it("persists the geometry mode choice", async () => {
+    const { getByRole } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Wide" }).click();
+    expect(window.localStorage.getItem("ajax.terminal.geometryMode")).toBe("wide");
+
+    getByRole("button", { name: "Wide" }).click();
+    expect(window.localStorage.getItem("ajax.terminal.geometryMode")).toBe("fit");
+  });
+
+  it("restores wide mode from storage", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
+    proposedDimensions = { cols: 55, rows: 30 };
+    const { socket } = await mountTerminal();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(80, 30);
+    });
   });
 
   it("refits again after pinch layout settles to the screen dimensions", async () => {
