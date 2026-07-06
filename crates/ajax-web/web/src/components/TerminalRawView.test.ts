@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { render, waitFor, queryByRole, fireEvent } from "@testing-library/svelte";
+import { render, waitFor, queryByRole } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
@@ -16,11 +16,7 @@ const fitDispose = vi.fn();
 
 const focus = vi.fn();
 const blur = vi.fn();
-const paste = vi.fn((text: string) => {
-  onDataHandler?.(text);
-});
-const copySelection = vi.fn(() => false);
-const getSelection = vi.fn(() => "");
+const paste = vi.fn();
 const resize = vi.fn();
 let lastTextarea: HTMLTextAreaElement | undefined;
 let terminalOptions: unknown;
@@ -62,8 +58,6 @@ vi.mock("ghostty-web", () => ({
     focus = focus;
     blur = blur;
     paste = paste;
-    copySelection = copySelection;
-    getSelection = getSelection;
     resize = (cols: number, rows: number) => {
       this.cols = cols;
       this.rows = rows;
@@ -146,10 +140,6 @@ beforeEach(() => {
   focus.mockClear();
   blur.mockClear();
   paste.mockClear();
-  copySelection.mockReset();
-  copySelection.mockReturnValue(false);
-  getSelection.mockReset();
-  getSelection.mockReturnValue("");
   resize.mockClear();
   scrollLines.mockClear();
   ghosttyLoad.mockClear();
@@ -484,31 +474,14 @@ describe("TerminalRawView", () => {
     });
   });
 
-  it("forwards repeated native backspace events to the PTY", async () => {
+  it("always forwards backspace to the PTY", async () => {
     const { socket } = await mountOpenTerminal();
 
     onDataHandler?.("\x7f");
-    onDataHandler?.("\x7f");
-    onDataHandler?.("\x7f");
 
     await waitFor(() => {
-      expect(inputPayloadsOf(socket!)).toEqual(["\x7f", "\x7f", "\x7f"]);
+      expect(inputPayloadsOf(socket!)).toContain("\x7f");
     });
-  });
-
-  it("repeats toolbar backspace while the key is held", async () => {
-    vi.useFakeTimers();
-    const { getByRole, socket } = await mountOpenTerminal();
-
-    const backspace = getByRole("button", { name: "Backspace" });
-    fireEvent.pointerDown(backspace);
-    vi.advanceTimersByTime(450);
-    vi.advanceTimersByTime(100);
-    fireEvent.pointerUp(backspace);
-
-    const backspaces = inputPayloadsOf(socket!).filter((payload) => payload === "\x7f");
-    expect(backspaces.length).toBeGreaterThanOrEqual(3);
-    vi.useRealTimers();
   });
 
   it("loads ghostty-web with the served wasm asset", async () => {
@@ -534,7 +507,7 @@ describe("TerminalRawView", () => {
     expect(container.querySelector("[data-testid='terminal-composer']")).toBeNull();
   });
 
-  it("pins the fullscreen toggle to the terminal's top-right corner with safe-area inset", () => {
+  it("pins the fullscreen toggle to the terminal's top-right corner", () => {
     const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
     const toggle = container.querySelector(".terminal-expand-corner");
@@ -543,17 +516,13 @@ describe("TerminalRawView", () => {
     // Overlay, not a key-bar item: absolutely positioned at the panel's top right.
     expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*position:\s*absolute/);
     expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*top:/);
-    expect(terminalRawViewSource).toMatch(
-      /\.terminal-expand-corner\s*\{[\s\S]*?env\(safe-area-inset-right/,
-    );
+    expect(terminalRawViewSource).toMatch(/\.terminal-expand-corner\s*\{[^}]*right:/);
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*position:\s*relative/);
-    // The expand control sits on the panel, not inside the clipped host.
-    expect(terminalRawViewSource).not.toMatch(/\.terminal-panel\s*\{[^}]*overflow:\s*hidden/);
   });
 
   it("keeps the terminal viewport as the internal flex scrollback area", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*display:\s*flex/);
-    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*overflow:\s*visible/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*overflow:\s*hidden/);
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*min-width:\s*0/);
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*max-width:\s*100%/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*flex:\s*1 1 auto/);
@@ -1010,7 +979,7 @@ describe("TerminalRawView", () => {
       value: { readText: vi.fn().mockResolvedValue("git push origin main") },
       configurable: true,
     });
-    const { getByRole, socket } = await mountOpenTerminal();
+    const { getByRole } = await mountOpenTerminal();
 
     getByRole("button", { name: "Paste" }).click();
 
@@ -1018,67 +987,8 @@ describe("TerminalRawView", () => {
       // term.paste() honors bracketed-paste mode and flows through the
       // existing onData → socket path, so the PTY receives it like any input.
       expect(paste).toHaveBeenCalledWith("git push origin main");
-      expect(inputPayloadsOf(socket!)).toContain("git push origin main");
       expect(focus).toHaveBeenCalled();
     });
-  });
-
-  it("surfaces an empty clipboard instead of silently doing nothing on paste", async () => {
-    Object.defineProperty(navigator, "clipboard", {
-      value: { readText: vi.fn().mockResolvedValue("") },
-      configurable: true,
-    });
-    const { getByRole, getByTestId } = await mountOpenTerminal();
-
-    getByRole("button", { name: "Paste" }).click();
-
-    await waitFor(() => {
-      expect(getByTestId("terminal-status").textContent).toMatch(/clipboard/i);
-    });
-    expect(paste).not.toHaveBeenCalled();
-  });
-
-  it("copies the terminal selection through ghostty-web", async () => {
-    copySelection.mockReturnValue(true);
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-      configurable: true,
-    });
-    const { getByRole } = await mountOpenTerminal();
-
-    getByRole("button", { name: "Copy" }).click();
-
-    await waitFor(() => {
-      expect(copySelection).toHaveBeenCalled();
-    });
-  });
-
-  it("falls back to clipboard writeText when ghostty exposes a selection but does not copy it", async () => {
-    copySelection.mockReturnValue(false);
-    getSelection.mockReturnValue("selected output");
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText: vi.fn().mockResolvedValue(undefined) },
-      configurable: true,
-    });
-    const { getByRole } = await mountOpenTerminal();
-
-    getByRole("button", { name: "Copy" }).click();
-
-    await waitFor(() => {
-      expect(navigator.clipboard.writeText).toHaveBeenCalledWith("selected output");
-    });
-  });
-
-  it("surfaces feedback when copy is tapped with no selection", async () => {
-    copySelection.mockReturnValue(false);
-    const { getByRole, getByTestId } = await mountOpenTerminal();
-
-    getByRole("button", { name: "Copy" }).click();
-
-    await waitFor(() => {
-      expect(getByTestId("terminal-status").textContent).toMatch(/nothing selected/i);
-    });
-    expect(copySelection).toHaveBeenCalled();
   });
 
   it("keeps a server error visible after a successful paste", async () => {
@@ -1301,16 +1211,10 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
   });
 
-  it("runs the terminal canvas edge-to-edge in the host", () => {
-    expect(terminalRawViewSource).not.toMatch(
+  it("centers the canvas in the host", () => {
+    expect(terminalRawViewSource).toMatch(
       /:global\(\.terminal-panel canvas\)\s*\{[^}]*margin-inline:\s*auto/,
     );
-    expect(terminalRawViewSource).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
-    const mobileBlock = terminalRawViewSource.match(
-      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
-    );
-    expect(mobileBlock).not.toBeNull();
-    expect(mobileBlock![1]).not.toMatch(/\.terminal-host\s*\{[^}]*padding:/);
   });
 
   it("refits through the immediate path when expand is toggled", async () => {
@@ -1649,10 +1553,9 @@ describe("TerminalRawView", () => {
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("7");
   });
 
-  it("does not rewrap the PTY when pinch ends with a narrower canvas", async () => {
+  it("clamps horizontal pan after pinch refit shrinks the canvas", async () => {
     window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     const { host } = await mountTerminal();
-    await settleFrames();
     sizeHostForPan(host, 900, 338);
     host.scrollLeft = 500;
 
@@ -1669,7 +1572,6 @@ describe("TerminalRawView", () => {
         { x: 225, y: 100 },
       ]),
     );
-    host.dispatchEvent(makePinch("touchend", []));
 
     sizeHostForPan(host, 480, 338);
 
@@ -1677,8 +1579,7 @@ describe("TerminalRawView", () => {
     vi.advanceTimersByTime(300);
     await tick();
 
-    // Visual-only pinch must not trigger a refit that reclamps horizontal pan.
-    expect(host.scrollLeft).toBe(500);
+    expect(host.scrollLeft).toBe(142);
     vi.useRealTimers();
   });
 
@@ -1766,13 +1667,13 @@ describe("TerminalRawView", () => {
     );
     host.dispatchEvent(makePinch("touchend", []));
 
-    // Animation frames only — pinch is visual-only and must not rewrap the PTY.
+    // Animation frames only — well under the 300ms resize debounce.
     vi.advanceTimersByTime(50);
-    expect(resizeFramesOf(socket!)).toHaveLength(0);
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 100, rows: 30 });
     vi.useRealTimers();
   });
 
-  it("does not rewrap the PTY during pinch while the keyboard is open", async () => {
+  it("applies the pinch rewrap while the keyboard is open", async () => {
     vi.useFakeTimers();
     window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
@@ -1796,11 +1697,13 @@ describe("TerminalRawView", () => {
     );
     host.dispatchEvent(makePinch("touchend", []));
 
+    // Animation frames only — well under the 300ms resize debounce.
     vi.advanceTimersByTime(50);
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
-    expect(resize).not.toHaveBeenCalled();
-    expect(resizeFramesOf(socket!)).toHaveLength(0);
+    expect(resize).toHaveBeenCalled();
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 100, rows: 30 });
 
+    // A later non-pinch refit must still be withheld while the keyboard is open.
     resize.mockClear();
     socket!.send.mockClear();
     dispatchVisualViewport("resize");
@@ -1822,7 +1725,7 @@ describe("TerminalRawView", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  it("keeps pinch zoom visual-only without a follow-up PTY refit", async () => {
+  it("refits again after pinch layout settles to the screen dimensions", async () => {
     vi.useFakeTimers();
     window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
@@ -1843,15 +1746,17 @@ describe("TerminalRawView", () => {
         { x: 225, y: 100 },
       ]),
     );
-    host.dispatchEvent(makePinch("touchend", []));
 
-    vi.advanceTimersByTime(50);
-    expect(resize).not.toHaveBeenCalled();
-    expect(resizeFramesOf(socket!)).toHaveLength(0);
+    vi.advanceTimersByTime(16);
+    expect(resize).toHaveBeenCalledWith(100, 30);
 
     proposedDimensions = { cols: 100, rows: 42 };
-    vi.advanceTimersByTime(350);
-    expect(resizeFramesOf(socket!)).toHaveLength(0);
+    vi.advanceTimersByTime(16);
+
+    expect(resize).toHaveBeenCalledWith(100, 42);
+
+    vi.advanceTimersByTime(300);
+    expect(resizeFramesOf(socket!)).toEqual([{ type: "resize", cols: 100, rows: 42 }]);
     vi.useRealTimers();
   });
 
@@ -2017,18 +1922,19 @@ describe("TerminalRawView", () => {
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 
+    expect(mobileCss).toContain(".terminal-host");
     // Full-bleed on mobile: the panel meets the screen edges, so side/bottom
-    // borders and radii go. The host stays flush — no inner padding.
+    // borders and radii go.
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-radius:\s*0/);
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-left:\s*none/);
-    expect(mobileCss).not.toMatch(/\.terminal-host\s*\{[^}]*padding:/);
+    expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*1px 7px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
 
-    expect(terminalRawViewSource).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
   });

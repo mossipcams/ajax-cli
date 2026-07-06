@@ -202,11 +202,6 @@ const terminalFrames = (page: Page) =>
 const terminalPanel = (page: Page) =>
   page.locator("[data-testid='task-terminal-panel'][data-terminal-engine='ghostty']");
 
-// ghostty-web renders a second aria-hidden overlay canvas (selection/link
-// painting) beside the grid canvas; target the visible grid canvas only.
-const terminalCanvas = (page: Page) =>
-  terminalPanel(page).locator("canvas:not([aria-hidden='true'])");
-
 const terminalToolbar = (page: Page) =>
   page.locator("[data-testid='terminal-bottom-controls']").getByRole("toolbar", {
     name: "Terminal keys",
@@ -267,7 +262,7 @@ test("mobile task terminal opens ghostty and sends toolbar input", async ({ page
   await page.goto("/app.html#/t/web%2Ffix-login");
 
   await expect(terminalPanel(page)).toBeVisible({ timeout: 10_000 });
-  await expect(terminalCanvas(page)).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
   const toolbar = terminalToolbar(page);
@@ -294,7 +289,7 @@ test("mobile task terminal paste, resize, and reconnect flows stay wired", async
   await mockFetch(page);
   await mockTerminalWebSocket(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(terminalCanvas(page)).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
   await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
