@@ -24,4 +24,20 @@ describe("global styles", () => {
       /html\.terminal-expanded \.task-detail \.terminal-primary\s*\{[^}]*right:\s*0/,
     );
   });
+
+  it("runs the expanded desktop terminal overlay edge-to-edge", () => {
+    // The ⛶ fullscreen overlay owns the whole viewport: no gutter around the
+    // fixed layer, and no panel border/radius reading as a stray frame at the
+    // screen edges. (The desktop overlay is the rule with `inset: 0`; the
+    // mobile takeover above anchors with top/left instead.)
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded \.task-detail \.terminal-primary\s*\{[^}]*inset:\s*0;[^}]*padding:\s*0/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded \.task-detail \.terminal-primary \.terminal-panel\s*\{[^}]*border:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded \.task-detail \.terminal-primary \.terminal-panel\s*\{[^}]*border-radius:\s*0/,
+    );
+  });
 });
