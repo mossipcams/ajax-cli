@@ -156,6 +156,10 @@ describe("TaskDetail", () => {
       /:global\(html\.terminal-expanded\)\s*\.task-detail \.terminal-primary\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/,
     );
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(/\.terminal-primary\s*\{[^}]*min-width:\s*0/);
+    expect(mobileCss).toMatch(/\.terminal-primary\s*\{[^}]*width:\s*100%/);
+    expect(mobileCss).toMatch(/\.terminal-primary\s*\{[^}]*max-width:\s*100%/);
+    expect(mobileCss).toMatch(/\.terminal-primary\s*\{[^}]*overflow:\s*hidden/);
     // Full-bleed terminal: the shell keeps only the top inset; the key bar
     // pads the bottom inset and chrome rows carry their own gutters.
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
