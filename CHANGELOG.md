@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.1...ajax-cli-v0.35.2) (2026-07-06)
+
+
+### Reverts
+
+* **web:** roll back rcarmo ghostty-web migration ([#356](https://github.com/mossipcams/ajax-cli/issues/356)) ([1143bee](https://github.com/mossipcams/ajax-cli/commit/1143bee42a8fc935bc683333b7fd65e5149c8e57))
+
 ## [0.35.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.0...ajax-cli-v0.35.1) (2026-07-06)
 
 
