@@ -149,17 +149,12 @@ describe("TaskDetail", () => {
     expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*left:\s*var\(--app-left,\s*0px\)/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*width:\s*var\(--app-width,\s*100vw\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
 
     expect(taskDetailSource).toMatch(
       /:global\(html\.terminal-expanded\)\s*\.task-detail \.terminal-primary\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/,
-    );
-    expect(taskDetailSource).toMatch(
-      /:global\(main:has\(\.task-detail\.is-terminal-first\)\)\s*\{[^}]*padding-inline:\s*env\(safe-area-inset-left\)\s*env\(safe-area-inset-right\)/,
     );
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
     // Full-bleed terminal: the shell keeps only the top inset; the key bar

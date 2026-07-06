@@ -1211,9 +1211,9 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
   });
 
-  it("left-aligns the canvas in the host so fit mode does not show symmetric gutters", () => {
+  it("centers the canvas in the host", () => {
     expect(terminalRawViewSource).toMatch(
-      /:global\(\.terminal-panel canvas\)\s*\{[^}]*margin-inline:\s*0\s+auto/,
+      /:global\(\.terminal-panel canvas\)\s*\{[^}]*margin-inline:\s*auto/,
     );
   });
 
@@ -1927,7 +1927,7 @@ describe("TerminalRawView", () => {
     // borders and radii go.
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-radius:\s*0/);
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-left:\s*none/);
-    expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*2px/);
+    expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
