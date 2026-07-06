@@ -92,6 +92,9 @@ export function attachTerminalGestures(
   const onTouchStart = (event: TouchEvent) => {
     cancelFling();
     if (event.touches.length === 2) {
+      // Own the pinch at touchdown — iOS latches page zoom at the second
+      // finger's touchstart, before any touchmove guard can run.
+      if (event.cancelable) event.preventDefault();
       touchActive = false;
       pinchStartDistance = touchDistance(event.touches);
       pinchBaseFontSize = host.fontSize();
@@ -220,7 +223,7 @@ export function attachTerminalGestures(
   // Capture phase so renderer layers can never swallow the gesture;
   // touchmove/wheel are non-passive because owning the gesture requires
   // preventDefault (see the iOS notes above).
-  const touchStartOptions: AddEventListenerOptions = { passive: true, capture: true };
+  const touchStartOptions: AddEventListenerOptions = { passive: false, capture: true };
   const touchMoveOptions: AddEventListenerOptions = { passive: false, capture: true };
   const scrollEndOptions: AddEventListenerOptions = { passive: true, capture: true };
   const wheelOptions: AddEventListenerOptions = { passive: false, capture: true };

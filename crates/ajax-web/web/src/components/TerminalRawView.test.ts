@@ -1625,6 +1625,57 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
+  it("applies the pinch rewrap while the keyboard is open", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 100, rows: 30 };
+    const { host, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle the open-path refits
+    setKeyboardOpen(true);
+    resize.mockClear();
+    socket!.send.mockClear();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 75, y: 100 },
+        { x: 225, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(makePinch("touchend", []));
+
+    // Animation frames only — well under the 300ms resize debounce.
+    vi.advanceTimersByTime(50);
+    expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
+    expect(resize).toHaveBeenCalled();
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 100, rows: 30 });
+
+    // A later non-pinch refit must still be withheld while the keyboard is open.
+    resize.mockClear();
+    socket!.send.mockClear();
+    dispatchVisualViewport("resize");
+    vi.advanceTimersByTime(400);
+    expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
+    expect(resizeFramesOf(socket!)).toHaveLength(0);
+
+    setKeyboardOpen(false);
+    vi.useRealTimers();
+  });
+
+  it("owns the two-finger touchstart on the host", async () => {
+    const { host } = await mountTerminal();
+    const event = makePinch("touchstart", [
+      { x: 100, y: 100 },
+      { x: 200, y: 100 },
+    ]);
+    host.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("refits again after pinch layout settles to the screen dimensions", async () => {
     vi.useFakeTimers();
     proposedDimensions = { cols: 100, rows: 30 };

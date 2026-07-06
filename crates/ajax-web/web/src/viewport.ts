@@ -83,11 +83,23 @@ export function initViewport(): () => void {
     }
   };
 
+  // Two-finger touches have no legitimate page-level use in this app;
+  // preventing the touchstart stops iOS from ever latching the zoom gesture
+  // (the touchmove scale guard alone runs too late on PWA). preventDefault
+  // does NOT stop event delivery, so the terminal host's own pinch handling
+  // still receives the events.
+  const onTouchStartPinchGuard = (event: TouchEvent) => {
+    if (event.touches && event.touches.length >= 2 && event.cancelable) {
+      event.preventDefault();
+    }
+  };
+
   vv.addEventListener("resize", onViewportResize);
   vv.addEventListener("scroll", onViewportResize);
   document.addEventListener("gesturestart", onGesture);
   document.addEventListener("gesturechange", onGesture);
   document.addEventListener("gestureend", onGesture);
+  document.addEventListener("touchstart", onTouchStartPinchGuard, { passive: false });
   document.addEventListener("touchmove", onTouchMovePinchGuard, { passive: false });
 
   return () => {
@@ -96,6 +108,7 @@ export function initViewport(): () => void {
     document.removeEventListener("gesturestart", onGesture);
     document.removeEventListener("gesturechange", onGesture);
     document.removeEventListener("gestureend", onGesture);
+    document.removeEventListener("touchstart", onTouchStartPinchGuard);
     document.removeEventListener("touchmove", onTouchMovePinchGuard);
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     root.style.removeProperty(APP_HEIGHT_VAR);
