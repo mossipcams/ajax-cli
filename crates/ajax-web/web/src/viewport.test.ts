@@ -5,9 +5,7 @@ import { initViewport, isKeyboardOpen } from "./viewport";
 // handlers it registers and replay them after mutating the height.
 const vvListeners: Record<string, Array<() => void>> = {};
 let vvHeight = 800;
-let vvWidth = 390;
 let vvOffsetTop = 0;
-let vvOffsetLeft = 0;
 
 function dispatchVV(type: string) {
   for (const handler of vvListeners[type] ?? []) handler();
@@ -25,9 +23,7 @@ function start(): () => void {
 beforeEach(() => {
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vvHeight = 800;
-  vvWidth = 390;
   vvOffsetTop = 0;
-  vvOffsetLeft = 0;
   disposers = [];
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
@@ -35,14 +31,8 @@ beforeEach(() => {
     get height() {
       return vvHeight;
     },
-    get width() {
-      return vvWidth;
-    },
     get offsetTop() {
       return vvOffsetTop;
-    },
-    get offsetLeft() {
-      return vvOffsetLeft;
     },
     addEventListener: (type: string, handler: () => void) => {
       (vvListeners[type] ??= []).push(handler);
@@ -64,22 +54,10 @@ describe("initViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
   });
 
-  it("sets --app-width from visualViewport width on init", () => {
-    vvWidth = 360;
-    start();
-    expect(document.documentElement.style.getPropertyValue("--app-width")).toBe("360px");
-  });
-
   it("sets --app-top from visualViewport offsetTop on init", () => {
     vvOffsetTop = 44;
     start();
     expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("44px");
-  });
-
-  it("sets --app-left from visualViewport offsetLeft on init", () => {
-    vvOffsetLeft = 24;
-    start();
-    expect(document.documentElement.style.getPropertyValue("--app-left")).toBe("24px");
   });
 
   it("updates --app-top when the visual viewport scrolls", () => {
@@ -87,20 +65,6 @@ describe("initViewport", () => {
     vvOffsetTop = 72;
     dispatchVV("scroll");
     expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("72px");
-  });
-
-  it("updates --app-left when the visual viewport scrolls while zoomed", () => {
-    start();
-    vvOffsetLeft = 31;
-    dispatchVV("scroll");
-    expect(document.documentElement.style.getPropertyValue("--app-left")).toBe("31px");
-  });
-
-  it("updates --app-width when the visual viewport resizes while zoomed", () => {
-    start();
-    vvWidth = 330;
-    dispatchVV("resize");
-    expect(document.documentElement.style.getPropertyValue("--app-width")).toBe("330px");
   });
 
   it("flags keyboard-open and shrinks --app-height when the viewport collapses", () => {
@@ -203,19 +167,15 @@ describe("initViewport", () => {
     expect(afterCleanup.defaultPrevented).toBe(false);
   });
 
-  it("removes the keyboard-open class and viewport CSS variables on cleanup", () => {
+  it("removes the keyboard-open class, --app-height, and --app-top on cleanup", () => {
     const dispose = initViewport();
     vvOffsetTop = 36;
-    vvOffsetLeft = 12;
     vvHeight = 480;
-    vvWidth = 330;
     dispatchVV("resize");
     dispose();
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(false);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
-    expect(document.documentElement.style.getPropertyValue("--app-width")).toBe("");
     expect(document.documentElement.style.getPropertyValue("--app-top")).toBe("");
-    expect(document.documentElement.style.getPropertyValue("--app-left")).toBe("");
   });
 
   it("no-ops without visualViewport", () => {
