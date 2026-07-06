@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.2...ajax-cli-v0.34.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** stabilize mobile terminal fullscreen gestures ([#345](https://github.com/mossipcams/ajax-cli/issues/345)) ([59a82a2](https://github.com/mossipcams/ajax-cli/commit/59a82a267287347c4d5a91b239b8bd0158d19ed6))
+
 ## [0.34.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.1...ajax-cli-v0.34.2) (2026-07-06)
 
 
