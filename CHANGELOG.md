@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.33.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.33.1...ajax-cli-v0.33.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** contain iOS PWA terminal width ([#336](https://github.com/mossipcams/ajax-cli/issues/336)) ([8b86482](https://github.com/mossipcams/ajax-cli/commit/8b8648209d81d68e78ff0fa0eb22fb30e42c3ff9))
+
 ## [0.33.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.33.0...ajax-cli-v0.33.1) (2026-07-06)
 
 
