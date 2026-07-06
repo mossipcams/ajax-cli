@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.4...ajax-cli-v0.34.5) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** size terminal takeover to visual viewport ([#349](https://github.com/mossipcams/ajax-cli/issues/349)) ([22d09e6](https://github.com/mossipcams/ajax-cli/commit/22d09e68cfefb568d074134081610bf29e1c8d4b))
+
 ## [0.34.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.3...ajax-cli-v0.34.4) (2026-07-06)
 
 
