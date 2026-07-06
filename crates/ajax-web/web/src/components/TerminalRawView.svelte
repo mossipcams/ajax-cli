@@ -868,7 +868,7 @@
     }
 
     .terminal-host {
-      padding: 2px;
+      padding: 4px;
     }
 
     .terminal-keys {
@@ -1033,13 +1033,12 @@
     text-transform: uppercase;
   }
 
-  /* Left aligned so fit-mode grids do not show symmetric blank gutters. The
-     trailing auto margin collapses when the wide-mode canvas overflows, so
-     scrollLeft panning is unaffected. */
+  /* Centered when the fit grid is narrower than the host; auto resolves to 0
+     when the wide-mode canvas overflows, so scrollLeft panning is unaffected. */
   :global(.terminal-panel canvas) {
     display: block;
     height: 100%;
     min-width: 0;
-    margin-inline: 0 auto;
+    margin-inline: auto;
   }
 </style>

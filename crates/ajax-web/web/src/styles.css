@@ -36,7 +36,7 @@
     -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --label-tracking: 0.18em;
-  --shell: 640px;
+  --shell: 560px;
 
   /* Spacing scale — 4px rhythm. Use in place of ad-hoc pixel values. */
   --space-1: 4px;
