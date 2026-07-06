@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.0...ajax-cli-v0.34.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** flush pinch rewrap, block page zoom, center terminal ([#341](https://github.com/mossipcams/ajax-cli/issues/341)) ([97ff8d6](https://github.com/mossipcams/ajax-cli/commit/97ff8d66683331bac55fa147ec276ce6059887f8))
+
 ## [0.34.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.33.2...ajax-cli-v0.34.0) (2026-07-06)
 
 
