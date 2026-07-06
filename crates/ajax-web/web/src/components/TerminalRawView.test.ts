@@ -26,7 +26,6 @@ let viewportY = 0;
 let proposedDimensions: { cols: number; rows: number } | undefined;
 let terminalHostClientWidth: number | undefined;
 let terminalCellMetrics = { width: 8, height: 18 };
-let visualViewportWidth: number | undefined;
 const ghosttyLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
 
 vi.mock("ghostty-web", () => ({
@@ -132,7 +131,6 @@ beforeEach(() => {
   proposedDimensions = undefined;
   terminalHostClientWidth = undefined;
   terminalCellMetrics = { width: 8, height: 18 };
-  visualViewportWidth = undefined;
   liveOptions = undefined;
   write.mockClear();
   scrollToBottom.mockClear();
@@ -158,9 +156,6 @@ beforeEach(() => {
     },
   );
   vi.stubGlobal("visualViewport", {
-    get width() {
-      return visualViewportWidth;
-    },
     addEventListener: (type: string, handler: () => void) => {
       (vvListeners[type] ??= []).push(handler);
     },
@@ -1380,21 +1375,6 @@ describe("TerminalRawView", () => {
     // floor instead of the phone-visible width. The cap must still use the
     // clipped host width, where 384px holds 48 cells at the 13px font.
     terminalHostClientWidth = 384;
-    proposedDimensions = { cols: 80, rows: 30 };
-    await mountTerminal();
-
-    await waitFor(() => {
-      expect(liveOptions?.fontSize).toBe(7);
-    });
-    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
-  });
-
-  it("shrinks from the visual viewport when the terminal host has already widened the page", async () => {
-    // On iOS Safari PWA the wide Ghostty canvas can make the measured host
-    // wider than the visible screen. The fit cap must use the actual visible
-    // viewport, where 384px holds 48 cells at the 13px font.
-    terminalHostClientWidth = 1200;
-    visualViewportWidth = 384;
     proposedDimensions = { cols: 80, rows: 30 };
     await mountTerminal();
 

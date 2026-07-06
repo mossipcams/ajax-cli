@@ -331,10 +331,6 @@
       display: flex;
       flex: 1 1 auto;
       min-height: 0;
-      min-width: 0;
-      width: 100%;
-      max-width: 100%;
-      overflow: hidden;
     }
 
     :global(html.terminal-expanded) .task-detail .terminal-primary {

@@ -192,25 +192,15 @@
       return Number.isFinite(value) ? value : 0;
     };
 
-    const visibleViewportWidth = (): number | undefined => {
-      const visualWidth = window.visualViewport?.width;
-      if (Number.isFinite(visualWidth) && visualWidth && visualWidth > 0) return visualWidth;
-      if (Number.isFinite(window.innerWidth) && window.innerWidth > 0) return window.innerWidth;
-      return undefined;
-    };
-
     // Largest font at which the column floor still fits the clipped host.
     // ghostty-web's FitAddon measures term.element, which is this same host;
     // after Ajax floors the grid to 80 cols that measurement may report the
-    // current floor instead of the phone-visible width. Prefer renderer cell
-    // metrics with the smaller of the host width and visible viewport width,
-    // and fall back to the addon's proposal for pre-layout/jsdom cases.
+    // current floor instead of the phone-visible width. Prefer the host's
+    // visible clientWidth plus renderer cell metrics, and fall back to the
+    // addon's proposal for pre-layout/jsdom cases.
     const hostWidthFitCap = (): number | undefined => {
       if (!container || !term) return undefined;
-      const measuredHostWidth = container.clientWidth;
-      const viewportWidth = visibleViewportWidth();
-      const hostWidth =
-        viewportWidth !== undefined ? Math.min(measuredHostWidth, viewportWidth) : measuredHostWidth;
+      const hostWidth = container.clientWidth;
       const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
       const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
       if (
