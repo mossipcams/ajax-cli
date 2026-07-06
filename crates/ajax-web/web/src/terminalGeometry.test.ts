@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flooredCols, clampPan, pinchFontSize } from "./terminalGeometry";
+import { flooredCols, clampPan, pinchFontSize, fitCapFontSize } from "./terminalGeometry";
 
 describe("flooredCols", () => {
   it("raises a narrow proposal to the minimum column count", () => {
@@ -46,6 +46,43 @@ describe("clampPan", () => {
     expect(clampPan(Number.NaN, 480, 338)).toBe(0);
     expect(clampPan(60, Number.NaN, 338)).toBe(0);
     expect(clampPan(60, 480, Number.NaN)).toBe(0);
+  });
+});
+
+describe("fitCapFontSize", () => {
+  it("returns the largest font at which the column floor still fits", () => {
+    // 48 columns fit at 13px, so the same width holds 80 columns at
+    // floor(13 * 48 / 80) = 7px.
+    expect(fitCapFontSize(13, 48, 80)).toBe(7);
+  });
+
+  it("leaves headroom untouched when the floor already fits with room", () => {
+    expect(fitCapFontSize(13, 100, 80)).toBe(16);
+  });
+
+  it("clamps the cap to the maximum font size", () => {
+    expect(fitCapFontSize(13, 200, 80)).toBe(20);
+  });
+
+  it("clamps the cap to the minimum font size when even that overflows", () => {
+    expect(fitCapFontSize(13, 30, 80)).toBe(7);
+  });
+
+  it("returns the maximum (no constraint) for invalid column proposals", () => {
+    expect(fitCapFontSize(13, undefined, 80)).toBe(20);
+    expect(fitCapFontSize(13, Number.NaN, 80)).toBe(20);
+    expect(fitCapFontSize(13, 0, 80)).toBe(20);
+    expect(fitCapFontSize(13, -5, 80)).toBe(20);
+  });
+
+  it("returns the maximum (no constraint) for invalid font sizes", () => {
+    expect(fitCapFontSize(0, 48, 80)).toBe(20);
+    expect(fitCapFontSize(Number.NaN, 48, 80)).toBe(20);
+  });
+
+  it("honors custom clamp bounds", () => {
+    expect(fitCapFontSize(13, 100, 80, 8, 14)).toBe(14);
+    expect(fitCapFontSize(13, 30, 80, 8, 14)).toBe(8);
   });
 });
 

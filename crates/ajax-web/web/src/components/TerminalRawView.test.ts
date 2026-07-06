@@ -1338,6 +1338,62 @@ describe("TerminalRawView", () => {
     });
   });
 
+  it("shrinks the font so the 80-column floor fits the viewport width", async () => {
+    // 48 columns fit at the 13px default, so 80 columns need 7px: the fit
+    // must shrink the font instead of hiding a third of every line off the
+    // right edge.
+    proposedDimensions = { cols: 48, rows: 30 };
+    await mountTerminal();
+
+    await waitFor(() => {
+      expect(liveOptions?.fontSize).toBe(7);
+    });
+    // The auto-fit is not an operator choice and must not overwrite one.
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+  });
+
+  it("restores the operator's font once a wider viewport fits it again", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 48, rows: 30 };
+    const { socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle the open refits: font clamped to 7
+    expect(liveOptions?.fontSize).toBe(7);
+    socket!.send.mockClear();
+
+    // Rotate to a viewport with room to spare: the font climbs back to the
+    // operator's (default) 13px choice — not to the 20px pinch ceiling.
+    proposedDimensions = { cols: 200, rows: 30 };
+    window.dispatchEvent(new Event("resize"));
+    vi.advanceTimersByTime(200);
+
+    expect(liveOptions?.fontSize).toBe(13);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("caps a pinch spread at the size where the column floor still fits", async () => {
+    // 100 columns fit at 13px, so 80 columns fit up to 16px: a pinch that
+    // asks for more stops there instead of pushing text off-screen.
+    proposedDimensions = { cols: 100, rows: 30 };
+    const { host } = await mountTerminal();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 50, y: 100 },
+        { x: 250, y: 100 },
+      ]),
+    );
+
+    expect(liveOptions?.fontSize).toBe(16);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("16");
+  });
+
   it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
     const { host } = await mountTerminal();
 
@@ -1414,7 +1470,7 @@ describe("TerminalRawView", () => {
 
   it("refits again after pinch layout settles to the screen dimensions", async () => {
     vi.useFakeTimers();
-    proposedDimensions = { cols: 55, rows: 30 };
+    proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400);
     resize.mockClear();
@@ -1434,7 +1490,7 @@ describe("TerminalRawView", () => {
     );
 
     vi.advanceTimersByTime(16);
-    expect(resize).toHaveBeenCalledWith(80, 30);
+    expect(resize).toHaveBeenCalledWith(100, 30);
 
     proposedDimensions = { cols: 100, rows: 42 };
     vi.advanceTimersByTime(16);

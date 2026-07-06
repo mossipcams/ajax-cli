@@ -9,7 +9,7 @@
  * terminalGeometry; this module owns the event wiring and gesture state.
  */
 
-import { clampPan, pinchFontSize } from "./terminalGeometry";
+import { clampPan, pinchFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE } from "./terminalGeometry";
 import { flingFrames, wheelNotchesFromDrag } from "./terminalTouchScroll";
 
 export interface TerminalGestureHost {
@@ -19,6 +19,9 @@ export interface TerminalGestureHost {
   cellHeightPx(): number;
   /** Current terminal font size (pinch baseline). */
   fontSize(): number;
+  /** Largest font a pinch may reach: the size at which the column floor
+   * still fits the host width, so zooming never pushes text off-screen. */
+  maxFontSize(): number;
   /** Apply a pinch result: set, persist, and refit. */
   setFontSize(px: number): void;
 }
@@ -41,9 +44,12 @@ export function attachTerminalGestures(
 
   // Two-finger pinch adjusts the font size (the legibility ↔ visible-columns
   // lever now that the PTY keeps an 80-column floor). The gesture scales
-  // from the size it started at, so a slow pinch can't compound drift.
+  // from the size it started at, so a slow pinch can't compound drift. The
+  // ceiling is captured at pinch start: the host width can't change mid-
+  // gesture, and one measurement per gesture beats one per touchmove.
   let pinchStartDistance = 0;
   let pinchBaseFontSize = 0;
+  let pinchMaxFontSize = MAX_FONT_SIZE;
 
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -86,6 +92,7 @@ export function attachTerminalGestures(
       touchActive = false;
       pinchStartDistance = touchDistance(event.touches);
       pinchBaseFontSize = host.fontSize();
+      pinchMaxFontSize = host.maxFontSize();
       return;
     }
     pinchStartDistance = 0;
@@ -112,6 +119,8 @@ export function attachTerminalGestures(
         pinchBaseFontSize,
         pinchStartDistance,
         touchDistance(event.touches),
+        MIN_FONT_SIZE,
+        pinchMaxFontSize,
       );
       if (next !== host.fontSize()) host.setFontSize(next);
       return;
