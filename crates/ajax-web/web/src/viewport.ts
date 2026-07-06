@@ -15,7 +15,9 @@ const KEYBOARD_OPEN_DELTA_PX = 150;
 const KEYBOARD_CLOSE_DELTA_PX = 100;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
+const APP_WIDTH_VAR = "--app-width";
 const APP_TOP_VAR = "--app-top";
+const APP_LEFT_VAR = "--app-left";
 
 /**
  * The single keyboard-open truth. `initViewport` maintains the class with
@@ -46,13 +48,21 @@ export function initViewport(): () => void {
   const setAppHeight = (height: number) => {
     root.style.setProperty(APP_HEIGHT_VAR, `${height}px`);
   };
+  const setAppWidth = (width: number) => {
+    root.style.setProperty(APP_WIDTH_VAR, `${width}px`);
+  };
   const setAppTop = (offsetTop: number) => {
     root.style.setProperty(APP_TOP_VAR, `${offsetTop}px`);
+  };
+  const setAppLeft = (offsetLeft: number) => {
+    root.style.setProperty(APP_LEFT_VAR, `${offsetLeft}px`);
   };
 
   const syncViewportGeometry = () => {
     setAppHeight(vv.height);
+    setAppWidth(vv.width);
     setAppTop(vv.offsetTop ?? 0);
+    setAppLeft(vv.offsetLeft ?? 0);
   };
   syncViewportGeometry();
 
@@ -112,6 +122,8 @@ export function initViewport(): () => void {
     document.removeEventListener("touchmove", onTouchMovePinchGuard);
     root.classList.remove(KEYBOARD_OPEN_CLASS);
     root.style.removeProperty(APP_HEIGHT_VAR);
+    root.style.removeProperty(APP_WIDTH_VAR);
     root.style.removeProperty(APP_TOP_VAR);
+    root.style.removeProperty(APP_LEFT_VAR);
   };
 }
