@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.0...ajax-cli-v0.35.1) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** repair ghostty terminal shell contracts ([#354](https://github.com/mossipcams/ajax-cli/issues/354)) ([3991429](https://github.com/mossipcams/ajax-cli/commit/3991429192b50421694ccc54155b3231e3c668c8))
+
 ## [0.35.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.5...ajax-cli-v0.35.0) (2026-07-06)
 
 
