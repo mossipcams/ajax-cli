@@ -20,7 +20,14 @@
     MIN_TERMINAL_COLS,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
+  const GHOSTTY_SCROLLBAR_RESERVATION_PX = 15;
   let ghosttyRuntime: Promise<Ghostty> | undefined;
+
+  type TerminalWithRendererMetrics = Terminal & {
+    renderer?: {
+      getMetrics?: () => { width?: number; height?: number };
+    };
+  };
 
   const loadGhosttyRuntime = () => {
     ghosttyRuntime ??= Ghostty.load(GHOSTTY_WASM_URL);
@@ -180,10 +187,49 @@
     // toward this choice when the viewport widens again.
     let chosenFontSize = persistedFontSize() ?? DEFAULT_FONT_SIZE;
 
-    // Largest font at which the column floor still fits the host width, from
-    // the fit addon's column proposal at the current font. No proposal (jsdom,
-    // pre-layout) means no constraint.
+    const cssPx = (style: CSSStyleDeclaration, property: string): number => {
+      const value = Number.parseFloat(style.getPropertyValue(property));
+      return Number.isFinite(value) ? value : 0;
+    };
+
+    // Largest font at which the column floor still fits the clipped host.
+    // ghostty-web's FitAddon measures term.element, which is this same host;
+    // after Ajax floors the grid to 80 cols that measurement may report the
+    // current floor instead of the phone-visible width. Prefer the host's
+    // visible clientWidth plus renderer cell metrics, and fall back to the
+    // addon's proposal for pre-layout/jsdom cases.
+    const hostWidthFitCap = (): number | undefined => {
+      if (!container || !term) return undefined;
+      const hostWidth = container.clientWidth;
+      const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
+      const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+      if (
+        !Number.isFinite(hostWidth) ||
+        hostWidth <= 0 ||
+        !Number.isFinite(cellWidth) ||
+        !cellWidth ||
+        cellWidth <= 0 ||
+        !Number.isFinite(currentFont) ||
+        currentFont <= 0
+      ) {
+        return undefined;
+      }
+      const style = window.getComputedStyle(container);
+      const usableWidth =
+        hostWidth -
+        cssPx(style, "padding-left") -
+        cssPx(style, "padding-right") -
+        GHOSTTY_SCROLLBAR_RESERVATION_PX;
+      if (!Number.isFinite(usableWidth) || usableWidth <= 0) return undefined;
+      return fitCapFontSize(
+        currentFont,
+        Math.floor(usableWidth / cellWidth),
+        MIN_TERMINAL_COLS,
+      );
+    };
+
     const fitFontCap = (): number =>
+      hostWidthFitCap() ??
       fitCapFontSize(
         term?.options.fontSize ?? DEFAULT_FONT_SIZE,
         fitAddon?.proposeDimensions()?.cols,
@@ -319,7 +365,7 @@
       // between adjacent font sizes, and a margin-less grow would oscillate
       // against the shrink rule.
       const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-      const cap = fitCapFontSize(currentFont, proposed?.cols, MIN_TERMINAL_COLS);
+      const cap = hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, MIN_TERMINAL_COLS);
       const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
       const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
       const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
@@ -721,6 +767,8 @@
     flex-direction: column;
     flex: 1 1 auto;
     min-height: 0;
+    min-width: 0;
+    max-width: 100%;
     margin-top: 16px;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
@@ -800,6 +848,8 @@
     position: relative;
     flex: 1 1 auto;
     min-height: 0;
+    min-width: 0;
+    width: 100%;
     padding: 8px;
     /* The 80-column floor can make the Ghostty canvas wider than the phone
        viewport. The host clips it and the touch handler pans it via
