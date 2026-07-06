@@ -264,7 +264,18 @@
             persistFontSize(next);
             scheduleFontSizeRefit();
           },
-          pinchEnded: () => schedulePostLayoutRefit(),
+          pinchEnded: () => {
+            pinchFlushPending = true;
+            schedulePostLayoutRefit();
+            // postLayout runs fit+resize this frame and once more next frame;
+            // clear the exemption after that second frame (rAF FIFO ordering
+            // guarantees the second refit runs before this clear).
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                pinchFlushPending = false;
+              });
+            });
+          },
         })
       : () => {};
 
@@ -277,7 +288,9 @@
     // Ghostty stays visually correct, and a single resize is flushed once the
     // viewport settles.
     const sendResize = () => {
-      if (isKeyboardOpen()) return;
+      // A pinch-end flush is exempt — it refits the grid and resizes the PTY
+      // in the same pass, so lockstep holds.
+      if (isKeyboardOpen() && !pinchFlushPending) return;
       if (!term) return;
       connection.sendResize(term.cols, term.rows);
     };
@@ -335,6 +348,7 @@
     // even the minimum font overflows does the canvas extend past the right
     // edge, with horizontal pan bringing it into view.
     let keyboardWasOpen = false;
+    let pinchFlushPending = false;
     const clampHorizontalPan = () => {
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
@@ -349,14 +363,15 @@
         hasUnseenOutput = false;
       }
       keyboardWasOpen = keyboardOpen;
-      if (keyboardOpen) {
+      if (keyboardOpen && !pinchFlushPending) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and the renderer
         // clamps those writes to its bottom row — the TUI input box drifts up
         // and overwrites the line below it. Keep grid == PTY and crop the
         // taller canvas bottom-anchored so the cursor/input row stays visible
-        // above the keyboard.
+        // above the keyboard. A pinch-end flush is exempt — it refits the grid
+        // and resizes the PTY in the same pass, so lockstep holds.
         if (container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }

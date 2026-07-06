@@ -115,6 +115,40 @@ describe("initViewport", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("prevents two-finger touchstart page zoom", () => {
+    start();
+    const twoFinger = new Event("touchstart", { cancelable: true });
+    Object.defineProperty(twoFinger, "touches", {
+      value: [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ],
+    });
+    document.dispatchEvent(twoFinger);
+    expect(twoFinger.defaultPrevented).toBe(true);
+
+    const oneFinger = new Event("touchstart", { cancelable: true });
+    Object.defineProperty(oneFinger, "touches", {
+      value: [{ clientX: 100, clientY: 100 }],
+    });
+    document.dispatchEvent(oneFinger);
+    expect(oneFinger.defaultPrevented).toBe(false);
+  });
+
+  it("stops preventing two-finger touchstart after cleanup", () => {
+    const dispose = start();
+    dispose();
+    const event = new Event("touchstart", { cancelable: true });
+    Object.defineProperty(event, "touches", {
+      value: [
+        { clientX: 100, clientY: 100 },
+        { clientX: 200, clientY: 100 },
+      ],
+    });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("leaves single-finger touchmove alone", () => {
     const dispose = start();
     const noScale = new Event("touchmove", { cancelable: true });
