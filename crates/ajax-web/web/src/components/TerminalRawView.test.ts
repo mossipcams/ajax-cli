@@ -24,6 +24,8 @@ let liveOptions: { fontSize?: number } | undefined;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
 let viewportY = 0;
 let proposedDimensions: { cols: number; rows: number } | undefined;
+let terminalHostClientWidth: number | undefined;
+let terminalCellMetrics = { width: 8, height: 18 };
 const ghosttyLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
 
 vi.mock("ghostty-web", () => ({
@@ -35,9 +37,18 @@ vi.mock("ghostty-web", () => ({
     rows = 24;
     textarea = document.createElement("textarea");
     element = document.createElement("div");
+    renderer = {
+      getMetrics: () => terminalCellMetrics,
+    };
     buffer = { active: { viewportY: 0, baseY: 0 } };
     loadAddon = vi.fn();
     open = vi.fn((container: HTMLElement) => {
+      if (terminalHostClientWidth !== undefined) {
+        Object.defineProperty(container, "clientWidth", {
+          value: terminalHostClientWidth,
+          configurable: true,
+        });
+      }
       container.appendChild(document.createElement("canvas"));
     });
     write = write;
@@ -118,6 +129,8 @@ beforeEach(() => {
   onScrollHandler = undefined;
   viewportY = 0;
   proposedDimensions = undefined;
+  terminalHostClientWidth = undefined;
+  terminalCellMetrics = { width: 8, height: 18 };
   liveOptions = undefined;
   write.mockClear();
   scrollToBottom.mockClear();
@@ -510,8 +523,12 @@ describe("TerminalRawView", () => {
   it("keeps the terminal viewport as the internal flex scrollback area", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*display:\s*flex/);
     expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*overflow:\s*hidden/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*min-width:\s*0/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-panel\s*\{[^}]*max-width:\s*100%/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*flex:\s*1 1 auto/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*min-height:\s*0/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*min-width:\s*0/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*width:\s*100%/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*overflow:\s*hidden/);
     expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*flex:\s*none/);
     expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*padding-bottom:\s*max\([^;]*env\(safe-area-inset-bottom\)/);
@@ -1352,6 +1369,21 @@ describe("TerminalRawView", () => {
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
   });
 
+  it("shrinks from the clipped host width when Ghostty proposes the current floor grid", async () => {
+    // Real ghostty-web measures the terminal host. After Ajax has resized that
+    // host to the 80-column floor, proposeDimensions can report the current
+    // floor instead of the phone-visible width. The cap must still use the
+    // clipped host width, where 384px holds 48 cells at the 13px font.
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 80, rows: 30 };
+    await mountTerminal();
+
+    await waitFor(() => {
+      expect(liveOptions?.fontSize).toBe(7);
+    });
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+  });
+
   it("restores the operator's font once a wider viewport fits it again", async () => {
     vi.useFakeTimers();
     proposedDimensions = { cols: 48, rows: 30 };
@@ -1432,6 +1464,28 @@ describe("TerminalRawView", () => {
       makePinch("touchmove", [
         { x: 140, y: 100 },
         { x: 160, y: 100 },
+      ]),
+    );
+
+    expect(liveOptions?.fontSize).toBe(7);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("7");
+  });
+
+  it("lets pinch shrink from the clipped host width when Ghostty proposes the floor grid", async () => {
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 80, rows: 30 };
+    const { host } = await mountTerminal();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 100, y: 100 },
+        { x: 180, y: 100 },
       ]),
     );
 
