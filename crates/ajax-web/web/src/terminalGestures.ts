@@ -22,6 +22,8 @@ export interface TerminalGestureHost {
   /** Largest font a pinch may reach: the size at which the column floor
    * still fits the host width, so zooming never pushes text off-screen. */
   maxFontSize(): number;
+  /** Whether this mode allows pinch to change terminal font size. */
+  pinchEnabled?(): boolean;
   /** Apply a pinch result: set, persist, and refit. */
   setFontSize(px: number): void;
   /** A two-finger pinch just released: flush the pending PTY resize so the
@@ -53,6 +55,7 @@ export function attachTerminalGestures(
   let pinchStartDistance = 0;
   let pinchBaseFontSize = 0;
   let pinchMaxFontSize = MAX_FONT_SIZE;
+  let pinchCanZoom = true;
 
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -99,6 +102,7 @@ export function attachTerminalGestures(
       pinchStartDistance = touchDistance(event.touches);
       pinchBaseFontSize = host.fontSize();
       pinchMaxFontSize = host.maxFontSize();
+      pinchCanZoom = host.pinchEnabled?.() ?? true;
       return;
     }
     pinchStartDistance = 0;
@@ -121,6 +125,7 @@ export function attachTerminalGestures(
       // Own the pinch so iOS can't page-zoom; font rounding means the
       // terminal only re-renders when the size crosses a whole pixel.
       if (event.cancelable) event.preventDefault();
+      if (!pinchCanZoom) return;
       const next = pinchFontSize(
         pinchBaseFontSize,
         pinchStartDistance,
@@ -185,6 +190,7 @@ export function attachTerminalGestures(
     touchAccumPx = 0;
     touchAccumXPx = 0;
     pinchStartDistance = 0;
+    pinchCanZoom = true;
   };
 
   const onTouchEnd = () => {

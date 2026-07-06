@@ -137,15 +137,16 @@ describe("TaskDetail", () => {
     expect(mobileBlock![1]).toMatch(/\.meta-details\s*\{[^}]*display:\s*none/);
   });
 
-  it("defines the mobile task route as a fixed visual-viewport shell", () => {
+  it("defines the mobile task route as a visual-viewport shell with scroll lock only for terminal takeover", () => {
     const mobileBlock = taskDetailSource.match(
       /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
     );
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 
-    expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/);
-    expect(mobileCss).toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
+    expect(mobileCss).not.toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);

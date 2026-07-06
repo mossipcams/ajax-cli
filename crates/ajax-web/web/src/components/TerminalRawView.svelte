@@ -258,6 +258,7 @@
           cellHeightPx,
           fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
           maxFontSize: fitFontCap,
+          pinchEnabled: () => geometryMode === "wide",
           setFontSize: (next) => {
             chosenFontSize = next;
             if (term) term.options.fontSize = next;
@@ -435,10 +436,10 @@
       } catch {
         // jsdom throws "Not implemented" for scrollTo.
       }
-      if (container) {
+      if (isKeyboardOpen() && container) {
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        term?.scrollToBottom();
       }
-      term?.scrollToBottom();
     };
 
     // Fullscreen expand must land in the visible band above the iOS keyboard.

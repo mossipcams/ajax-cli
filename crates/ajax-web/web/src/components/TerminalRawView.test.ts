@@ -1097,10 +1097,11 @@ describe("TerminalRawView", () => {
     expect(inputPayloadsOf(socket!)).toContain("x");
   });
 
-  it("snaps the visible viewport on expand: document top, host bottom crop, terminal scroll bottom", async () => {
+  it("snaps the visible viewport on expand while the keyboard is open: document top, host bottom crop, terminal scroll bottom", async () => {
     vi.useFakeTimers();
     const { getByRole, host } = await mountOpenTerminal();
     vi.advanceTimersByTime(400);
+    setKeyboardOpen(true);
 
     scrollAwayFromBottom();
     scrollToBottom.mockClear();
@@ -1119,6 +1120,29 @@ describe("TerminalRawView", () => {
     }
     expect(host.scrollTop).toBe(500);
     expect(scrollToBottom).toHaveBeenCalled();
+    setKeyboardOpen(false);
+    vi.useRealTimers();
+  });
+
+  it("focuses fullscreen without bottom-cropping the terminal before the keyboard opens", async () => {
+    vi.useFakeTimers();
+    const { getByRole, host } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400);
+
+    scrollAwayFromBottom();
+    scrollToBottom.mockClear();
+
+    Object.defineProperty(host, "scrollHeight", { value: 800, configurable: true });
+    Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
+    host.scrollTop = 120;
+    const focusSpy = vi.spyOn(lastTextarea!, "focus");
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(host.scrollTop).toBe(120);
+    expect(scrollToBottom).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 
@@ -1439,6 +1463,7 @@ describe("TerminalRawView", () => {
   });
 
   it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     const { host } = await mountTerminal();
 
     // Two fingers land 100px apart (base font 13), spread to 150px:
@@ -1462,7 +1487,29 @@ describe("TerminalRawView", () => {
     expect(scrollLines).not.toHaveBeenCalled();
   });
 
+  it("captures but ignores pinch zoom in fit mode", async () => {
+    const { host } = await mountTerminal();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    const move = makePinch("touchmove", [
+      { x: 75, y: 100 },
+      { x: 225, y: 100 },
+    ]);
+    host.dispatchEvent(move);
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(liveOptions?.fontSize).toBe(13);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+    expect(scrollLines).not.toHaveBeenCalled();
+  });
+
   it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     const { host } = await mountTerminal();
 
     // 100px → 20px spread: 13 * 0.2 = 2.6 → clamped up to the 7px floor.
@@ -1600,6 +1647,7 @@ describe("TerminalRawView", () => {
 
   it("flushes the PTY resize when the pinch ends", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
@@ -1627,6 +1675,7 @@ describe("TerminalRawView", () => {
 
   it("applies the pinch rewrap while the keyboard is open", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
@@ -1678,6 +1727,7 @@ describe("TerminalRawView", () => {
 
   it("refits again after pinch layout settles to the screen dimensions", async () => {
     vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400);
