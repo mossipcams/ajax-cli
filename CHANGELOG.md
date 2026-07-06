@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.34.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.1...ajax-cli-v0.34.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* **web:** pinch rewrap with keyboard open, kill page zoom at touchdown ([#343](https://github.com/mossipcams/ajax-cli/issues/343)) ([5a66477](https://github.com/mossipcams/ajax-cli/commit/5a66477ea95e6c91bc2f3b42c165abcd5b5156ea))
+
 ## [0.34.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.34.0...ajax-cli-v0.34.1) (2026-07-06)
 
 
