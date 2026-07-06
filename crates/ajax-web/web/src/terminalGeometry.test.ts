@@ -1,5 +1,12 @@
-import { describe, it, expect } from "vitest";
-import { flooredCols, clampPan, pinchFontSize, fitCapFontSize } from "./terminalGeometry";
+import { describe, it, expect, beforeEach } from "vitest";
+import {
+  flooredCols,
+  clampPan,
+  pinchFontSize,
+  fitCapFontSize,
+  persistedGeometryMode,
+  persistGeometryMode,
+} from "./terminalGeometry";
 
 describe("flooredCols", () => {
   it("raises a narrow proposal to the minimum column count", () => {
@@ -115,5 +122,27 @@ describe("pinchFontSize", () => {
 
   it("honors custom clamp bounds", () => {
     expect(pinchFontSize(10, 100, 300, 7, 16)).toBe(16);
+  });
+});
+
+describe("geometry mode persistence", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("round-trips a persisted wide mode", () => {
+    persistGeometryMode("wide");
+    expect(persistedGeometryMode()).toBe("wide");
+  });
+
+  it("returns undefined for stored garbage values", () => {
+    window.localStorage.setItem("ajax.terminal.geometryMode", "huge");
+    expect(persistedGeometryMode()).toBeUndefined();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "");
+    expect(persistedGeometryMode()).toBeUndefined();
+  });
+
+  it("returns undefined when the key is absent", () => {
+    expect(persistedGeometryMode()).toBeUndefined();
   });
 });

@@ -628,11 +628,13 @@ with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
 task-terminal WebSocket lifecycle and reconnect behavior, and
 `terminalGestures.ts`, `terminalGeometry.ts`, and `terminalRefit.ts` keep mobile
 scrolling, panning, fit-to-width font sizing, keyboard-safe fitting, and refit
-scheduling local to the browser shell. The font auto-shrinks (to a readable
-minimum) so the 80-column PTY floor fits the viewport width, and pinch-zoom
-adjusts it within that same bound, so terminal text stays on-screen without
-horizontal panning except below the minimum font size. These frontend modules
-do not own task truth or tmux target selection.
+scheduling local to the browser shell. The default fit geometry sizes the PTY
+to the visible width with a 40-column safety floor, so phone-width viewports
+get a readable grid with no horizontal panning; a persisted "Wide" key-bar
+toggle restores the 80-column floor, where the font auto-shrinks (to a readable
+minimum) and horizontal pan covers sub-minimum overflow. Pinch-zoom adjusts
+font size within that same bound in wide mode. These frontend modules do not
+own task truth or tmux target selection.
 
 ### `ajax-web::adapters::terminal_pty`
 
