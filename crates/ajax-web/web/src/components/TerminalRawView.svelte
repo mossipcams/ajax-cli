@@ -49,9 +49,10 @@
   // there is no terminal "disconnected" state — only the reconnecting one.
   let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
-  // Clipboard feedback is its own channel: paste outcomes must never clear or
+  // Clipboard feedback is its own channel: paste/copy outcomes must never clear or
   // overwrite a bridge-reported error in statusDetail.
   let pasteNotice = $state("");
+  let copyNotice = $state("");
   let ctrlArmed = $state(false);
   let geometryMode = $state<GeometryMode>(persistedGeometryMode() ?? "fit");
   let hasUnseenOutput = $state(false);
@@ -75,6 +76,7 @@
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
   let requestPaste: () => void = () => {};
+  let requestCopy: () => void = () => {};
   let focusTerm: () => void = () => {};
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
@@ -103,7 +105,12 @@
   // A sticky modifier the user forgot they armed would mangle the next thing
   // they type minutes later, so it auto-disarms after a short window.
   const CTRL_ARM_TIMEOUT_MS = 4000;
+  const BACKSPACE_KEY = "\x7f";
+  const KEY_REPEAT_DELAY_MS = 400;
+  const KEY_REPEAT_INTERVAL_MS = 50;
   let ctrlTimer: ReturnType<typeof setTimeout> | undefined;
+  let backspaceRepeatTimer: ReturnType<typeof setTimeout> | undefined;
+  let backspaceRepeatInterval: ReturnType<typeof setInterval> | undefined;
 
   const disarmCtrl = () => {
     ctrlArmed = false;
@@ -141,6 +148,31 @@
     if (!ctrlArmed) return data;
     disarmCtrl();
     return controlModify(data);
+  };
+
+  const stopBackspaceRepeat = () => {
+    if (backspaceRepeatTimer) {
+      clearTimeout(backspaceRepeatTimer);
+      backspaceRepeatTimer = undefined;
+    }
+    if (backspaceRepeatInterval) {
+      clearInterval(backspaceRepeatInterval);
+      backspaceRepeatInterval = undefined;
+    }
+  };
+
+  const fireBackspace = () => {
+    sendKey(BACKSPACE_KEY);
+    refocusTerm();
+  };
+
+  const onBackspacePointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    fireBackspace();
+    stopBackspaceRepeat();
+    backspaceRepeatTimer = setTimeout(() => {
+      backspaceRepeatInterval = setInterval(fireBackspace, KEY_REPEAT_INTERVAL_MS);
+    }, KEY_REPEAT_DELAY_MS);
   };
 
   onMount(() => {
@@ -263,19 +295,6 @@
             chosenFontSize = next;
             if (term) term.options.fontSize = next;
             persistFontSize(next);
-            scheduleFontSizeRefit();
-          },
-          pinchEnded: () => {
-            pinchFlushPending = true;
-            schedulePostLayoutRefit();
-            // postLayout runs fit+resize this frame and once more next frame;
-            // clear the exemption after that second frame (rAF FIFO ordering
-            // guarantees the second refit runs before this clear).
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                pinchFlushPending = false;
-              });
-            });
           },
         })
       : () => {};
@@ -289,9 +308,7 @@
     // Ghostty stays visually correct, and a single resize is flushed once the
     // viewport settles.
     const sendResize = () => {
-      // A pinch-end flush is exempt — it refits the grid and resizes the PTY
-      // in the same pass, so lockstep holds.
-      if (isKeyboardOpen() && !pinchFlushPending) return;
+      if (isKeyboardOpen()) return;
       if (!term) return;
       connection.sendResize(term.cols, term.rows);
     };
@@ -331,13 +348,43 @@
       clipboard
         .readText()
         .then((text) => {
-          if (text) term?.paste(text);
+          if (!text) {
+            pasteNotice = "Clipboard empty";
+            return;
+          }
+          term?.paste(text);
           pasteNotice = "";
           term?.focus();
         })
         .catch(() => {
           pasteNotice = "Clipboard read failed — allow paste access and retry";
         });
+    };
+
+    requestCopy = () => {
+      if (!term) return;
+      if (term.copySelection()) {
+        copyNotice = "";
+        return;
+      }
+      const selection = term.getSelection();
+      const clipboard = navigator.clipboard;
+      if (selection && clipboard?.writeText) {
+        clipboard
+          .writeText(selection)
+          .then(() => {
+            copyNotice = "";
+          })
+          .catch(() => {
+            copyNotice = "Clipboard write failed — allow copy access and retry";
+        });
+        return;
+      }
+      if (selection) {
+        copyNotice = "Clipboard unavailable in this browser";
+        return;
+      }
+      copyNotice = "Nothing selected to copy";
     };
 
     // Fit rows to the container; the column floor depends on geometry mode.
@@ -349,7 +396,6 @@
     // even the minimum font overflows does the canvas extend past the right
     // edge, with horizontal pan bringing it into view.
     let keyboardWasOpen = false;
-    let pinchFlushPending = false;
     const clampHorizontalPan = () => {
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
@@ -364,15 +410,14 @@
         hasUnseenOutput = false;
       }
       keyboardWasOpen = keyboardOpen;
-      if (keyboardOpen && !pinchFlushPending) {
+      if (keyboardOpen) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and the renderer
         // clamps those writes to its bottom row — the TUI input box drifts up
         // and overwrites the line below it. Keep grid == PTY and crop the
         // taller canvas bottom-anchored so the cursor/input row stays visible
-        // above the keyboard. A pinch-end flush is exempt — it refits the grid
-        // and resizes the PTY in the same pass, so lockstep holds.
+        // above the keyboard.
         if (container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
@@ -417,7 +462,6 @@
     // debounced one is also an event listener removed by identity.
     const refitScheduler = createRefitScheduler({ fit: fitNow, sendResize });
     const scheduleDebouncedRefit = () => refitScheduler.scheduleDebounced();
-    const scheduleFontSizeRefit = () => refitScheduler.scheduleFontSize();
     const schedulePostLayoutRefit = () => refitScheduler.schedulePostLayout();
     // Discrete layout jumps (the ⛶ expand toggle) refit through the immediate
     // path: waiting out the debounce leaves the grid misfit in the new space
@@ -673,6 +717,7 @@
       cancelExpandedSnap();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      stopBackspaceRepeat();
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
       term?.textarea?.removeEventListener("beforeinput", handleTextareaBeforeInput);
@@ -759,7 +804,21 @@
         type="button"
         class="terminal-key"
         onmousedown={(event) => event.preventDefault()}
+        onclick={() => requestCopy()}>Copy</button>
+      <button
+        type="button"
+        class="terminal-key"
+        onmousedown={(event) => event.preventDefault()}
         onclick={() => requestPaste()}>Paste</button>
+      <button
+        type="button"
+        class="terminal-key"
+        aria-label="Backspace"
+        onmousedown={(event) => event.preventDefault()}
+        onpointerdown={onBackspacePointerDown}
+        onpointerup={stopBackspaceRepeat}
+        onpointerleave={stopBackspaceRepeat}
+        onpointercancel={stopBackspaceRepeat}>⌫</button>
       <button
         type="button"
         class="terminal-key"
@@ -780,7 +839,7 @@
         onclick={() => blurTerm()}>⌄</button>
     </div>
   </div>
-  {#if status !== "connected" || statusDetail || pasteNotice}
+  {#if status !== "connected" || statusDetail || pasteNotice || copyNotice}
     <div class="terminal-status" data-testid="terminal-status">
       <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
       {#if statusDetail}
@@ -788,6 +847,9 @@
       {/if}
       {#if pasteNotice}
         <span class="terminal-status-detail">{pasteNotice}</span>
+      {/if}
+      {#if copyNotice}
+        <span class="terminal-status-detail">{copyNotice}</span>
       {/if}
       {#if status === "reconnecting"}
         <button
@@ -812,7 +874,7 @@
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
     background: var(--paper);
-    overflow: hidden;
+    overflow: visible;
   }
 
   /* Fullscreen toggle pinned to the terminal's top-right corner. Translucent
@@ -821,7 +883,7 @@
   .terminal-expand-corner {
     position: absolute;
     top: 6px;
-    right: 6px;
+    right: calc(6px + env(safe-area-inset-right, 0px));
     z-index: 2;
     min-width: 36px;
     min-height: 36px;
@@ -867,10 +929,6 @@
       border-radius: 0;
     }
 
-    .terminal-host {
-      padding: 4px;
-    }
-
     .terminal-keys {
       gap: 4px;
       padding: 2px 4px;
@@ -889,7 +947,6 @@
     min-height: 0;
     min-width: 0;
     width: 100%;
-    padding: 8px;
     /* The 80-column floor can make the Ghostty canvas wider than the phone
        viewport. The host clips it and the touch handler pans it via
        scrollLeft (programmatic scrolling works on overflow:hidden boxes);
@@ -910,9 +967,9 @@
   .terminal-zero-lag-input {
     position: absolute;
     z-index: 1;
-    left: 8px;
-    bottom: 8px;
-    max-width: calc(100% - 16px);
+    left: 0;
+    bottom: 0;
+    max-width: 100%;
     overflow: hidden;
     color: #f4eee0;
     font-family: ui-monospace, SF Mono, Menlo, monospace;
@@ -1033,12 +1090,9 @@
     text-transform: uppercase;
   }
 
-  /* Centered when the fit grid is narrower than the host; auto resolves to 0
-     when the wide-mode canvas overflows, so scrollLeft panning is unaffected. */
   :global(.terminal-panel canvas) {
     display: block;
     height: 100%;
     min-width: 0;
-    margin-inline: auto;
   }
 </style>
