@@ -36,7 +36,7 @@
     -apple-system, sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --label-tracking: 0.18em;
-  --shell: 640px;
+  --shell: 560px;
 
   /* Spacing scale — 4px rhythm. Use in place of ad-hoc pixel values. */
   --space-1: 4px;
@@ -604,12 +604,11 @@ main {
   html.terminal-expanded .task-detail .terminal-primary {
     position: fixed;
     top: var(--app-top, 0px);
-    right: auto;
-    left: var(--app-left, 0px);
+    right: 0;
+    left: 0;
     z-index: 45;
     display: flex;
     flex-direction: column;
-    width: var(--app-width, 100vw);
     height: var(--app-height, 100dvh);
     min-height: 0;
     padding: env(safe-area-inset-top) 0 0;
