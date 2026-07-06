@@ -83,6 +83,10 @@
 </div>
 
 <style>
+  :global(main:has(.task-detail.is-terminal-first)) {
+    padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+  }
+
   /* DETAIL HEADER --------------------------------------------------------- */
   .detail-header {
     display: flex;
@@ -296,10 +300,11 @@
     .task-detail {
       position: fixed;
       top: var(--app-top, 0px);
-      right: 0;
+      right: auto;
       bottom: auto;
-      left: 0;
+      left: var(--app-left, 0px);
       z-index: 30;
+      width: var(--app-width, 100vw);
       height: 100dvh;
       height: var(--app-height, 100dvh);
       min-height: 0;
