@@ -107,6 +107,32 @@ describe("initViewport", () => {
     expect(prevent).toHaveBeenCalled();
   });
 
+  it("prevents pinch touchmove page zoom", () => {
+    start();
+    const event = new Event("touchmove", { cancelable: true });
+    Object.defineProperty(event, "scale", { value: 2 });
+    document.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("leaves single-finger touchmove alone", () => {
+    const dispose = start();
+    const noScale = new Event("touchmove", { cancelable: true });
+    document.dispatchEvent(noScale);
+    expect(noScale.defaultPrevented).toBe(false);
+
+    const scaleOne = new Event("touchmove", { cancelable: true });
+    Object.defineProperty(scaleOne, "scale", { value: 1 });
+    document.dispatchEvent(scaleOne);
+    expect(scaleOne.defaultPrevented).toBe(false);
+
+    dispose();
+    const afterCleanup = new Event("touchmove", { cancelable: true });
+    Object.defineProperty(afterCleanup, "scale", { value: 2 });
+    document.dispatchEvent(afterCleanup);
+    expect(afterCleanup.defaultPrevented).toBe(false);
+  });
+
   it("removes the keyboard-open class, --app-height, and --app-top on cleanup", () => {
     const dispose = initViewport();
     vvOffsetTop = 36;

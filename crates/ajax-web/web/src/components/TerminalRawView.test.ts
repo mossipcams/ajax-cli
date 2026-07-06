@@ -1187,6 +1187,12 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
   });
 
+  it("centers the canvas in the host", () => {
+    expect(terminalRawViewSource).toMatch(
+      /:global\(\.terminal-panel canvas\)\s*\{[^}]*margin-inline:\s*auto/,
+    );
+  });
+
   it("refits through the immediate path when expand is toggled", async () => {
     vi.useFakeTimers();
     window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
@@ -1590,6 +1596,33 @@ describe("TerminalRawView", () => {
     await waitFor(() => {
       expect(resize).toHaveBeenCalledWith(80, 30);
     });
+  });
+
+  it("flushes the PTY resize when the pinch ends", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 100, rows: 30 };
+    const { host, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle the open-path refits
+    socket!.send.mockClear();
+
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 100, y: 100 },
+        { x: 200, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(
+      makePinch("touchmove", [
+        { x: 75, y: 100 },
+        { x: 225, y: 100 },
+      ]),
+    );
+    host.dispatchEvent(makePinch("touchend", []));
+
+    // Animation frames only — well under the 300ms resize debounce.
+    vi.advanceTimersByTime(50);
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 100, rows: 30 });
+    vi.useRealTimers();
   });
 
   it("refits again after pinch layout settles to the screen dimensions", async () => {

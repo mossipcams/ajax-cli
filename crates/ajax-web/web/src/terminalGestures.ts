@@ -24,6 +24,9 @@ export interface TerminalGestureHost {
   maxFontSize(): number;
   /** Apply a pinch result: set, persist, and refit. */
   setFontSize(px: number): void;
+  /** A two-finger pinch just released: flush the pending PTY resize so the
+   * rewrap lands with the finger lift instead of after the debounce. */
+  pinchEnded?(): void;
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
@@ -182,19 +185,25 @@ export function attachTerminalGestures(
   };
 
   const onTouchEnd = () => {
+    const pinchWasActive = pinchStartDistance > 0;
     // Only a gesture that actually scrolled may fling; a tap with a few
     // pixels of jitter must stay a tap.
     if (touchActive && touchScrolled) {
       const frames = flingFrames(flingVelocity, host.cellHeightPx());
       if (frames.length) startFling(frames);
     }
+    if (pinchWasActive) host.pinchEnded?.();
     resetTouchState();
   };
 
   // touchcancel means the system stole the gesture (e.g. an incoming call
   // sheet); momentum from a stolen gesture would feel haunted, so reset
   // without flinging.
-  const onTouchCancel = resetTouchState;
+  const onTouchCancel = () => {
+    const pinchWasActive = pinchStartDistance > 0;
+    if (pinchWasActive) host.pinchEnded?.();
+    resetTouchState();
+  };
 
   const onWheel = (event: WheelEvent) => {
     cancelFling();
