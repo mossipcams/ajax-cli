@@ -27,6 +27,6 @@
     "vitest": "^4.1.9"
   },
   "dependencies": {
-    "ghostty-web": "^0.4.0"
+    "ghostty-web": "github:rcarmo/ghostty-web#v0.9.4"
   }
 }
