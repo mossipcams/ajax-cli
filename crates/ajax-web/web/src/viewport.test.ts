@@ -99,6 +99,21 @@ describe("initViewport", () => {
     expect(window.scrollTo).not.toHaveBeenCalled();
   });
 
+  it("clears document scroll when the keyboard closes", () => {
+    start();
+    const scrollCallsBeforeOpen = (window.scrollTo as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    vvHeight = 600;
+    dispatchVV("resize");
+    expect((window.scrollTo as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
+      scrollCallsBeforeOpen,
+    );
+
+    vvHeight = 800;
+    dispatchVV("resize");
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
   it("suppresses pinch-zoom gestures", () => {
     start();
     const event = new Event("gesturestart", { cancelable: true });

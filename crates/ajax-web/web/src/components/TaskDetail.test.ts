@@ -137,14 +137,22 @@ describe("TaskDetail", () => {
     expect(mobileBlock![1]).toMatch(/\.meta-details\s*\{[^}]*display:\s*none/);
   });
 
-  it("defines the mobile task route as a visual-viewport shell with scroll lock only for terminal takeover", () => {
+  it("defines the mobile task route scroll lock for the whole task shell without freezing height", () => {
     const mobileBlock = taskDetailSource.match(
       /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
     );
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 
-    expect(mobileCss).not.toMatch(/:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/);
+    expect(mobileCss).toMatch(
+      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/,
+    );
+    expect(mobileCss).toMatch(
+      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overscroll-behavior:\s*none/,
+    );
+    expect(mobileCss).not.toMatch(
+      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*height:/,
+    );
     expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*overflow:\s*hidden/);
     expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
@@ -161,5 +169,15 @@ describe("TaskDetail", () => {
     // pads the bottom inset and chrome rows carry their own gutters.
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
     expect(mobileCss).toMatch(/\.detail-header,\s*\.interact-panel\s*\{[^}]*padding-left:[^;]*env\(safe-area-inset-left\)/);
+  });
+
+  it("adds ajax-task-open to the document while mounted and removes it on unmount", () => {
+    const { unmount } = render(TaskDetail, { props: { detail: detail() } });
+
+    expect(document.documentElement.classList.contains("ajax-task-open")).toBe(true);
+
+    unmount();
+
+    expect(document.documentElement.classList.contains("ajax-task-open")).toBe(false);
   });
 });

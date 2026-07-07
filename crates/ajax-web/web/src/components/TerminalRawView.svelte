@@ -9,6 +9,8 @@
   import { isKeyboardOpen } from "../viewport";
   import { attachTerminalGestures } from "../terminalGestures";
   import { createRefitScheduler } from "../terminalRefit";
+  import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalSelection";
+  import { copyText } from "../diagnostics";
   import {
     flooredCols,
     clampPan,
@@ -24,7 +26,6 @@
     type GeometryMode,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
-  const GHOSTTY_SCROLLBAR_RESERVATION_PX = 15;
   let ghosttyRuntime: Promise<Ghostty> | undefined;
 
   type TerminalWithRendererMetrics = Terminal & {
@@ -32,6 +33,25 @@
       getMetrics?: () => { width?: number; height?: number };
     };
   };
+
+  // ghostty-web's public select() stores rows in the wrong coordinate space
+  // (viewportY + row, where its own getSelection()/renderer read
+  // scrollbackLength + row − viewportY), so Ajax writes the range through the
+  // selection manager directly in the space the library reads back. A
+  // standalone type (not a Terminal intersection) because these members are
+  // private on the class; the cast goes through unknown.
+  type SelectionEndpoint = { col: number; absoluteRow: number };
+  type TerminalSelectionInternals = {
+    showScrollbar?: () => void;
+    getScrollbackLength?: () => number;
+    selectionManager?: {
+      selectionStart: SelectionEndpoint | null;
+      selectionEnd: SelectionEndpoint | null;
+      requestRender?: () => void;
+    };
+  };
+  const terminalInternals = (candidate: Terminal | undefined): TerminalSelectionInternals =>
+    (candidate ?? {}) as unknown as TerminalSelectionInternals;
 
   const loadGhosttyRuntime = () => {
     ghosttyRuntime ??= Ghostty.load(GHOSTTY_WASM_URL);
@@ -56,6 +76,13 @@
   let geometryMode = $state<GeometryMode>(persistedGeometryMode() ?? "fit");
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
+  // Insecure (plain-http LAN) origins have no async clipboard API, so the
+  // Paste key falls back to a real textarea the iOS Paste menu can target.
+  let pasteFallbackOpen = $state(false);
+  let pasteFallbackInput = $state<HTMLTextAreaElement | undefined>();
+  $effect(() => {
+    if (pasteFallbackOpen) pasteFallbackInput?.focus();
+  });
   let zeroLagInput = $state("");
   let zeroLagStyle = $state("");
 
@@ -71,6 +98,7 @@
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
+  let pasteToTerm: (text: string) => void = () => {};
   let refocusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
@@ -223,10 +251,7 @@
       }
       const style = window.getComputedStyle(container);
       const usableWidth =
-        hostWidth -
-        cssPx(style, "padding-left") -
-        cssPx(style, "padding-right") -
-        GHOSTTY_SCROLLBAR_RESERVATION_PX;
+        hostWidth - cssPx(style, "padding-left") - cssPx(style, "padding-right");
       if (!Number.isFinite(usableWidth) || usableWidth <= 0) return undefined;
       return fitCapFontSize(
         currentFont,
@@ -243,9 +268,103 @@
         colsFloor(),
       );
 
-    // Touch/wheel scroll, horizontal pan, pinch-zoom, and momentum flings all
-    // live in terminalGestures; the component only supplies the terminal-side
-    // effects each gesture drives.
+    // ghostty-web's FitAddon reserves 15px of width for the scrollbar Ajax
+    // suppresses (see mountGhosttyTerminal), so its column proposal stops a
+    // couple of cells short of the screen edge. Fit columns from the full
+    // host width instead; the addon's proposal remains the pre-layout/jsdom
+    // fallback.
+    const hostFitCols = (): number | undefined => {
+      if (!container || !term) return undefined;
+      const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
+      const width = container.clientWidth;
+      if (
+        !Number.isFinite(width) ||
+        width <= 0 ||
+        !cellWidth ||
+        !Number.isFinite(cellWidth) ||
+        cellWidth <= 0
+      ) {
+        return undefined;
+      }
+      return Math.floor(width / cellWidth);
+    };
+
+    // Long-press copy selection. The range lives in ghostty-web's
+    // SelectionManager so its renderer paints the highlight; Ajax maps touch
+    // points to cells (terminalSelection) and writes the endpoints directly
+    // (see TerminalWithSelectionInternals for why select() is bypassed).
+    let selectionAnchor: CellPoint | undefined;
+    let copyNoticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const topAbsoluteRow = (): number => {
+      const scrollback = terminalInternals(term).getScrollbackLength?.() ?? 0;
+      return scrollback - Math.floor(term?.getViewportY() ?? 0);
+    };
+
+    const selectionCellAt = (clientX: number, clientY: number): CellPoint | undefined => {
+      const canvas = container?.querySelector<HTMLElement>("canvas");
+      if (!canvas || !term) return undefined;
+      const rect = canvas.getBoundingClientRect();
+      return cellAtPoint(
+        clientX - rect.left,
+        clientY - rect.top,
+        rect.width,
+        rect.height,
+        term.cols,
+        term.rows,
+      );
+    };
+
+    // A bare long-press (no drag) selects the word under the finger, like
+    // iOS's native text long-press; a space or unreadable line selects just
+    // the touched cell so the gesture still gives visible feedback.
+    const wordRangeAt = (cell: CellPoint): { start: CellPoint; end: CellPoint } => {
+      const line = term?.buffer.active.getLine?.(topAbsoluteRow() + cell.row);
+      const text = line?.translateToString?.(false);
+      if (!text || !text[cell.col] || text[cell.col] === " ") {
+        return { start: cell, end: cell };
+      }
+      let start = cell.col;
+      let end = cell.col;
+      while (start > 0 && text[start - 1] !== " ") start -= 1;
+      while (end < text.length - 1 && text[end + 1] !== " ") end += 1;
+      return { start: { col: start, row: cell.row }, end: { col: end, row: cell.row } };
+    };
+
+    const applySelection = (start: CellPoint, end: CellPoint) => {
+      const manager = terminalInternals(term).selectionManager;
+      if (!manager) return;
+      const top = topAbsoluteRow();
+      manager.selectionStart = { col: start.col, absoluteRow: top + start.row };
+      manager.selectionEnd = { col: end.col, absoluteRow: top + end.row };
+      manager.requestRender?.();
+    };
+
+    const flashCopyNotice = (message: string) => {
+      pasteNotice = message;
+      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
+      copyNoticeTimer = setTimeout(() => {
+        pasteNotice = "";
+        copyNoticeTimer = undefined;
+      }, 2500);
+    };
+
+    const finishSelectionCopy = (cancelled: boolean) => {
+      selectionAnchor = undefined;
+      const text = cancelled ? "" : (term?.getSelection() ?? "");
+      if (!text) {
+        term?.clearSelection();
+        return;
+      }
+      void copyText(text).then((copied) => {
+        flashCopyNotice(copied ? "Copied" : "Copy failed — clipboard unavailable");
+        term?.clearSelection();
+      });
+    };
+
+    // Touch/wheel scroll, horizontal pan, pinch-zoom, long-press copy, and
+    // momentum flings all live in terminalGestures; the component only
+    // supplies the terminal-side effects each gesture drives.
     const detachGestures = container
       ? attachTerminalGestures(container, {
           scrollLines: (lines) => {
@@ -258,7 +377,6 @@
           cellHeightPx,
           fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
           maxFontSize: fitFontCap,
-          pinchEnabled: () => geometryMode === "wide",
           setFontSize: (next) => {
             chosenFontSize = next;
             if (term) term.options.fontSize = next;
@@ -277,6 +395,20 @@
               });
             });
           },
+          beginSelection: (clientX, clientY) => {
+            selectionAnchor = selectionCellAt(clientX, clientY);
+            if (!selectionAnchor) return;
+            const word = wordRangeAt(selectionAnchor);
+            applySelection(word.start, word.end);
+          },
+          extendSelection: (clientX, clientY) => {
+            if (!selectionAnchor) return;
+            const focus = selectionCellAt(clientX, clientY);
+            if (!focus) return;
+            const { start, end } = orderedSelection(selectionAnchor, focus);
+            applySelection(start, end);
+          },
+          endSelection: finishSelectionCopy,
         })
       : () => {};
 
@@ -322,10 +454,16 @@
     // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
     // mode and flows through the normal onData → socket path. Failures must be
     // visible: silently doing nothing reads as a broken button.
+    pasteToTerm = (text: string) => {
+      term?.paste(text);
+      term?.focus();
+    };
     requestPaste = () => {
       const clipboard = navigator.clipboard;
       if (!clipboard || typeof clipboard.readText !== "function") {
-        pasteNotice = "Clipboard unavailable in this browser";
+        // No async clipboard on insecure (plain-http LAN) origins: offer a
+        // real textarea the iOS long-press Paste menu can act on instead.
+        pasteFallbackOpen = true;
         return;
       }
       clipboard
@@ -402,7 +540,7 @@
         scheduleDebouncedRefit();
       }
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
-        term.resize(flooredCols(proposed.cols, colsFloor()), proposed.rows);
+        term.resize(flooredCols(hostFitCols() ?? proposed.cols, colsFloor()), proposed.rows);
       } else {
         // jsdom / pre-layout paints propose nothing; plain fit is the best guess.
         fitAddon.fit();
@@ -649,6 +787,11 @@
       });
       term.loadAddon(fitAddon);
       term.open(container);
+      // ghostty-web paints its scrollbar on the canvas with no option to
+      // disable it, and Ajax owns every scroll surface (touch gestures, the
+      // New-output jump); silencing the fade-in at its single entry point
+      // keeps the canvas clean to the edge.
+      terminalInternals(term).showScrollbar = () => {};
       hardenMobileTextarea();
       term.textarea?.addEventListener("beforeinput", handleTextareaBeforeInput);
       terminalSubscriptions.push(
@@ -673,6 +816,7 @@
       cancelExpandedSnap();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
       term?.textarea?.removeEventListener("beforeinput", handleTextareaBeforeInput);
@@ -729,6 +873,28 @@
       onclick={() => {
         jumpToBottom();
       }}>New output ↓</button>
+  {/if}
+  {#if pasteFallbackOpen}
+    <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
+      <textarea
+        class="terminal-paste-fallback-input"
+        placeholder="Long-press here, then tap Paste"
+        aria-label="Paste text for the terminal"
+        rows="1"
+        bind:this={pasteFallbackInput}
+        onpaste={(event) => {
+          const text = event.clipboardData?.getData("text") ?? "";
+          event.preventDefault();
+          pasteFallbackOpen = false;
+          if (text) pasteToTerm(text);
+        }}></textarea>
+      <button
+        type="button"
+        class="terminal-key"
+        onclick={() => {
+          pasteFallbackOpen = false;
+        }}>Cancel</button>
+    </div>
   {/if}
   <div
     class="terminal-bottom-controls"
@@ -860,7 +1026,7 @@
        terminal runs edge to edge; side/bottom borders and radii would read as
        stray hairlines against the screen edges. */
     .terminal-panel {
-      margin-top: 8px;
+      margin-top: 0;
       border-left: none;
       border-right: none;
       border-bottom: none;
@@ -900,6 +1066,19 @@
        touch. none keeps every touchmove cancelable and hands the whole gesture
        to our handler. */
     touch-action: none;
+    /* ghostty-web marks the host contenteditable for key handling; without
+       these, an iOS long-press raises the text-magnifier loupe (a huge
+       duplicated echo of the canvas) and the system edit callout, both of
+       which fight the synthesized long-press copy gesture. */
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* The hidden input must stay selectable or iOS refuses to paste into it. */
+  .terminal-host :global(textarea) {
+    user-select: text;
+    -webkit-user-select: text;
   }
 
   .terminal-zero-lag-input {
@@ -916,6 +1095,35 @@
     pointer-events: none;
     text-shadow: 0 0 6px #1c1714;
     white-space: pre;
+  }
+
+  .terminal-paste-fallback {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 3;
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+  }
+
+  .terminal-paste-fallback-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+    padding: 8px;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: transparent;
+    resize: none;
+    font-family: var(--mono);
+    /* >= 16px so iOS Safari does not zoom on focus. */
+    font-size: 16px;
   }
 
   .terminal-new-output {

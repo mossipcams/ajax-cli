@@ -18,6 +18,23 @@ const focus = vi.fn();
 const blur = vi.fn();
 const paste = vi.fn();
 const resize = vi.fn();
+const getSelection = vi.fn(() => "selected text");
+const clearSelection = vi.fn();
+let scrollbackLength = 0;
+let bufferLineText: string | undefined;
+let lastTerminal: {
+  selectionManager: {
+    selectionStart: { col: number; absoluteRow: number } | null;
+    selectionEnd: { col: number; absoluteRow: number } | null;
+    requestRender: ReturnType<typeof vi.fn>;
+  };
+  showScrollbar?: () => void;
+} | undefined;
+let activeSelectionManager: {
+  selectionStart: { col: number; absoluteRow: number } | null;
+  selectionEnd: { col: number; absoluteRow: number } | null;
+  requestRender: ReturnType<typeof vi.fn>;
+};
 let lastTextarea: HTMLTextAreaElement | undefined;
 let terminalOptions: unknown;
 let liveOptions: { fontSize?: number } | undefined;
@@ -40,7 +57,16 @@ vi.mock("ghostty-web", () => ({
     renderer = {
       getMetrics: () => terminalCellMetrics,
     };
-    buffer = { active: { viewportY: 0, baseY: 0 } };
+    buffer = {
+      active: {
+        viewportY: 0,
+        baseY: 0,
+        getLine: () =>
+          bufferLineText !== undefined
+            ? { translateToString: () => bufferLineText }
+            : undefined,
+      },
+    };
     loadAddon = vi.fn();
     open = vi.fn((container: HTMLElement) => {
       if (terminalHostClientWidth !== undefined) {
@@ -72,8 +98,23 @@ vi.mock("ghostty-web", () => ({
       return { dispose: vi.fn() };
     });
     getViewportY = () => viewportY;
+    getSelection = getSelection;
+    clearSelection = clearSelection;
+    getScrollbackLength = () => scrollbackLength;
+    selectionManager!: {
+      selectionStart: { col: number; absoluteRow: number } | null;
+      selectionEnd: { col: number; absoluteRow: number } | null;
+      requestRender: ReturnType<typeof vi.fn>;
+    };
     options: { fontSize?: number };
     constructor(options: unknown) {
+      this.selectionManager = {
+        selectionStart: null,
+        selectionEnd: null,
+        requestRender: vi.fn(),
+      };
+      activeSelectionManager = this.selectionManager;
+      lastTerminal = this;
       terminalOptions = options;
       this.options = { fontSize: (options as { fontSize?: number }).fontSize };
       liveOptions = this.options;
@@ -131,7 +172,13 @@ beforeEach(() => {
   proposedDimensions = undefined;
   terminalHostClientWidth = undefined;
   terminalCellMetrics = { width: 8, height: 18 };
+  scrollbackLength = 0;
+  bufferLineText = undefined;
+  lastTerminal = undefined;
   liveOptions = undefined;
+  getSelection.mockClear();
+  getSelection.mockReturnValue("selected text");
+  clearSelection.mockClear();
   write.mockClear();
   scrollToBottom.mockClear();
   dispose.mockClear();
@@ -1487,7 +1534,7 @@ describe("TerminalRawView", () => {
     expect(scrollLines).not.toHaveBeenCalled();
   });
 
-  it("captures but ignores pinch zoom in fit mode", async () => {
+  it("grows the font on pinch spread in fit mode", async () => {
     const { host } = await mountTerminal();
 
     host.dispatchEvent(
@@ -1503,9 +1550,148 @@ describe("TerminalRawView", () => {
     host.dispatchEvent(move);
 
     expect(move.defaultPrevented).toBe(true);
-    expect(liveOptions?.fontSize).toBe(13);
-    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+    expect(liveOptions?.fontSize).toBe(20);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("20");
     expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("fits columns to the full host width", async () => {
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 46, rows: 30 };
+    const { socket } = await mountTerminal();
+
+    socket?.emit("open");
+
+    await waitFor(() => {
+      expect(resize).toHaveBeenCalledWith(48, 30);
+    });
+  });
+
+  it("suppresses ghostty-web's canvas scrollbar after mount", async () => {
+    await mountTerminal();
+
+    await waitFor(() => {
+      expect(lastTerminal?.showScrollbar).toBeTypeOf("function");
+    });
+    expect(() => lastTerminal?.showScrollbar?.()).not.toThrow();
+  });
+
+  function stubTerminalCanvas(host: HTMLElement) {
+    const canvas = host.querySelector("canvas");
+    if (!canvas) throw new Error("terminal canvas missing");
+    vi.spyOn(canvas, "getBoundingClientRect").mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 480,
+      right: 800,
+      bottom: 480,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+  }
+
+  it("copies the selection after a long-press drag", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const { host, getByTestId } = await mountTerminal();
+    stubTerminalCanvas(host);
+
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 105, 105));
+    vi.advanceTimersByTime(500);
+
+    expect(activeSelectionManager.selectionStart).toEqual({ col: 10, absoluteRow: 5 });
+
+    const move = makeTouch("touchmove", 105, 305);
+    host.dispatchEvent(move);
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(scrollLines).not.toHaveBeenCalled();
+    expect(activeSelectionManager.selectionEnd).toEqual({ col: 30, absoluteRow: 5 });
+
+    const end = new Event("touchend", { bubbles: true, cancelable: true });
+    const stopPropagation = vi.spyOn(end, "stopPropagation");
+    host.dispatchEvent(end);
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeText).toHaveBeenCalledWith("selected text");
+    expect(clearSelection).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(getByTestId("terminal-status").textContent).toContain("Copied");
+    vi.useRealTimers();
+  });
+
+  it("selects the word under a bare long-press", async () => {
+    bufferLineText = "hello world ok";
+    const { host } = await mountTerminal();
+    stubTerminalCanvas(host);
+
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 5, 75));
+    vi.advanceTimersByTime(500);
+
+    expect(activeSelectionManager.selectionStart).toEqual({ col: 6, absoluteRow: 0 });
+    expect(activeSelectionManager.selectionEnd).toEqual({ col: 10, absoluteRow: 0 });
+    vi.useRealTimers();
+  });
+
+  it("cancels a long-press when the finger scrolls before the timeout", async () => {
+    const { host } = await mountTerminal();
+    stubTerminalCanvas(host);
+
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 200, 105));
+    host.dispatchEvent(makeTouch("touchmove", 140, 105));
+    vi.advanceTimersByTime(500);
+
+    expect(activeSelectionManager.selectionStart).toBeNull();
+    expect(scrollLines).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("opens a paste fallback sheet when the async clipboard API is unavailable", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+    const sheet = getByTestId("terminal-paste-fallback");
+    const textarea = sheet.querySelector("textarea");
+    expect(textarea).toBeInTheDocument();
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: { getData: () => "pasted text" },
+    });
+    textarea!.dispatchEvent(pasteEvent);
+
+    expect(paste).toHaveBeenCalledWith("pasted text");
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
+  });
+
+  it("closes the paste fallback sheet without pasting when Cancel is tapped", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+
+    getByRole("button", { name: "Cancel" }).click();
+
+    expect(paste).not.toHaveBeenCalled();
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
   });
 
   it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
@@ -1911,6 +2097,15 @@ describe("TerminalRawView", () => {
     expect(move.defaultPrevented).toBe(true);
     expect(scrollToBottom).not.toHaveBeenCalled();
     vi.useRealTimers();
+  });
+
+  it("lays the mobile terminal panel flush to the top edge without a gutter margin", () => {
+    const mobileBlock = terminalRawViewSource.match(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
+    );
+    expect(mobileBlock).not.toBeNull();
+    const mobileCss = mobileBlock![1];
+    expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*margin-top:\s*0/);
   });
 
   it("uses compact terminal chrome on mobile and desktop", () => {

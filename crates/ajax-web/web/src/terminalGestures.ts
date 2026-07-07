@@ -3,8 +3,9 @@
  *
  * Wheel/touch scrolling always uses Ajax-owned terminal scrollback: every
  * gesture is captured before renderer layers can handle it and translated into
- * whole-line scroll steps, horizontal pan of the 80-column canvas, or a
- * pinch font-size change — never forwarded into tmux or the foreground app.
+ * whole-line scroll steps, horizontal pan of the 80-column canvas, a pinch
+ * font-size change, or a long-press copy selection — never forwarded into
+ * tmux or the foreground app.
  * The pure px→line and momentum math lives in terminalTouchScroll/
  * terminalGeometry; this module owns the event wiring and gesture state.
  */
@@ -22,16 +23,25 @@ export interface TerminalGestureHost {
   /** Largest font a pinch may reach: the size at which the column floor
    * still fits the host width, so zooming never pushes text off-screen. */
   maxFontSize(): number;
-  /** Whether this mode allows pinch to change terminal font size. */
-  pinchEnabled?(): boolean;
   /** Apply a pinch result: set, persist, and refit. */
   setFontSize(px: number): void;
   /** A two-finger pinch just released: flush the pending PTY resize so the
    * rewrap lands with the finger lift instead of after the debounce. */
   pinchEnded?(): void;
+  /** A long-press anchored a text selection at these client coordinates. */
+  beginSelection?(clientX: number, clientY: number): void;
+  /** The selecting finger dragged to these client coordinates. */
+  extendSelection?(clientX: number, clientY: number): void;
+  /** The selecting finger lifted; cancelled means the system stole the
+   * gesture (or a second finger landed) and the selection must be dropped
+   * instead of copied. */
+  endSelection?(cancelled: boolean): void;
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
+// iOS's own text long-press engages around 500ms; matching it makes the
+// synthesized selection feel native instead of laggy or hair-triggered.
+const LONG_PRESS_MS = 500;
 
 /**
  * Attach the gesture handlers to `target` (the overflow-hidden terminal
@@ -55,7 +65,18 @@ export function attachTerminalGestures(
   let pinchStartDistance = 0;
   let pinchBaseFontSize = 0;
   let pinchMaxFontSize = MAX_FONT_SIZE;
-  let pinchCanZoom = true;
+
+  // Long-press → drag → lift = select → extend → copy. The timer arms on a
+  // single stationary finger; any scroll, pinch, wheel, or lift disarms it.
+  let longPressTimer: ReturnType<typeof setTimeout> | undefined;
+  let selecting = false;
+
+  const cancelLongPress = () => {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = undefined;
+    }
+  };
 
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
@@ -94,15 +115,21 @@ export function attachTerminalGestures(
 
   const onTouchStart = (event: TouchEvent) => {
     cancelFling();
+    cancelLongPress();
     if (event.touches.length === 2) {
       // Own the pinch at touchdown — iOS latches page zoom at the second
       // finger's touchstart, before any touchmove guard can run.
       if (event.cancelable) event.preventDefault();
+      // A second finger during a live selection turns the gesture into a
+      // pinch; the half-made selection must not be copied.
+      if (selecting) {
+        selecting = false;
+        host.endSelection?.(true);
+      }
       touchActive = false;
       pinchStartDistance = touchDistance(event.touches);
       pinchBaseFontSize = host.fontSize();
       pinchMaxFontSize = host.maxFontSize();
-      pinchCanZoom = host.pinchEnabled?.() ?? true;
       return;
     }
     pinchStartDistance = 0;
@@ -118,14 +145,35 @@ export function attachTerminalGestures(
     touchLastX = event.touches[0].clientX;
     flingVelocity = 0;
     lastMoveTime = performance.now();
+    if (host.beginSelection) {
+      longPressTimer = setTimeout(() => {
+        longPressTimer = undefined;
+        // Only a finger that is still down and hasn't scrolled anchors a
+        // selection; touchLastX/Y track sub-threshold jitter so the anchor
+        // lands where the finger actually rests.
+        if (!touchActive || touchScrolled) return;
+        touchActive = false;
+        selecting = true;
+        host.beginSelection?.(touchLastX, touchLastY);
+      }, LONG_PRESS_MS);
+    }
   };
 
   const onTouchMove = (event: TouchEvent) => {
+    if (selecting && event.touches.length === 1) {
+      // The drag now moves the selection focus, never the scrollback; owning
+      // the event also keeps iOS from starting a native pan mid-selection.
+      if (event.cancelable) event.preventDefault();
+      const touch = event.touches[0];
+      touchLastX = touch.clientX;
+      touchLastY = touch.clientY;
+      host.extendSelection?.(touch.clientX, touch.clientY);
+      return;
+    }
     if (event.touches.length === 2 && pinchStartDistance > 0) {
       // Own the pinch so iOS can't page-zoom; font rounding means the
       // terminal only re-renders when the size crosses a whole pixel.
       if (event.cancelable) event.preventDefault();
-      if (!pinchCanZoom) return;
       const next = pinchFontSize(
         pinchBaseFontSize,
         pinchStartDistance,
@@ -158,6 +206,9 @@ export function attachTerminalGestures(
       return;
     }
     touchScrolled = true;
+    // Past the threshold the finger is scrolling, not resting: a long-press
+    // can no longer begin.
+    cancelLongPress();
 
     // Past the threshold this is a scroll, not a tap, so own the gesture NOW —
     // before a full cell of movement accumulates. iOS Safari latches native
@@ -190,10 +241,19 @@ export function attachTerminalGestures(
     touchAccumPx = 0;
     touchAccumXPx = 0;
     pinchStartDistance = 0;
-    pinchCanZoom = true;
   };
 
-  const onTouchEnd = () => {
+  const onTouchEnd = (event: TouchEvent) => {
+    cancelLongPress();
+    if (selecting) {
+      selecting = false;
+      host.endSelection?.(false);
+      // ghostty-web's canvas focuses its hidden textarea on every touchend,
+      // which pops the iOS keyboard; a copy gesture must stay a copy.
+      event.stopPropagation();
+      resetTouchState();
+      return;
+    }
     const pinchWasActive = pinchStartDistance > 0;
     // Only a gesture that actually scrolled may fling; a tap with a few
     // pixels of jitter must stay a tap.
@@ -209,6 +269,11 @@ export function attachTerminalGestures(
   // sheet); momentum from a stolen gesture would feel haunted, so reset
   // without flinging.
   const onTouchCancel = () => {
+    cancelLongPress();
+    if (selecting) {
+      selecting = false;
+      host.endSelection?.(true);
+    }
     const pinchWasActive = pinchStartDistance > 0;
     if (pinchWasActive) host.pinchEnded?.();
     resetTouchState();
@@ -216,6 +281,7 @@ export function attachTerminalGestures(
 
   const onWheel = (event: WheelEvent) => {
     cancelFling();
+    cancelLongPress();
     const lineDelta =
       event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
         ? Math.trunc(event.deltaY / host.cellHeightPx())
@@ -242,6 +308,7 @@ export function attachTerminalGestures(
 
   return () => {
     cancelFling();
+    cancelLongPress();
     target.removeEventListener("touchstart", onTouchStart, touchStartOptions);
     target.removeEventListener("touchmove", onTouchMove, touchMoveOptions);
     target.removeEventListener("touchend", onTouchEnd, scrollEndOptions);
