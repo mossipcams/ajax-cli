@@ -135,10 +135,19 @@
 
 <style>
   /* NEW TASK SHEET — bottom-rising modal. Rendered only while open, so no
-     body-class toggle is needed (the legacy #new-task-sheet display switch). */
+     body-class toggle is needed (the legacy #new-task-sheet display switch).
+     Pinned to the visual-viewport band (--app-top/--app-height, viewport.ts)
+     rather than inset: 0: the layout viewport does not shrink for the iOS
+     soft keyboard, so a layout-anchored bottom sheet ends up behind it and
+     Safari pans the frozen page to chase the focused input — the UI jumps
+     and rubber-bands while the field stays hidden. Sized to the band, the
+     card rises above the keyboard and tracks Safari's pan instead. */
   #new-task-sheet {
     position: fixed;
-    inset: 0;
+    top: var(--app-top, 0px);
+    left: 0;
+    right: 0;
+    height: var(--app-height, 100dvh);
     z-index: 50;
     display: flex;
     align-items: flex-end;
