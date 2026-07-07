@@ -56,6 +56,19 @@ export function initViewport(): () => void {
   };
   syncViewportGeometry();
 
+  // While the keyboard is up Safari scrolls the document to reveal the
+  // focused input; with the app's fixed shells that offset survives the
+  // keyboard closing and renders as dead space plus rubber-band bounce.
+  const resetDocumentScroll = () => {
+    try {
+      window.scrollTo(0, 0);
+    } catch {
+      // jsdom throws "Not implemented" for scrollTo.
+    }
+    const scroller = document.scrollingElement;
+    if (scroller) scroller.scrollTop = 0;
+  };
+
   const onViewportResize = () => {
     const current = vv.height;
     const delta = baselineHeight - current;
@@ -65,6 +78,7 @@ export function initViewport(): () => void {
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
       keyboardOpen = false;
       root.classList.remove(KEYBOARD_OPEN_CLASS);
+      resetDocumentScroll();
     }
     // Keep --app-height pinned to the visible band. While the keyboard is closed
     // this also tracks address-bar / orientation changes and re-bases the

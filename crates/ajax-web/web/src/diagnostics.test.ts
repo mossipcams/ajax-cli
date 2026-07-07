@@ -91,6 +91,23 @@ describe("copyText", () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledWith("hello");
   });
 
+  it("returns true via execCommand when clipboard API is unavailable", async () => {
+    vi.stubGlobal("navigator", {});
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", {
+      value: execCommand,
+      configurable: true,
+    });
+    const textareasBefore = document.body.querySelectorAll("textarea").length;
+
+    const ok = await copyText("plain-http copy");
+
+    expect(ok).toBe(true);
+    expect(execCommand).toHaveBeenCalledWith("copy");
+    expect(document.body.querySelectorAll("textarea").length).toBe(textareasBefore);
+    Reflect.deleteProperty(document, "execCommand");
+  });
+
   it("returns false when clipboard API is unavailable", async () => {
     vi.stubGlobal("navigator", {});
 

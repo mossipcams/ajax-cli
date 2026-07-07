@@ -20,6 +20,16 @@
   let actions = $derived(visibleTaskActions(detail.actions));
   let metaOpen = $state(false);
 
+  // While the (mobile) fixed task shell is mounted the document behind it
+  // must not scroll: Safari otherwise keeps its focus-into-view scroll offset
+  // after the keyboard closes, which reads as the terminal hopping to the top
+  // with dead space under it and a rubber-band bounce. Unlike the pre-#345
+  // lock this only kills scrolling — it does not freeze html/body to
+  // --app-height; only keyboard-open/terminal-expanded pin the height.
+  $effect(() => {
+    document.documentElement.classList.add("ajax-task-open");
+    return () => document.documentElement.classList.remove("ajax-task-open");
+  });
 </script>
 
 <div class="task-detail is-terminal-first">
@@ -281,6 +291,14 @@
      in styles.css) gets maximum height. Includes landscape phones (coarse
      pointer, short viewport) that exceed the width breakpoint. */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    /* Scroll-only lock for the whole task route (see the $effect above);
+       height stays unfrozen so address-bar drift can't strand dead space. */
+    :global(html.ajax-task-open),
+    :global(html.ajax-task-open body) {
+      overflow: hidden;
+      overscroll-behavior: none;
+    }
+
     :global(html.terminal-expanded),
     :global(html.terminal-expanded body),
     :global(html.keyboard-open),
