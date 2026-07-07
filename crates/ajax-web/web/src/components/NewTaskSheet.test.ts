@@ -24,6 +24,30 @@ describe("NewTaskSheet", () => {
     expect(fullscreenLayerSource).toMatch(/--app-band-height/);
   });
 
+  it("offers every supported agent including opencode", () => {
+    const { container } = render(NewTaskSheet, { props: { repos } });
+    const options = [...container.querySelectorAll<HTMLOptionElement>("#new-task-agent option")];
+    expect(options.map((option) => option.value)).toEqual([
+      "codex",
+      "claude",
+      "cursor",
+      "opencode",
+    ]);
+  });
+
+  it("submits the selected opencode agent", async () => {
+    const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const { container } = render(NewTaskSheet, { props: { repos } });
+    await fireEvent.input(container.querySelector("#new-task-title-input")!, {
+      target: { value: "Fix login" },
+    });
+    await fireEvent.change(container.querySelector("#new-task-agent")!, {
+      target: { value: "opencode" },
+    });
+    await fireEvent.submit(container.querySelector("form")!);
+    expect(spy.mock.calls[0][0].agent).toBe("opencode");
+  });
+
   it("preselects the matching repo for the selected project", () => {
     const { container } = render(NewTaskSheet, { props: { repos, selectedProject: "api" } });
     const select = container.querySelector<HTMLSelectElement>("#new-task-repo")!;

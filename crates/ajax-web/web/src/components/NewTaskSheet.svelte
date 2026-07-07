@@ -123,6 +123,7 @@
       <option value="codex">Codex</option>
       <option value="claude">Claude</option>
       <option value="cursor">Cursor</option>
+      <option value="opencode">OpenCode</option>
     </select>
 
     {#if error}

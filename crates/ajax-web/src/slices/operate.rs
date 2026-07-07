@@ -141,7 +141,7 @@ fn start_plan_observation<R: Registry>(
 }
 
 fn supported_start_agent(agent: &str) -> bool {
-    matches!(agent, "codex" | "claude" | "cursor")
+    matches!(agent, "codex" | "claude" | "cursor" | "opencode")
 }
 
 fn execute_task_command<R: Registry>(
@@ -496,6 +496,31 @@ mod tests {
             "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- cursor agent"
         );
         assert!(!line.contains("--cd"));
+    }
+
+    #[test]
+    fn start_task_opencode_agent_command_runs_opencode_in_task_window() {
+        let mut context = context_with_managed_repo();
+        let mut runner = RecordingCommandRunner::default();
+
+        super::start_task(
+            &mut context,
+            &mut runner,
+            super::StartTaskRequest {
+                repo: "web".to_string(),
+                title: "Fix login".to_string(),
+                agent: "opencode".to_string(),
+                request_id: String::new(),
+            },
+        )
+        .unwrap();
+
+        // opencode opens in the current directory; the task window's cwd is
+        // the worktree, so the launch needs no extra arguments.
+        assert_eq!(
+            agent_send_keys_line(runner.commands()),
+            "ajax-cli __agent-runtime --task-id web/fix-login --state-root .cache/ajax/agent-runtime -- opencode"
+        );
     }
 
     #[test]
