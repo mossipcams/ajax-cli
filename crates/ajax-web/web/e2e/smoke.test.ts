@@ -329,6 +329,33 @@ test("mobile task terminal paste, resize, and reconnect flows stay wired", async
   expect(closeDebug.status, JSON.stringify(closeDebug)).toContain("Reconnecting");
 });
 
+test("new task sheet stays inside the visible band when the keyboard opens", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await page.goto("/app.html");
+  await expect(page.getByText("web/fix-login")).toBeVisible({ timeout: 10_000 });
+
+  await page.locator(".bottom-nav [data-bottom-action='new-task']").click();
+  const titleInput = page.locator("#new-task-title-input");
+  await expect(titleInput).toBeVisible();
+  await titleInput.click();
+
+  // Simulate viewport.ts reacting to the iOS soft keyboard: the visual
+  // viewport shrinks to a 460px band and Safari pans the page down 40px.
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty("--app-height", "460px");
+    document.documentElement.style.setProperty("--app-top", "40px");
+  });
+
+  // The focused input must sit inside the visible band [40, 40 + 460] —
+  // otherwise it is hidden behind the keyboard while the user types.
+  const box = await titleInput.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.y).toBeGreaterThanOrEqual(40);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(40 + 460);
+});
+
 test("non-destructive action completes without a second tap", async ({ page }) => {
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
