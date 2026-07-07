@@ -47,6 +47,7 @@
   type SelectionEndpoint = { col: number; absoluteRow: number };
   type TerminalSelectionInternals = {
     showScrollbar?: () => void;
+    scrollToBottom?: () => void;
     getScrollbackLength?: () => number;
     selectionManager?: {
       selectionStart: SelectionEndpoint | null;
@@ -207,6 +208,19 @@
     let pinnedToBottom = true;
     let snapTimer: ReturnType<typeof setTimeout> | undefined;
     let snapFrames: number[] = [];
+
+    // ghostty-web 0.4's write path force-scrolls to the bottom whenever the
+    // viewport is away from it (writeInternal ends with
+    // `viewportY !== 0 && scrollToBottom()`), which yanks the user out of
+    // scrollback on every output frame — on a busy task scrolling up looks
+    // completely dead. Ajax owns the follow-output policy (pinnedToBottom),
+    // so mountGhosttyTerminal blinds the instance method and keeps the real
+    // one here for Ajax's intentional bottom snaps.
+    let libraryScrollToBottom: (() => void) | undefined;
+    const snapScrollbackToBottom = () => libraryScrollToBottom?.();
+
+    const scrollbackLines = (): number =>
+      terminalInternals(term).getScrollbackLength?.() ?? 0;
 
     const cancelExpandedSnap = () => {
       for (const frame of snapFrames) cancelAnimationFrame(frame);
@@ -467,7 +481,7 @@
     // Reading action only: focusing here would pop the iOS keyboard and
     // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
-      term?.scrollToBottom();
+      snapScrollbackToBottom();
       hasUnseenOutput = false;
     };
     // iOS long-press paste doesn't reliably reach the hidden terminal input, so
@@ -534,7 +548,7 @@
         if (container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
-        if (pinnedToBottom) term?.scrollToBottom();
+        if (pinnedToBottom) snapScrollbackToBottom();
         return;
       }
       if (!term || !fitAddon) return;
@@ -566,7 +580,7 @@
         fitAddon.fit();
       }
       clampHorizontalPan();
-      if (pinnedToBottom) term.scrollToBottom();
+      if (pinnedToBottom) snapScrollbackToBottom();
     };
 
     // When to fit and when to tell the PTY (frame coalescing, the resize
@@ -596,7 +610,7 @@
       }
       if (isKeyboardOpen() && container) {
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        term?.scrollToBottom();
+        snapScrollbackToBottom();
       }
     };
 
@@ -649,7 +663,17 @@
     let optimisticBackspacesAhead = 0;
 
     const writeOutput = (text: string) => {
-      writeToTerminal(text);
+      if (pinnedToBottom) {
+        writeToTerminal(text);
+      } else {
+        // viewportY is measured from the bottom, so when this write pushes
+        // lines into scrollback the view must step back by the same amount
+        // or the text being read crawls upward.
+        const scrollbackBefore = scrollbackLines();
+        writeToTerminal(text);
+        const growth = scrollbackLines() - scrollbackBefore;
+        if (growth > 0) term?.scrollLines(-growth);
+      }
       const pendingOptimistic = zeroLagInput;
       if (pendingOptimistic && text.includes(pendingOptimistic)) {
         optimisticPrintableAhead = "";
@@ -658,7 +682,7 @@
         zeroLagStyle = "";
       }
       if (pinnedToBottom) {
-        term?.scrollToBottom();
+        snapScrollbackToBottom();
       } else {
         hasUnseenOutput = true;
       }
@@ -787,7 +811,7 @@
       if (!term) return;
       for (const text of pendingOutput) term.write(text);
       pendingOutput.length = 0;
-      if (pinnedToBottom) term.scrollToBottom();
+      if (pinnedToBottom) snapScrollbackToBottom();
     };
 
     const mountGhosttyTerminal = async () => {
@@ -812,6 +836,12 @@
       // New-output jump); silencing the fade-in at its single entry point
       // keeps the canvas clean to the edge.
       terminalInternals(term).showScrollbar = () => {};
+      // Keep the real scrollToBottom for Ajax's intentional snaps, then blind
+      // the instance method so ghostty-web's write-time force-scroll (and the
+      // pinnedToBottom-corrupting scroll event it fires) can never run. See
+      // the libraryScrollToBottom note above.
+      libraryScrollToBottom = term.scrollToBottom.bind(term);
+      terminalInternals(term).scrollToBottom = () => {};
       hardenMobileTextarea();
       term.textarea?.addEventListener("beforeinput", handleTextareaBeforeInput);
       terminalSubscriptions.push(
