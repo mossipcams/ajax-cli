@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.3...ajax-cli-v0.35.4) (2026-07-07)
+
+
+### Bug Fixes
+
+* **web:** polish mobile terminal gestures ([#360](https://github.com/mossipcams/ajax-cli/issues/360)) ([704e23d](https://github.com/mossipcams/ajax-cli/commit/704e23d885fb587663c712b92e7849e35c1c59dd))
+
 ## [0.35.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.2...ajax-cli-v0.35.3) (2026-07-07)
 
 
