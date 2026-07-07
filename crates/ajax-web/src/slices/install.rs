@@ -123,10 +123,11 @@ mod tests {
 
     #[test]
     fn stylesheet_preserves_the_safari_first_visual_language() {
-        // Compare without internal spaces so the assertions survive CSS
-        // minification (`scrollbar-width:none` vs `scrollbar-width: none`).
+        // Compare without internal spaces or attribute quotes so the assertions
+        // survive CSS minification (`scrollbar-width:none` vs
+        // `scrollbar-width: none`, `[data-testid=x]` vs `[data-testid="x"]`).
         let css = std::str::from_utf8(static_asset("/app.css").unwrap().body).unwrap();
-        let compact = css.replace(' ', "").to_ascii_lowercase();
+        let compact = css.replace([' ', '"'], "").to_ascii_lowercase();
 
         assert!(compact.contains(".cockpit-chrome"));
         assert!(compact.contains("env(safe-area-inset-top)"));
@@ -136,7 +137,11 @@ mod tests {
         assert!(compact.contains("html.keyboard-open.task-detail.detail-header"));
         assert!(compact.contains("html.terminal-expanded.task-detail.detail-header"));
         assert!(compact.contains("html.terminal-expanded.task-detail.terminal-primary"));
-        assert!(compact.contains("html.terminal-expanded.task-detail.terminal-panel"));
+        // The expanded terminal takeover targets the panel by test id since the
+        // viewport-ownership refactor (053a104).
+        assert!(
+            compact.contains("html.terminal-expanded[data-testid=task-terminal-panel].is-expanded")
+        );
         assert!(compact.contains("position:fixed"));
         assert!(compact.contains("height:var(--app-height,100dvh)"));
         // Inputs stay >= 16px so iOS Safari does not zoom on focus.

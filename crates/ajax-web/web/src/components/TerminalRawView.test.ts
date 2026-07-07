@@ -21,6 +21,7 @@ const resize = vi.fn();
 const getSelection = vi.fn(() => "selected text");
 const clearSelection = vi.fn();
 let scrollbackLength = 0;
+let writeScrollbackGrowth = 0;
 let bufferLineText: string | undefined;
 let lastTerminal: {
   selectionManager: {
@@ -77,8 +78,21 @@ vi.mock("ghostty-web", () => ({
       }
       container.appendChild(document.createElement("canvas"));
     });
-    write = write;
-    scrollToBottom = scrollToBottom;
+    // Mimics ghostty-web 0.4.0's writeInternal, which force-scrolls to the
+    // bottom on every write while the viewport is away from it
+    // (`this.viewportY !== 0 && this.scrollToBottom()`). The component must
+    // blind this instance method or every output frame yanks the user out of
+    // scrollback.
+    write = (data: string | Uint8Array) => {
+      write(data);
+      scrollbackLength += writeScrollbackGrowth;
+      if (viewportY !== 0) this.scrollToBottom();
+    };
+    scrollToBottom = () => {
+      scrollToBottom();
+      viewportY = 0;
+      onScrollHandler?.(0);
+    };
     scrollLines = scrollLines;
     dispose = dispose;
     focus = focus;
@@ -173,6 +187,7 @@ beforeEach(() => {
   terminalHostClientWidth = undefined;
   terminalCellMetrics = { width: 8, height: 18 };
   scrollbackLength = 0;
+  writeScrollbackGrowth = 0;
   bufferLineText = undefined;
   lastTerminal = undefined;
   liveOptions = undefined;
@@ -654,6 +669,27 @@ describe("TerminalRawView", () => {
     } as MessageEvent);
 
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+  });
+
+  it("holds the reading position steady when writes grow the scrollback", async () => {
+    // viewportY is measured from the bottom of the buffer, so when output
+    // pushes new lines into scrollback the view must step back by the same
+    // amount or the text the user is reading crawls upward.
+    const { socket } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await settleFrames();
+
+    scrollbackLength = 40;
+    scrollAwayFromBottom();
+    scrollLines.mockClear();
+    writeScrollbackGrowth = 2;
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("two new lines") }),
+    } as MessageEvent);
+
+    await waitFor(() => expect(write).toHaveBeenCalledWith("two new lines"));
+    expect(linesScrolled()).toBe(-2);
   });
 
   it("shows a New output control while the user is scrolled away from bottom", async () => {
