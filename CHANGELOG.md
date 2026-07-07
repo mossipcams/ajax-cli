@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.7...ajax-cli-v0.35.8) (2026-07-07)
+
+
+### Bug Fixes
+
+* **web:** resume task on open and surface dead terminal sessions ([#370](https://github.com/mossipcams/ajax-cli/issues/370)) ([bb8fda1](https://github.com/mossipcams/ajax-cli/commit/bb8fda10e3f0b9204a51e69ad9f672ffa985ea17))
+
 ## [0.35.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.6...ajax-cli-v0.35.7) (2026-07-07)
 
 
