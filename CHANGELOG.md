@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.5...ajax-cli-v0.35.6) (2026-07-07)
+
+
+### Code Refactoring
+
+* **web:** refactor web cockpit viewport ownership ([6b311db](https://github.com/mossipcams/ajax-cli/commit/6b311db58a00c949124cc85425eece5298fba561))
+
 ## [0.35.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.4...ajax-cli-v0.35.5) (2026-07-07)
 
 
