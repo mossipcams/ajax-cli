@@ -77,8 +77,8 @@ jobs:
       - name: Check built web assets
         run: npm run web:build:check
 
-      - name: Install Playwright browser
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Smoke and visual-regression tests
         run: npm run web:smoke

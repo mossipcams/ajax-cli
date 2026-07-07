@@ -26,6 +26,10 @@
     type GeometryMode,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
+  const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
+  const placeholderMode =
+    typeof localStorage !== "undefined" &&
+    localStorage.getItem(TERMINAL_PLACEHOLDER_KEY) === "true";
   let ghosttyRuntime: Promise<Ghostty> | undefined;
 
   type TerminalWithRendererMetrics = Terminal & {
@@ -76,6 +80,7 @@
   let geometryMode = $state<GeometryMode>(persistedGeometryMode() ?? "fit");
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
+  let inlineSpacerHeight = $state(0);
   // Insecure (plain-http LAN) origins have no async clipboard API, so the
   // Paste key falls back to a real textarea the iOS Paste menu can target.
   let pasteFallbackOpen = $state(false);
@@ -92,6 +97,13 @@
   // chrome outside this component can react.
   const EXPANDED_CLASS = "terminal-expanded";
   const setExpanded = (next: boolean) => {
+    if (next) {
+      const panel = container?.closest("[data-testid='task-terminal-panel']") as HTMLElement | null;
+      const measured = Math.round(panel?.getBoundingClientRect().height ?? 0);
+      inlineSpacerHeight = measured > 0 ? measured : 280;
+    } else {
+      inlineSpacerHeight = 0;
+    }
     expanded = next;
     document.documentElement.classList.toggle(EXPANDED_CLASS, next);
   };
@@ -172,6 +184,14 @@
   };
 
   onMount(() => {
+    if (placeholderMode) {
+      status = "connected";
+      return () => {
+        setExpanded(false);
+        if (ctrlTimer) clearTimeout(ctrlTimer);
+      };
+    }
+
     let disposed = false;
     let term: Terminal | undefined;
     let fitAddon: FitAddon | undefined;
@@ -832,13 +852,23 @@
   });
 </script>
 
-<section
-  class="terminal-panel"
-  data-testid="task-terminal-panel"
-  data-terminal-engine="ghostty"
-  aria-label="Task terminal">
+<div class="terminal-root">
+  {#if expanded && inlineSpacerHeight > 0}
+    <div
+      class="terminal-inline-spacer"
+      style="height: {inlineSpacerHeight}px"
+      aria-hidden="true"></div>
+  {/if}
+  <section
+    class="terminal-panel"
+    class:is-expanded={expanded}
+    data-testid="task-terminal-panel"
+    data-terminal-engine={placeholderMode ? "placeholder" : "ghostty"}
+    aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}>
-    {#if zeroLagInput}
+    {#if placeholderMode}
+      <div data-testid="terminal-placeholder" class="terminal-placeholder">Terminal placeholder</div>
+    {:else if zeroLagInput}
       <div
         class="terminal-zero-lag-input"
         data-testid="terminal-zero-lag-input"
@@ -963,9 +993,35 @@
       {/if}
     </div>
   {/if}
-</section>
+  </section>
+</div>
 
 <style>
+  .terminal-root {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    min-width: 0;
+  }
+
+  .terminal-inline-spacer {
+    flex: none;
+    width: 100%;
+    pointer-events: none;
+  }
+
+  .terminal-placeholder {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    color: var(--ink-muted);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
   .terminal-panel {
     position: relative;
     display: flex;
@@ -1016,8 +1072,9 @@
   /* A landscape phone exceeds the width breakpoint but must not get the
      fixed desktop panel height — its takeover layout flex-fills instead. */
   @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
-    .terminal-panel {
+    .terminal-panel:not(.is-expanded) {
       height: min(58vh, 560px);
+      max-height: min(58vh, 560px);
     }
   }
 

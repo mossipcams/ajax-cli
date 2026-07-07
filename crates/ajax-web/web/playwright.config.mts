@@ -1,4 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
+
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
@@ -12,13 +15,14 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "desktop-chromium", use: { ...devices["Desktop Chrome"] } },
+    { name: "mobile-webkit", use: { ...devices["iPhone 12"] } },
   ],
   webServer: {
     command: "./node_modules/.bin/vite --config crates/ajax-web/web/vite.config.mts",
     url: "http://localhost:5173/app.html",
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
-    cwd: process.cwd(),
+    cwd: repoRoot,
   },
 });

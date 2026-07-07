@@ -64,12 +64,34 @@ Choose the smallest mode that fits the request. Bounded Small Fix and Behavior
 Change work defaults to Cursor implementation via the `cursor-delegate` skill;
 see Cursor Delegate.
 
+## Persistent Plans
+
+For any code change, create a repo-local Markdown plan before editing source.
+Use `.planning/agent-plans/<short-slug>.md` unless a task-specific planning
+directory already exists. Keep the file small, concrete, and current.
+
+Each plan must include:
+
+- scope and non-goals
+- a task checklist with the test, implementation, and verification for each task
+- approval status when approval is required
+- deviations discovered during execution
+- validation commands and results
+
+Use the plan as the execution ledger. Check off each task as it completes, note
+failed commands or changed assumptions where they happen, and keep the checklist
+aligned with the actual work. If the plan changes materially, update the file
+before continuing and call out the change to the user.
+
+For trivial mechanical changes where new tests are not meaningful, still create
+the plan file and explicitly record why tests are skipped.
+
 ### Planning-Only
 
 Use when the user asks for a plan, review, critique, or design.
 
 - Inspect relevant files.
-- Produce a concrete plan.
+- Produce a concrete plan and save it in the persistent plan file.
 - Do not edit code.
 - Include risks and validation strategy.
 
@@ -420,6 +442,7 @@ A completed change should be easy to review.
 Final response must include:
 
 - what changed
+- persistent plan file path and whether all checklist items are complete
 - tests added or updated
 - validation commands run
 - commands that failed or were skipped

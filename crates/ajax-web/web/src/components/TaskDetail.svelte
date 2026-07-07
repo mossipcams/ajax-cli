@@ -19,17 +19,6 @@
   let meta = $derived(statusMeta(detail.status));
   let actions = $derived(visibleTaskActions(detail.actions));
   let metaOpen = $state(false);
-
-  // While the (mobile) fixed task shell is mounted the document behind it
-  // must not scroll: Safari otherwise keeps its focus-into-view scroll offset
-  // after the keyboard closes, which reads as the terminal hopping to the top
-  // with dead space under it and a rubber-band bounce. Unlike the pre-#345
-  // lock this only kills scrolling — it does not freeze html/body to
-  // --app-height; only keyboard-open/terminal-expanded pin the height.
-  $effect(() => {
-    document.documentElement.classList.add("ajax-task-open");
-    return () => document.documentElement.classList.remove("ajax-task-open");
-  });
 </script>
 
 <div class="task-detail is-terminal-first">
@@ -287,44 +276,25 @@
     outline: none;
   }
 
-  /* Mobile: tighten chrome so the full-screen terminal (see .task-detail rules
-     in styles.css) gets maximum height. Includes landscape phones (coarse
-     pointer, short viewport) that exceed the width breakpoint. */
+  /* Mobile: tighten chrome for terminal-first layout inside route-scroll.
+     Includes landscape phones (coarse pointer, short viewport). */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Scroll-only lock for the whole task route (see the $effect above);
-       height stays unfrozen so address-bar drift can't strand dead space. */
-    :global(html.ajax-task-open),
-    :global(html.ajax-task-open body) {
-      overflow: hidden;
-      overscroll-behavior: none;
-    }
-
     :global(html.terminal-expanded),
     :global(html.terminal-expanded body),
     :global(html.keyboard-open),
     :global(html.keyboard-open body) {
       overflow: hidden;
       overscroll-behavior: none;
-      height: var(--app-height, 100dvh);
     }
 
-    /* The shell keeps only the top safe-area inset: the terminal runs edge to
-       edge below it, and the key bar pads the bottom inset itself
-       (.terminal-bottom-controls). Chrome rows carry their own gutters. */
+    /* Task detail scrolls with route-scroll; flex column fills the app band. */
     .task-detail {
-      position: fixed;
-      top: var(--app-top, 0px);
-      right: 0;
-      bottom: auto;
-      left: 0;
-      z-index: 30;
-      height: 100dvh;
-      height: var(--app-height, 100dvh);
-      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: var(--app-band-height, 100dvh);
       padding: env(safe-area-inset-top) 0 0;
       background: var(--paper);
-      overflow: hidden;
-      overscroll-behavior: none;
+      overflow: visible;
     }
 
     .detail-header,
@@ -337,17 +307,13 @@
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .interact-summary { display: none; }
-    /* The mobile task view is a fixed-height band; this disclosure sits below
-       the terminal and eats rows. Its facts remain available on desktop. */
+    /* Meta details stay on desktop; on mobile they sit below the terminal in
+       route-scroll and are hidden so the terminal gets more height. */
     .meta-details { display: none; }
     .terminal-primary {
       display: flex;
       flex: 1 1 auto;
       min-height: 0;
-    }
-
-    :global(html.terminal-expanded) .task-detail .terminal-primary {
-      top: var(--app-top, 0px);
     }
   }
 

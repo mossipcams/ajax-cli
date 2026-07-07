@@ -554,6 +554,25 @@ describe("TerminalRawView", () => {
     expect(container.querySelector("[data-testid='terminal-composer']")).toBeNull();
   });
 
+  it("renders a debug placeholder without ghostty when localStorage flag is set", () => {
+    localStorage.setItem("ajax.debug.terminalPlaceholder", "true");
+    ghosttyLoad.mockClear();
+    const { getByTestId, container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
+    expect(getByTestId("terminal-placeholder")).toBeInTheDocument();
+    expect(container.querySelector("canvas")).toBeNull();
+    expect(getByTestId("task-terminal-panel")).toHaveAttribute("data-terminal-engine", "placeholder");
+    expect(ghosttyLoad).not.toHaveBeenCalled();
+  });
+
+  it("inserts an inline spacer while expanded to preserve route scroll extent", async () => {
+    localStorage.setItem("ajax.debug.terminalPlaceholder", "true");
+    const { getByRole, container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
+    getByRole("button", { name: "Expand terminal" }).click();
+    await tick();
+    expect(container.querySelector(".terminal-inline-spacer")).toBeInTheDocument();
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
+  });
+
   it("pins the fullscreen toggle to the terminal's top-right corner", () => {
     const { container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
 

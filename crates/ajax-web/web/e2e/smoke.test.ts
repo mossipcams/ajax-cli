@@ -246,12 +246,16 @@ test("project filter shows only matching repo tasks", async ({ page }) => {
   await expect(page.getByText("api/add-auth")).not.toBeVisible();
 });
 
-test("task detail renders server status and actions", async ({ page }) => {
+test("task detail renders server status and actions", async ({ page }, testInfo) => {
   await mockFetch(page);
   // Use correct task hash prefix from routes.ts: #/t/
   await page.goto("/app.html#/t/web%2Ffix-login");
 
-  await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
+  if (testInfo.project.name === "mobile-webkit") {
+    await expect(page.locator(".interact-pill")).toContainText("Waiting", { timeout: 10_000 });
+  } else {
+    await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
+  }
   await expect(page.locator("[data-action='review']")).toBeVisible();
 });
 
