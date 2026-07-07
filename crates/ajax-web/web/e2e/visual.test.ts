@@ -150,7 +150,8 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   expect(await newTaskRow.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe("dashed");
 });
 
-test("task detail panels and action buttons are styled", async ({ page }) => {
+test("task detail panels and action buttons are styled", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "mobile-webkit", "desktop panel styling is collapsed on mobile");
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });

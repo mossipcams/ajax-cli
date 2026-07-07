@@ -41,6 +41,7 @@ export function initViewport(): () => void {
 
   const root = document.documentElement;
   let baselineHeight = vv.height;
+  let baselineWidth = window.innerWidth;
   let keyboardOpen = false;
 
   const setAppHeight = (height: number) => {
@@ -71,6 +72,15 @@ export function initViewport(): () => void {
 
   const onViewportResize = () => {
     const current = vv.height;
+    const currentWidth = window.innerWidth;
+    if (currentWidth !== baselineWidth) {
+      keyboardOpen = false;
+      root.classList.remove(KEYBOARD_OPEN_CLASS);
+      syncViewportGeometry();
+      baselineHeight = current;
+      baselineWidth = currentWidth;
+      return;
+    }
     const delta = baselineHeight - current;
     if (delta > KEYBOARD_OPEN_DELTA_PX && !keyboardOpen) {
       keyboardOpen = true;
@@ -84,7 +94,10 @@ export function initViewport(): () => void {
     // this also tracks address-bar / orientation changes and re-bases the
     // threshold so the next keyboard open is measured from the right height.
     syncViewportGeometry();
-    if (!keyboardOpen) baselineHeight = current;
+    if (!keyboardOpen) {
+      baselineHeight = current;
+      baselineWidth = currentWidth;
+    }
   };
 
   // Suppress pinch / double-tap zoom (iOS ignores user-scalable=no since iOS 10).

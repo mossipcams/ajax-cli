@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
+import terminalRawViewSource from "./TerminalRawView.svelte?raw";
+import routeScrollSource from "./RouteScroll.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
 vi.mock("ghostty-web", () => ({
@@ -128,8 +130,6 @@ describe("TaskDetail", () => {
   });
 
   it("hides the task-details disclosure on mobile so the terminal gets the height", () => {
-    // The mobile task view is a fixed-height band; the disclosure below the
-    // terminal eats rows the operator asked for. Its facts stay on desktop.
     const mobileBlock = taskDetailSource.match(
       /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
     );
@@ -137,44 +137,39 @@ describe("TaskDetail", () => {
     expect(mobileBlock![1]).toMatch(/\.meta-details\s*\{[^}]*display:\s*none/);
   });
 
-  it("defines the mobile task route scroll lock for the whole task shell without freezing height", () => {
+  it("does not own document scroll via ajax-task-open", () => {
+    expect(taskDetailSource).not.toMatch(/ajax-task-open/);
+    expect(routeScrollSource).toMatch(/data-testid="route-scroll"/);
+  });
+
+  it("defines mobile overlay height pins without a fixed task shell", () => {
     const mobileBlock = taskDetailSource.match(
       /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n  \}/,
     );
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 
-    expect(mobileCss).toMatch(
-      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overflow:\s*hidden/,
-    );
-    expect(mobileCss).toMatch(
-      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*overscroll-behavior:\s*none/,
-    );
-    expect(mobileCss).not.toMatch(
-      /:global\(html\.ajax-task-open\),\s*:global\(html\.ajax-task-open body\)\s*\{[^}]*height:/,
-    );
+    expect(mobileCss).not.toMatch(/ajax-task-open/);
     expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*overflow:\s*hidden/);
-    expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*100dvh/);
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/);
-    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
-
-    expect(taskDetailSource).toMatch(
-      /:global\(html\.terminal-expanded\)\s*\.task-detail \.terminal-primary\s*\{[^}]*top:\s*var\(--app-top,\s*0px\)/,
+    expect(mobileCss).not.toMatch(
+      /:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height/,
     );
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
-    // Full-bleed terminal: the shell keeps only the top inset; the key bar
-    // pads the bottom inset and chrome rows carry their own gutters.
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*min-height:\s*var\(--app-band-height,\s*100dvh\)/);
+    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
+    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
+    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
+
+    expect(terminalRawViewSource).toMatch(/terminal-inline-spacer/);
+    expect(terminalRawViewSource).toMatch(/class:is-expanded=\{expanded\}/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
     expect(mobileCss).toMatch(/\.detail-header,\s*\.interact-panel\s*\{[^}]*padding-left:[^;]*env\(safe-area-inset-left\)/);
   });
 
-  it("adds ajax-task-open to the document while mounted and removes it on unmount", () => {
+  it("does not toggle document classes on mount", () => {
+    document.documentElement.classList.remove("ajax-task-open");
     const { unmount } = render(TaskDetail, { props: { detail: detail() } });
 
-    expect(document.documentElement.classList.contains("ajax-task-open")).toBe(true);
+    expect(document.documentElement.classList.contains("ajax-task-open")).toBe(false);
 
     unmount();
 

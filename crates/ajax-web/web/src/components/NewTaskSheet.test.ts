@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import NewTaskSheet from "./NewTaskSheet.svelte";
+import newTaskSheetSource from "./NewTaskSheet.svelte?raw";
+import fullscreenLayerSource from "./FullscreenLayer.svelte?raw";
 import * as api from "../api";
 
 const repos = [{ name: "web" }, { name: "api" }];
@@ -8,6 +10,20 @@ const repos = [{ name: "web" }, { name: "api" }];
 afterEach(() => vi.restoreAllMocks());
 
 describe("NewTaskSheet", () => {
+  it("exposes data-testid new-task-sheet", () => {
+    const { getByTestId } = render(NewTaskSheet, { props: { repos } });
+    expect(getByTestId("new-task-sheet")).toHaveAttribute("id", "new-task-sheet");
+  });
+
+  it("scrolls the sheet card internally when content exceeds the band", () => {
+    expect(newTaskSheetSource).toMatch(/FullscreenLayer/);
+    expect(newTaskSheetSource).not.toMatch(/--app-height|--app-top/);
+    expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*overflow-y:\s*auto/);
+    expect(newTaskSheetSource).toMatch(/\.sheet-card\s*\{[^}]*max-height:\s*calc\(100% - 40px\)/);
+    expect(fullscreenLayerSource).toMatch(/--app-band-top/);
+    expect(fullscreenLayerSource).toMatch(/--app-band-height/);
+  });
+
   it("preselects the matching repo for the selected project", () => {
     const { container } = render(NewTaskSheet, { props: { repos, selectedProject: "api" } });
     const select = container.querySelector<HTMLSelectElement>("#new-task-repo")!;

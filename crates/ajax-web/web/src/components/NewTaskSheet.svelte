@@ -3,6 +3,7 @@
   import type { BrowserCockpitView, RepoSummary } from "../types";
   import { requestId, startTask } from "../api";
   import { sheetDrag } from "../gestures/sheetDragAction";
+  import FullscreenLayer from "./FullscreenLayer.svelte";
 
   interface Props {
     repos: RepoSummary[];
@@ -64,8 +65,10 @@
   }
 </script>
 
+<FullscreenLayer zIndex={50}>
 <div
   id="new-task-sheet"
+  data-testid="new-task-sheet"
   role="dialog"
   aria-modal="true"
   aria-labelledby="new-task-title"
@@ -132,28 +135,20 @@
     </div>
   </form>
 </div>
+</FullscreenLayer>
 
 <style>
-  /* NEW TASK SHEET — bottom-rising modal. Rendered only while open, so no
-     body-class toggle is needed (the legacy #new-task-sheet display switch).
-     Pinned to the visual-viewport band (--app-top/--app-height, viewport.ts)
-     rather than inset: 0: the layout viewport does not shrink for the iOS
-     soft keyboard, so a layout-anchored bottom sheet ends up behind it and
-     Safari pans the frozen page to chase the focused input — the UI jumps
-     and rubber-bands while the field stays hidden. Sized to the band, the
-     card rises above the keyboard and tracks Safari's pan instead. */
+  /* NEW TASK SHEET — bottom-rising modal inside FullscreenLayer's app band. */
   #new-task-sheet {
-    position: fixed;
-    top: var(--app-top, 0px);
-    left: 0;
-    right: 0;
-    height: var(--app-height, 100dvh);
-    z-index: 50;
+    flex: 1 1 auto;
+    min-height: 0;
     display: flex;
     align-items: flex-end;
     justify-content: center;
     padding: 20px;
     background: rgba(0, 0, 0, 0.6);
+    overflow: hidden;
+    box-sizing: border-box;
   }
 
   .sheet-card {
@@ -162,7 +157,10 @@
     border-radius: var(--radius);
     padding: 22px;
     width: min(440px, 100%);
+    max-height: calc(100% - 40px);
     margin-bottom: max(8px, env(safe-area-inset-bottom));
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     animation: sheet-rise 220ms var(--ease-spring);
   }
 

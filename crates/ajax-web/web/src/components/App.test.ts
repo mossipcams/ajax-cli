@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
-import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
+import appViewportSource from "./AppViewport.svelte?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
@@ -80,7 +80,8 @@ describe("App shell", () => {
     expect(container.querySelector(".update-banner")).toBeInTheDocument();
     expect(container.querySelector(".bottom-nav")).toBeInTheDocument();
     expect(container.querySelector("[data-bottom-action='new-task']")).toBeInTheDocument();
-    expect(container.querySelector("main")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='app-main']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='route-scroll']")).toBeInTheDocument();
   });
 
   it("syncs --app-height from the visual viewport on mount", () => {
@@ -100,35 +101,18 @@ describe("App shell", () => {
     expect(container.querySelector("[data-outlet='settings']")).toBeNull();
   });
 
-  it("locks dashboard document scroll on mobile via ajax-dashboard-open", async () => {
-    const { unmount } = render(App);
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
-
-    setHash("#/settings");
-    await tick();
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
-
-    setHash("#/");
-    await tick();
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
-
-    setHash("#/p/web");
-    await tick();
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(true);
-
-    setHash("#/t/web%2Ffix-login");
-    await tick();
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
-
-    unmount();
-    expect(document.documentElement.classList.contains("ajax-dashboard-open")).toBe(false);
-
-    expect(appSource).toMatch(
-      /:global\(html\.ajax-dashboard-open\),\s*:global\(html\.ajax-dashboard-open body\)\s*\{[^}]*overflow:\s*hidden/,
-    );
-    expect(appSource).toMatch(
-      /:global\(html\.ajax-dashboard-open\)\s*:global\(main\)\s*\{[^}]*height:\s*var\(--app-height,\s*100dvh\)/,
-    );
+  it("exposes layout primitives for viewport and scroll ownership", () => {
+    const { container } = render(App);
+    expect(container.querySelector("[data-testid='app-viewport']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='app-shell']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='app-main']")).toBeInTheDocument();
+    expect(container.querySelector("[data-testid='route-scroll']")).toBeInTheDocument();
+    expect(appSource).not.toMatch(/initViewport/);
+    expect(appViewportSource).toMatch(/initViewport/);
+    expect(appSource).not.toMatch(/ajax-dashboard-open/);
+    expect(appViewportSource).toMatch(/--app-band-top:\s*var\(--app-top/);
+    expect(appViewportSource).toMatch(/--app-band-height:\s*var\(--app-height/);
+    expect(appSource).not.toMatch(/--app-height|--app-top/);
   });
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {

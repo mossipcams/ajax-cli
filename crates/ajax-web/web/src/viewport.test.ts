@@ -245,4 +245,20 @@ describe("isKeyboardOpen", () => {
     dispatchVV("resize");
     expect(isKeyboardOpen()).toBe(true);
   });
+
+  it("rebases instead of opening the keyboard when the viewport width changes", () => {
+    vi.stubGlobal("innerWidth", 390);
+    start();
+
+    vi.stubGlobal("innerWidth", 844);
+    vvHeight = 390;
+    dispatchVV("resize");
+
+    expect(isKeyboardOpen()).toBe(false);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("390px");
+
+    vvHeight = 200;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+  });
 });

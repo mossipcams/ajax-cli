@@ -11,9 +11,11 @@
   import SettingsView from "./SettingsView.svelte";
   import NewTaskSheet from "./NewTaskSheet.svelte";
   import Skeleton from "./Skeleton.svelte";
+  import AppViewport from "./AppViewport.svelte";
+  import AppShell from "./AppShell.svelte";
+  import RouteScroll from "./RouteScroll.svelte";
   import { pullToRefresh } from "../gestures/pullToRefreshAction";
   import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
-  import { initViewport } from "../viewport";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -100,7 +102,6 @@
 
   // Cockpit polling — mount once; the interval callback is not a tracked read.
   $effect(() => {
-    const disposeViewport = initViewport();
     void loadCockpit();
     const idleHandle = whenIdle(() => void checkVersion());
     const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);
@@ -115,7 +116,6 @@
     window.addEventListener("pageshow", onResume);
     document.addEventListener("visibilitychange", onResume);
     return () => {
-      disposeViewport();
       cancelIdle(idleHandle);
       clearInterval(cockpitTimer);
       clearInterval(versionTimer);
@@ -139,14 +139,6 @@
     });
   });
 
-  // Lock dashboard/project document scroll on mobile; task route keeps its own
-  // terminal scroll container.
-  $effect(() => {
-    const open = route.kind === "dashboard" || route.kind === "project";
-    document.documentElement.classList.toggle("ajax-dashboard-open", open);
-    return () => document.documentElement.classList.remove("ajax-dashboard-open");
-  });
-
   function go(hash: string) {
     location.hash = hash;
   }
@@ -158,146 +150,138 @@
   );
 </script>
 
-<div class="cockpit-chrome">
-  {#if result}
-    <ResultPanel
-      message={result.message}
-      output={result.output}
-      isError={result.isError}
-      onDismiss={() => (result = null)}
-    />
-  {/if}
+<AppViewport>
+  <AppShell>
+    {#snippet chrome()}
+      <div class="cockpit-chrome">
+        {#if result}
+          <ResultPanel
+            message={result.message}
+            output={result.output}
+            isError={result.isError}
+            onDismiss={() => (result = null)}
+          />
+        {/if}
 
-  <header>
-    <div class="bar">
-      <h1>Ajax</h1>
-      <p class="status-line" aria-live="polite">{statusText}</p>
-      <button class="settings-link" type="button" onclick={() => go(settingsHash())}>Settings</button>
-      <span class="live-dot" aria-hidden="true"></span>
-    </div>
-    <ConnectionStatus
-      state={connection}
-      detail={connectionDetail}
-      onRetry={() => loadCockpit()}
-      onReload={() => location.reload()}
-      onCopyDiagnostics={() => go(settingsHash())}
-    />
-  </header>
+        <header>
+          <div class="bar">
+            <h1>Ajax</h1>
+            <p class="status-line" aria-live="polite">{statusText}</p>
+            <button class="settings-link" type="button" onclick={() => go(settingsHash())}>Settings</button>
+            <span class="live-dot" aria-hidden="true"></span>
+          </div>
+          <ConnectionStatus
+            state={connection}
+            detail={connectionDetail}
+            onRetry={() => loadCockpit()}
+            onReload={() => location.reload()}
+            onCopyDiagnostics={() => go(settingsHash())}
+          />
+        </header>
 
-  <div class="page-lead">
-    <button
-      class="update-banner"
-      type="button"
-      hidden={!updateAvailable}
-      onclick={() => location.reload()}
-    >
-      Update ready — tap to reload
-    </button>
-  </div>
-</div>
-
-<main>
-  {#if route.kind === "settings"}
-    <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
-      <SettingsView
-        detailHandle={null}
-        onResult={showResult}
-        onBack={() => go(dashboardHash())}
-        onRestarted={() => {
-          go(dashboardHash());
-          void loadCockpit();
-        }}
-      />
-    </section>
-  {:else if route.kind === "task"}
-    <section data-outlet="task" data-testid="outlet-task" data-handle={route.handle} aria-live="polite">
-      {#if detail}
-        <TaskDetail
-          {detail}
-          onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
-          onCockpit={applyCockpit}
-          onResult={showResult}
-          onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
-        />
-      {:else}
-        <Skeleton testid="task-skeleton" rows={6} />
-      {/if}
-    </section>
-  {:else}
-    <section
-      data-outlet={route.kind === "project" ? "project" : "dashboard"}
-      data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
-      aria-live="polite"
-      use:pullToRefresh={{ onRefresh: () => loadCockpit(), onDistance: (d) => (pullDistance = d) }}
-    >
-      <div
-        class="pull-indicator"
-        class:armed={pullDistance >= PULL_THRESHOLD}
-        style="height: {pullDistance}px"
-        aria-hidden="true"
-      >
-        <span class="pull-spinner"></span>
+        <div class="page-lead">
+          <button
+            class="update-banner"
+            type="button"
+            hidden={!updateAvailable}
+            onclick={() => location.reload()}
+          >
+            Update ready — tap to reload
+          </button>
+        </div>
       </div>
-      {#if cockpit}
-        <TaskList
-          {cockpit}
-          {selectedProject}
-          onSelectProject={(project) => go(project ? projectHash(project) : dashboardHash())}
-          onOpenTask={(handle) => go(taskHash(handle))}
-          onCockpit={applyCockpit}
-          onResult={showResult}
-          onMutated={() => loadCockpit()}
-        />
-      {:else}
-        <Skeleton testid="dashboard-skeleton" rows={4} />
-      {/if}
-      <button
-        class="new-task-row"
-        type="button"
-        data-bottom-action="new-task"
-        onclick={() => (sheetOpen = true)}
-      >
-        <span class="new-task-glyph" aria-hidden="true">+</span>
-        <span class="new-task-label">{selectedProject ? `New task in ${selectedProject}` : "New task"}</span>
-      </button>
-    </section>
+    {/snippet}
+
+    {#snippet children()}
+      <RouteScroll>
+        {#if route.kind === "settings"}
+          <section data-outlet="settings" data-testid="outlet-settings" aria-live="polite">
+            <SettingsView
+              detailHandle={null}
+              onResult={showResult}
+              onBack={() => go(dashboardHash())}
+              onRestarted={() => {
+                go(dashboardHash());
+                void loadCockpit();
+              }}
+            />
+          </section>
+        {:else if route.kind === "task"}
+          <section data-outlet="task" data-testid="outlet-task" data-handle={route.handle} aria-live="polite">
+            {#if detail}
+              <TaskDetail
+                {detail}
+                onBack={() => go(selectedProject ? projectHash(selectedProject) : dashboardHash())}
+                onCockpit={applyCockpit}
+                onResult={showResult}
+                onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
+              />
+            {:else}
+              <Skeleton testid="task-skeleton" rows={6} />
+            {/if}
+          </section>
+        {:else}
+          <section
+            data-outlet={route.kind === "project" ? "project" : "dashboard"}
+            data-testid={route.kind === "project" ? "outlet-project" : "outlet-dashboard"}
+            aria-live="polite"
+            use:pullToRefresh={{ onRefresh: () => loadCockpit(), onDistance: (d) => (pullDistance = d) }}
+          >
+            <div
+              class="pull-indicator"
+              class:armed={pullDistance >= PULL_THRESHOLD}
+              style="height: {pullDistance}px"
+              aria-hidden="true"
+            >
+              <span class="pull-spinner"></span>
+            </div>
+            {#if cockpit}
+              <TaskList
+                {cockpit}
+                {selectedProject}
+                onSelectProject={(project) => go(project ? projectHash(project) : dashboardHash())}
+                onOpenTask={(handle) => go(taskHash(handle))}
+                onCockpit={applyCockpit}
+                onResult={showResult}
+                onMutated={() => loadCockpit()}
+              />
+            {:else}
+              <Skeleton testid="dashboard-skeleton" rows={4} />
+            {/if}
+            <button
+              class="new-task-row"
+              type="button"
+              data-bottom-action="new-task"
+              onclick={() => (sheetOpen = true)}
+            >
+              <span class="new-task-glyph" aria-hidden="true">+</span>
+              <span class="new-task-label">{selectedProject ? `New task in ${selectedProject}` : "New task"}</span>
+            </button>
+          </section>
+        {/if}
+      </RouteScroll>
+    {/snippet}
+
+    {#snippet nav()}
+      <nav class="bottom-nav" aria-label="Mobile navigation">
+        <button type="button" data-bottom-route="#/" onclick={() => go(dashboardHash())}>Dashboard</button>
+        <button type="button" data-bottom-action="new-task" onclick={() => (sheetOpen = true)}>New</button>
+      </nav>
+    {/snippet}
+  </AppShell>
+
+  {#if sheetOpen}
+    <NewTaskSheet
+      repos={cockpit?.repos?.repos ?? []}
+      {selectedProject}
+      onClose={() => (sheetOpen = false)}
+      onCockpit={applyCockpit}
+      onResult={showResult}
+    />
   {/if}
-</main>
-
-<nav class="bottom-nav" aria-label="Mobile navigation">
-  <button type="button" data-bottom-route="#/" onclick={() => go(dashboardHash())}>Dashboard</button>
-  <button type="button" data-bottom-action="new-task" onclick={() => (sheetOpen = true)}>New</button>
-</nav>
-
-{#if sheetOpen}
-  <NewTaskSheet
-    repos={cockpit?.repos?.repos ?? []}
-    {selectedProject}
-    onClose={() => (sheetOpen = false)}
-    onCockpit={applyCockpit}
-    onResult={showResult}
-  />
-{/if}
+</AppViewport>
 
 <style>
-  @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Dashboard/project routes: freeze the document and scroll inside <main>. */
-    :global(html.ajax-dashboard-open),
-    :global(html.ajax-dashboard-open body) {
-      overflow: hidden;
-      overscroll-behavior: none;
-      height: var(--app-height, 100dvh);
-    }
-
-    :global(html.ajax-dashboard-open) :global(main) {
-      overflow-y: auto;
-      -webkit-overflow-scrolling: touch;
-      height: var(--app-height, 100dvh);
-      box-sizing: border-box;
-      padding-bottom: calc(72px + env(safe-area-inset-bottom));
-    }
-  }
-
   /* PULL-TO-REFRESH INDICATOR — height is driven by the gesture distance. */
   .pull-indicator {
     display: flex;

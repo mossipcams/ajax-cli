@@ -84,14 +84,23 @@
 }
 
 html,
-body {
+body,
+#app {
   margin: 0;
   background: var(--paper);
   width: 100%;
   max-width: 100vw;
-  overflow-x: hidden;
+  overflow: hidden;
+  overscroll-behavior: none;
+  height: 100dvh;
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 html::-webkit-scrollbar,
@@ -357,13 +366,23 @@ header .bar h1 {
   outline: none;
 }
 
-/* MAIN LAYOUT ------------------------------------------------------------- */
-main {
+/* MAIN LAYOUT — route-scroll is the only normal vertical scroll owner. ------- */
+[data-testid="route-scroll"] {
   display: block;
+  flex: 1 1 auto;
+  min-height: 0;
   width: min(var(--shell), 100%);
   margin: 0 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 16px calc(20px + env(safe-area-inset-right)) 48px
     calc(20px + env(safe-area-inset-left));
+}
+
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  [data-testid="route-scroll"] {
+    padding-bottom: calc(72px + env(safe-area-inset-bottom));
+  }
 }
 
 /* EMPTY STATE (App + TaskList) -------------------------------------------- */
@@ -523,6 +542,8 @@ main {
 .task-detail [data-testid="task-terminal-panel"] {
   flex: 1 1 auto;
   min-height: 280px;
+  max-height: min(58vh, 560px);
+  overflow: hidden;
 }
 
 .task-detail {
@@ -535,13 +556,10 @@ main {
   min-height: 240px;
 }
 
-/* MOBILE TASK VIEW — terminal-first full-screen takeover.
-   The detail view becomes a fixed flex column sized to the visible band
-   (--app-height tracks visualViewport, set by viewport.ts). The terminal is the
-   only scroll container; when the keyboard opens the column shrinks above it so
-   the cursor row and control-key bar stay visible. Desktop keeps the inline
-   panel untouched. Landscape phones (coarse pointer, short viewport) exceed
-   the width breakpoint but still get the takeover. */
+/* MOBILE TASK VIEW — terminal-first layout inside route-scroll. Normal routes
+   scroll in [data-testid="route-scroll"]; keyboard-open and terminal-expanded
+   pin overlays to the inherited app band. Landscape phones (coarse pointer,
+   short viewport) exceed the width breakpoint but still get the mobile rules. */
 @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
   /* Kill the 300ms double-tap delay / double-tap zoom (iOS ignores
      user-scalable=no; pinch is handled in viewport.ts). */
@@ -549,16 +567,14 @@ main {
     touch-action: manipulation;
   }
 
-  /* The fixed full-screen task shell (html.ajax-task-open document freeze +
-     .task-detail visual-viewport takeover) is owned by TaskDetail.svelte's
-     scoped styles — one source of truth so the html/body height rules cannot
-     conflict. */
-
-  /* Let the terminal shrink to fit above the keyboard rather than overflow. */
+  /* Let the terminal host shrink above the keyboard; keep the panel bounded. */
   .task-detail .terminal-panel,
-  .task-detail [data-testid="task-terminal-panel"],
   .task-detail .task-terminal-viewport {
     min-height: 0;
+  }
+
+  .task-detail [data-testid="task-terminal-panel"] {
+    min-height: 200px;
   }
 
   /* Terminal-first: strip the action card down to a minimal strip so the
@@ -575,9 +591,9 @@ main {
 
   /* KEYBOARD OPEN — hand the whole visible band to the terminal.
      viewport.ts adds .keyboard-open to <html> when the soft keyboard shrinks
-     visualViewport, and .task-detail is already sized to that band
-     (--app-height). Without this rule the header, status hero, next-action
-     buttons, and task-details still eat the shrunken band, squeezing the
+     visualViewport, and AppViewport mirrors the band via --app-band-height.
+     Without this rule the header, status hero, next-action buttons, and
+     task details still eat the shrunken band, squeezing the
      terminal down to a couple of rows — you see the cursor line but no
      scrollback. Collapsing them lets the terminal history + control-key bar
      fill the band instead. Dismissing the keyboard drops the class and
@@ -601,50 +617,43 @@ main {
     margin-top: 0;
   }
 
-  html.terminal-expanded .task-detail .terminal-primary {
+  html.terminal-expanded [data-testid="task-terminal-panel"].is-expanded {
     position: fixed;
-    top: var(--app-top, 0px);
+    top: var(--app-band-top, 0px);
     right: 0;
     left: 0;
     z-index: 45;
     display: flex;
     flex-direction: column;
-    height: var(--app-height, 100dvh);
+    height: var(--app-band-height, 100dvh);
     min-height: 0;
+    max-height: none;
+    margin-top: 0;
     padding: env(safe-area-inset-top) 0 0;
     box-sizing: border-box;
     background: var(--paper);
-  }
-
-  html.terminal-expanded .task-detail .terminal-panel {
-    flex: 1 1 auto;
-    min-height: 0;
-    height: auto;
-    margin-top: 0;
-    border: none;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
     border-radius: 0;
   }
 }
 
-/* EXPANDED TERMINAL (desktop) — the key-bar ⛶ toggle lifts the inline panel
-   into a fixed full-viewport overlay. Mobile uses the visual-viewport layer
-   above so PWA keyboard geometry stays stable. */
+/* EXPANDED TERMINAL (desktop) — fixed overlay on the panel, with an inline
+   spacer in TerminalRawView preserving route-scroll extent. */
 @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
-  html.terminal-expanded .task-detail .terminal-primary {
+  html.terminal-expanded [data-testid="task-terminal-panel"].is-expanded {
     position: fixed;
     inset: 0;
     z-index: 40; /* above .cockpit-chrome (10) and .bottom-nav (20) */
     display: flex;
     flex-direction: column;
+    height: auto;
+    max-height: none;
+    margin-top: 0;
     padding: 16px;
     background: var(--paper);
-  }
-
-  html.terminal-expanded .task-detail .terminal-primary .terminal-panel {
-    height: auto;
-    flex: 1 1 auto;
-    min-height: 0;
-    margin-top: 0;
+    box-sizing: border-box;
   }
 }
 
