@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
+import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
@@ -141,6 +142,42 @@ describe("App shell", () => {
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
   });
 
+  it("resumes the task once when its route is entered, and re-resumes a different handle", async () => {
+    const operations: Array<{ task_handle: string; action: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") {
+          operations.push(JSON.parse(String(init?.body)));
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByTestId } = render(App);
+
+    // Dashboard route must never resume.
+    await tick();
+    expect(operations).toHaveLength(0);
+
+    setHash("#/t/web%2Ffix-login");
+    await findByTestId("outlet-task");
+    await vi.waitFor(() =>
+      expect(operations).toEqual([{ task_handle: "web/fix-login", action: "resume", request_id: expect.any(String) }]),
+    );
+
+    // Leaving and re-entering a different handle is a fresh open → a fresh resume.
+    setHash("#/");
+    setHash("#/t/web%2Fother");
+    await vi.waitFor(() => expect(operations).toHaveLength(2));
+    expect(operations[1]).toMatchObject({ task_handle: "web/other", action: "resume" });
+  });
+
   it("mounts the task terminal panel after detail loads", async () => {
     vi.stubGlobal(
       "fetch",
@@ -149,6 +186,7 @@ describe("App shell", () => {
         if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
         if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
         return Promise.reject(new Error(`unexpected fetch: ${path}`));
       }),
     );
@@ -312,6 +350,7 @@ describe("App shell", () => {
         const path = String(input);
         if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
         if (path.startsWith("/api/tasks/")) {
           return Promise.resolve(jsonResponse({ error: "detail unavailable" }, 500));
         }
@@ -333,6 +372,7 @@ describe("App shell", () => {
         const path = String(input);
         if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
         if (path.startsWith("/api/tasks/")) {
           detailCalls += 1;
           if (detailCalls <= 2) {

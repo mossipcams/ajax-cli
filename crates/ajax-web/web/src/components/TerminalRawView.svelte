@@ -125,6 +125,7 @@
     connecting: "Connecting…",
     connected: "Connected",
     reconnecting: "Reconnecting…",
+    unavailable: "No live session",
   };
 
   // Control-key bar: keys the iOS keyboard lacks. The "Ctrl" button is a sticky
@@ -1015,7 +1016,7 @@
       {#if pasteNotice}
         <span class="terminal-status-detail">{pasteNotice}</span>
       {/if}
-      {#if status === "reconnecting"}
+      {#if status === "reconnecting" || status === "unavailable"}
         <button
           type="button"
           class="terminal-status-reconnect"

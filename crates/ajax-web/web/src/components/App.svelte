@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { parseRoute, dashboardHash, settingsHash, taskHash, projectHash, type Route } from "../routes";
   import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
-  import { ApiError, fetchCockpit, fetchDetail, fetchVersion } from "../api";
+  import { ApiError, fetchCockpit, fetchDetail, fetchVersion, postOperation, requestId } from "../api";
   import { REFRESH_INTERVAL_MS, VERSION_POLL_MS } from "../polling";
   import ConnectionStatus from "./ConnectionStatus.svelte";
   import ResultPanel from "./ResultPanel.svelte";
@@ -29,6 +29,7 @@
   let pullDistance = $state(0);
 
   let selectedProject = $derived(route.kind === "project" ? (route.project ?? null) : null);
+  let taskOpenHandle = $derived(route.kind === "task" ? route.handle : null);
   let bootVersion: string | null = null;
 
   function showResult(message: string, output: string | null | undefined, isError: boolean) {
@@ -62,6 +63,23 @@
       applyCockpit(await fetchCockpit());
     } catch (error) {
       applyConnectionError(error);
+    }
+  }
+
+  // Opening a task IS the resume gesture (matches TUI Enter): dispatch the
+  // operator action so core acknowledges attention and the inbox row clears.
+  // Best-effort — a blocked/failed resume is not a connection error; the detail
+  // projection already carries the status explanation.
+  async function resumeOnOpen(handle: string) {
+    try {
+      const result = await postOperation({
+        task_handle: handle,
+        action: "resume",
+        request_id: requestId(),
+      });
+      if (result.ok && result.response.cockpit) applyCockpit(result.response.cockpit);
+    } catch {
+      // swallow: resume is not required for viewing.
     }
   }
 
@@ -128,14 +146,14 @@
 
   // Detail loading — re-run only when the selected task handle changes.
   $effect(() => {
-    const handle = route.kind === "task" ? route.handle : null;
+    const handle = taskOpenHandle;
     if (!handle) {
       detail = null;
       return;
     }
     untrack(() => {
       detail = null;
-      void loadDetail(handle);
+      void resumeOnOpen(handle).finally(() => void loadDetail(handle));
     });
   });
 

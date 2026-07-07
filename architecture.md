@@ -607,6 +607,12 @@ capabilities return typed adapter capability outcomes rather than duplicated
 lifecycle policy. Browser `resume` uses the authenticated task terminal bridge
 when the operator needs full interactive attach.
 
+Opening a task in the browser is the resume gesture: entering a task route
+dispatches the `resume` operation (acknowledging attention through core, exactly
+like Enter in the native Cockpit) before attaching the terminal. The browser
+renders no separate resume control; the implicit open=resume acknowledgment is
+best-effort and never derives task truth in JavaScript.
+
 ### `ajax-web::slices::install`
 
 Owns the browser shell. It serves the HTML shell, client JavaScript,

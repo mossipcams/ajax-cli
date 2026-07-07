@@ -10,7 +10,11 @@
 
 import { openTaskTerminalSocket } from "./api";
 
-export type TerminalConnectionStatus = "connecting" | "connected" | "reconnecting";
+export type TerminalConnectionStatus =
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "unavailable";
 
 export interface TerminalConnectionEvents {
   /** Decoded PTY output, ready for term.write(). */
@@ -32,6 +36,7 @@ export interface TerminalConnection {
 }
 
 const RECONNECT_MAX_DELAY_MS = 15000;
+const IMMEDIATE_FAILURE_LIMIT = 5;
 
 export function connectTaskTerminal(
   handle: string,
@@ -40,6 +45,8 @@ export function connectTaskTerminal(
   let socket: WebSocket;
   let reconnectAttempts = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  let everOpened = false;
+  let attachFailed = false;
   let disposed = false;
   let status: TerminalConnectionStatus = "connecting";
   // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
@@ -85,6 +92,7 @@ export function connectTaskTerminal(
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
       events.onOutput(outputDecoder.decode(bytes, { stream: true }));
     } else if (payload.type === "error" && payload.error) {
+      attachFailed = true;
       events.onServerError(String(payload.error));
     }
   };
@@ -107,6 +115,7 @@ export function connectTaskTerminal(
       reconnectTimer = undefined;
     }
     reconnectAttempts = 0;
+    attachFailed = false;
     setStatus("connecting");
     connect();
   };
@@ -118,7 +127,9 @@ export function connectTaskTerminal(
       // pane and the resize-on-open makes tmux redraw at the real size, so no
       // explicit refresh frame is needed on reconnect.
       const isReconnect = reconnectAttempts > 0;
+      everOpened = true;
       reconnectAttempts = 0;
+      attachFailed = false;
       setStatus("connected");
       events.onOpen(isReconnect);
     });
@@ -128,6 +139,10 @@ export function connectTaskTerminal(
     socket.addEventListener("error", () => {});
     socket.addEventListener("close", () => {
       if (disposed) return;
+      if (attachFailed || (!everOpened && reconnectAttempts >= IMMEDIATE_FAILURE_LIMIT)) {
+        setStatus("unavailable");
+        return;
+      }
       scheduleReconnect();
     });
   }
