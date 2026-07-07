@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.6...ajax-cli-v0.35.7) (2026-07-07)
+
+
+### Bug Fixes
+
+* **web:** keep terminal scrollback scrollable and add OpenCode agent option ([#368](https://github.com/mossipcams/ajax-cli/issues/368)) ([6ce5d59](https://github.com/mossipcams/ajax-cli/commit/6ce5d596148ac73ee11f7b0818f54c6eb0db2481))
+
 ## [0.35.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.5...ajax-cli-v0.35.6) (2026-07-07)
 
 
