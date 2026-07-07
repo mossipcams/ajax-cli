@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     #[test]
-    fn old_wrapper_completion_beats_new_hook_during_refresh() {
+    fn fresh_wrapper_completion_beats_new_hook_during_refresh() {
         let mut context = context_with_active_task();
         let mut runner = HealthyRefreshRunner::default();
         let cache = ScriptedAgentStatusCache {
@@ -1301,7 +1301,7 @@ mod tests {
                 scripted_entry(
                     AgentStatusCacheSource::RuntimeWrapper,
                     "done",
-                    Duration::from_secs(3_600),
+                    Duration::from_secs(60),
                 ),
                 scripted_entry(
                     AgentStatusCacheSource::Hook,
@@ -1319,6 +1319,58 @@ mod tests {
             Some(LiveStatusKind::Done)
         );
         assert_eq!(task.lifecycle_status, LifecycleStatus::Reviewable);
+    }
+
+    #[test]
+    fn stale_wrapper_completion_falls_through_to_busy_pane_capture() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::RuntimeWrapper,
+                "done",
+                Duration::from_secs(3_600),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 1);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn prior_done_yields_to_busy_pane_after_stale_wrapper_completion() {
+        let mut context = context_with_active_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new(TASK_ID))
+            .unwrap();
+        task.lifecycle_status = LifecycleStatus::Reviewable;
+        task.agent_status = AgentRuntimeStatus::Done;
+        task.live_status = Some(LiveObservation::new(LiveStatusKind::Done, "done"));
+        let mut runner = HealthyRefreshRunner::default();
+        let cache = ScriptedAgentStatusCache {
+            entries: vec![scripted_entry(
+                AgentStatusCacheSource::RuntimeWrapper,
+                "done",
+                Duration::from_secs(3_600),
+            )],
+        };
+
+        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+
+        assert_eq!(captured_pane(&runner), 1);
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
     }
 
     #[test]

@@ -7803,7 +7803,11 @@ fn cockpit_refresh_marks_new_agent_running_from_wrapper_snapshot() {
 #[test]
 fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
     let directory = runtime_snapshot_directory("failed");
-    write_runtime_snapshot(&directory, "exited_failure", 1);
+    let now_millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    write_runtime_snapshot(&directory, "exited_failure", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
 
@@ -7823,7 +7827,11 @@ fn cockpit_refresh_marks_killed_agent_failed_instead_of_unknown() {
 #[test]
 fn cockpit_refresh_promotes_wrapper_completion_to_reviewable() {
     let directory = runtime_snapshot_directory("completed");
-    write_runtime_snapshot(&directory, "exited_success", 1);
+    let now_millis = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    write_runtime_snapshot(&directory, "exited_success", now_millis);
     let mut context = active_runtime_context(&directory);
     let mut runner = QueuedRunner::new(tmux_live_outputs("shell idle\n"));
 

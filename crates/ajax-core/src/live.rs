@@ -14,6 +14,11 @@ const HOOK_DEFAULT_FRESH_FOR: Duration = Duration::from_secs(120);
 /// Freshness window for an active runtime-wrapper heartbeat.
 const WRAPPER_RUNNING_FRESH_FOR: Duration = Duration::from_secs(30);
 
+/// Wrapper terminal evidence decays on the same clock as hook completion
+/// evidence: the wrapper only vouches for the process it supervised, and an
+/// agent relaunched directly in the session must win via pane capture.
+const WRAPPER_TERMINAL_FRESH_FOR: Duration = HOOK_DEFAULT_FRESH_FOR;
+
 /// Value-typed input for the pure per-agent hook freshness decision.
 ///
 /// The decision is intentionally free of lifecycle, task mutation, and clock
@@ -204,8 +209,8 @@ impl EvidenceTier {
 /// Select the strongest eligible agent-status observation.
 ///
 /// Source priority follows the decision table: trusted wrapper terminal
-/// evidence (any age) outranks an active wrapper heartbeat (30-second window),
-/// which outranks agent-specific hook evidence. Missing-substrate priors are
+/// evidence (120-second window) outranks an active wrapper heartbeat
+/// (30-second window), which outranks agent-specific hook evidence. Missing-substrate priors are
 /// preserved over any candidate. Malformed and stale candidates are filtered
 /// before timestamp selection, and equal timestamps fall back to a state
 /// tie-break where busy beats waiting and waiting beats approval.
@@ -307,7 +312,11 @@ fn eligible_candidate(
             let observation = classify_agent_status_value(&candidate.value)?;
             match observation.kind {
                 LiveStatusKind::Done | LiveStatusKind::CommandFailed => {
-                    Some((EvidenceTier::WrapperTerminal, observation))
+                    if within_window(now, candidate.observed_at, WRAPPER_TERMINAL_FRESH_FOR) {
+                        Some((EvidenceTier::WrapperTerminal, observation))
+                    } else {
+                        None
+                    }
                 }
                 LiveStatusKind::AgentRunning
                 | LiveStatusKind::CommandRunning
@@ -388,11 +397,12 @@ pub fn classify_agent_pane(agent: AgentClient, pane: &str) -> LiveObservation {
 
 const BUSY_WINDOW: usize = 8;
 
-fn has_recent_busy_indicator(agent: AgentClient, lines: &[&str]) -> bool {
-    lines.iter().rev().take(BUSY_WINDOW).any(|line| {
-        looks_like_active_agent_status(line)
-            || (agent == AgentClient::Claude && looks_like_claude_busy(line))
-    })
+fn has_recent_busy_indicator(_agent: AgentClient, lines: &[&str]) -> bool {
+    lines
+        .iter()
+        .rev()
+        .take(BUSY_WINDOW)
+        .any(|line| looks_like_active_agent_status(line) || looks_like_claude_busy(line))
 }
 
 fn looks_like_claude_busy(line: &str) -> bool {
@@ -406,6 +416,13 @@ fn classify_agent_prompt(agent: AgentClient, lines: &[&str]) -> Option<LiveObser
         AgentClient::Codex => classify_codex_prompt(lines),
         AgentClient::Other => None,
     }
+    .or_else(|| match agent {
+        AgentClient::Claude => classify_codex_prompt(lines),
+        AgentClient::Codex => classify_claude_prompt(lines),
+        AgentClient::Other => {
+            classify_claude_prompt(lines).or_else(|| classify_codex_prompt(lines))
+        }
+    })
 }
 
 fn classify_claude_prompt(lines: &[&str]) -> Option<LiveObservation> {
@@ -416,10 +433,7 @@ fn classify_claude_prompt(lines: &[&str]) -> Option<LiveObservation> {
         ));
     }
 
-    if lines
-        .last()
-        .is_some_and(|line| line.trim() == "❯" || line.trim() == ">")
-    {
+    if looks_like_claude_idle_prompt(lines) {
         return Some(LiveObservation::new(
             LiveStatusKind::WaitingForInput,
             "waiting for input",
@@ -429,11 +443,47 @@ fn classify_claude_prompt(lines: &[&str]) -> Option<LiveObservation> {
     None
 }
 
+fn looks_like_claude_idle_prompt(lines: &[&str]) -> bool {
+    if lines
+        .last()
+        .is_some_and(|line| line.trim() == "❯" || line.trim() == ">")
+    {
+        return true;
+    }
+
+    const IDLE_WINDOW: usize = 8;
+    let recent = &lines[lines.len().saturating_sub(IDLE_WINDOW)..];
+    let has_bare_prompt = recent.iter().any(|line| matches!(line.trim(), "❯" | ">"));
+    let has_strong_chrome = recent.iter().any(|line| is_strong_claude_chrome_line(line));
+
+    has_bare_prompt && has_strong_chrome
+}
+
+fn is_strong_claude_chrome_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    if lower.contains("bypass permissions") || lower.contains("shift+tab") {
+        return true;
+    }
+
+    let trimmed = line.trim();
+    trimmed.contains('│')
+        && (trimmed.contains('%') || trimmed.contains('█') || trimmed.contains('░'))
+}
+
 fn looks_like_claude_permission(lines: &[&str]) -> bool {
     let recent: Vec<&str> = lines.iter().rev().take(BUSY_WINDOW).copied().collect();
-    let has_choice_marker = recent.iter().any(|line| line.trim_start().starts_with('❯'));
+    let has_choice_marker = recent.iter().any(|line| {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('❯') {
+            return false;
+        }
+        !trimmed.trim_start_matches('❯').trim().is_empty()
+    });
     let has_cue = recent.iter().any(|line| {
         let lower = line.to_ascii_lowercase();
+        if lower.contains("shift+tab") || lower.contains("bypass permissions") {
+            return false;
+        }
         contains_any(
             &lower,
             &[
@@ -1048,7 +1098,7 @@ pub fn reduce_live_observation(
 
 fn should_keep_current_status(current: LiveStatusKind, next: LiveStatusKind) -> bool {
     if current == LiveStatusKind::Done {
-        return is_incidental_observation(next);
+        return is_passive_observation(next);
     }
 
     if current == LiveStatusKind::TestsRunning {
@@ -1063,7 +1113,7 @@ fn should_keep_current_status(current: LiveStatusKind, next: LiveStatusKind) -> 
     }
 
     if is_failure_status(current) {
-        return is_incidental_observation(next);
+        return is_passive_observation(next);
     }
 
     false
@@ -1091,17 +1141,6 @@ fn is_failure_status(kind: LiveStatusKind) -> bool {
 
 fn is_passive_observation(kind: LiveStatusKind) -> bool {
     matches!(kind, LiveStatusKind::ShellIdle | LiveStatusKind::Unknown)
-}
-
-fn is_incidental_observation(kind: LiveStatusKind) -> bool {
-    matches!(
-        kind,
-        LiveStatusKind::ShellIdle
-            | LiveStatusKind::Unknown
-            | LiveStatusKind::AgentRunning
-            | LiveStatusKind::CommandRunning
-            | LiveStatusKind::TestsRunning
-    )
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
@@ -1626,7 +1665,42 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
     }
 
     #[test]
-    fn failed_observation_is_not_downgraded_by_later_output() {
+    fn done_yields_to_new_busy_evidence() {
+        let reduced = super::reduce_live_observation(
+            Some(&LiveObservation::new(LiveStatusKind::Done, "done")),
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn failure_yields_to_new_busy_evidence() {
+        let reduced = super::reduce_live_observation(
+            Some(&LiveObservation::new(
+                LiveStatusKind::CommandFailed,
+                "command failed",
+            )),
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn done_keeps_over_shell_idle_and_unknown() {
+        for passive in [LiveStatusKind::ShellIdle, LiveStatusKind::Unknown] {
+            let reduced = super::reduce_live_observation(
+                Some(&LiveObservation::new(LiveStatusKind::Done, "done")),
+                LiveObservation::new(passive, "passive"),
+            );
+
+            assert_eq!(reduced.kind, LiveStatusKind::Done, "{passive:?}");
+        }
+    }
+
+    #[test]
+    fn failed_observation_yields_to_later_busy_output() {
         let mut task = base_task();
 
         apply_observation(
@@ -1638,15 +1712,15 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             LiveObservation::new(LiveStatusKind::CommandRunning, "command running"),
         );
 
-        assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
-            Some(LiveStatusKind::CommandFailed)
+            Some(LiveStatusKind::CommandRunning)
         );
     }
 
     #[test]
-    fn blocked_observation_is_not_downgraded_by_later_output() {
+    fn blocked_observation_yields_to_later_busy_output() {
         let reduced = super::reduce_live_observation(
             Some(&LiveObservation::new(
                 LiveStatusKind::Blocked,
@@ -1655,7 +1729,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
         );
 
-        assert_eq!(reduced.kind, LiveStatusKind::Blocked);
+        assert_eq!(reduced.kind, LiveStatusKind::AgentRunning);
     }
 
     #[test]
@@ -1706,10 +1780,6 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
             &mut task,
             LiveObservation::new(LiveStatusKind::CiFailed, "ci failed"),
         );
-        apply_observation(
-            &mut task,
-            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
-        );
 
         assert_eq!(task.agent_status, AgentRuntimeStatus::Blocked);
         assert!(!task.has_side_flag(SideFlag::NeedsInput));
@@ -1718,6 +1788,17 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::CiFailed)
+        );
+
+        apply_observation(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "agent running"),
+        );
+
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
         );
     }
 
@@ -1759,6 +1840,92 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
     }
 
     use super::classify_agent_pane;
+
+    const CLAUDE_TRAILING_STATUS_BAR: &str = "\
+──────────────────────────────────
+❯
+──────────────────────────────────
+Fable 5 │ ajax-statuses ██░░░░░░░░ 23%
+⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents";
+
+    #[test]
+    fn claude_idle_pane_with_footer_advisories_classifies_waiting_for_input() {
+        let pane = "\
+Earlier we discussed the merge conflict in the PR comments.
+
+The user said they were done reviewing the implementation.
+
+pending, so merge the PR whenever you're ready.
+─────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────
+Fable 5 │ Python Dead Code & Constants (8/18) │ ajax-ux ███░…
+⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents
+                         ~265k uncached · /clear to start fresh
+                         new task? /clear to save 266.7k tokens";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+        assert_ne!(observation.kind, LiveStatusKind::MergeConflict);
+        assert_ne!(observation.kind, LiveStatusKind::Done);
+        assert_ne!(observation.kind, LiveStatusKind::WaitingForApproval);
+    }
+
+    #[test]
+    fn bare_prompt_without_claude_chrome_does_not_classify_waiting_for_input() {
+        let pane = "\
+$ cargo test -p ajax-core
+running 1 test
+test live::tests::example ... ok
+
+❯
+total 8
+drwxr-xr-x  3 matt  staff   96 Jul  7 06:00 .";
+
+        let observation = classify_agent_pane(AgentClient::Claude, pane);
+
+        assert_ne!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn claude_idle_pane_with_trailing_status_bar_classifies_waiting_for_input() {
+        let pane = format!(
+            "We should resolve the merge conflict before shipping.\n\
+             The user said they were done reviewing the plan.\n\
+             {CLAUDE_TRAILING_STATUS_BAR}"
+        );
+
+        let observation = classify_agent_pane(AgentClient::Claude, &pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn claude_permission_menu_with_trailing_status_bar_classifies_waiting_for_approval() {
+        let pane = format!(
+            "Do you want to proceed?\n\
+             ❯ 1. Yes\n\
+               2. No\n\
+             {CLAUDE_TRAILING_STATUS_BAR}"
+        );
+
+        let observation = classify_agent_pane(AgentClient::Claude, &pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForApproval);
+    }
+
+    #[test]
+    fn claude_busy_pane_with_trailing_status_bar_classifies_agent_running() {
+        let pane = format!(
+            "✢ Flummoxing… (6m 14s · ↓ 14.3k tokens)\n\
+             {CLAUDE_TRAILING_STATUS_BAR}"
+        );
+
+        let observation = classify_agent_pane(AgentClient::Claude, &pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
 
     #[test]
     fn claude_busy_indicator_beats_stale_permission_prompt() {
@@ -1837,7 +2004,7 @@ Here is my plan.
     }
 
     #[test]
-    fn agent_specific_prompt_markers_do_not_cross_classify() {
+    fn agent_specific_prompt_markers_cross_classify_when_registered_agent_differs() {
         let claude_prompt = "\
 Here is my plan.
 
@@ -1850,10 +2017,59 @@ Here is my plan.
         let claude_as_codex = classify_agent_pane(AgentClient::Codex, claude_prompt);
         let codex_as_claude = classify_agent_pane(AgentClient::Claude, codex_composer);
 
-        assert_ne!(claude_as_codex.kind, LiveStatusKind::WaitingForInput);
-        assert_ne!(claude_as_codex.kind, LiveStatusKind::WaitingForApproval);
-        assert_ne!(codex_as_claude.kind, LiveStatusKind::WaitingForInput);
-        assert_ne!(codex_as_claude.kind, LiveStatusKind::WaitingForApproval);
+        assert_eq!(claude_as_codex.kind, LiveStatusKind::WaitingForInput);
+        assert_eq!(codex_as_claude.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn codex_selected_task_with_claude_busy_pane_classifies_agent_running() {
+        let pane = "\
+✶ Scurrying… (3m 9s · ↓ 7.8k tokens)";
+
+        let observation = classify_agent_pane(AgentClient::Codex, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::AgentRunning);
+    }
+
+    #[test]
+    fn codex_selected_task_with_claude_idle_prompt_classifies_waiting_for_input() {
+        let pane = "\
+We should resolve the merge conflict before shipping.
+
+The user said they were done reviewing the plan.
+
+❯";
+
+        let observation = classify_agent_pane(AgentClient::Codex, pane);
+
+        assert_eq!(observation.kind, LiveStatusKind::WaitingForInput);
+    }
+
+    #[test]
+    fn other_agent_pane_uses_claude_and_codex_prompt_shapes() {
+        let claude_busy = "\
+✢ Clauding… (53s · ↓ 749 tokens)";
+        let claude_prompt = "\
+Here is my plan.
+
+❯";
+        let codex_composer = "\
+› Fix the tests
+
+  gpt-5.5 high · ~/Desktop/Projects/ajax";
+
+        assert_eq!(
+            classify_agent_pane(AgentClient::Other, claude_busy).kind,
+            LiveStatusKind::AgentRunning
+        );
+        assert_eq!(
+            classify_agent_pane(AgentClient::Other, claude_prompt).kind,
+            LiveStatusKind::WaitingForInput
+        );
+        assert_eq!(
+            classify_agent_pane(AgentClient::Other, codex_composer).kind,
+            LiveStatusKind::WaitingForInput
+        );
     }
 
     #[test]
@@ -2140,14 +2356,10 @@ Nothing actionable to report here.";
     }
 
     #[test]
-    fn old_wrapper_completion_outranks_newer_hook_working() {
+    fn fresh_wrapper_completion_outranks_newer_hook_working() {
         use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
         let candidates = [
-            candidate(
-                RuntimeWrapper,
-                "done",
-                std::time::Duration::from_secs(3_600),
-            ),
+            candidate(RuntimeWrapper, "done", std::time::Duration::from_secs(60)),
             candidate(Hook, "working", std::time::Duration::from_secs(1)),
         ];
 
@@ -2165,14 +2377,10 @@ Nothing actionable to report here.";
     }
 
     #[test]
-    fn old_wrapper_failure_outranks_newer_hook_waiting() {
+    fn fresh_wrapper_failure_outranks_newer_hook_waiting() {
         use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
         let candidates = [
-            candidate(
-                RuntimeWrapper,
-                "failed",
-                std::time::Duration::from_secs(3_600),
-            ),
+            candidate(RuntimeWrapper, "failed", std::time::Duration::from_secs(60)),
             candidate(Hook, "wait", std::time::Duration::from_secs(1)),
         ];
 
@@ -2247,6 +2455,85 @@ Nothing actionable to report here.";
             stale.observation.map(|observation| observation.kind),
             Some(LiveStatusKind::WaitingForInput)
         );
+    }
+
+    #[test]
+    fn wrapper_terminal_is_fresh_through_two_minutes() {
+        use super::AgentEvidenceSource::RuntimeWrapper;
+        let prior = LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting for input");
+
+        let fresh = select(
+            AgentClient::Codex,
+            Some(&prior),
+            &[candidate(
+                RuntimeWrapper,
+                "done",
+                std::time::Duration::from_secs(120),
+            )],
+        );
+        assert!(fresh.applied);
+        assert_eq!(
+            fresh.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::Done)
+        );
+
+        let stale = select(
+            AgentClient::Codex,
+            Some(&prior),
+            &[super::StatusCandidate::new(
+                RuntimeWrapper,
+                "done",
+                hook_now()
+                    - std::time::Duration::from_secs(120)
+                    - std::time::Duration::from_nanos(1),
+            )],
+        );
+        assert!(!stale.applied);
+        assert_eq!(
+            stale.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+    }
+
+    #[test]
+    fn stale_wrapper_terminal_falls_through_to_fresh_hook() {
+        use super::AgentEvidenceSource::{Hook, RuntimeWrapper};
+        let candidates = [
+            candidate(RuntimeWrapper, "done", std::time::Duration::from_secs(121)),
+            candidate(Hook, "working", std::time::Duration::from_secs(1)),
+        ];
+
+        let decision = select(AgentClient::Codex, None, &candidates);
+
+        assert!(decision.applied);
+        assert_eq!(decision.source, Some(super::AgentEvidenceSource::Hook));
+        assert_eq!(
+            decision.observation.map(|observation| observation.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn stale_acknowledged_wrapper_terminal_does_not_hold() {
+        use super::AgentEvidenceSource::RuntimeWrapper;
+        let now = hook_now();
+        let observed_at = now - std::time::Duration::from_secs(121);
+        let candidates = [super::StatusCandidate::new(
+            RuntimeWrapper,
+            "done",
+            observed_at,
+        )];
+
+        let decision = super::select_status_observation(super::StatusDecisionInput {
+            selected_agent: AgentClient::Claude,
+            prior: None,
+            acknowledged_at: Some(now - std::time::Duration::from_secs(1)),
+            now,
+            candidates: &candidates,
+        });
+
+        assert!(!decision.applied);
+        assert!(!decision.acknowledged_hold);
     }
 
     #[test]
