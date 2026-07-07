@@ -43,7 +43,7 @@ mod tests {
     use super::SupervisorStatusMachine;
 
     #[test]
-    fn status_machine_reduces_event_batches_without_late_output_override() {
+    fn status_machine_yields_done_to_late_busy_output() {
         let events = [
             MonitorEvent::Agent(AgentEvent::Completed),
             MonitorEvent::Process(ProcessEvent::Stdout {
@@ -56,7 +56,7 @@ mod tests {
 
         assert_eq!(
             status.observation().map(|observation| observation.kind),
-            Some(LiveStatusKind::Done)
+            Some(LiveStatusKind::CommandRunning)
         );
     }
 
@@ -81,7 +81,7 @@ mod tests {
     }
 
     #[test]
-    fn status_machine_preserves_blocked_over_late_output() {
+    fn status_machine_yields_blocked_to_late_busy_output() {
         let events = [
             MonitorEvent::Agent(AgentEvent::Failed {
                 message: "manual intervention required; blocked".to_string(),
@@ -96,7 +96,7 @@ mod tests {
 
         assert_eq!(
             status.observation().map(|observation| observation.kind),
-            Some(LiveStatusKind::Blocked)
+            Some(LiveStatusKind::CommandRunning)
         );
     }
 

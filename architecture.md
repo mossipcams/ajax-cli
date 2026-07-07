@@ -94,7 +94,9 @@ Agent runtime snapshots written by the Ajax launch wrapper are trusted process
 evidence. Hook files and pane text are observational hints. When sources
 disagree, core's status decision applies an explicit precedence: explicit
 missing substrate stays authoritative; trusted runtime-wrapper terminal events
-(`done`/`failed`) outrank hooks and pane text regardless of age; an active
+(`done`/`failed`) outrank hooks and pane text only within a 120-second window
+(same decay as hook completion evidence); after that the agent-aware pane
+fallback owns truth; an active
 wrapper heartbeat applies only inside its 30-second window; hook freshness is
 selected-agent and state specific (Codex `working` for 20 seconds, Codex
 `wait`/`ask` and all Claude hook states for 120 seconds, `AgentClient::Other`

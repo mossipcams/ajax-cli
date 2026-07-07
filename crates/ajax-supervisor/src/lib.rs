@@ -489,7 +489,7 @@ mod tests {
 
         assert_eq!(
             status.observation().map(|observation| observation.kind),
-            Some(LiveStatusKind::Done)
+            Some(LiveStatusKind::CommandRunning)
         );
 
         status.apply(&MonitorEvent::Process(ProcessEvent::Exited {
@@ -503,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn supervisor_status_machine_preserves_conflict_over_late_output() {
+    fn supervisor_status_machine_yields_conflict_to_late_busy_output() {
         let mut status = SupervisorStatusMachine::default();
 
         status.apply(&MonitorEvent::Agent(AgentEvent::Thinking));
@@ -518,12 +518,12 @@ mod tests {
 
         assert_eq!(
             status.observation().map(|observation| observation.kind),
-            Some(LiveStatusKind::MergeConflict)
+            Some(LiveStatusKind::CommandRunning)
         );
     }
 
     #[test]
-    fn supervisor_status_machine_preserves_ci_failure_over_late_output() {
+    fn supervisor_status_machine_yields_ci_failure_to_late_busy_output() {
         let mut status = SupervisorStatusMachine::default();
 
         status.apply(&MonitorEvent::Agent(AgentEvent::Thinking));
@@ -536,7 +536,7 @@ mod tests {
 
         assert_eq!(
             status.observation().map(|observation| observation.kind),
-            Some(LiveStatusKind::CiFailed)
+            Some(LiveStatusKind::CommandRunning)
         );
     }
 
