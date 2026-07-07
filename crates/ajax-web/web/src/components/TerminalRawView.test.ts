@@ -1211,8 +1211,8 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
   });
 
-  it("centers the canvas in the host", () => {
-    expect(terminalRawViewSource).toMatch(
+  it("does not center the canvas in the host", () => {
+    expect(terminalRawViewSource).not.toMatch(
       /:global\(\.terminal-panel canvas\)\s*\{[^}]*margin-inline:\s*auto/,
     );
   });
@@ -1922,19 +1922,20 @@ describe("TerminalRawView", () => {
     expect(mobileBlock).not.toBeNull();
     const mobileCss = mobileBlock![1];
 
-    expect(mobileCss).toContain(".terminal-host");
+    // Mobile inherits base .terminal-host layout; no duplicate stub block.
+    expect(mobileCss).not.toMatch(/\.terminal-host\s*\{[^}]*\}/);
     // Full-bleed on mobile: the panel meets the screen edges, so side/bottom
     // borders and radii go.
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-radius:\s*0/);
     expect(mobileCss).toMatch(/\.terminal-panel\s*\{[^}]*border-left:\s*none/);
-    expect(mobileCss).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
+    expect(mobileCss).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*1px 7px/);
     expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
 
-    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
+    expect(terminalRawViewSource).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(terminalRawViewSource).toMatch(/@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/);
   });
