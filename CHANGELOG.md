@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.4...ajax-cli-v0.35.5) (2026-07-07)
+
+
+### Bug Fixes
+
+* **core:** make terminal statuses track live pane reality ([#363](https://github.com/mossipcams/ajax-cli/issues/363)) ([32c4d36](https://github.com/mossipcams/ajax-cli/commit/32c4d3677ffb2b671978b6145578b1e54bc0ed2c))
+* **web:** pin new-task sheet to the visual viewport band ([#362](https://github.com/mossipcams/ajax-cli/issues/362)) ([47c2eaa](https://github.com/mossipcams/ajax-cli/commit/47c2eaaef91f983850ac5d7de647ae541a9f06be))
+
 ## [0.35.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.3...ajax-cli-v0.35.4) (2026-07-07)
 
 
