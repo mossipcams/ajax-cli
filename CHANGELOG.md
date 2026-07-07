@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.2...ajax-cli-v0.35.3) (2026-07-07)
+
+
+### Bug Fixes
+
+* **web:** remove terminal shell edge padding ([#358](https://github.com/mossipcams/ajax-cli/issues/358)) ([0d5b18c](https://github.com/mossipcams/ajax-cli/commit/0d5b18cd7dad09fd56f2bb6fd91610ae0d11b03f))
+
 ## [0.35.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.1...ajax-cli-v0.35.2) (2026-07-06)
 
 
