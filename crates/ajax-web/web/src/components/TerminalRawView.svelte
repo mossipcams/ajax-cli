@@ -239,7 +239,7 @@
     };
 
     const cellHeightPx = (): number => {
-      const viewport = container?.querySelector<HTMLElement>("canvas") ?? container;
+      const viewport = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])") ?? container;
       const height = viewport?.clientHeight ?? 0;
       // jsdom and pre-layout paints report 0; fall back to a sane line height.
       return height > 0 && term && term.rows > 0 ? height / term.rows : 18;
@@ -332,7 +332,7 @@
     };
 
     const selectionCellAt = (clientX: number, clientY: number): CellPoint | undefined => {
-      const canvas = container?.querySelector<HTMLElement>("canvas");
+      const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
       if (!canvas || !term) return undefined;
       const rect = canvas.getBoundingClientRect();
       return cellAtPoint(
@@ -731,7 +731,7 @@
     requestReconnect = () => connection.reconnectNow();
 
     const cursorOverlayStyle = (): string => {
-      const canvas = container?.querySelector<HTMLElement>("canvas");
+      const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
       const active = term?.buffer.active as { cursorX?: number; cursorY?: number } | undefined;
       if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
         return "";
@@ -844,6 +844,14 @@
         fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
         fontSize: persistedFontSize() ?? DEFAULT_FONT_SIZE,
         ghostty,
+        scrollbarWidth: 0,
+        // Ajax synthesizes 100% of scrolling and reads getViewportY() as an
+        // instant integer (pinnedToBottom, Math.floor topAbsoluteRow). 0.9.x's
+        // smooth scroll animates viewportY to fractional values across frames on
+        // the library's own wheel/scrollbar paths, so those reads misfire mid-
+        // animation. 0 = instant jump (terminal.ts duration===0 short-circuit),
+        // restoring 0.4.0's semantics.
+        smoothScrollDuration: 0,
         theme: {
           background: "#1c1714",
           foreground: "#f4eee0",
@@ -852,11 +860,6 @@
       });
       term.loadAddon(fitAddon);
       term.open(container);
-      // ghostty-web paints its scrollbar on the canvas with no option to
-      // disable it, and Ajax owns every scroll surface (touch gestures, the
-      // New-output jump); silencing the fade-in at its single entry point
-      // keeps the canvas clean to the edge.
-      terminalInternals(term).showScrollbar = () => {};
       // Keep the real scrollToBottom for Ajax's intentional snaps, then blind
       // the instance method so ghostty-web's write-time force-scroll (and the
       // pinnedToBottom-corrupting scroll event it fires) can never run. See

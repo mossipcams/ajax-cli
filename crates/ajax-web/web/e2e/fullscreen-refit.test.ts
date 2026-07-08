@@ -30,7 +30,7 @@ async function openTerminal(page: Page) {
   await mockFetch(page);
   await mockTerminalWebSocket(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 }
 

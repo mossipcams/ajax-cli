@@ -632,7 +632,8 @@ supported browser task-control APIs.
 
 The browser terminal frontend lives in `crates/ajax-web/web`. `TaskDetail.svelte`
 mounts `TerminalRawView.svelte`; `TerminalRawView.svelte` uses `ghostty-web`
-with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
+from `github:rcarmo/ghostty-web#v0.9.4` (fork of coder's unmaintained npm
+0.4.0) with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
 task-terminal WebSocket lifecycle and reconnect behavior, and
 `terminalGestures.ts`, `terminalGeometry.ts`, and `terminalRefit.ts` keep mobile
 scrolling, panning, fit-to-width font sizing, keyboard-safe fitting, and refit

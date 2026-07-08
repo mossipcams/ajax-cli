@@ -1678,13 +1678,16 @@ describe("TerminalRawView", () => {
     });
   });
 
-  it("suppresses ghostty-web's canvas scrollbar after mount", async () => {
+  it("hides the scrollbar via the scrollbarWidth option", async () => {
     await mountTerminal();
 
-    await waitFor(() => {
-      expect(lastTerminal?.showScrollbar).toBeTypeOf("function");
-    });
-    expect(() => lastTerminal?.showScrollbar?.()).not.toThrow();
+    expect((terminalOptions as { scrollbarWidth?: number }).scrollbarWidth).toBe(0);
+  });
+
+  it("disables ghostty-web smooth scrolling so viewportY stays instant", async () => {
+    await mountTerminal();
+
+    expect((terminalOptions as { smoothScrollDuration?: number }).smoothScrollDuration).toBe(0);
   });
 
   function stubTerminalCanvas(host: HTMLElement) {
