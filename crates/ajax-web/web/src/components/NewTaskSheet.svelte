@@ -25,6 +25,12 @@
   );
   let title = $state("");
   let agent = $state("codex");
+  const AGENTS = [
+    { value: "codex", label: "Codex" },
+    { value: "claude", label: "Claude" },
+    { value: "cursor", label: "Cursor" },
+    { value: "opencode", label: "OpenCode" },
+  ];
   let error = $state<string | null>(null);
   let submitting = $state(false);
   let dragOffset = $state(0);
@@ -118,13 +124,18 @@
       bind:value={title}
     />
 
-    <label for="new-task-agent">Agent</label>
-    <select id="new-task-agent" bind:value={agent}>
-      <option value="codex">Codex</option>
-      <option value="claude">Claude</option>
-      <option value="cursor">Cursor</option>
-      <option value="opencode">OpenCode</option>
-    </select>
+    <span class="field-label" id="new-task-agent">Agent</span>
+    <div class="agent-picker" role="radiogroup" aria-labelledby="new-task-agent">
+      {#each AGENTS as option (option.value)}
+        <button
+          type="button"
+          class="agent-option"
+          class:is-selected={agent === option.value}
+          role="radio"
+          aria-checked={agent === option.value}
+          onclick={() => (agent = option.value)}>{option.label}</button>
+      {/each}
+    </div>
 
     {#if error}
       <p class="sheet-error">{error}</p>
@@ -196,7 +207,8 @@
     color: var(--ink-muted);
   }
 
-  .sheet-card label {
+  .sheet-card label,
+  .sheet-card .field-label {
     display: block;
     margin-top: 14px;
     font-size: 11px;
@@ -220,6 +232,35 @@
 
   .sheet-card input:focus,
   .sheet-card select:focus {
+    outline: none;
+    border-color: var(--teal-bright);
+  }
+
+  /* Segmented agent picker — all choices visible, one tap, no dropdown scroll. */
+  .agent-picker {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin-top: 6px;
+  }
+
+  .agent-option {
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    background: var(--paper);
+    color: var(--ink-muted);
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+  }
+
+  .agent-option.is-selected {
+    background: var(--teal-deep);
+    border-color: var(--teal);
+    color: var(--paper);
+  }
+
+  .agent-option:focus-visible {
     outline: none;
     border-color: var(--teal-bright);
   }

@@ -120,6 +120,7 @@
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
   let snapExpandedView: () => void = () => {};
+  let beginExpandFlush: () => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -458,7 +459,7 @@
     const sendResize = () => {
       // A pinch-end flush is exempt — it refits the grid and resizes the PTY
       // in the same pass, so lockstep holds.
-      if (isKeyboardOpen() && !pinchFlushPending) return;
+      if (isKeyboardOpen() && !pinchFlushPending && !expandFlushPending) return;
       if (!term) return;
       connection.sendResize(term.cols, term.rows);
     };
@@ -523,6 +524,14 @@
     // edge, with horizontal pan bringing it into view.
     let keyboardWasOpen = false;
     let pinchFlushPending = false;
+    // The ⛶ expand toggle changes the panel from its padded inline width to the
+    // full-bleed fixed overlay. Entering expand focuses the terminal, which pops
+    // the iOS keyboard — so fitNow's keyboard-open guard would otherwise skip the
+    // grid resize and leave the canvas at its narrower pre-expand column count,
+    // left-aligned with an empty column down the right edge. This one-shot flag
+    // exempts the expand refit exactly like pinchFlushPending, so the grid (and
+    // PTY) resize once to the new width.
+    let expandFlushPending = false;
     const clampHorizontalPan = () => {
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
@@ -596,6 +605,26 @@
     // path: waiting out the debounce leaves the grid misfit in the new space
     // for a visible beat.
     refitAfterLayout = schedulePostLayoutRefit;
+    // setExpanded has already switched the panel to the full-bleed fixed
+    // overlay. Resize the grid and PTY to the new width synchronously — reading
+    // the host width forces the pending layout flush, so cols follow the wider
+    // panel in this same tick. Done directly (not through fitNow) so fitNow's
+    // keyboard-open branch — which owns the bottom-crop/scroll handling for the
+    // above-keyboard band — stays untouched. Only sendResize is exempted, and
+    // only across this synchronous call, so no stray keyboard-animation frame
+    // can spray a SIGWINCH. Without this the grid keeps its narrower pre-expand
+    // column count, left-aligned, leaving an empty column down the right edge.
+    beginExpandFlush = () => {
+      if (!term || !fitAddon) return;
+      const proposed = fitAddon.proposeDimensions();
+      if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
+        term.resize(flooredCols(hostFitCols() ?? proposed.cols, colsFloor()), proposed.rows);
+      }
+      clampHorizontalPan();
+      expandFlushPending = true;
+      sendResize();
+      expandFlushPending = false;
+    };
 
     const snapVisibleTerminal = () => {
       pinnedToBottom = true;
@@ -930,10 +959,11 @@
       if (next) {
         focusTerm();
         snapExpandedView();
+        beginExpandFlush();
       } else {
         blurTerm();
+        refitAfterLayout();
       }
-      refitAfterLayout();
     }}>⛶</button>
   {#if hasUnseenOutput}
     <button

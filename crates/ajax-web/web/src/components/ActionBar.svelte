@@ -12,9 +12,11 @@
     onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
     /** Notify the parent a mutation finished (e.g. to refresh detail). */
     onMutated?: () => void;
+    /** The task no longer exists (e.g. after Drop) — leave the detail page. */
+    onDismiss?: () => void;
   }
 
-  let { actions, handle, onCockpit, onResult, onMutated }: Props = $props();
+  let { actions, handle, onCockpit, onResult, onMutated, onDismiss }: Props = $props();
 
   let pendingAction = $state<string | null>(null);
   let runningAction = $state<string | null>(null);
@@ -49,7 +51,9 @@
       if (result.response.cockpit) onCockpit?.(result.response.cockpit);
       if (result.ok) {
         onResult?.(`${action.label} completed`, result.response.output, false);
-        onMutated?.();
+        // Drop removes the task; refreshing this detail would 404. Leave instead.
+        if (action.action === "drop") onDismiss?.();
+        else onMutated?.();
       } else {
         onResult?.(
           result.error?.message ?? "Action failed",

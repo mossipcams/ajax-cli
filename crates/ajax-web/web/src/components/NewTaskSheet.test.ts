@@ -26,24 +26,24 @@ describe("NewTaskSheet", () => {
 
   it("offers every supported agent including opencode", () => {
     const { container } = render(NewTaskSheet, { props: { repos } });
-    const options = [...container.querySelectorAll<HTMLOptionElement>("#new-task-agent option")];
-    expect(options.map((option) => option.value)).toEqual([
-      "codex",
-      "claude",
-      "cursor",
-      "opencode",
+    const options = [...container.querySelectorAll<HTMLButtonElement>(".agent-option")];
+    expect(options.map((option) => option.textContent?.trim())).toEqual([
+      "Codex",
+      "Claude",
+      "Cursor",
+      "OpenCode",
     ]);
+    expect(newTaskSheetSource).toMatch(/role="radiogroup"/);
+    expect(newTaskSheetSource).not.toMatch(/<select id="new-task-agent"/);
   });
 
   it("submits the selected opencode agent", async () => {
     const spy = vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
-    const { container } = render(NewTaskSheet, { props: { repos } });
+    const { container, getByRole } = render(NewTaskSheet, { props: { repos } });
     await fireEvent.input(container.querySelector("#new-task-title-input")!, {
       target: { value: "Fix login" },
     });
-    await fireEvent.change(container.querySelector("#new-task-agent")!, {
-      target: { value: "opencode" },
-    });
+    await fireEvent.click(getByRole("radio", { name: "OpenCode" }));
     await fireEvent.submit(container.querySelector("form")!);
     expect(spy.mock.calls[0][0].agent).toBe("opencode");
   });

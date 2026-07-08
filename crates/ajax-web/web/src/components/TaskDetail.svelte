@@ -12,9 +12,10 @@
     onCockpit?: (cockpit: BrowserCockpitView) => void;
     onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
     onMutated?: () => void;
+    onDismiss?: () => void;
   }
 
-  let { detail, onBack, onCockpit, onResult, onMutated }: Props = $props();
+  let { detail, onBack, onCockpit, onResult, onMutated, onDismiss }: Props = $props();
 
   let meta = $derived(statusMeta(detail.status));
   let actions = $derived(visibleTaskActions(detail.actions));
@@ -39,6 +40,7 @@
         {onCockpit}
         {onResult}
         {onMutated}
+        {onDismiss}
       />
     {/if}
   </section>
