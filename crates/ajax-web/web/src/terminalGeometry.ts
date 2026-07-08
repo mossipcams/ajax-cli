@@ -1,34 +1,26 @@
 /**
- * Pure sizing math for the mobile terminal's wide-canvas mode.
+ * Pure sizing math for the mobile terminal.
  *
  * On a phone the viewport fits far fewer than the ~80 columns the hosted
- * tmux/Claude Code TUI assumes. The column floor is mode-dependent: fit mode
- * (default) sizes the PTY to the visible width with a 40-column safety floor
- * so the grid stays readable without horizontal panning; wide mode keeps the
- * classic 80-column canvas where the font shrinks until the floor fits the
- * screen and horizontal pan covers sub-minimum overflow. These helpers own the
- * column floor, the fit-to-width font cap, the horizontal pan clamp, and the
- * pinch-distance → font-size mapping so the gesture wiring in TerminalRawView
- * stays thin and the math stays unit-testable.
+ * tmux/Claude Code TUI assumes. Fit geometry sizes the PTY to the visible width
+ * with a 40-column safety floor so the grid stays readable without horizontal
+ * panning. These helpers own the column floor, the fit-to-width font cap, the
+ * horizontal pan clamp, and the pinch-distance → font-size mapping so the
+ * gesture wiring in TerminalRawView stays thin and the math stays unit-testable.
  */
 
-/** Never let the PTY drop below this many columns in wide geometry mode. */
+/** Fallback column floor for callers that pass an invalid minimum. */
 export const MIN_TERMINAL_COLS = 80;
 
 /** Safety floor for fit geometry mode (real phones fit 45+ cols in practice). */
 export const FIT_TERMINAL_COLS = 40;
 
-export type GeometryMode = "fit" | "wide";
-
-const GEOMETRY_MODE_STORAGE_KEY = "ajax.terminal.geometryMode";
-
 /** Pinch-zoom font bounds: below 7px text is unreadable, above 20px the
- * 80-col canvas outgrows any phone gesture's usefulness. */
+ * canvas outgrows a phone gesture's usefulness. */
 export const MIN_FONT_SIZE = 7;
 export const MAX_FONT_SIZE = 20;
 
-/** The default cell size on every viewport — the 80-column floor made
- * per-device font sizing obsolete (narrow viewports pan instead of wrap). */
+/** The default cell size on every viewport. */
 export const DEFAULT_FONT_SIZE = 13;
 
 const FONT_SIZE_STORAGE_KEY = "ajax.terminal.fontSize";
@@ -57,31 +49,6 @@ export function persistFontSize(size: number): void {
     window.localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(size));
   } catch {
     // Best-effort: the session still uses the new size.
-  }
-}
-
-/**
- * The operator's persisted geometry mode choice; a valid stored mode wins over
- * the default. localStorage can throw (Safari private mode), so reads and
- * writes are best-effort.
- */
-export function persistedGeometryMode(): GeometryMode | undefined {
-  try {
-    const raw = window.localStorage.getItem(GEOMETRY_MODE_STORAGE_KEY);
-    if (raw === "fit" || raw === "wide") {
-      return raw;
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export function persistGeometryMode(mode: GeometryMode): void {
-  try {
-    window.localStorage.setItem(GEOMETRY_MODE_STORAGE_KEY, mode);
-  } catch {
-    // Best-effort: the session still uses the new mode.
   }
 }
 
