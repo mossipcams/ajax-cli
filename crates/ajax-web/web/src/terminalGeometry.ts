@@ -139,6 +139,28 @@ export function fitCapFontSize(
 }
 
 /**
+ * True once a two-finger gesture has moved far enough to count as a deliberate
+ * pinch-zoom. A small incidental change in finger distance (a graze, a resting
+ * second finger) stays below the deadzone so it never rewraps the terminal.
+ * Non-finite or non-positive distances are never activated.
+ */
+export function pinchActivated(
+  startDistancePx: number,
+  currentDistancePx: number,
+  thresholdPx: number,
+): boolean {
+  if (
+    !Number.isFinite(startDistancePx) ||
+    !Number.isFinite(currentDistancePx) ||
+    startDistancePx <= 0 ||
+    currentDistancePx <= 0
+  ) {
+    return false;
+  }
+  return Math.abs(currentDistancePx - startDistancePx) >= thresholdPx;
+}
+
+/**
  * Map a two-finger pinch to a font size: scale the size the gesture started
  * at by the finger-distance ratio, rounded and clamped. Zero/non-finite
  * distances (finger lift mid-gesture) leave the base size untouched.

@@ -82,13 +82,6 @@
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
   let inlineSpacerHeight = $state(0);
-  // Insecure (plain-http LAN) origins have no async clipboard API, so the
-  // Paste key falls back to a real textarea the iOS Paste menu can target.
-  let pasteFallbackOpen = $state(false);
-  let pasteFallbackInput = $state<HTMLTextAreaElement | undefined>();
-  $effect(() => {
-    if (pasteFallbackOpen) pasteFallbackInput?.focus();
-  });
   let zeroLagInput = $state("");
   let zeroLagStyle = $state("");
 
@@ -111,11 +104,9 @@
 
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
-  let pasteToTerm: (text: string) => void = () => {};
   let refocusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
-  let requestPaste: () => void = () => {};
   let focusTerm: () => void = () => {};
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
@@ -484,34 +475,6 @@
       snapScrollbackToBottom();
       hasUnseenOutput = false;
     };
-    // iOS long-press paste doesn't reliably reach the hidden terminal input, so
-    // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
-    // mode and flows through the normal onData → socket path. Failures must be
-    // visible: silently doing nothing reads as a broken button.
-    pasteToTerm = (text: string) => {
-      term?.paste(text);
-      term?.focus();
-    };
-    requestPaste = () => {
-      const clipboard = navigator.clipboard;
-      if (!clipboard || typeof clipboard.readText !== "function") {
-        // No async clipboard on insecure (plain-http LAN) origins: offer a
-        // real textarea the iOS long-press Paste menu can act on instead.
-        pasteFallbackOpen = true;
-        return;
-      }
-      clipboard
-        .readText()
-        .then((text) => {
-          if (text) term?.paste(text);
-          pasteNotice = "";
-          term?.focus();
-        })
-        .catch(() => {
-          pasteNotice = "Clipboard read failed — allow paste access and retry";
-        });
-    };
-
     // Fit rows to the container; the column floor depends on geometry mode.
     // Fit mode sizes the PTY to the visible width (40-col safety floor) so
     // phones get a readable grid without horizontal panning. Wide mode keeps
@@ -934,28 +897,6 @@
         jumpToBottom();
       }}>New output ↓</button>
   {/if}
-  {#if pasteFallbackOpen}
-    <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
-      <textarea
-        class="terminal-paste-fallback-input"
-        placeholder="Long-press here, then tap Paste"
-        aria-label="Paste text for the terminal"
-        rows="1"
-        bind:this={pasteFallbackInput}
-        onpaste={(event) => {
-          const text = event.clipboardData?.getData("text") ?? "";
-          event.preventDefault();
-          pasteFallbackOpen = false;
-          if (text) pasteToTerm(text);
-        }}></textarea>
-      <button
-        type="button"
-        class="terminal-key"
-        onclick={() => {
-          pasteFallbackOpen = false;
-        }}>Cancel</button>
-    </div>
-  {/if}
   <div
     class="terminal-bottom-controls"
     data-testid="terminal-bottom-controls"
@@ -981,11 +922,6 @@
           toggleCtrl();
           refocusTerm();
         }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
-      <button
-        type="button"
-        class="terminal-key"
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => requestPaste()}>Paste</button>
       <button
         type="button"
         class="terminal-key"
@@ -1093,7 +1029,13 @@
     outline: none;
   }
 
+  /* Expanded = the fullscreen fixed panel sits at the screen top, so the
+     absolutely-positioned corner (which ignores the panel's safe-area padding)
+     would land under the notch/status bar. Offset it by the safe-area insets
+     while expanded; both are 0 off-notch and on desktop, so 6px holds there. */
   .terminal-expand-corner.is-armed {
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(6px + env(safe-area-inset-right));
     background: var(--teal-deep);
     border-color: var(--teal);
     color: var(--paper);
@@ -1182,35 +1124,6 @@
     pointer-events: none;
     text-shadow: 0 0 6px #1c1714;
     white-space: pre;
-  }
-
-  .terminal-paste-fallback {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    z-index: 3;
-    display: flex;
-    align-items: stretch;
-    gap: 6px;
-    padding: 8px;
-    border: 1px solid var(--rule-strong);
-    border-radius: var(--radius-sm);
-    background: var(--paper);
-  }
-
-  .terminal-paste-fallback-input {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 44px;
-    padding: 8px;
-    border: 1px solid var(--rule);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    resize: none;
-    font-family: var(--mono);
-    /* >= 16px so iOS Safari does not zoom on focus. */
-    font-size: 16px;
   }
 
   .terminal-new-output {
