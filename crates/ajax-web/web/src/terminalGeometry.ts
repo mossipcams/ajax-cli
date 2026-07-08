@@ -85,15 +85,27 @@ export function persistGeometryMode(mode: GeometryMode): void {
   }
 }
 
+function sanitizeFontBounds(min: number, max: number): [number, number] {
+  let lo = Number.isFinite(min) ? min : MIN_FONT_SIZE;
+  let hi = Number.isFinite(max) ? max : MAX_FONT_SIZE;
+  if (lo > hi) {
+    lo = MIN_FONT_SIZE;
+    hi = MAX_FONT_SIZE;
+  }
+  return [lo, hi];
+}
+
 /**
  * Raise a fitted column proposal to the column floor. Invalid proposals
  * (absent, non-finite, or non-positive — e.g. pre-layout fits) get the floor.
+ * Valid proposals are floored to whole columns before applying the floor.
  */
 export function flooredCols(proposedCols: number | undefined, minCols: number): number {
+  const floor = Number.isFinite(minCols) ? Math.floor(minCols) : MIN_TERMINAL_COLS;
   if (proposedCols === undefined || !Number.isFinite(proposedCols) || proposedCols <= 0) {
-    return minCols;
+    return floor;
   }
-  return Math.max(proposedCols, minCols);
+  return Math.max(Math.floor(proposedCols), floor);
 }
 
 /**
@@ -125,6 +137,7 @@ export function fitCapFontSize(
   min: number = MIN_FONT_SIZE,
   max: number = MAX_FONT_SIZE,
 ): number {
+  const [lo, hi] = sanitizeFontBounds(min, max);
   if (
     proposedCols === undefined ||
     !Number.isFinite(proposedCols) ||
@@ -132,10 +145,10 @@ export function fitCapFontSize(
     !Number.isFinite(currentFontSize) ||
     currentFontSize <= 0
   ) {
-    return max;
+    return hi;
   }
   const cap = Math.floor((currentFontSize * proposedCols) / minCols);
-  return Math.min(Math.max(cap, min), max);
+  return Math.min(Math.max(cap, lo), hi);
 }
 
 /**
@@ -153,7 +166,9 @@ export function pinchActivated(
     !Number.isFinite(startDistancePx) ||
     !Number.isFinite(currentDistancePx) ||
     startDistancePx <= 0 ||
-    currentDistancePx <= 0
+    currentDistancePx <= 0 ||
+    !Number.isFinite(thresholdPx) ||
+    thresholdPx < 0
   ) {
     return false;
   }
@@ -172,6 +187,7 @@ export function pinchFontSize(
   min: number = MIN_FONT_SIZE,
   max: number = MAX_FONT_SIZE,
 ): number {
+  const [lo, hi] = sanitizeFontBounds(min, max);
   if (
     !Number.isFinite(startDistancePx) ||
     !Number.isFinite(currentDistancePx) ||
@@ -180,6 +196,9 @@ export function pinchFontSize(
   ) {
     return baseFontSize;
   }
+  if (!Number.isFinite(baseFontSize) || baseFontSize <= 0) {
+    return lo;
+  }
   const scaled = Math.round(baseFontSize * (currentDistancePx / startDistancePx));
-  return Math.min(Math.max(scaled, min), max);
+  return Math.min(Math.max(scaled, lo), hi);
 }

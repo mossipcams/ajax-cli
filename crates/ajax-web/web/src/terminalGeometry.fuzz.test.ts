@@ -88,18 +88,31 @@ function isFiniteNumber(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n);
 }
 
+function sanitizeExpectedFontBounds(min: number, max: number): [number, number] {
+  let lo = Number.isFinite(min) ? min : MIN_FONT_SIZE;
+  let hi = Number.isFinite(max) ? max : MAX_FONT_SIZE;
+  if (lo > hi) {
+    lo = MIN_FONT_SIZE;
+    hi = MAX_FONT_SIZE;
+  }
+  return [lo, hi];
+}
+
 function expectedFlooredCols(
   proposedCols: number | undefined,
   minCols: number,
 ): number {
+  const floor = Number.isFinite(minCols)
+    ? Math.floor(minCols)
+    : MIN_TERMINAL_COLS;
   if (
     proposedCols === undefined ||
     !Number.isFinite(proposedCols) ||
     proposedCols <= 0
   ) {
-    return minCols;
+    return floor;
   }
-  return Math.max(proposedCols, minCols);
+  return Math.max(Math.floor(proposedCols), floor);
 }
 
 function expectedClampPan(
@@ -125,6 +138,7 @@ function expectedFitCapFontSize(
   min: number = MIN_FONT_SIZE,
   max: number = MAX_FONT_SIZE,
 ): number {
+  const [lo, hi] = sanitizeExpectedFontBounds(min, max);
   if (
     proposedCols === undefined ||
     !Number.isFinite(proposedCols) ||
@@ -132,10 +146,10 @@ function expectedFitCapFontSize(
     !Number.isFinite(currentFontSize) ||
     currentFontSize <= 0
   ) {
-    return max;
+    return hi;
   }
   const cap = Math.floor((currentFontSize * proposedCols) / minCols);
-  return Math.min(Math.max(cap, min), max);
+  return Math.min(Math.max(cap, lo), hi);
 }
 
 function expectedPinchActivated(
@@ -147,7 +161,9 @@ function expectedPinchActivated(
     !Number.isFinite(startDistancePx) ||
     !Number.isFinite(currentDistancePx) ||
     startDistancePx <= 0 ||
-    currentDistancePx <= 0
+    currentDistancePx <= 0 ||
+    !Number.isFinite(thresholdPx) ||
+    thresholdPx < 0
   ) {
     return false;
   }
@@ -161,6 +177,7 @@ function expectedPinchFontSize(
   min: number = MIN_FONT_SIZE,
   max: number = MAX_FONT_SIZE,
 ): number {
+  const [lo, hi] = sanitizeExpectedFontBounds(min, max);
   if (
     !Number.isFinite(startDistancePx) ||
     !Number.isFinite(currentDistancePx) ||
@@ -169,10 +186,13 @@ function expectedPinchFontSize(
   ) {
     return baseFontSize;
   }
+  if (!Number.isFinite(baseFontSize) || baseFontSize <= 0) {
+    return lo;
+  }
   const scaled = Math.round(
     baseFontSize * (currentDistancePx / startDistancePx),
   );
-  return Math.min(Math.max(scaled, min), max);
+  return Math.min(Math.max(scaled, lo), hi);
 }
 
 type ComposedGeometryScenario = {
@@ -331,6 +351,82 @@ describe("terminalGeometry fuzz invariants", () => {
           customPinchMax,
         ),
       );
+    }
+  });
+
+  it("finds unsafe terminal geometry edge cases", () => {
+    // Column counts must be integers — fractional cols break PTY resize contracts.
+    const fractionalCols = flooredCols(80.9, 80);
+    expect(fractionalCols).toBeGreaterThanOrEqual(80);
+    expect(Number.isInteger(fractionalCols)).toBe(true);
+
+    // Invalid thresholds must never activate a pinch gesture.
+    expect(pinchActivated(100, 100, Number.NaN)).toBe(false);
+    expect(pinchActivated(100, 100, -1)).toBe(false);
+
+    // Invalid base font sizes must yield finite, readable results.
+    const nanBasePinch = pinchFontSize(Number.NaN, 100, 150);
+    expect(Number.isFinite(nanBasePinch)).toBe(true);
+    expect(nanBasePinch).toBeGreaterThanOrEqual(MIN_FONT_SIZE);
+    expect(nanBasePinch).toBeLessThanOrEqual(MAX_FONT_SIZE);
+
+    const negativeBasePinch = pinchFontSize(-10, 100, 150);
+    expect(Number.isFinite(negativeBasePinch)).toBe(true);
+    expect(negativeBasePinch).toBeGreaterThanOrEqual(MIN_FONT_SIZE);
+    expect(negativeBasePinch).toBeLessThanOrEqual(MAX_FONT_SIZE);
+
+    // Impossible negative content size must not preserve a positive pan offset.
+    expect(clampPan(10, -100, 300)).toBe(0);
+
+    // Invalid clamp bounds must not poison fit-cap output.
+    const nanMinFit = fitCapFontSize(13, 80, 80, Number.NaN, MAX_FONT_SIZE);
+    expect(Number.isFinite(nanMinFit)).toBe(true);
+    expect(nanMinFit).toBeGreaterThanOrEqual(MIN_FONT_SIZE);
+    expect(nanMinFit).toBeLessThanOrEqual(MAX_FONT_SIZE);
+
+    const nanFontAndMax = fitCapFontSize(
+      Number.NaN,
+      80,
+      80,
+      MIN_FONT_SIZE,
+      Number.NaN,
+    );
+    expect(Number.isFinite(nanFontAndMax)).toBe(true);
+    expect(nanFontAndMax).toBeGreaterThanOrEqual(MIN_FONT_SIZE);
+    expect(nanFontAndMax).toBeLessThanOrEqual(MAX_FONT_SIZE);
+
+    // Seeded sweep across defect classes — contracts independent of copied oracles.
+    const rng = makeRng(0xde7ec7);
+    for (let i = 0; i < 32; i++) {
+      const proposed = 80 + rng() * 2 - 0.5;
+      const cols = flooredCols(proposed, 80);
+      if (Number.isFinite(proposed) && proposed > 0) {
+        expect(Number.isInteger(cols)).toBe(true);
+        expect(cols).toBeGreaterThanOrEqual(80);
+      }
+
+      const threshold = rng() < 0.5 ? Number.NaN : -rng();
+      if (Number.isFinite(threshold) && threshold < 0) {
+        expect(pinchActivated(100, 100, threshold)).toBe(false);
+      } else if (!Number.isFinite(threshold)) {
+        expect(pinchActivated(100, 100, threshold)).toBe(false);
+      }
+
+      const badBase = rng() < 0.5 ? Number.NaN : -rng() * 20;
+      const pinched = pinchFontSize(badBase, 100, 100 + rng() * 50);
+      expect(Number.isFinite(pinched)).toBe(true);
+      expect(pinched).toBeGreaterThanOrEqual(MIN_FONT_SIZE);
+      expect(pinched).toBeLessThanOrEqual(MAX_FONT_SIZE);
+
+      const contentPx = rng() < 0.3 ? -rng() * 500 : rng() * 500;
+      const viewportPx = 200 + rng() * 300;
+      const pan = clampPan(10 + rng() * 20, contentPx, viewportPx);
+      if (contentPx < 0) {
+        expect(pan).toBe(0);
+      } else {
+        expect(Number.isFinite(pan)).toBe(true);
+        expect(pan).toBeGreaterThanOrEqual(0);
+      }
     }
   });
 
