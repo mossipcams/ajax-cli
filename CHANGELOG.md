@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.8...ajax-cli-v0.35.9) (2026-07-08)
+
+
+### Bug Fixes
+
+* **web:** harden iOS terminal — pinch deadzone + fullscreen button safe-area ([#373](https://github.com/mossipcams/ajax-cli/issues/373)) ([79200d8](https://github.com/mossipcams/ajax-cli/commit/79200d8e1d9e56d35bfcc4c248964b025f6e7e07))
+
 ## [0.35.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.7...ajax-cli-v0.35.8) (2026-07-07)
 
 
