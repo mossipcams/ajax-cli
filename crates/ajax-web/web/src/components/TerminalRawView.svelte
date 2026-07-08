@@ -731,7 +731,8 @@
       }
       const left = Math.max(0, active.cursorX) * cellWidth;
       const top = Math.max(0, active.cursorY) * cellHeight;
-      return `left: ${left}px; top: ${top}px;`;
+      const fontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+      return `left: ${left}px; top: ${top}px; font-size: ${fontSize}px; line-height: ${cellHeight}px;`;
     };
 
     const setZeroLagInput = (next: string) => {
