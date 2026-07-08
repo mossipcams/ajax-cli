@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.11...ajax-cli-v0.35.12) (2026-07-08)
+
+
+### Bug Fixes
+
+* **web:** correct terminal fullscreen chrome peek-through and zero-lag echo sizing ([#381](https://github.com/mossipcams/ajax-cli/issues/381)) ([800abcb](https://github.com/mossipcams/ajax-cli/commit/800abcbcc4a7c8034c5c5b9b14bf07d6bd43765c))
+
 ## [0.35.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.10...ajax-cli-v0.35.11) (2026-07-08)
 
 
