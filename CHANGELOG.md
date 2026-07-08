@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.15](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.14...ajax-cli-v0.35.15) (2026-07-08)
+
+
+### Bug Fixes
+
+* **web:** keep mobile task-view scroll inside the terminal and remove dead Wide hotkey ([#387](https://github.com/mossipcams/ajax-cli/issues/387)) ([cf9a2d7](https://github.com/mossipcams/ajax-cli/commit/cf9a2d7b32e0f23a5055f9c9be64b092cbcd69a1))
+
 ## [0.35.14](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.13...ajax-cli-v0.35.14) (2026-07-08)
 
 
