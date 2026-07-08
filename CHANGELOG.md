@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.10...ajax-cli-v0.35.11) (2026-07-08)
+
+
+### Bug Fixes
+
+* **web:** cap viewport zoom to stop iOS fullscreen focus-zoom ([#379](https://github.com/mossipcams/ajax-cli/issues/379)) ([ab18a90](https://github.com/mossipcams/ajax-cli/commit/ab18a90b877f58bbc3154295122d040aa05ef0d1))
+
 ## [0.35.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.9...ajax-cli-v0.35.10) (2026-07-08)
 
 
