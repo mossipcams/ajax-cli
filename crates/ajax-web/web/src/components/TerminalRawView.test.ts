@@ -1366,21 +1366,23 @@ describe("TerminalRawView", () => {
   });
 
   it("resizes the grid on expand even while the keyboard is open", async () => {
-    vi.useFakeTimers();
     window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
     proposedDimensions = { cols: 55, rows: 30 };
     const { getByRole, socket } = await mountOpenTerminal();
-    vi.advanceTimersByTime(400); // settle the open-path refits
+    await settleFrames();
     socket!.send.mockClear();
+    resize.mockClear();
 
     document.documentElement.classList.add("keyboard-open");
-    proposedDimensions = { cols: 55, rows: 60 };
     getByRole("button", { name: "Expand terminal" }).click();
-    vi.advanceTimersByTime(50);
+    expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
+    proposedDimensions = { cols: 55, rows: 60 };
+    await settleFrames();
+    await settleFrames();
 
+    await waitFor(() => expect(resize).toHaveBeenCalledWith(80, 60));
     expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
     document.documentElement.classList.remove("keyboard-open");
-    vi.useRealTimers();
   });
 
   it("re-fits again after the expand viewport settles", async () => {
