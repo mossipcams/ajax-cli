@@ -627,16 +627,23 @@
         snapFrames = snapFrames.filter((frame) => frame !== firstFrame);
         if (disposed) return;
         snapVisibleTerminal();
+        schedulePostLayoutRefit();
         const secondFrame = requestAnimationFrame(() => {
           snapFrames = snapFrames.filter((frame) => frame !== secondFrame);
-          if (!disposed) snapVisibleTerminal();
+          if (!disposed) {
+            snapVisibleTerminal();
+            schedulePostLayoutRefit();
+          }
         });
         snapFrames.push(secondFrame);
       });
       snapFrames.push(firstFrame);
       snapTimer = setTimeout(() => {
         snapTimer = undefined;
-        if (!disposed) snapVisibleTerminal();
+        if (!disposed) {
+          snapVisibleTerminal();
+          schedulePostLayoutRefit();
+        }
       }, 260);
     };
 
