@@ -233,6 +233,7 @@
                 onCockpit={applyCockpit}
                 onResult={showResult}
                 onMutated={() => route.kind === "task" && route.handle && loadDetail(route.handle)}
+                onDismiss={() => go(dashboardHash())}
               />
             {:else}
               <Skeleton testid="task-skeleton" rows={6} />

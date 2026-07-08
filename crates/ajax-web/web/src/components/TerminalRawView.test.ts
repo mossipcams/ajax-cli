@@ -229,6 +229,9 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  // A test that toggles keyboard-open/expand and then fails would otherwise
+  // leak the class onto <html> and make every later fit test bail.
+  document.documentElement.classList.remove("keyboard-open", "terminal-expanded");
 });
 
 function stubMatchMedia(matcher: (query: string) => boolean) {
@@ -1359,6 +1362,24 @@ describe("TerminalRawView", () => {
     vi.advanceTimersByTime(50);
 
     expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
+    vi.useRealTimers();
+  });
+
+  it("resizes the grid on expand even while the keyboard is open", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
+    proposedDimensions = { cols: 55, rows: 30 };
+    const { getByRole, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle the open-path refits
+    socket!.send.mockClear();
+
+    document.documentElement.classList.add("keyboard-open");
+    proposedDimensions = { cols: 55, rows: 60 };
+    getByRole("button", { name: "Expand terminal" }).click();
+    vi.advanceTimersByTime(50);
+
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
+    document.documentElement.classList.remove("keyboard-open");
     vi.useRealTimers();
   });
 

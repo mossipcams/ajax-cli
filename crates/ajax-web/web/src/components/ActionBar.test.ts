@@ -55,6 +55,33 @@ describe("ActionBar", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("routes to dismiss instead of refresh after a successful drop", async () => {
+    vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onMutated = vi.fn();
+    const onDismiss = vi.fn();
+    const { getByText } = render(ActionBar, {
+      props: { actions: [drop], handle: "web/x", onMutated, onDismiss },
+    });
+    await fireEvent.click(getByText("Drop"));
+    await fireEvent.click(getByText("Tap to confirm"));
+    await vi.runAllTimersAsync();
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(onMutated).not.toHaveBeenCalled();
+  });
+
+  it("routes to mutate instead of dismiss for non-destructive actions", async () => {
+    vi.spyOn(api, "postOperation").mockResolvedValue({ ok: true, response: {} });
+    const onMutated = vi.fn();
+    const onDismiss = vi.fn();
+    const { getByText } = render(ActionBar, {
+      props: { actions: [review], handle: "web/x", onMutated, onDismiss },
+    });
+    await fireEvent.click(getByText("Review"));
+    await vi.runAllTimersAsync();
+    expect(onMutated).toHaveBeenCalledOnce();
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it("runs a non-destructive action immediately and forwards the refreshed cockpit", async () => {
     const cockpit = {
       backend: { authority: "host-native", control_enabled: true },
