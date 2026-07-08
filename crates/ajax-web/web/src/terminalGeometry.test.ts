@@ -3,6 +3,7 @@ import {
   flooredCols,
   clampPan,
   pinchFontSize,
+  pinchActivated,
   fitCapFontSize,
   persistedGeometryMode,
   persistGeometryMode,
@@ -90,6 +91,30 @@ describe("fitCapFontSize", () => {
   it("honors custom clamp bounds", () => {
     expect(fitCapFontSize(13, 100, 80, 8, 14)).toBe(14);
     expect(fitCapFontSize(13, 30, 80, 8, 14)).toBe(8);
+  });
+});
+
+describe("pinchActivated", () => {
+  it("is inactive below the threshold", () => {
+    expect(pinchActivated(100, 108, 12)).toBe(false);
+  });
+
+  it("activates when spreading past the threshold", () => {
+    expect(pinchActivated(100, 113, 12)).toBe(true);
+  });
+
+  it("activates when pinching in past the threshold", () => {
+    expect(pinchActivated(100, 87, 12)).toBe(true);
+  });
+
+  it("activates exactly at the threshold", () => {
+    expect(pinchActivated(100, 112, 12)).toBe(true);
+  });
+
+  it("is inactive for non-finite or non-positive distances", () => {
+    expect(pinchActivated(0, 120, 12)).toBe(false);
+    expect(pinchActivated(100, Number.NaN, 12)).toBe(false);
+    expect(pinchActivated(Number.NaN, 120, 12)).toBe(false);
   });
 });
 

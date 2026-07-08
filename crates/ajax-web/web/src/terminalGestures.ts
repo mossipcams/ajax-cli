@@ -10,7 +10,7 @@
  * terminalGeometry; this module owns the event wiring and gesture state.
  */
 
-import { clampPan, pinchFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE } from "./terminalGeometry";
+import { clampPan, pinchFontSize, pinchActivated, MIN_FONT_SIZE, MAX_FONT_SIZE } from "./terminalGeometry";
 import { flingFrames, wheelNotchesFromDrag } from "./terminalTouchScroll";
 
 export interface TerminalGestureHost {
@@ -39,6 +39,9 @@ export interface TerminalGestureHost {
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
+// A two-finger touch must change the finger distance by this many px before it
+// counts as a zoom, so an incidental graze can't rewrap the terminal.
+const PINCH_ACTIVATION_PX = 12;
 // iOS's own text long-press engages around 500ms; matching it makes the
 // synthesized selection feel native instead of laggy or hair-triggered.
 const LONG_PRESS_MS = 500;
@@ -65,6 +68,7 @@ export function attachTerminalGestures(
   let pinchStartDistance = 0;
   let pinchBaseFontSize = 0;
   let pinchMaxFontSize = MAX_FONT_SIZE;
+  let pinchEngaged = false;
 
   // Long-press → drag → lift = select → extend → copy. The timer arms on a
   // single stationary finger; any scroll, pinch, wheel, or lift disarms it.
@@ -127,6 +131,7 @@ export function attachTerminalGestures(
         host.endSelection?.(true);
       }
       touchActive = false;
+      pinchEngaged = false;
       pinchStartDistance = touchDistance(event.touches);
       pinchBaseFontSize = host.fontSize();
       pinchMaxFontSize = host.maxFontSize();
@@ -174,14 +179,20 @@ export function attachTerminalGestures(
       // Own the pinch so iOS can't page-zoom; font rounding means the
       // terminal only re-renders when the size crosses a whole pixel.
       if (event.cancelable) event.preventDefault();
-      const next = pinchFontSize(
-        pinchBaseFontSize,
-        pinchStartDistance,
-        touchDistance(event.touches),
-        MIN_FONT_SIZE,
-        pinchMaxFontSize,
-      );
-      if (next !== host.fontSize()) host.setFontSize(next);
+      const distance = touchDistance(event.touches);
+      if (!pinchEngaged && pinchActivated(pinchStartDistance, distance, PINCH_ACTIVATION_PX)) {
+        pinchEngaged = true;
+      }
+      if (pinchEngaged) {
+        const next = pinchFontSize(
+          pinchBaseFontSize,
+          pinchStartDistance,
+          distance,
+          MIN_FONT_SIZE,
+          pinchMaxFontSize,
+        );
+        if (next !== host.fontSize()) host.setFontSize(next);
+      }
       return;
     }
     if (!touchActive || event.touches.length !== 1) return;
@@ -241,6 +252,7 @@ export function attachTerminalGestures(
     touchAccumPx = 0;
     touchAccumXPx = 0;
     pinchStartDistance = 0;
+    pinchEngaged = false;
   };
 
   const onTouchEnd = (event: TouchEvent) => {

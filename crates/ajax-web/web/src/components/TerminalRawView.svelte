@@ -1094,7 +1094,13 @@
     outline: none;
   }
 
+  /* Expanded = the fullscreen fixed panel sits at the screen top, so the
+     absolutely-positioned corner (which ignores the panel's safe-area padding)
+     would land under the notch/status bar. Offset it by the safe-area insets
+     while expanded; both are 0 off-notch and on desktop, so 6px holds there. */
   .terminal-expand-corner.is-armed {
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(6px + env(safe-area-inset-right));
     background: var(--teal-deep);
     border-color: var(--teal);
     color: var(--paper);
