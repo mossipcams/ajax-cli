@@ -60,8 +60,9 @@ remote-agent execution.
 
 ## Task Modes
 
-Choose the smallest mode that fits the request. Bounded Small Fix and Behavior
-Change work is delegated via `model-router`; see Delegation for lane selection.
+Choose the smallest mode that fits the request. For code-changing Small Fix and
+Behavior Change work, delegation is the default execution path. Apply the
+Delegation rules before editing source.
 
 ## Persistent Plans
 
@@ -177,14 +178,28 @@ How to apply:
 
 ## Delegation
 
-For any single bounded code behavior change in the current worktree that you
-would otherwise implement yourself, delegate via the `model-router` skill. You
-stay the planner, reviewer, and final approver: plan the change, hand the
-delegate a narrow work order, then review its diff before accepting anything.
-Skip delegation for trivial one-liners, non-code work, or pure Q&A.
+Default rule: bounded code changes are delegated. A user request like “fix,”
+“implement,” “change,” “add,” or “update” is authorization to delegate unless
+the user explicitly says not to delegate.
 
-Implementation always needs a complete `tdd-implementation-packet` as the
-source of truth — never delegate a code change from a vague prompt.
+For any code change, create or update the persistent plan and record one
+delegation decision before editing source:
+
+- `Delegation decision: delegated to <lane> via model-router`
+- `Delegation decision: not delegated because <specific allowed exception>`
+
+You stay the planner, reviewer, and final approver. Strict workflow:
+
+1. Create or update the persistent plan.
+2. Make and record the delegation decision.
+3. When delegating implementation, create a complete
+   `tdd-implementation-packet` as the source of truth.
+4. Delegate via `model-router`.
+5. Review the diff.
+6. Run validation personally; do not trust the delegate's claim alone.
+7. Accept, reject, or send a focused `resume` order.
+
+Never delegate implementation from a vague prompt.
 
 **Pick the lane — first match wins:**
 
@@ -230,16 +245,22 @@ Review before accepting, for every lane:
 
 1. Read the diff and check it against the requested scope.
 2. Confirm tests were added or updated when applicable.
-3. Run validation yourself; do not trust the delegate's claim alone. An empty
-   diff plus a success claim is a failure.
+3. Run validation yourself. An empty diff plus a success claim is a failure.
 4. Send unrelated or overly broad edits back via `resume` instead of quietly
    fixing them.
 5. Never commit, push, or report done solely because the delegate finished.
    Delegates never commit, push, merge, rebase, or change branches.
 
-Implement directly only when the change is smaller than the work order needed
-to describe it, when the chosen CLI is unavailable (report that instead of
-silently taking over), or when the task is on the do-not-delegate list:
+Do not implement directly unless one of these exceptions applies:
+
+- The change is truly smaller than the work order needed to describe it, such as
+  a one-line typo, formatting-only edit, or comment-only correction.
+- The work is non-code, pure Q&A, planning-only, or review-only.
+- The selected delegation CLI or skill is unavailable. In that case, report the
+  unavailable tool instead of silently taking over.
+- The task is on the do-not-delegate list below.
+
+Do-not-delegate list:
 
 - vague discovery or broad architecture planning
 - large refactors without a written plan
