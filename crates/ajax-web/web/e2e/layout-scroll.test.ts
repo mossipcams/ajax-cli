@@ -303,7 +303,7 @@ test("terminal placeholder proves layout without Ghostty", async ({ page }) => {
 
   const placeholder = page.locator('[data-testid="terminal-placeholder"]');
   await expect(placeholder).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator("[data-testid='task-terminal-panel'] canvas")).toHaveCount(0);
+  await expect(page.locator("[data-testid='task-terminal-panel'] canvas:not([aria-hidden='true'])")).toHaveCount(0);
 
   const panel = page.locator("[data-testid='task-terminal-panel']");
   const panelStyle = await panel.evaluate((el) => {

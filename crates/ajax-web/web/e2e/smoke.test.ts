@@ -63,7 +63,7 @@ test("mobile task terminal opens ghostty and sends toolbar input", async ({ page
   await page.goto("/app.html#/t/web%2Ffix-login");
 
   await expect(terminalPanel(page)).toBeVisible({ timeout: 10_000 });
-  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
   const toolbar = terminalToolbar(page);
@@ -90,7 +90,7 @@ test("mobile task terminal paste, resize, and reconnect flows stay wired", async
   await mockFetch(page);
   await mockTerminalWebSocket(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
+  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
 
   await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
