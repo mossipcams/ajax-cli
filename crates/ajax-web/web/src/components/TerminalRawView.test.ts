@@ -468,6 +468,32 @@ describe("TerminalRawView", () => {
     expect(socket?.send).not.toHaveBeenCalled();
   });
 
+  it("tracks terminal font size in the zero-lag overlay inline style", async () => {
+    const termFont = 13;
+    const { container } = await mountOpenTerminal();
+
+    if (liveOptions) liveOptions.fontSize = termFont;
+
+    const canvas = container.querySelector("canvas") as HTMLElement;
+    Object.defineProperty(canvas, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 480, configurable: true });
+    Object.assign(
+      (lastTerminal as unknown as { buffer: { active: Record<string, unknown> } }).buffer.active,
+      { cursorX: 0, cursorY: 0 },
+    );
+
+    dispatchTextareaBeforeInput("insertText", "x");
+
+    const overlay = container.querySelector(
+      "[data-testid='terminal-zero-lag-input']",
+    ) as HTMLElement;
+    expect(overlay).toBeInTheDocument();
+    const inlineStyle = overlay.getAttribute("style") ?? "";
+    expect(inlineStyle).toContain(`font-size: ${termFont}px`);
+    expect(inlineStyle).not.toContain("font-size: 16px");
+    expect(liveOptions?.fontSize).toBe(termFont);
+  });
+
   it("keeps optimistic input visible through unrelated output until PTY echo arrives", async () => {
     const { container, socket } = await mountOpenTerminal();
 

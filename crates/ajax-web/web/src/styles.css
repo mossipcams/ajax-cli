@@ -607,6 +607,14 @@ header .bar h1 {
     display: none;
   }
 
+  /* Fullscreen terminal owns the screen: hide the global chrome too, so it
+     cannot peek through when the visual viewport shrinks (keyboard / URL bar)
+     below the layout viewport the fixed panel is sized against. */
+  html.terminal-expanded .cockpit-chrome,
+  html.terminal-expanded .bottom-nav {
+    display: none;
+  }
+
   /* With the chrome gone the terminal owns the fixed band top-to-bottom; the
      control-key bar stays pinned at its bottom edge, directly above the
      keyboard, so Esc/Tab/⌃C/arrows remain in reach while typing. Manual

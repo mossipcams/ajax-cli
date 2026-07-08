@@ -60,6 +60,23 @@ test("entering fullscreen refits the terminal and does not zoom the PWA", async 
   expect(Number.isFinite(latest.rows) && latest.rows > 0).toBe(true);
 });
 
+test("entering fullscreen hides the global chrome so it cannot peek through", async ({ page }) => {
+  await openTerminal(page);
+  const header = page.locator(".cockpit-chrome");
+  const nav = page.locator(".bottom-nav");
+  await expect(header).toBeVisible();
+  await expect(nav).toBeVisible();
+
+  await expandButton(page).click();
+  await expect(page.locator("[data-testid='task-terminal-panel']")).toHaveClass(/is-expanded/);
+  await expect(header).toBeHidden();
+  await expect(nav).toBeHidden();
+
+  await expandButton(page).click();
+  await expect(header).toBeVisible();
+  await expect(nav).toBeVisible();
+});
+
 test("exiting fullscreen restores the inline terminal", async ({ page }) => {
   await openTerminal(page);
 
@@ -84,4 +101,21 @@ test("served shell caps zoom with maximum-scale=1 (iOS focus-zoom guard)", async
   await page.goto("/app.html");
   const content = await page.locator('meta[name="viewport"]').getAttribute("content");
   expect(content).toContain("maximum-scale=1");
+});
+
+test("fullscreen keeps global chrome hidden even when the visual viewport shrinks", async ({ page }) => {
+  await openTerminal(page);
+  await expandButton(page).click();
+  await expect(page.locator("[data-testid='task-terminal-panel']")).toHaveClass(/is-expanded/);
+
+  // Simulate viewport.ts on keyboard-open: the visual viewport shrinks below the
+  // layout viewport — the divergence that made the chrome peek through on iOS.
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty("--app-height", (window.innerHeight - 336) + "px");
+  });
+
+  // The global chrome must stay hidden — no peek-through in the exposed band.
+  await expect(page.locator(".cockpit-chrome")).toBeHidden();
+  await expect(page.locator(".bottom-nav")).toBeHidden();
 });
