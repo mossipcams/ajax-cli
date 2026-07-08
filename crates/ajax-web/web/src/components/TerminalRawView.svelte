@@ -546,7 +546,7 @@
         hasUnseenOutput = false;
       }
       keyboardWasOpen = keyboardOpen;
-      if (keyboardOpen && !pinchFlushPending) {
+      if (keyboardOpen && !pinchFlushPending && !expandFlushPending) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and the renderer
@@ -606,24 +606,17 @@
     // for a visible beat.
     refitAfterLayout = schedulePostLayoutRefit;
     // setExpanded has already switched the panel to the full-bleed fixed
-    // overlay. Resize the grid and PTY to the new width synchronously — reading
-    // the host width forces the pending layout flush, so cols follow the wider
-    // panel in this same tick. Done directly (not through fitNow) so fitNow's
-    // keyboard-open branch — which owns the bottom-crop/scroll handling for the
-    // above-keyboard band — stays untouched. Only sendResize is exempted, and
-    // only across this synchronous call, so no stray keyboard-animation frame
-    // can spray a SIGWINCH. Without this the grid keeps its narrower pre-expand
-    // column count, left-aligned, leaving an empty column down the right edge.
+    // overlay. Let the post-layout fit run through the keyboard-open guard once,
+    // mirroring the pinch-end exemption so the local grid and PTY resize in the
+    // same pass.
     beginExpandFlush = () => {
-      if (!term || !fitAddon) return;
-      const proposed = fitAddon.proposeDimensions();
-      if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
-        term.resize(flooredCols(hostFitCols() ?? proposed.cols, colsFloor()), proposed.rows);
-      }
-      clampHorizontalPan();
       expandFlushPending = true;
-      sendResize();
-      expandFlushPending = false;
+      schedulePostLayoutRefit();
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          expandFlushPending = false;
+        });
+      });
     };
 
     const snapVisibleTerminal = () => {
@@ -958,8 +951,8 @@
       setExpanded(next);
       if (next) {
         focusTerm();
-        snapExpandedView();
         beginExpandFlush();
+        snapExpandedView();
       } else {
         blurTerm();
         refitAfterLayout();
