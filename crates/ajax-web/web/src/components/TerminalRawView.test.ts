@@ -1336,6 +1336,25 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
+  it("re-fits again after the expand viewport settles", async () => {
+    vi.useFakeTimers();
+    window.localStorage.setItem("ajax.terminal.geometryMode", "wide");
+    proposedDimensions = { cols: 55, rows: 60 };
+    const { getByRole, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400);
+    socket!.send.mockClear();
+
+    getByRole("button", { name: "Expand terminal" }).click();
+    vi.advanceTimersByTime(50);
+
+    proposedDimensions = { cols: 55, rows: 90 };
+    socket!.send.mockClear();
+    vi.advanceTimersByTime(300);
+
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 90 });
+    vi.useRealTimers();
+  });
+
   it("disables autocorrect/autocapitalize on the ghostty input", async () => {
     render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
