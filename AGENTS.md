@@ -482,3 +482,24 @@ Before adding a rule, ask:
 
 Keep this file compact. Remove stale, duplicated, or generic instructions when
 updating it.
+
+## Delegation Routing
+
+Start with the `model-router` skill for any single bounded code behavior change
+in this worktree that you would otherwise implement yourself. It decides whether
+to create a `tdd-implementation-packet` (the source-of-truth handoff), delegate
+implementation, delegate review, or stop. Skip it for trivial one-liners,
+non-code work, or pure Q&A/exploration.
+
+Lanes it routes to (reach for one directly only when the user names it):
+
+- `cursor-delegate` (Composer 2.5) — default implementer: frontend, TypeScript,
+  Svelte, PWA, repo-aware Rust, normal bounded bug fixes.
+- `opencode-delegate` — MiniMax-M3 for cheap mechanical/boilerplate/docs work,
+  GLM 5.2 for reasoning-heavy backend, architecture, bug isolation, refactors.
+- `codex-delegate` (GPT-5.5) — default reviewer and packet critique; delegator
+  mode when Codex should itself dispatch to a sub-lane and review the result;
+  implementation only when the user explicitly asks.
+
+The parent always reviews the git diff before accepting. Delegates never commit,
+push, merge, rebase, or change branches.
