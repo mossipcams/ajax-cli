@@ -17,13 +17,9 @@
     fitCapFontSize,
     persistedFontSize,
     persistFontSize,
-    persistedGeometryMode,
-    persistGeometryMode,
     DEFAULT_FONT_SIZE,
     MAX_FONT_SIZE,
-    MIN_TERMINAL_COLS,
     FIT_TERMINAL_COLS,
-    type GeometryMode,
   } from "../terminalGeometry";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
@@ -78,7 +74,6 @@
   // overwrite a bridge-reported error in statusDetail.
   let pasteNotice = $state("");
   let ctrlArmed = $state(false);
-  let geometryMode = $state<GeometryMode>(persistedGeometryMode() ?? "fit");
   let hasUnseenOutput = $state(false);
   let expanded = $state(false);
   let inlineSpacerHeight = $state(0);
@@ -251,12 +246,11 @@
     };
 
     // The operator's font size — persisted pinch choice or the default. The
-    // live font may sit below it: fitNow shrinks the rendered size whenever
-    // the 80-column floor would overflow the host width, and climbs back
-    // toward this choice when the viewport widens again.
+    // live font may sit below it when the column floor would overflow the host
+    // width, and climbs back toward this choice when the viewport widens again.
     let chosenFontSize = persistedFontSize() ?? DEFAULT_FONT_SIZE;
 
-    const colsFloor = () => (geometryMode === "wide" ? MIN_TERMINAL_COLS : FIT_TERMINAL_COLS);
+    const colsFloor = () => FIT_TERMINAL_COLS;
 
     const cssPx = (style: CSSStyleDeclaration, property: string): number => {
       const value = Number.parseFloat(style.getPropertyValue(property));
@@ -514,14 +508,10 @@
         });
     };
 
-    // Fit rows to the container; the column floor depends on geometry mode.
-    // Fit mode sizes the PTY to the visible width (40-col safety floor) so
-    // phones get a readable grid without horizontal panning. Wide mode keeps
-    // the classic 80-column floor: the hosted tmux/Claude Code TUI assumes
-    // ~80, and a narrower PTY wraps nearly every line. When the floor exceeds
-    // what fits, the font shrinks to keep every column on screen; only when
-    // even the minimum font overflows does the canvas extend past the right
-    // edge, with horizontal pan bringing it into view.
+    // Fit rows to the container. Fit mode sizes the PTY to the visible width
+    // with a 40-column safety floor so phones get a readable grid without
+    // horizontal panning. When the floor exceeds what fits, the font shrinks to
+    // keep every column on screen; only sub-minimum overflow can pan.
     let keyboardWasOpen = false;
     let pinchFlushPending = false;
     // The ⛶ expand toggle changes the panel from its padded inline width to the
@@ -565,7 +555,7 @@
       if (container) container.scrollTop = 0;
       const proposed = fitAddon.proposeDimensions();
       // Fit-to-width: the font tracks the operator's chosen size but shrinks
-      // as far as the readable minimum so the 80-column floor fits the host —
+      // as far as the readable minimum so the column floor fits the host —
       // a narrow screen must not hide half of every line off the right edge
       // (horizontal pan remains only for the sub-minimum overflow). Growth
       // back (rotating to a wider viewport) is one step per pass and stops a
@@ -1021,19 +1011,6 @@
       <button
         type="button"
         class="terminal-key"
-        class:is-armed={geometryMode === "wide"}
-        aria-pressed={geometryMode === "wide"}
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => {
-          const next = geometryMode === "wide" ? "fit" : "wide";
-          geometryMode = next;
-          persistGeometryMode(next);
-          refitAfterLayout();
-          refocusTerm();
-        }}>Wide</button>
-      <button
-        type="button"
-        class="terminal-key"
         aria-label="Hide keyboard"
         onclick={() => blurTerm()}>⌄</button>
     </div>
@@ -1176,8 +1153,8 @@
     min-height: 0;
     min-width: 0;
     width: 100%;
-    /* The 80-column floor can make the Ghostty canvas wider than the phone
-       viewport. The host clips it and the touch handler pans it via
+    /* The column floor can make the Ghostty canvas wider than the host.
+       The host clips it and the touch handler pans it via
        scrollLeft (programmatic scrolling works on overflow:hidden boxes);
        nothing else may scroll this element. */
     overflow: hidden;

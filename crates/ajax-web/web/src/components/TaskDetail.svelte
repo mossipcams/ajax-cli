@@ -289,14 +289,16 @@
       overscroll-behavior: none;
     }
 
-    /* Task detail scrolls with route-scroll; flex column fills the app band. */
+    /* Fill the locked route-scroll band (no page scroll); terminal owns overflow. */
     .task-detail {
       display: flex;
       flex-direction: column;
-      min-height: var(--app-band-height, 100dvh);
+      flex: 1 1 auto;
+      min-height: 0;
+      height: 100%;
       padding: env(safe-area-inset-top) 0 0;
       background: var(--paper);
-      overflow: visible;
+      overflow: hidden;
     }
 
     .detail-header,

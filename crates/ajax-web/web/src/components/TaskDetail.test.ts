@@ -4,6 +4,7 @@ import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 import routeScrollSource from "./RouteScroll.svelte?raw";
+import appSource from "./App.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
 vi.mock("ghostty-web", () => ({
@@ -122,6 +123,16 @@ describe("TaskDetail", () => {
     expect(container.querySelector("[data-mobile-primary='terminal']")).toBeInTheDocument();
   });
 
+  it("renders the task outlet hook the scroll lock targets", () => {
+    // Characterization: App owns `[data-outlet="task"]`; TaskDetail alone cannot
+    // mount that wrapper. Pin the markup the mobile `:has()` scroll lock keys off.
+    expect(appSource).toMatch(
+      /<section[^>]*data-outlet="task"[^>]*>[\s\S]*?<TaskDetail\b/,
+    );
+    const { container } = render(TaskDetail, { props: { detail: detail() } });
+    expect(container.querySelector(".task-detail")).toBeInTheDocument();
+  });
+
   it("fires onBack from the back control", async () => {
     const onBack = vi.fn();
     const { getByText } = render(TaskDetail, { props: { detail: detail(), onBack } });
@@ -154,10 +165,13 @@ describe("TaskDetail", () => {
     expect(mobileCss).not.toMatch(
       /:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height/,
     );
-    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*min-height:\s*var\(--app-band-height,\s*100dvh\)/);
+    // Fill the locked route-scroll band; do not force app-band min-height (that
+    // plus route-scroll padding made the page scroll outside the terminal).
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*min-height:\s*0/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+auto/);
+    expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
     expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*position:\s*fixed/);
     expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*inset:\s*0/);
-    expect(mobileCss).not.toMatch(/\.task-detail\s*\{[^}]*overflow:\s*hidden/);
 
     expect(terminalRawViewSource).toMatch(/terminal-inline-spacer/);
     expect(terminalRawViewSource).toMatch(/class:is-expanded=\{expanded\}/);

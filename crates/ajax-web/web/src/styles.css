@@ -383,6 +383,23 @@ header .bar h1 {
   [data-testid="route-scroll"] {
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
+
+  /* Task route: page chrome must not scroll — only the terminal scrolls.
+     Keep bottom-nav clearance; drop top padding so the band fits exactly. */
+  [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    overscroll-behavior: none;
+    padding-top: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) > [data-outlet="task"] {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
 }
 
 /* EMPTY STATE (App + TaskList) -------------------------------------------- */
