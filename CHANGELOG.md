@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.35.13](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.12...ajax-cli-v0.35.13) (2026-07-08)
+
+
+### Bug Fixes
+
+* **web:** repair mobile cockpit regressions ([#383](https://github.com/mossipcams/ajax-cli/issues/383)) ([ec37399](https://github.com/mossipcams/ajax-cli/commit/ec373998c4a1fb47ec3b62bf3e977c290f8e9db9))
+
 ## [0.35.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.11...ajax-cli-v0.35.12) (2026-07-08)
 
 
