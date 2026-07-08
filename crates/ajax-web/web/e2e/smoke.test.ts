@@ -288,13 +288,18 @@ test("mobile task terminal opens ghostty and sends toolbar input", async ({ page
     );
 });
 
-test("mobile task terminal resize and reconnect flows stay wired", async ({ page }) => {
+test("mobile task terminal paste, resize, and reconnect flows stay wired", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
   await mockTerminalWebSocket(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(terminalPanel(page).locator("canvas")).toBeVisible({ timeout: 10_000 });
   await waitForTerminalSocket(page);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await expect
+    .poll(() => terminalFrames(page))
+    .toContainEqual({ type: "input", data: "echo pasted" });
 
   await page.setViewportSize({ width: 844, height: 390 });
   await expect

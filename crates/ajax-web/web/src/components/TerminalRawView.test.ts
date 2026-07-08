@@ -1076,6 +1076,63 @@ describe("TerminalRawView", () => {
     input.remove();
   });
 
+  it("pastes clipboard text through the terminal paste path", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockResolvedValue("git push origin main") },
+      configurable: true,
+    });
+    const { getByRole } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      // term.paste() honors bracketed-paste mode and flows through the
+      // existing onData → socket path, so the PTY receives it like any input.
+      expect(paste).toHaveBeenCalledWith("git push origin main");
+      expect(focus).toHaveBeenCalled();
+    });
+  });
+
+  it("keeps a server error visible after a successful paste", async () => {
+    // Clipboard feedback and bridge errors are separate channels: a paste
+    // must never clear a server-reported failure it does not own.
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockResolvedValue("ls") },
+      configurable: true,
+    });
+    const { getByRole, getByTestId, socket } = await mountOpenTerminal();
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "error", error: "tmux session missing" }),
+    } as MessageEvent);
+    await waitFor(() => {
+      expect(getByTestId("terminal-status").textContent).toContain("tmux session missing");
+    });
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => expect(paste).toHaveBeenCalledWith("ls"));
+    expect(getByTestId("terminal-status").textContent).toContain("tmux session missing");
+  });
+
+  it("surfaces a clipboard read failure instead of silently doing nothing", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    const { getByRole, getByTestId } = render(TerminalRawView, {
+      props: { handle: "web/fix-login" },
+    });
+    const socket = MockWebSocket.instances[0];
+    socket?.emit("open");
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      expect(getByTestId("terminal-status").textContent).toContain("Clipboard");
+    });
+    expect(paste).not.toHaveBeenCalled();
+  });
+
   it("sends an Escape byte when the Esc key is tapped", async () => {
     const { getByRole, socket } = await mountOpenTerminal();
 
@@ -1650,6 +1707,46 @@ describe("TerminalRawView", () => {
     expect(activeSelectionManager.selectionStart).toBeNull();
     expect(scrollLines).toHaveBeenCalled();
     vi.useRealTimers();
+  });
+
+  it("opens a paste fallback sheet when the async clipboard API is unavailable", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+    const sheet = getByTestId("terminal-paste-fallback");
+    const textarea = sheet.querySelector("textarea");
+    expect(textarea).toBeInTheDocument();
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: { getData: () => "pasted text" },
+    });
+    textarea!.dispatchEvent(pasteEvent);
+
+    expect(paste).toHaveBeenCalledWith("pasted text");
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
+  });
+
+  it("closes the paste fallback sheet without pasting when Cancel is tapped", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+
+    getByRole("button", { name: "Cancel" }).click();
+
+    expect(paste).not.toHaveBeenCalled();
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
   });
 
   it("shrinks the font on a pinch-in and clamps at the readable minimum", async () => {
