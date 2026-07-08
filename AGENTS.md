@@ -61,8 +61,7 @@ remote-agent execution.
 ## Task Modes
 
 Choose the smallest mode that fits the request. Bounded Small Fix and Behavior
-Change work defaults to Cursor implementation via the `cursor-delegate` skill;
-see Cursor Delegate.
+Change work is delegated via `model-router`; see Delegation for lane selection.
 
 ## Persistent Plans
 
@@ -156,8 +155,8 @@ How to apply:
   Escalating costs less than shipping mediocre work.
 - Cost is a tie-breaker only; when axes conflict for anything that ships,
   intelligence > taste > cost.
-- Bounded in-repo implementation: delegate to Cursor via the `cursor-delegate`
-  skill by default (see Cursor Delegate below).
+- Bounded in-repo implementation: delegate via `model-router`, which picks the
+  lane (Cursor / OpenCode / Codex) — see Delegation below.
 - Bulk/mechanical work (data analysis, large mechanical migrations): gpt-5.5 -
   it is effectively free.
 - Anything user-facing (UI, copy, API design) needs taste >= 7.
@@ -176,45 +175,70 @@ How to apply:
   `model: sonnet`, `effort: low` whose prompt instructs it to write a
   self-contained Codex prompt, run `codex exec` via Bash, and return the result.
 
-## Cursor Delegate
+## Delegation
 
-Cursor CLI, driven through the `cursor-delegate` skill, is the default
-implementation worker for bounded changes in the current worktree. The
-orchestrating agent remains the planner, reviewer, and final approver: plan
-the change, hand Cursor a narrow work order, then review its diff before
-accepting anything.
+For any single bounded code behavior change in the current worktree that you
+would otherwise implement yourself, delegate via the `model-router` skill. You
+stay the planner, reviewer, and final approver: plan the change, hand the
+delegate a narrow work order, then review its diff before accepting anything.
+Skip delegation for trivial one-liners, non-code work, or pure Q&A.
 
-Pick the skill mode that matches the task:
+Implementation always needs a complete `tdd-implementation-packet` as the
+source of truth — never delegate a code change from a vague prompt.
+
+**Pick the lane — first match wins:**
+
+1. No code change (adversarial review, or critique of a packet before it goes to
+   a weaker model) → `codex-delegate` (GPT-5.5), read-only.
+2. Web frontend — anything under `crates/ajax-web/web` (Svelte, TypeScript, PWA,
+   terminal, viewport, CSS), or a change whose hard part is matching existing
+   repo UI patterns → `cursor-delegate` (Composer 2.5).
+3. Mechanical and fully specified — the packet names the exact edit and no design
+   judgment is left: renames, constant/string/config edits, boilerplate, docs,
+   or a test that mirrors an existing one → `opencode-delegate` / MiniMax-M3.
+4. Needs reasoning before editing — a backend/Rust change where you must first
+   work out module boundaries, failure modes, or refactor safety (bug isolation,
+   non-obvious multi-file interaction) → `opencode-delegate` / GLM 5.2.
+5. Anything else, or genuine doubt → `cursor-delegate` (Composer 2.5). Cursor is
+   the default; ambiguity resolves here.
+
+`codex-delegate` also implements, but only when the user explicitly asks, or in
+delegator mode where Codex picks one of the above sub-lanes and runs it itself.
+
+Cursor (the default lane) skill modes:
 
 - `implement` — an approved plan or bounded feature/fix (Behavior Change work)
 - `small-fix` — a narrow bug or failing test needing minimal edits (Small Fix
   work)
 - `test-only` — add or update tests without implementing the fix (the
   failing-test step of TDD)
-- `resume` — a focused follow-up after reviewing Cursor's previous diff
-- `review` — a read-only second opinion; Cursor must not edit files
+- `resume` — a focused follow-up after reviewing the previous diff
+- `review` — a read-only second opinion; the delegate must not edit files
 
-Delegation quality lives in the prompt. Give Cursor a work order, not a wish:
+Delegation quality lives in the prompt. Give the delegate a work order, not a
+wish:
 
 - name the files and code paths to touch
 - state the expected behavior and the tests to add or update
 - state what must not change (public behavior, unrelated files, architecture)
-- include the validation commands from this file that Cursor should run
+- include the validation commands from this file that the delegate should run
 
-One bounded task per delegation. Split larger work into sequential
-`implement` → `resume` rounds rather than one broad prompt.
+One bounded task per delegation. Split larger work into sequential `implement` →
+`resume` rounds rather than one broad prompt.
 
-After Cursor returns, review before accepting:
+Review before accepting, for every lane:
 
 1. Read the diff and check it against the requested scope.
 2. Confirm tests were added or updated when applicable.
-3. Run validation yourself; do not trust Cursor's claim alone.
+3. Run validation yourself; do not trust the delegate's claim alone. An empty
+   diff plus a success claim is a failure.
 4. Send unrelated or overly broad edits back via `resume` instead of quietly
    fixing them.
-5. Never commit, push, or report done solely because Cursor finished.
+5. Never commit, push, or report done solely because the delegate finished.
+   Delegates never commit, push, merge, rebase, or change branches.
 
 Implement directly only when the change is smaller than the work order needed
-to describe it, when Cursor CLI is unavailable (report that instead of
+to describe it, when the chosen CLI is unavailable (report that instead of
 silently taking over), or when the task is on the do-not-delegate list:
 
 - vague discovery or broad architecture planning
