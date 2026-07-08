@@ -318,7 +318,7 @@ test("terminal placeholder proves layout without Ghostty", async ({ page }) => {
   expect(panelStyle.minHeight).not.toBe("0px");
 });
 
-test("task detail route scroll survives expanded terminal close", async ({ page }) => {
+test("task detail route scroll survives expanded terminal close", async ({ page }, testInfo) => {
   await enableTerminalPlaceholder(page);
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
@@ -328,6 +328,36 @@ test("task detail route scroll survives expanded terminal close", async ({ page 
 
   const routeScroll = page.locator('[data-testid="route-scroll"]');
   await expect(routeScroll).toBeVisible();
+  await expect(page.locator("[data-testid='task-terminal-panel']")).toBeVisible();
+
+  const isMobileWebkit = testInfo.project.name === "mobile-webkit";
+
+  if (isMobileWebkit) {
+    // Mobile task route locks route-scroll (:has([data-outlet="task"])); only
+    // the terminal scrolls. Setting scrollTop must leave it at 0.
+    const beforeExpand = await routeScroll.evaluate((el) => {
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.max(0, maxScroll);
+      return { scrollTop: el.scrollTop, maxScroll };
+    });
+    expect(beforeExpand.maxScroll, "mobile task route must not overflow").toBeLessThanOrEqual(0);
+    expect(beforeExpand.scrollTop, "mobile task route scrollTop stays locked").toBe(0);
+
+    await page.getByRole("button", { name: "Expand terminal" }).click();
+    await expect(page.locator("html")).toHaveClass(/terminal-expanded/);
+
+    await page.getByRole("button", { name: "Expand terminal" }).click();
+    await expect(page.locator("html")).not.toHaveClass(/terminal-expanded/);
+
+    const afterClose = await routeScroll.evaluate((el) => {
+      const maxScroll = el.scrollHeight - el.clientHeight;
+      el.scrollTop = Math.max(0, maxScroll);
+      return { scrollTop: el.scrollTop, maxScroll };
+    });
+    expect(afterClose.maxScroll, "route must stay non-scrollable after expand close").toBeLessThanOrEqual(0);
+    expect(afterClose.scrollTop, "route scrollTop after expand close").toBe(0);
+    return;
+  }
 
   const beforeExpand = await routeScroll.evaluate((el) => {
     el.scrollTop = Math.min(120, el.scrollHeight - el.clientHeight);
