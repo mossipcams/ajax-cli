@@ -134,47 +134,11 @@ terminal model, runtime authority, or security assumptions.
 - Wait for approval unless the user explicitly asked for immediate implementation.
 - Update `architecture.md` in the same change when architecture changes.
 
-## Picking the Right Models for Workflows and Subagents
+## Model Routing
 
-Rankings, higher = better. Cost reflects what Matt actually pays (OpenAI has
-generous limits), not list price. Intelligence is how hard a problem can be
-handed to the model unsupervised. Taste covers UI/UX, code quality, API design,
-and copy.
-
-| model | cost | intelligence | taste |
-| --- | ---: | ---: | ---: |
-| gpt-5.5 | 9 | 8 | 5 |
-| sonnet-5 | 15 | 5 | 7 |
-| opus-4.8 | 4 | 7 | 8 |
-| fable-5 | 2 | 19 | 9 |
-
-How to apply:
-
-- These are defaults, not limits. You have standing permission to override them:
-  if a cheaper model's output does not meet the bar, rerun or redo the work with
-  a smarter model without asking. Judge the output, not the price tag.
-  Escalating costs less than shipping mediocre work.
-- Cost is a tie-breaker only; when axes conflict for anything that ships,
-  intelligence > taste > cost.
-- Bounded in-repo implementation: delegate via `model-router`, which picks the
-  lane (Cursor / OpenCode / Codex) — see Delegation below.
-- Bulk/mechanical work (data analysis, large mechanical migrations): gpt-5.5 -
-  it is effectively free.
-- Anything user-facing (UI, copy, API design) needs taste >= 7.
-- Reviews of plans/implementations: fable-5 or opus-4.8, optionally gpt-5.5 as
-  an extra independent perspective.
-- Never use Haiku.
-- Mechanics: gpt-5.5 is only reachable through the Codex CLI - `codex exec` /
-  `codex review` (Matt's `~/.codex/config.toml` defaults to gpt-5.5). Use the
-  codex-implementation, codex-review, and codex-computer-use skills; for work
-  they do not cover (investigation, data analysis), run
-  `codex exec -s read-only` directly with a self-contained prompt.
-- Claude models (sonnet-5, opus-4.8, fable-5) run via the Agent/Workflow model
-  parameter.
-- Using gpt-5.5 inside workflows and subagents (the model parameter only takes
-  Claude models, so use a wrapper): spawn a thin Claude wrapper agent with
-  `model: sonnet`, `effort: low` whose prompt instructs it to write a
-  self-contained Codex prompt, run `codex exec` via Bash, and return the result.
+Use the `model-router` skill for model, lane, and delegate-tool decisions. Do
+not duplicate model rankings, model preferences, or lane-selection rules in this
+file.
 
 ## Delegation
 
@@ -185,7 +149,7 @@ the user explicitly says not to delegate.
 For any code change, create or update the persistent plan and record one
 delegation decision before editing source:
 
-- `Delegation decision: delegated to <lane> via model-router`
+- `Delegation decision: delegated via model-router`
 - `Delegation decision: not delegated because <specific allowed exception>`
 
 You stay the planner, reviewer, and final approver. Strict workflow:
@@ -194,41 +158,12 @@ You stay the planner, reviewer, and final approver. Strict workflow:
 2. Make and record the delegation decision.
 3. When delegating implementation, create a complete
    `tdd-implementation-packet` as the source of truth.
-4. Delegate via `model-router`.
+4. Delegate via `model-router`; let it choose the model, lane, and tool.
 5. Review the diff.
 6. Run validation personally; do not trust the delegate's claim alone.
 7. Accept, reject, or send a focused `resume` order.
 
 Never delegate implementation from a vague prompt.
-
-**Pick the lane — first match wins:**
-
-1. No code change (adversarial review, or critique of a packet before it goes to
-   a weaker model) → `codex-delegate` (GPT-5.5), read-only.
-2. Web frontend — anything under `crates/ajax-web/web` (Svelte, TypeScript, PWA,
-   terminal, viewport, CSS), or a change whose hard part is matching existing
-   repo UI patterns → `cursor-delegate` (Composer 2.5).
-3. Mechanical and fully specified — the packet names the exact edit and no design
-   judgment is left: renames, constant/string/config edits, boilerplate, docs,
-   or a test that mirrors an existing one → `opencode-delegate` / MiniMax-M3.
-4. Needs reasoning before editing — a backend/Rust change where you must first
-   work out module boundaries, failure modes, or refactor safety (bug isolation,
-   non-obvious multi-file interaction) → `opencode-delegate` / GLM 5.2.
-5. Anything else, or genuine doubt → `cursor-delegate` (Composer 2.5). Cursor is
-   the default; ambiguity resolves here.
-
-`codex-delegate` also implements, but only when the user explicitly asks, or in
-delegator mode where Codex picks one of the above sub-lanes and runs it itself.
-
-Cursor (the default lane) skill modes:
-
-- `implement` — an approved plan or bounded feature/fix (Behavior Change work)
-- `small-fix` — a narrow bug or failing test needing minimal edits (Small Fix
-  work)
-- `test-only` — add or update tests without implementing the fix (the
-  failing-test step of TDD)
-- `resume` — a focused follow-up after reviewing the previous diff
-- `review` — a read-only second opinion; the delegate must not edit files
 
 Delegation quality lives in the prompt. Give the delegate a work order, not a
 wish:
@@ -241,7 +176,7 @@ wish:
 One bounded task per delegation. Split larger work into sequential `implement` →
 `resume` rounds rather than one broad prompt.
 
-Review before accepting, for every lane:
+Review before accepting, for every delegation:
 
 1. Read the diff and check it against the requested scope.
 2. Confirm tests were added or updated when applicable.
@@ -253,11 +188,12 @@ Review before accepting, for every lane:
 
 Do not implement directly unless one of these exceptions applies:
 
+- The user explicitly says not to delegate.
 - The change is truly smaller than the work order needed to describe it, such as
   a one-line typo, formatting-only edit, or comment-only correction.
 - The work is non-code, pure Q&A, planning-only, or review-only.
-- The selected delegation CLI or skill is unavailable. In that case, report the
-  unavailable tool instead of silently taking over.
+- The `model-router` skill or its selected delegation tool is unavailable. In
+  that case, report the unavailable tool instead of silently taking over.
 - The task is on the do-not-delegate list below.
 
 Do-not-delegate list:
