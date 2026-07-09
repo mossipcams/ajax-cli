@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.3...ajax-cli-v0.37.4) (2026-07-09)
+
+
+### Bug Fixes
+
+* **core:** recreate missing worktrees on repair and lock terminal ownership ([#401](https://github.com/mossipcams/ajax-cli/issues/401)) ([2061092](https://github.com/mossipcams/ajax-cli/commit/2061092d734d20ab81f5b0eed2e32bfa853aca7f))
+
 ## [0.37.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.2...ajax-cli-v0.37.3) (2026-07-09)
 
 
