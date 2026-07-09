@@ -1,9 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render } from "@testing-library/svelte";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
+
+function loadStylesSource(): string {
+  const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
+  return readFileSync(join(testDir, "../styles.css"), "utf8");
+}
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
@@ -114,6 +121,37 @@ describe("App shell", () => {
     expect(appViewportSource).toMatch(/--app-band-top:\s*var\(--app-top/);
     expect(appViewportSource).toMatch(/--app-band-height:\s*var\(--app-height/);
     expect(appSource).not.toMatch(/--app-height|--app-top/);
+  });
+
+  it("pins app-viewport to the keyboard band when html.keyboard-open", () => {
+    expect(appViewportSource).toMatch(/:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{/);
+    expect(appViewportSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*position:\s*fixed/,
+    );
+    expect(appViewportSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*top:\s*var\(--app-band-top/,
+    );
+    expect(appViewportSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*height:\s*var\(--app-band-height/,
+    );
+  });
+
+  it("hides chrome and clears task route-scroll padding when keyboard-open", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlocks = [...stylesSource.matchAll(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
+    )];
+    const mobileCss = mobileBlocks.map((match) => match[1]).join("\n");
+
+    expect(mobileCss).toMatch(
+      /html\.keyboard-open \.bottom-nav[\s\S]*?\{[^}]*display:\s*none/,
+    );
+    expect(mobileCss).toMatch(
+      /html\.keyboard-open \.cockpit-chrome[\s\S]*?\{[^}]*display:\s*none/,
+    );
+    expect(mobileCss).toMatch(
+      /html\.keyboard-open \[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*padding-bottom:\s*0/,
+    );
   });
 
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
