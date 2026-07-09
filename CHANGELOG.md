@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.8...ajax-cli-v0.37.9) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** repair worktree action, overlay toast, clear zero-lag echo ghost ([#412](https://github.com/mossipcams/ajax-cli/issues/412)) ([1a43b38](https://github.com/mossipcams/ajax-cli/commit/1a43b38b1261eaaee5aa743f198527a3acccfe0e))
+
 ## [0.37.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.7...ajax-cli-v0.37.8) (2026-07-09)
 
 
