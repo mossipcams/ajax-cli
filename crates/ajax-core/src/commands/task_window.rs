@@ -1,7 +1,7 @@
-use super::lookup::find_task;
+use super::lookup::{find_task, task_repo_path};
 use super::{CommandContext, CommandError, CommandPlan, OpenMode};
 use crate::{
-    adapters::TmuxAdapter,
+    adapters::{GitAdapter, TmuxAdapter},
     live::LiveStatusKind,
     models::{LifecycleStatus, TaskWindowStatus, TmuxStatus},
     registry::Registry,
@@ -26,16 +26,24 @@ pub fn task_window_repair_plan_with_open_mode<R: Registry>(
         plan.blocked_reasons.push("task is removed".to_string());
         return Ok(plan);
     }
-    if task
-        .git_status
-        .as_ref()
-        .is_some_and(|status| !status.worktree_exists)
-    {
-        plan.blocked_reasons.push(format!(
-            "task worktree is missing: {}",
-            task.worktree_path.display()
-        ));
-        return Ok(plan);
+    if let Some(git_status) = task.git_status.as_ref() {
+        if !git_status.worktree_exists {
+            if !git_status.branch_exists {
+                plan.blocked_reasons.push(format!(
+                    "task worktree is missing: {}",
+                    task.worktree_path.display()
+                ));
+                return Ok(plan);
+            }
+            let repo_path = task_repo_path(context, task)
+                .ok_or_else(|| CommandError::RepoNotFound(task.repo.clone()))?;
+            let git = GitAdapter::new("git");
+            plan.commands.push(git.add_worktree_existing_branch(
+                &repo_path,
+                &task.worktree_path.display().to_string(),
+                &task.branch,
+            ));
+        }
     }
 
     let tmux_session_exists = task

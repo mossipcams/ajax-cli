@@ -70,6 +70,18 @@ impl GitAdapter {
         )
     }
 
+    pub fn add_worktree_existing_branch(
+        &self,
+        repo_path: &str,
+        worktree_path: &str,
+        branch: &str,
+    ) -> CommandSpec {
+        CommandSpec::new(
+            &self.program,
+            ["-C", repo_path, "worktree", "add", worktree_path, branch],
+        )
+    }
+
     pub fn remove_worktree(&self, repo_path: &str, worktree_path: &str) -> CommandSpec {
         CommandSpec::new(
             &self.program,
@@ -269,6 +281,30 @@ mod tests {
             CommandSpec::new(
                 "git",
                 ["-C", "/repos/ajax-cli", "worktree", "list", "--porcelain"]
+            )
+        );
+    }
+
+    #[test]
+    fn add_worktree_existing_branch_attaches_without_creating_branch() {
+        let adapter = GitAdapter::new("git");
+
+        assert_eq!(
+            adapter.add_worktree_existing_branch(
+                "/Users/matt/projects/web",
+                "/tmp/worktrees/web-fix-login",
+                "ajax/fix-login",
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "add",
+                    "/tmp/worktrees/web-fix-login",
+                    "ajax/fix-login",
+                ],
             )
         );
     }

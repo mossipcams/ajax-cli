@@ -936,15 +936,6 @@ mod tests {
 
             let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
 
-            if !worktree_exists {
-                prop_assert!(plan.commands.is_empty());
-                prop_assert_eq!(
-                    plan.blocked_reasons,
-                    vec!["task worktree is missing: /tmp/worktrees/web-fix-login"]
-                );
-                return Ok(());
-            }
-
             prop_assert!(plan.blocked_reasons.is_empty());
             prop_assert_eq!(
                 &plan.commands[plan.commands.len() - 2..],
@@ -959,9 +950,28 @@ mod tests {
             );
 
             let repair_commands = &plan.commands[..plan.commands.len() - 2];
+            let worktree_prefix = if !worktree_exists {
+                prop_assert!(super::is_git_worktree_add_command(&repair_commands[0]));
+                prop_assert_eq!(
+                    &repair_commands[0].args,
+                    &[
+                        "-C",
+                        "/Users/matt/projects/web",
+                        "worktree",
+                        "add",
+                        "/tmp/worktrees/web-fix-login",
+                        "ajax/fix-login",
+                    ]
+                );
+                prop_assert!(!repair_commands[0].args.iter().any(|arg| arg == "-b"));
+                1
+            } else {
+                0
+            };
+            let tmux_repair = &repair_commands[worktree_prefix..];
             if !tmux_exists {
                 prop_assert_eq!(
-                    repair_commands,
+                    tmux_repair,
                     &[CommandSpec::new(
                         "tmux",
                         [
@@ -978,7 +988,7 @@ mod tests {
                 );
             } else if task_window_exists && !points_at_expected_path {
                 prop_assert_eq!(
-                    repair_commands,
+                    tmux_repair,
                     &[
                         CommandSpec::new(
                             "tmux",
@@ -1000,7 +1010,7 @@ mod tests {
                 );
             } else if !task_window_exists {
                 prop_assert_eq!(
-                    repair_commands,
+                    tmux_repair,
                     &[CommandSpec::new(
                         "tmux",
                         [
@@ -1015,7 +1025,7 @@ mod tests {
                     )]
                 );
             } else {
-                prop_assert!(repair_commands.is_empty());
+                prop_assert!(tmux_repair.is_empty());
             }
         }
 
@@ -4309,6 +4319,102 @@ mod tests {
             .events_for_task(&TaskId::new("task-1"))
             .iter()
             .any(|event| event.message == "lifecycle changed to Removed"));
+    }
+
+    #[test]
+    fn task_window_repair_plan_recreates_missing_worktree_when_branch_exists() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.blocked_reasons.is_empty());
+        let worktree_add = plan
+            .commands
+            .iter()
+            .find(|command| super::is_git_worktree_add_command(command))
+            .expect("expected git worktree add command");
+        assert_eq!(
+            worktree_add.args,
+            vec![
+                "-C",
+                "/Users/matt/projects/web",
+                "worktree",
+                "add",
+                "/tmp/worktrees/web-fix-login",
+                "ajax/fix-login",
+            ]
+        );
+        assert!(!worktree_add.args.iter().any(|arg| arg == "-b"));
+        assert_eq!(
+            plan.commands,
+            vec![
+                worktree_add.clone(),
+                CommandSpec::new(
+                    "tmux",
+                    [
+                        "new-session",
+                        "-d",
+                        "-s",
+                        "ajax-web-fix-login",
+                        "-n",
+                        "task",
+                        "-c",
+                        "/tmp/worktrees/web-fix-login"
+                    ]
+                ),
+                CommandSpec::new("tmux", ["select-window", "-t", "ajax-web-fix-login:task"]),
+                CommandSpec::new("tmux", ["attach-session", "-t", "ajax-web-fix-login"])
+                    .with_mode(CommandMode::InheritStdio)
+            ]
+        );
+    }
+
+    #[test]
+    fn task_window_repair_plan_blocks_missing_worktree_when_branch_missing() {
+        let mut context = context_with_tasks();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: false,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+
+        let plan = task_window_repair_plan(&context, "web/fix-login").unwrap();
+
+        assert!(plan.commands.is_empty());
+        assert!(!plan.commands.iter().any(super::is_git_worktree_add_command));
+        assert_eq!(
+            plan.blocked_reasons,
+            vec!["task worktree is missing: /tmp/worktrees/web-fix-login"]
+        );
     }
 
     #[test]

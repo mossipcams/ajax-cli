@@ -644,6 +644,7 @@ toggle restores the 80-column floor, where the font auto-shrinks (to a readable
 minimum) and horizontal pan covers sub-minimum overflow. Pinch-zoom adjusts
 font size within that same bound in wide mode. These frontend modules do not
 own task truth or tmux target selection.
+Frontend ownership rules for these modules are in `crates/ajax-web/web/TERMINAL.md`.
 
 ### `ajax-web::adapters::terminal_pty`
 
