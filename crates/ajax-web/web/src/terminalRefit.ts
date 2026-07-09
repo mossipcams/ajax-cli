@@ -13,7 +13,7 @@
  */
 
 /** Quiet window a layout-event burst must clear before the PTY is resized. */
-export const RESIZE_DEBOUNCE_MS = 300;
+export const RESIZE_DEBOUNCE_MS = 100;
 
 export interface RefitScheduler {
   /** Fit and notify the PTY on the next frame. Connection-time path: the

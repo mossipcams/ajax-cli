@@ -67,7 +67,6 @@ version = "0.11.0"
 dependencies = [
  "ajax-core",
  "axum",
- "base64",
  "getrandom 0.3.4",
  "jsonwebtoken",
  "portable-pty",

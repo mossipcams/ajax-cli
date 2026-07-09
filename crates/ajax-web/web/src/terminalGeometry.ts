@@ -23,6 +23,25 @@ export const MAX_FONT_SIZE = 20;
 /** The default cell size on every viewport. */
 export const DEFAULT_FONT_SIZE = 13;
 
+/** Ghostty scrollback line caps: lighter on phones, full history on desktop. */
+export const MOBILE_SCROLLBACK_LINES = 2000;
+export const DESKTOP_SCROLLBACK_LINES = 10000;
+
+/** Matches TaskDetail / TerminalRawView mobile CSS media query. */
+const MOBILE_MEDIA_QUERY =
+  "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
+
+/**
+ * Scrollback lines for the Ghostty constructor. Uses the same mobile media
+ * heuristic as TaskDetail CSS so phone viewports get the lighter buffer.
+ */
+export function terminalScrollbackLines(): number {
+  if (typeof window !== "undefined" && window.matchMedia?.(MOBILE_MEDIA_QUERY).matches) {
+    return MOBILE_SCROLLBACK_LINES;
+  }
+  return DESKTOP_SCROLLBACK_LINES;
+}
+
 const FONT_SIZE_STORAGE_KEY = "ajax.terminal.fontSize";
 
 /**
