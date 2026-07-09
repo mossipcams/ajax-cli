@@ -19,6 +19,8 @@ const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
+const TERMINAL_OUTPUT_FLUSH_MS: u64 = 16;
+const TERMINAL_OUTPUT_MAX_BYTES: usize = 16 * 1024;
 const BROWSER_TMUX_TERM: &str = "xterm-256color";
 const SCROLLBACK_HOSTILE_SEQUENCES: &[&[u8]] = &[
     b"\x1b[?47h",
@@ -177,14 +179,21 @@ fn build_isolated_attach_plan_with_token(
         task_window: plan.task_window.clone(),
     };
     IsolatedAttachPlan {
-        setup: vec![TmuxCommand::new([
-            "new-session",
-            "-d",
-            "-s",
-            &ephemeral,
-            "-t",
-            &plan.tmux_session,
-        ])],
+        setup: vec![
+            TmuxCommand::new([
+                "new-session",
+                "-d",
+                "-s",
+                &ephemeral,
+                "-t",
+                &plan.tmux_session,
+            ]),
+            // Quieter status redraw on the browser-only grouped session; never
+            // touch the shared task session's options.
+            TmuxCommand::new(["set-option", "-t", &ephemeral, "status-interval", "5"]),
+            TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-activity", "off"]),
+            TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-bell", "off"]),
+        ],
         attach: build_tmux_attach_command_plan(&ephemeral_plan),
         teardown: vec![TmuxCommand::new(["kill-session", "-t", &ephemeral])],
         ephemeral_session: ephemeral,
@@ -278,13 +287,6 @@ struct TerminalInputFrame {
     rows: u16,
 }
 
-#[derive(Debug, serde::Serialize)]
-struct TerminalOutputFrame<'a> {
-    #[serde(rename = "type")]
-    frame_type: &'static str,
-    data: &'a str,
-}
-
 fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec<u8> {
     let mut buf = std::mem::take(carry);
     buf.extend_from_slice(chunk);
@@ -312,6 +314,49 @@ fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec
     }
 
     output
+}
+
+struct TerminalOutputBatch {
+    buf: Vec<u8>,
+}
+
+impl TerminalOutputBatch {
+    fn new() -> Self {
+        Self { buf: Vec::new() }
+    }
+
+    fn push(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.buf.len()
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
+    /// true when buffered bytes >= TERMINAL_OUTPUT_MAX_BYTES
+    fn should_flush_by_size(&self) -> bool {
+        self.buf.len() >= TERMINAL_OUTPUT_MAX_BYTES
+    }
+
+    /// Drain all buffered bytes (empty → empty Vec).
+    fn take(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.buf)
+    }
+}
+
+/// Non-empty drained batch bytes ready for `Message::Binary` (no JSON/base64 wrap).
+fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
+    if bytes.is_empty() {
+        None
+    } else {
+        Some(bytes)
+    }
 }
 
 /// Report a bridge setup failure to the browser and close the socket.
@@ -409,9 +454,26 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     });
 
     let mut scrollback_filter_carry = Vec::new();
+    let mut output_batch = TerminalOutputBatch::new();
+    let mut flush_deadline: Option<tokio::time::Instant> = None;
 
     loop {
+        let flush_wait = match flush_deadline {
+            Some(deadline) => tokio::time::sleep_until(deadline),
+            None => tokio::time::sleep(Duration::from_secs(86400 * 365)),
+        };
+        tokio::pin!(flush_wait);
+
         tokio::select! {
+            _ = &mut flush_wait, if flush_deadline.is_some() => {
+                flush_deadline = None;
+                let drained = output_batch.take();
+                if let Some(payload) = output_frame_bytes(drained) {
+                    if socket.send(Message::Binary(payload.into())).await.is_err() {
+                        break;
+                    }
+                }
+            }
             output = output_rx.recv() => {
                 match output {
                     Some(bytes) => {
@@ -420,23 +482,29 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
                         if filtered.is_empty() {
                             continue;
                         }
-                        let encoded = base64::Engine::encode(
-                            &base64::engine::general_purpose::STANDARD,
-                            &filtered,
-                        );
-                        let frame = TerminalOutputFrame {
-                            frame_type: "output",
-                            data: &encoded,
-                        };
-                        let payload = match serde_json::to_string(&frame) {
-                            Ok(payload) => payload,
-                            Err(_) => break,
-                        };
-                        if socket.send(Message::Text(payload.into())).await.is_err() {
-                            break;
+                        output_batch.push(&filtered);
+                        if output_batch.should_flush_by_size() {
+                            flush_deadline = None;
+                            let drained = output_batch.take();
+                            if let Some(payload) = output_frame_bytes(drained) {
+                                if socket.send(Message::Binary(payload.into())).await.is_err() {
+                                    break;
+                                }
+                            }
+                        } else if flush_deadline.is_none() {
+                            flush_deadline = Some(
+                                tokio::time::Instant::now()
+                                    + Duration::from_millis(TERMINAL_OUTPUT_FLUSH_MS),
+                            );
                         }
                     }
-                    None => break,
+                    None => {
+                        let drained = output_batch.take();
+                        if let Some(payload) = output_frame_bytes(drained) {
+                            let _ = socket.send(Message::Binary(payload.into())).await;
+                        }
+                        break;
+                    }
                 }
             }
             incoming = socket.recv() => {
@@ -642,20 +710,66 @@ mod tests {
         assert_eq!(isolated.ephemeral_session, ephemeral);
         // A grouped session shares the shared session's windows but keeps an
         // independent size, so the phone never shrinks the shared window.
+        // Quieter status options target the ephemeral session only.
         assert_eq!(
             isolated.setup,
-            vec![TmuxCommand {
-                program: "tmux".to_string(),
-                args: vec![
-                    "new-session".to_string(),
-                    "-d".to_string(),
-                    "-s".to_string(),
-                    ephemeral.to_string(),
-                    "-t".to_string(),
-                    "ajax-web-fix-login".to_string(),
-                ],
-            }]
+            vec![
+                TmuxCommand {
+                    program: "tmux".to_string(),
+                    args: vec![
+                        "new-session".to_string(),
+                        "-d".to_string(),
+                        "-s".to_string(),
+                        ephemeral.to_string(),
+                        "-t".to_string(),
+                        "ajax-web-fix-login".to_string(),
+                    ],
+                },
+                TmuxCommand {
+                    program: "tmux".to_string(),
+                    args: vec![
+                        "set-option".to_string(),
+                        "-t".to_string(),
+                        ephemeral.to_string(),
+                        "status-interval".to_string(),
+                        "5".to_string(),
+                    ],
+                },
+                TmuxCommand {
+                    program: "tmux".to_string(),
+                    args: vec![
+                        "set-option".to_string(),
+                        "-t".to_string(),
+                        ephemeral.to_string(),
+                        "visual-activity".to_string(),
+                        "off".to_string(),
+                    ],
+                },
+                TmuxCommand {
+                    program: "tmux".to_string(),
+                    args: vec![
+                        "set-option".to_string(),
+                        "-t".to_string(),
+                        ephemeral.to_string(),
+                        "visual-bell".to_string(),
+                        "off".to_string(),
+                    ],
+                },
+            ]
         );
+        let set_option_targets: Vec<&str> = isolated
+            .setup
+            .iter()
+            .filter(|cmd| cmd.args.first().map(String::as_str) == Some("set-option"))
+            .filter_map(|cmd| {
+                cmd.args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-t")
+                    .map(|pair| pair[1].as_str())
+            })
+            .collect();
+        assert_eq!(set_option_targets, vec![ephemeral, ephemeral, ephemeral]);
+        assert!(!set_option_targets.contains(&"ajax-web-fix-login"));
         // Attach targets the ephemeral session's task window, never the
         // browser handle and never the shared session directly.
         assert_eq!(
@@ -723,6 +837,52 @@ mod tests {
         assert_ne!(first, second);
         assert_ne!(first, "ajax-web-fix-login");
         assert!(first.starts_with("ajax-web-fix-login-m"));
+    }
+
+    #[test]
+    fn terminal_output_flush_constants_match_targets() {
+        assert_eq!(TERMINAL_OUTPUT_FLUSH_MS, 16);
+        assert_eq!(TERMINAL_OUTPUT_MAX_BYTES, 16 * 1024);
+    }
+
+    #[test]
+    fn terminal_output_batch_pushes_until_max_bytes_then_take_drains() {
+        let mut batch = TerminalOutputBatch::new();
+        batch.push(b"abc");
+        assert!(!batch.should_flush_by_size());
+        assert_eq!(batch.len(), 3);
+
+        let remaining = TERMINAL_OUTPUT_MAX_BYTES - batch.len();
+        batch.push(&vec![b'x'; remaining]);
+        assert!(batch.should_flush_by_size());
+        assert_eq!(batch.len(), TERMINAL_OUTPUT_MAX_BYTES);
+
+        let drained = batch.take();
+        assert_eq!(drained.len(), TERMINAL_OUTPUT_MAX_BYTES);
+        assert_eq!(&drained[..3], b"abc");
+        assert!(drained[3..].iter().all(|&b| b == b'x'));
+        assert!(batch.is_empty());
+        assert_eq!(batch.len(), 0);
+        assert!(!batch.should_flush_by_size());
+    }
+
+    #[test]
+    fn terminal_output_batch_take_on_empty_returns_none_or_empty() {
+        let mut batch = TerminalOutputBatch::new();
+        assert!(batch.is_empty());
+        let drained = batch.take();
+        assert!(drained.is_empty());
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn terminal_output_frame_bytes_returns_raw_bytes_for_binary_send() {
+        let bytes = output_frame_bytes(b"hello".to_vec()).expect("non-empty bytes");
+        assert_eq!(bytes, b"hello");
+        // Live path sends Message::Binary(raw); must not base64-wrap or JSON-wrap.
+        assert!(!String::from_utf8_lossy(&bytes).contains("\"type\""));
+        assert!(!String::from_utf8_lossy(&bytes).contains("output"));
+        assert!(output_frame_bytes(Vec::new()).is_none());
     }
 
     #[test]

@@ -17,6 +17,7 @@
     fitCapFontSize,
     persistedFontSize,
     persistFontSize,
+    terminalScrollbackLines,
     DEFAULT_FONT_SIZE,
     MAX_FONT_SIZE,
     FIT_TERMINAL_COLS,
@@ -25,6 +26,8 @@
     scrollbackGrowthCompensation,
     outputFollowEffects,
     validTerminalSize,
+    createResizeDedupe,
+    createTerminalWriteBatcher,
   } from "../terminalOutputPolicy";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
@@ -222,6 +225,9 @@
     let term: Terminal | undefined;
     let fitAddon: FitAddon | undefined;
     let connection: TerminalConnection;
+    const resizeDedupe = createResizeDedupe((cols, rows) => {
+      connection.sendResize(cols, rows);
+    });
     const terminalSubscriptions: IDisposable[] = [];
     const pendingOutput: string[] = [];
 
@@ -545,7 +551,7 @@
       if (!term) return;
       const size = validTerminalSize(term.cols, term.rows);
       if (!size) return;
-      connection.sendResize(size.cols, size.rows);
+      resizeDedupe.sendIfChanged(size.cols, size.rows);
     };
 
     sendKey = (data: string) => connection.sendInput(data);
@@ -777,38 +783,42 @@
     let optimisticPrintableAhead = "";
     let optimisticBackspacesAhead = 0;
 
-    const writeOutput = (text: string) => {
-      if (pinnedToBottom) {
-        writeToTerminal(text);
-      } else {
-        // viewportY is measured from the bottom, so when this write pushes
-        // lines into scrollback the view must step back by the same amount
-        // or the text being read crawls upward.
-        const scrollbackBefore = scrollbackLines();
-        writeToTerminal(text);
-        const compensation = scrollbackGrowthCompensation(
-          scrollbackBefore,
-          scrollbackLines(),
-        );
-        if (compensation !== 0) term?.scrollLines(compensation);
-      }
-      const pendingOptimistic = zeroLagInput;
-      if (pendingOptimistic && text.includes(pendingOptimistic)) {
-        optimisticPrintableAhead = "";
-        optimisticBackspacesAhead = 0;
-        zeroLagInput = "";
-        zeroLagStyle = "";
-      }
-      const follow = outputFollowEffects(pinnedToBottom);
-      if (follow.snapToBottom) {
-        snapScrollbackToBottom();
-      } else if (follow.markUnseenOutput) {
-        hasUnseenOutput = true;
-      }
-    };
+    // Coalesce WS output chunks into one write + one follow/compensation pass
+    // per ~16ms (or max-char) flush. Input / zero-lag echo stays unbatched.
+    const writeBatcher = createTerminalWriteBatcher({
+      onFlush: (combined) => {
+        if (pinnedToBottom) {
+          writeToTerminal(combined);
+        } else {
+          // viewportY is measured from the bottom, so when this write pushes
+          // lines into scrollback the view must step back by the same amount
+          // or the text being read crawls upward.
+          const scrollbackBefore = scrollbackLines();
+          writeToTerminal(combined);
+          const compensation = scrollbackGrowthCompensation(
+            scrollbackBefore,
+            scrollbackLines(),
+          );
+          if (compensation !== 0) term?.scrollLines(compensation);
+        }
+        const pendingOptimistic = zeroLagInput;
+        if (pendingOptimistic && combined.includes(pendingOptimistic)) {
+          optimisticPrintableAhead = "";
+          optimisticBackspacesAhead = 0;
+          zeroLagInput = "";
+          zeroLagStyle = "";
+        }
+        const follow = outputFollowEffects(pinnedToBottom);
+        if (follow.snapToBottom) {
+          snapScrollbackToBottom();
+        } else if (follow.markUnseenOutput) {
+          hasUnseenOutput = true;
+        }
+      },
+    });
 
     connection = connectTaskTerminal(handle, {
-      onOutput: writeOutput,
+      onOutput: (text) => writeBatcher.push(text),
       onServerError: (message) => {
         statusDetail = message;
       },
@@ -821,6 +831,7 @@
         optimisticBackspacesAhead = 0;
         zeroLagInput = "";
         zeroLagStyle = "";
+        resizeDedupe.reset();
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term?.focus());
       },
@@ -946,6 +957,7 @@
         fontFamily: "ui-monospace, SF Mono, Menlo, monospace",
         fontSize: persistedFontSize() ?? DEFAULT_FONT_SIZE,
         ghostty,
+        scrollback: terminalScrollbackLines(),
         scrollbarWidth: 0,
         // Ajax synthesizes 100% of scrolling and reads getViewportY() as an
         // instant integer (pinnedToBottom, Math.floor topAbsoluteRow). 0.9.x's
@@ -1003,6 +1015,10 @@
         expandFlushTimer = undefined;
       }
       expandFlushPending = false;
+      // Paint any queued output while the terminal still exists, then drop the
+      // batcher so a late timer cannot write after dispose.
+      if (term) writeBatcher.flush();
+      writeBatcher.dispose();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
       if (copyNoticeTimer) clearTimeout(copyNoticeTimer);

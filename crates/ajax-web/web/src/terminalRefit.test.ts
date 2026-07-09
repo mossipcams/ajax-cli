@@ -3,6 +3,12 @@ import { createRefitScheduler, RESIZE_DEBOUNCE_MS, type RefitScheduler } from ".
 
 const FRAME_MS = 16;
 
+describe("RESIZE_DEBOUNCE_MS", () => {
+  it("is 100ms", () => {
+    expect(RESIZE_DEBOUNCE_MS).toBe(100);
+  });
+});
+
 describe("createRefitScheduler", () => {
   let fit: Mock<() => void>;
   let sendResize: Mock<() => void>;

@@ -1,11 +1,57 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   flooredCols,
   clampPan,
   pinchFontSize,
   pinchActivated,
   fitCapFontSize,
+  MOBILE_SCROLLBACK_LINES,
+  DESKTOP_SCROLLBACK_LINES,
+  terminalScrollbackLines,
 } from "./terminalGeometry";
+
+const MOBILE_MEDIA_QUERY =
+  "(max-width: 767px), (pointer: coarse) and (max-height: 500px)";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("terminal scrollback limits", () => {
+  it("uses 2000 lines on mobile and 10000 on desktop", () => {
+    expect(MOBILE_SCROLLBACK_LINES).toBe(2000);
+    expect(DESKTOP_SCROLLBACK_LINES).toBe(10000);
+  });
+
+  it("selects mobile scrollback when the TaskDetail mobile media heuristic matches", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === MOBILE_MEDIA_QUERY,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+
+    expect(terminalScrollbackLines()).toBe(MOBILE_SCROLLBACK_LINES);
+    expect(window.matchMedia).toHaveBeenCalledWith(MOBILE_MEDIA_QUERY);
+  });
+
+  it("selects desktop scrollback when the mobile media heuristic does not match", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: false,
+        media: query,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })),
+    );
+
+    expect(terminalScrollbackLines()).toBe(DESKTOP_SCROLLBACK_LINES);
+  });
+});
 
 describe("flooredCols", () => {
   it("raises a narrow proposal to the minimum column count", () => {

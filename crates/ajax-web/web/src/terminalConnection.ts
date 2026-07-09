@@ -58,42 +58,83 @@ export function connectTaskTerminal(
     events.onStatus(next);
   };
 
-  const readMessageData = async (data: unknown): Promise<string> => {
-    if (typeof data === "string") return data;
-    if (data instanceof Blob) {
-      // Every supported browser has Blob.text(), but jsdom's Blob does not —
-      // the FileReader fallback is what the component tests exercise.
-      if ("text" in data && typeof data.text === "function") return data.text();
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.addEventListener("load", () => resolve(String(reader.result ?? "")));
-        reader.addEventListener("error", () => reject(reader.error));
-        reader.readAsText(data);
-      });
+  const readBlobArrayBuffer = async (blob: Blob): Promise<ArrayBuffer> => {
+    if ("arrayBuffer" in blob && typeof blob.arrayBuffer === "function") {
+      return blob.arrayBuffer();
     }
-    if (data instanceof ArrayBuffer) return new TextDecoder().decode(data);
-    return String(data);
+    // jsdom Blob may lack arrayBuffer(); FileReader is what component tests use.
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => resolve(reader.result as ArrayBuffer));
+      reader.addEventListener("error", () => reject(reader.error));
+      reader.readAsArrayBuffer(blob);
+    });
   };
 
-  const onSocketMessage = async (event: MessageEvent) => {
-    const data = await readMessageData(event.data);
-    // Only a parse failure may fall back to raw pass-through; a decode or
-    // write failure must surface instead of smearing raw JSON into the
-    // terminal and hiding the bug.
+  const bytesFromBinaryData = async (data: unknown): Promise<Uint8Array | null> => {
+    if (data instanceof ArrayBuffer) return new Uint8Array(data);
+    if (ArrayBuffer.isView(data)) {
+      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    }
+    // Cross-realm ArrayBuffer (jsdom MessageEvent) may fail instanceof.
+    if (
+      data != null &&
+      typeof data === "object" &&
+      Object.prototype.toString.call(data) === "[object ArrayBuffer]"
+    ) {
+      return new Uint8Array(data as ArrayBuffer);
+    }
+    if (data instanceof Blob) {
+      return new Uint8Array(await readBlobArrayBuffer(data));
+    }
+    return null;
+  };
+
+  const handleJsonControlFrame = (text: string): boolean => {
     let payload: { type?: string; data?: string; error?: unknown };
     try {
-      payload = JSON.parse(data) as { type?: string; data?: string; error?: unknown };
+      payload = JSON.parse(text) as { type?: string; data?: string; error?: unknown };
     } catch {
-      events.onOutput(data);
-      return;
+      return false;
     }
     if (payload.type === "output" && payload.data) {
+      // Legacy JSON+base64 output (one-release compat).
       const binary = atob(payload.data);
       const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
       events.onOutput(outputDecoder.decode(bytes, { stream: true }));
-    } else if (payload.type === "error" && payload.error) {
+      return true;
+    }
+    if (payload.type === "error" && payload.error) {
       attachFailed = true;
       events.onServerError(String(payload.error));
+      return true;
+    }
+    return false;
+  };
+
+  const onSocketMessage = async (event: MessageEvent) => {
+    const raw = event.data;
+
+    // Binary PTY output (server Message::Binary). Default browser binaryType is Blob.
+    const binaryBytes = await bytesFromBinaryData(raw);
+    if (binaryBytes) {
+      // JSON control/error (or legacy output) may arrive as a Blob of UTF-8 JSON.
+      if (binaryBytes.length > 0 && binaryBytes[0] === 0x7b /* { */) {
+        const asText = new TextDecoder().decode(binaryBytes);
+        if (handleJsonControlFrame(asText)) return;
+      }
+      events.onOutput(outputDecoder.decode(binaryBytes, { stream: true }));
+      return;
+    }
+
+    if (typeof raw !== "string") {
+      events.onOutput(String(raw));
+      return;
+    }
+
+    // Text frames: JSON control/error/legacy output, else raw pass-through.
+    if (!handleJsonControlFrame(raw)) {
+      events.onOutput(raw);
     }
   };
 

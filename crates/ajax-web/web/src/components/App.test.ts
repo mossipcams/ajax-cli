@@ -413,7 +413,8 @@ describe("App shell", () => {
         if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
         if (path.startsWith("/api/tasks/")) {
           detailCalls += 1;
-          if (detailCalls <= 2) {
+          // First open fails; reopen after leaving the task succeeds.
+          if (detailCalls === 1) {
             return Promise.resolve(jsonResponse({ error: "detail unavailable" }, 500));
           }
           return Promise.resolve(jsonResponse(taskDetail));
@@ -426,7 +427,10 @@ describe("App shell", () => {
     setHash("#/t/web%2Ffix-login");
     expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
 
+    // Flush the dashboard intermediate so the detail effect observes handle=null
+    // before reopening the same task (sync double-hashchange would otherwise batch).
     setHash("#/");
+    await tick();
     setHash("#/t/web%2Ffix-login");
 
     expect(await findByText("connected")).toBeInTheDocument();

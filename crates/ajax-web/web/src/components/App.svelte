@@ -3,7 +3,11 @@
   import { parseRoute, dashboardHash, settingsHash, taskHash, projectHash, type Route } from "../routes";
   import type { BrowserCockpitView, BrowserTaskDetail, ConnectionState } from "../types";
   import { ApiError, fetchCockpit, fetchDetail, fetchVersion, postOperation, requestId } from "../api";
-  import { REFRESH_INTERVAL_MS, VERSION_POLL_MS } from "../polling";
+  import {
+    cockpitRefreshIntervalMs,
+    versionPollIntervalMs,
+    type PollingRouteKind,
+  } from "../polling";
   import ConnectionStatus from "./ConnectionStatus.svelte";
   import ResultPanel from "./ResultPanel.svelte";
   import TaskList from "./TaskList.svelte";
@@ -16,6 +20,7 @@
   import RouteScroll from "./RouteScroll.svelte";
   import { pullToRefresh } from "../gestures/pullToRefreshAction";
   import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
+  import { createCockpitApplyGate, createInFlightGuard } from "../cockpitPoll";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -27,17 +32,25 @@
   let sheetOpen = $state(false);
   let result = $state<{ message: string; output?: string | null; isError: boolean } | null>(null);
   let pullDistance = $state(0);
+  let documentVisibility = $state<DocumentVisibilityState>(
+    typeof document !== "undefined" ? document.visibilityState : "visible",
+  );
 
   let selectedProject = $derived(route.kind === "project" ? (route.project ?? null) : null);
   let taskOpenHandle = $derived(route.kind === "task" ? route.handle : null);
   let bootVersion: string | null = null;
+
+  const cockpitApplyGate = createCockpitApplyGate();
+  const cockpitPollGuard = createInFlightGuard();
 
   function showResult(message: string, output: string | null | undefined, isError: boolean) {
     result = { message, output, isError };
   }
 
   function applyCockpit(next: BrowserCockpitView) {
-    cockpit = next;
+    if (cockpitApplyGate.applyIfChanged(next)) {
+      cockpit = next;
+    }
     connection = "connected";
     connectionDetail = null;
   }
@@ -59,11 +72,13 @@
 
   async function loadCockpit() {
     if (document.hidden) return;
-    try {
-      applyCockpit(await fetchCockpit());
-    } catch (error) {
-      applyConnectionError(error);
-    }
+    await cockpitPollGuard.run(async () => {
+      try {
+        applyCockpit(await fetchCockpit());
+      } catch (error) {
+        applyConnectionError(error);
+      }
+    });
   }
 
   // Opening a task IS the resume gesture (matches TUI Enter): dispatch the
@@ -118,29 +133,46 @@
     else clearTimeout(handle);
   }
 
-  // Cockpit polling — mount once; the interval callback is not a tracked read.
+  // Shell listeners — mount once; immediate poll on focus / pageshow / become-visible.
   $effect(() => {
     void loadCockpit();
     const idleHandle = whenIdle(() => void checkVersion());
-    const cockpitTimer = setInterval(loadCockpit, REFRESH_INTERVAL_MS);
-    const versionTimer = setInterval(checkVersion, VERSION_POLL_MS);
     const onHashChange = () => (route = parseRoute(location.hash));
     const onResume = () => {
       void checkVersion();
       void loadCockpit();
     };
+    const onVisibilityChange = () => {
+      documentVisibility = document.visibilityState;
+      if (document.visibilityState === "visible") {
+        void checkVersion();
+        void loadCockpit();
+      }
+    };
     window.addEventListener("hashchange", onHashChange);
     window.addEventListener("focus", onResume);
     window.addEventListener("pageshow", onResume);
-    document.addEventListener("visibilitychange", onResume);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelIdle(idleHandle);
-      clearInterval(cockpitTimer);
-      clearInterval(versionTimer);
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("focus", onResume);
       window.removeEventListener("pageshow", onResume);
-      document.removeEventListener("visibilitychange", onResume);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  });
+
+  // Adaptive cockpit / version intervals — reschedule on route or visibility change.
+  $effect(() => {
+    const input = {
+      visibilityState: documentVisibility,
+      routeKind: route.kind as PollingRouteKind,
+    };
+    const cockpitTimer = setInterval(loadCockpit, cockpitRefreshIntervalMs(input));
+    const versionTimer = setInterval(checkVersion, versionPollIntervalMs(input));
+    return () => {
+      clearInterval(cockpitTimer);
+      clearInterval(versionTimer);
     };
   });
 

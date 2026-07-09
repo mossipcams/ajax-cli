@@ -852,18 +852,19 @@ describe("TerminalRawView", () => {
     fit.mockClear();
     socket!.send.mockClear();
 
+    proposedDimensions = { cols: 90, rows: 28 };
     dispatchVisualViewport("resize");
 
     vi.advanceTimersByTime(20);
-    expect(fit).toHaveBeenCalled();
+    expect(resize).toHaveBeenCalledWith(90, 28);
     expect(socket?.send).not.toHaveBeenCalled();
 
-    vi.advanceTimersByTime(279);
+    vi.advanceTimersByTime(79);
     expect(socket?.send).not.toHaveBeenCalled();
 
     vi.advanceTimersByTime(1);
     expect(socket?.send).toHaveBeenCalledWith(
-      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
+      JSON.stringify({ type: "resize", cols: 90, rows: 28 }),
     );
     vi.useRealTimers();
   });
@@ -934,11 +935,13 @@ describe("TerminalRawView", () => {
     vi.advanceTimersByTime(100);
     dispatchVisualViewport("resize");
     vi.advanceTimersByTime(100);
+    proposedDimensions = { cols: 72, rows: 20 };
     setKeyboardOpen(false);
     dispatchVisualViewport("resize");
-    vi.advanceTimersByTime(300);
+    vi.advanceTimersByTime(100);
 
     expect(resizeFrames()).toHaveLength(1);
+    expect(resizeFrames()[0]).toEqual({ type: "resize", cols: 72, rows: 20 });
     vi.useRealTimers();
   });
 
@@ -968,13 +971,8 @@ describe("TerminalRawView", () => {
     await settleFrames();
 
     expect(fit.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(socket?.send).toHaveBeenCalledTimes(2);
-    expect(socket?.send).toHaveBeenNthCalledWith(
-      1,
-      JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
-    );
-    expect(socket?.send).toHaveBeenNthCalledWith(
-      2,
+    expect(socket?.send).toHaveBeenCalledTimes(1);
+    expect(socket?.send).toHaveBeenCalledWith(
       JSON.stringify({ type: "resize", cols: 80, rows: 24 }),
     );
   });
@@ -1841,6 +1839,23 @@ describe("TerminalRawView", () => {
     expect((terminalOptions as { scrollbarWidth?: number }).scrollbarWidth).toBe(0);
   });
 
+  it("passes a mobile-aware scrollback limit into Ghostty", async () => {
+    stubMatchMedia(() => false);
+    await mountTerminal();
+
+    expect((terminalOptions as { scrollback?: number }).scrollback).toBe(10_000);
+  });
+
+  it("passes the mobile scrollback limit when the mobile media heuristic matches", async () => {
+    stubMatchMedia(
+      (query) =>
+        query === "(max-width: 767px), (pointer: coarse) and (max-height: 500px)",
+    );
+    await mountTerminal();
+
+    expect((terminalOptions as { scrollback?: number }).scrollback).toBe(2000);
+  });
+
   it("disables ghostty-web smooth scrolling so viewportY stays instant", async () => {
     await mountTerminal();
 
@@ -2159,10 +2174,10 @@ describe("TerminalRawView", () => {
 
   it("flushes the PTY resize when the pinch ends", async () => {
     vi.useFakeTimers();
-    proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
     socket!.send.mockClear();
+    proposedDimensions = { cols: 100, rows: 30 };
 
     host.dispatchEvent(
       makePinch("touchstart", [
@@ -2178,7 +2193,7 @@ describe("TerminalRawView", () => {
     );
     host.dispatchEvent(makePinch("touchend", []));
 
-    // Animation frames only — well under the 300ms resize debounce.
+    // Animation frames only — well under the 100ms resize debounce.
     vi.advanceTimersByTime(50);
     expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 100, rows: 30 });
     vi.useRealTimers();
@@ -2186,12 +2201,12 @@ describe("TerminalRawView", () => {
 
   it("applies the pinch rewrap while the keyboard is open", async () => {
     vi.useFakeTimers();
-    proposedDimensions = { cols: 100, rows: 30 };
     const { host, socket } = await mountOpenTerminal();
     vi.advanceTimersByTime(400); // settle the open-path refits
     setKeyboardOpen(true);
     resize.mockClear();
     socket!.send.mockClear();
+    proposedDimensions = { cols: 100, rows: 30 };
 
     host.dispatchEvent(
       makePinch("touchstart", [
@@ -2207,7 +2222,7 @@ describe("TerminalRawView", () => {
     );
     host.dispatchEvent(makePinch("touchend", []));
 
-    // Animation frames only — well under the 300ms resize debounce.
+    // Animation frames only — well under the 100ms resize debounce.
     vi.advanceTimersByTime(50);
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(true);
     expect(resize).toHaveBeenCalled();

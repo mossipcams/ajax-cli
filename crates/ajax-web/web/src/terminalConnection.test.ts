@@ -153,4 +153,108 @@ describe("connectTaskTerminal", () => {
     expect(statuses.at(-1)).toBe("connecting");
     expect(MockWebSocket.instances.length).toBeGreaterThan(dialsBefore);
   });
+
+  it("decodes binary ArrayBuffer output via TextDecoder into onOutput", async () => {
+    const outputs: string[] = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: (text) => outputs.push(text),
+      onServerError: () => {},
+      onStatus: () => {},
+      onOpen: () => {},
+    });
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    const bytes = new TextEncoder().encode("λ binary");
+    socket.fire(
+      "message",
+      new MessageEvent("message", { data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) }),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(outputs).toEqual(["λ binary"]);
+  });
+
+  it("decodes binary Blob output via TextDecoder into onOutput", async () => {
+    const outputs: string[] = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: (text) => outputs.push(text),
+      onServerError: () => {},
+      onStatus: () => {},
+      onOpen: () => {},
+    });
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: new Blob([new TextEncoder().encode("blob pty")]),
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(outputs).toEqual(["blob pty"]);
+    });
+  });
+
+  it("still accepts legacy JSON base64 output frames", async () => {
+    const outputs: string[] = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: (text) => outputs.push(text),
+      onServerError: () => {},
+      onStatus: () => {},
+      onOpen: () => {},
+    });
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({ type: "output", data: btoa("legacy ok") }),
+      }),
+    );
+    await Promise.resolve();
+
+    expect(outputs).toEqual(["legacy ok"]);
+  });
+
+  it("JSON error frames still call onServerError", async () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: JSON.stringify({ type: "error", error: "attach boom" }),
+      }),
+    );
+    await Promise.resolve();
+
+    expect(serverErrors).toEqual(["attach boom"]);
+  });
+
+  it("resize still sends JSON text", () => {
+    createConnection();
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    const sent: unknown[] = [];
+    socket.send = (data: unknown) => {
+      sent.push(data);
+    };
+
+    connection.sendResize(120, 40);
+
+    expect(sent).toHaveLength(1);
+    expect(typeof sent[0]).toBe("string");
+    expect(JSON.parse(String(sent[0]))).toEqual({ type: "resize", cols: 120, rows: 40 });
+  });
 });
