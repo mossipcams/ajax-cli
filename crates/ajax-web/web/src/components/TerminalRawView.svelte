@@ -216,6 +216,7 @@
     // to scroll up — scrolling looked completely broken.
     let pinnedToBottom = true;
     let snapTimer: ReturnType<typeof setTimeout> | undefined;
+    let expandFlushTimer: ReturnType<typeof setTimeout> | undefined;
     let snapFrames: number[] = [];
 
     // ghostty-web 0.4's write path force-scrolls to the bottom whenever the
@@ -240,6 +241,21 @@
       }
     };
 
+    // iOS hold-to-delete needs deletable textarea content; without a sentinel
+    // the soft keyboard never starts its beforeinput repeat loop.
+    const BACKSPACE_SENTINEL = "\u200B";
+
+    const seedBackspaceSentinel = (input: HTMLTextAreaElement) => {
+      if (!input.value.includes(BACKSPACE_SENTINEL)) {
+        input.value = BACKSPACE_SENTINEL;
+      }
+    };
+
+    const handleTextareaFocusForBackspaceSentinel = () => {
+      const input = term?.textarea;
+      if (input) seedBackspaceSentinel(input);
+    };
+
     const hardenMobileTextarea = () => {
       const input = term?.textarea;
       if (!input) return;
@@ -250,11 +266,18 @@
       input.style.fontSize = "16px";
       // ghostty clips the textarea to a fully invisible 1px box (opacity:0 +
       // clipPath:inset(50%)). Soften just enough that iOS treats it as a real
-      // edit target for native Paste while it still does not paint over the canvas.
+      // edit target for native Paste. Keep the element slightly opaque/unclipped
+      // for paste targeting, but make text/caret paint transparent so typed
+      // characters do not echo beside the canvas.
       input.style.opacity = "0.01";
       input.style.setProperty("clip-path", "none");
       input.style.setProperty("-webkit-clip-path", "none");
       input.style.setProperty("clip", "auto");
+      input.style.color = "transparent";
+      input.style.setProperty("-webkit-text-fill-color", "transparent");
+      input.style.caretColor = "transparent";
+      seedBackspaceSentinel(input);
+      input.addEventListener("focus", handleTextareaFocusForBackspaceSentinel);
     };
 
     const cellHeightPx = (): number => {
@@ -651,11 +674,24 @@
     beginExpandFlush = () => {
       expandFlushPending = true;
       schedulePostLayoutRefit();
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      // snapExpandedView's final settle is setTimeout(260). Keep the exemption
+      // through that window so late post-layout refits still resize the grid/PTY
+      // while the keyboard is open; clear on the next frame after settle.
+      if (expandFlushTimer) clearTimeout(expandFlushTimer);
+      const EXPAND_FLUSH_MS = 280;
+      expandFlushTimer = setTimeout(() => {
+        expandFlushTimer = undefined;
+        if (disposed) {
           expandFlushPending = false;
+          return;
+        }
+        schedulePostLayoutRefit();
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            expandFlushPending = false;
+          });
         });
-      });
+      }, EXPAND_FLUSH_MS);
     };
 
     const snapVisibleTerminal = () => {
@@ -830,6 +866,9 @@
       if (event.inputType === "deleteContentBackward") {
         optimisticBackspacesAhead += 1;
         trimZeroLagInput();
+        // keydown is not preventDefaulted (so iOS can key-repeat); reseed so
+        // the next hold tick still has deletable content.
+        if (term?.textarea) seedBackspaceSentinel(term.textarea);
         return;
       }
       if (event.inputType === "insertLineBreak") {
@@ -916,6 +955,14 @@
       libraryScrollToBottom = term.scrollToBottom.bind(term);
       terminalInternals(term).scrollToBottom = () => {};
       hardenMobileTextarea();
+      // iOS hold-to-delete repeats via beforeinput deleteContentBackward.
+      // Ghostty's keydown always preventDefault()s Backspace, which cancels that
+      // loop. Returning false skips Ghostty's keydown handling without
+      // preventDefault; beforeinput still emits \x7f.
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.key === "Backspace" || event.key === "Delete") return false;
+        return undefined;
+      });
       term.textarea?.addEventListener("beforeinput", handleTextareaBeforeInput);
       terminalSubscriptions.push(
         term.onScroll(() => {
@@ -937,12 +984,18 @@
       disposed = true;
       setExpanded(false);
       cancelExpandedSnap();
+      if (expandFlushTimer) {
+        clearTimeout(expandFlushTimer);
+        expandFlushTimer = undefined;
+      }
+      expandFlushPending = false;
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
       if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
       term?.textarea?.removeEventListener("beforeinput", handleTextareaBeforeInput);
+      term?.textarea?.removeEventListener("focus", handleTextareaFocusForBackspaceSentinel);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", scheduleDebouncedRefit);
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
@@ -1288,6 +1341,9 @@
     opacity: 0.01;
     clip-path: none;
     -webkit-clip-path: none;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: transparent;
   }
 
   .terminal-zero-lag-input {

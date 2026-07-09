@@ -37,6 +37,7 @@ let activeSelectionManager: {
   requestRender: ReturnType<typeof vi.fn>;
 };
 let lastTextarea: HTMLTextAreaElement | undefined;
+let customKeyHandler: ((event: KeyboardEvent) => boolean | undefined) | undefined;
 let terminalOptions: unknown;
 let liveOptions: { fontSize?: number } | undefined;
 let onScrollHandler: ((viewportY: number) => void) | undefined;
@@ -115,6 +116,11 @@ vi.mock("ghostty-web", () => ({
     getSelection = getSelection;
     clearSelection = clearSelection;
     getScrollbackLength = () => scrollbackLength;
+    attachCustomKeyEventHandler = vi.fn(
+      (handler: (event: KeyboardEvent) => boolean | undefined) => {
+        customKeyHandler = handler;
+      },
+    );
     selectionManager!: {
       selectionStart: { col: number; absoluteRow: number } | null;
       selectionEnd: { col: number; absoluteRow: number } | null;
@@ -180,6 +186,7 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   onDataHandler = undefined;
   lastTextarea = undefined;
+  customKeyHandler = undefined;
   terminalOptions = undefined;
   onScrollHandler = undefined;
   viewportY = 0;
@@ -573,6 +580,37 @@ describe("TerminalRawView", () => {
     await waitFor(() => {
       expect(inputPayloadsOf(socket!)).toContain("\x7f");
     });
+  });
+
+  it("skips Ghostty Backspace keydown so iOS can key-repeat", async () => {
+    await mountOpenTerminal();
+
+    await waitFor(() => {
+      expect(customKeyHandler).toBeDefined();
+    });
+
+    expect(customKeyHandler!({ key: "Backspace" } as KeyboardEvent)).toBe(false);
+    expect(customKeyHandler!({ key: "Delete" } as KeyboardEvent)).toBe(false);
+    expect(customKeyHandler!({ key: "a" } as KeyboardEvent)).toBeUndefined();
+  });
+
+  it("seeds a zero-width space in the textarea so iOS backspace can repeat", async () => {
+    await mountOpenTerminal();
+
+    await waitFor(() => {
+      expect(lastTextarea).toBeDefined();
+      expect(lastTextarea!.value).toContain("\u200B");
+    });
+
+    lastTextarea!.value = "";
+    dispatchTextareaBeforeInput("deleteContentBackward");
+    expect(lastTextarea!.value).toContain("\u200B");
+  });
+
+  it("attaches Backspace skip handler and ZWS sentinel for iOS key-repeat", () => {
+    expect(terminalRawViewSource).toMatch(/attachCustomKeyEventHandler/);
+    expect(terminalRawViewSource).toMatch(/key === ["']Backspace["']/);
+    expect(terminalRawViewSource).toMatch(/\\u200B/);
   });
 
   it("loads ghostty-web with the served wasm asset", async () => {
@@ -1418,6 +1456,30 @@ describe("TerminalRawView", () => {
     document.documentElement.classList.remove("keyboard-open");
   });
 
+  it("keeps expand flush through the settle window while the keyboard is open", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 55, rows: 30 };
+    const { getByRole, socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400);
+    socket!.send.mockClear();
+    resize.mockClear();
+
+    document.documentElement.classList.add("keyboard-open");
+    getByRole("button", { name: "Expand terminal" }).click();
+    proposedDimensions = { cols: 55, rows: 60 };
+    vi.advanceTimersByTime(50);
+
+    socket!.send.mockClear();
+    resize.mockClear();
+    proposedDimensions = { cols: 80, rows: 90 };
+    vi.advanceTimersByTime(300);
+
+    expect(resize).toHaveBeenCalledWith(80, 90);
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 90 });
+    document.documentElement.classList.remove("keyboard-open");
+    vi.useRealTimers();
+  });
+
   it("re-fits again after the expand viewport settles", async () => {
     vi.useFakeTimers();
     proposedDimensions = { cols: 55, rows: 60 };
@@ -2256,6 +2318,32 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(
       /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*opacity:\s*0\.01/,
     );
+  });
+
+  it("terminal textarea text and caret paint are transparent", () => {
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*color:\s*transparent/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*-webkit-text-fill-color:\s*transparent/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*caret-color:\s*transparent/,
+    );
+  });
+
+  it("hardens the textarea with transparent text paint for iOS paste", async () => {
+    await mountOpenTerminal();
+
+    await waitFor(() => {
+      expect(lastTextarea).toBeDefined();
+      expect(lastTextarea!.style.opacity).toBe("0.01");
+      expect(lastTextarea!.style.color).toBe("transparent");
+      expect(lastTextarea!.style.getPropertyValue("-webkit-text-fill-color")).toBe(
+        "transparent",
+      );
+      expect(lastTextarea!.style.caretColor).toBe("transparent");
+    });
   });
 
   it("captures touch drags from terminal child layers before they can be swallowed", async () => {
