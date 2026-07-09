@@ -529,7 +529,48 @@ describe("TerminalRawView", () => {
   });
 
   it("renders the optimistic echo above the terminal canvas", () => {
-    expect(terminalRawViewSource).toMatch(/\.terminal-zero-lag-input\s*\{[^}]*z-index:\s*1/);
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(\.terminal-zero-lag-input\)\s*\{[^}]*z-index:\s*1/,
+    );
+  });
+
+  it("does not use flushSync for zero-lag echo", () => {
+    expect(terminalRawViewSource).not.toMatch(/\bflushSync\b/);
+  });
+
+  it("pins the zero-lag overlay to the cursor without a bottom stretch anchor", async () => {
+    // CSS bottom + inline top stretches the overlay into a second terminal.
+    const zeroLagCss =
+      /\.terminal-host\s+:global\(\.terminal-zero-lag-input\)\s*\{[^}]*\}/;
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(\.terminal-zero-lag-input\)\s*\{[^}]*position:\s*absolute/,
+    );
+    expect(terminalRawViewSource).not.toMatch(
+      /\.terminal-host\s+:global\(\.terminal-zero-lag-input\)\s*\{[^}]*\bbottom\s*:/,
+    );
+    expect(terminalRawViewSource).not.toMatch(
+      /\.terminal-host\s+:global\(\.terminal-zero-lag-input\)\s*\{[^}]*\bleft\s*:/,
+    );
+    expect(terminalRawViewSource.match(zeroLagCss)?.[0] ?? "").not.toMatch(/\bbottom\s*:/);
+
+    const { container } = await mountOpenTerminal();
+    const canvas = container.querySelector("canvas") as HTMLElement;
+    Object.defineProperty(canvas, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 480, configurable: true });
+    Object.assign(
+      (lastTerminal as unknown as { buffer: { active: Record<string, unknown> } }).buffer.active,
+      { cursorX: 3, cursorY: 2 },
+    );
+
+    dispatchTextareaBeforeInput("insertText", "x");
+
+    const overlay = container.querySelector(
+      "[data-testid='terminal-zero-lag-input']",
+    ) as HTMLElement;
+    const inlineStyle = overlay.getAttribute("style") ?? "";
+    expect(inlineStyle).toMatch(/left:\s*\d/);
+    expect(inlineStyle).toMatch(/top:\s*\d/);
+    expect(inlineStyle).not.toMatch(/bottom:/);
   });
 
   it("does not duplicate optimistic text when Ghostty emits matching data", async () => {
@@ -1470,6 +1511,18 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
+  });
+
+  it("drops safe-area bottom pad on bottom controls while keyboard is open", () => {
+    expect(terminalRawViewSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.terminal-bottom-controls\s*\{[^}]*padding-bottom:\s*6px/,
+    );
+  });
+
+  it("collapses empty terminal status while keyboard is open", () => {
+    expect(terminalRawViewSource).toMatch(
+      /:global\(html\.keyboard-open\)\s+\.terminal-status\.is-empty\s*\{[^}]*display:\s*none/,
+    );
   });
 
   it("does not center the canvas in the host", () => {

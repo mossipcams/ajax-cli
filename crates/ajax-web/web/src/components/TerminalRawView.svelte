@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { flushSync, onMount } from "svelte";
+  import { onMount } from "svelte";
   import { Ghostty, Terminal, FitAddon, type IDisposable } from "ghostty-web";
   import {
     connectTaskTerminal,
@@ -29,6 +29,7 @@
     createResizeDedupe,
     createTerminalWriteBatcher,
   } from "../terminalOutputPolicy";
+  import { createZeroLagEcho } from "../terminalZeroLag";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
   const placeholderMode =
@@ -108,9 +109,6 @@
       copyFallbackInput?.select();
     }
   });
-  let zeroLagInput = $state("");
-  let zeroLagStyle = $state("");
-
   // Expanded mode gives the terminal a fixed visual-viewport layer. On mobile
   // that layer owns the PWA screen above the keyboard; on desktop it lifts the
   // panel into a full-viewport overlay. The class lives on <html> so page-level
@@ -780,8 +778,46 @@
       term.write(text);
     };
 
-    let optimisticPrintableAhead = "";
-    let optimisticBackspacesAhead = 0;
+    // Imperative zero-lag overlay: paint text/style without a sync Svelte flush.
+    // Create/remove the node so cleared state matches querySelector === null.
+    let zeroLagEl: HTMLDivElement | null = null;
+    const paintZeroLag = (text: string, style: string) => {
+      if (!container) return;
+      if (!text) {
+        zeroLagEl?.remove();
+        zeroLagEl = null;
+        return;
+      }
+      if (!zeroLagEl) {
+        zeroLagEl = document.createElement("div");
+        zeroLagEl.className = "terminal-zero-lag-input";
+        zeroLagEl.setAttribute("data-testid", "terminal-zero-lag-input");
+        zeroLagEl.setAttribute("aria-hidden", "true");
+        container.insertBefore(zeroLagEl, container.firstChild);
+      }
+      zeroLagEl.textContent = text;
+      zeroLagEl.style.cssText = style;
+    };
+
+    const zeroLag = createZeroLagEcho({
+      onChange: paintZeroLag,
+      measure: () => {
+        const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
+        const active = term?.buffer.active as { cursorX?: number; cursorY?: number } | undefined;
+        if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
+          return null;
+        }
+        return {
+          cursorX: active.cursorX,
+          cursorY: active.cursorY,
+          cols: term.cols,
+          rows: term.rows,
+          canvasWidth: canvas.clientWidth,
+          canvasHeight: canvas.clientHeight,
+          fontSize: term.options.fontSize ?? DEFAULT_FONT_SIZE,
+        };
+      },
+    });
 
     // Coalesce WS output chunks into one write + one follow/compensation pass
     // per ~16ms (or max-char) flush. Input / zero-lag echo stays unbatched.
@@ -801,13 +837,7 @@
           );
           if (compensation !== 0) term?.scrollLines(compensation);
         }
-        const pendingOptimistic = zeroLagInput;
-        if (pendingOptimistic && combined.includes(pendingOptimistic)) {
-          optimisticPrintableAhead = "";
-          optimisticBackspacesAhead = 0;
-          zeroLagInput = "";
-          zeroLagStyle = "";
-        }
+        zeroLag.clearIfEchoedIn(combined);
         const follow = outputFollowEffects(pinnedToBottom);
         if (follow.snapToBottom) {
           snapScrollbackToBottom();
@@ -827,10 +857,7 @@
       },
       onOpen: () => {
         statusDetail = "";
-        optimisticPrintableAhead = "";
-        optimisticBackspacesAhead = 0;
-        zeroLagInput = "";
-        zeroLagStyle = "";
+        zeroLag.reset();
         resizeDedupe.reset();
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term?.focus());
@@ -840,71 +867,21 @@
     // Exposed to the status banner's manual "Reconnect" button.
     requestReconnect = () => connection.reconnectNow();
 
-    const cursorOverlayStyle = (): string => {
-      const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
-      const active = term?.buffer.active as { cursorX?: number; cursorY?: number } | undefined;
-      if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
-        return "";
-      }
-      const cellWidth = canvas.clientWidth / term.cols;
-      const cellHeight = canvas.clientHeight / term.rows;
-      if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth <= 0 || cellHeight <= 0) {
-        return "";
-      }
-      const left = Math.max(0, active.cursorX) * cellWidth;
-      const top = Math.max(0, active.cursorY) * cellHeight;
-      const fontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-      return `left: ${left}px; top: ${top}px; font-size: ${fontSize}px; line-height: ${cellHeight}px;`;
-    };
-
-    const setZeroLagInput = (next: string) => {
-      zeroLagInput = next;
-      zeroLagStyle = next ? cursorOverlayStyle() : "";
-    };
-
-    const appendZeroLagInput = (data: string) => {
-      flushSync(() => {
-        setZeroLagInput(zeroLagInput + data);
-      });
-    };
-
-    const trimZeroLagInput = () => {
-      flushSync(() => {
-        setZeroLagInput(zeroLagInput.slice(0, -1));
-      });
-    };
-
-    const clearZeroLagInput = () => {
-      flushSync(() => {
-        optimisticPrintableAhead = "";
-        optimisticBackspacesAhead = 0;
-        setZeroLagInput("");
-      });
-    };
-
     const handleTextareaBeforeInput = (event: InputEvent) => {
       if (event.inputType === "insertText" && event.data) {
-        optimisticPrintableAhead += event.data;
-        appendZeroLagInput(event.data);
+        zeroLag.noteBeforeInputPrintable(event.data);
         return;
       }
       if (event.inputType === "deleteContentBackward") {
-        optimisticBackspacesAhead += 1;
-        trimZeroLagInput();
+        zeroLag.noteBeforeInputBackspace();
         // keydown is not preventDefaulted (so iOS can key-repeat); reseed so
         // the next hold tick still has deletable content.
         if (term?.textarea) seedBackspaceSentinel(term.textarea);
         return;
       }
       if (event.inputType === "insertLineBreak") {
-        clearZeroLagInput();
+        zeroLag.clear();
       }
-    };
-
-    const consumeOptimisticPrintable = (data: string): boolean => {
-      if (!optimisticPrintableAhead.startsWith(data)) return false;
-      optimisticPrintableAhead = optimisticPrintableAhead.slice(data.length);
-      return true;
     };
 
     const handleTerminalData = (raw: string) => {
@@ -917,25 +894,19 @@
       const data = consumeCtrl(raw);
 
       if (data === "\r") {
-        clearZeroLagInput();
+        zeroLag.onTerminalData(data);
         connection.sendInput(data);
         return;
       }
 
       if (data === "\x7f") {
-        if (optimisticBackspacesAhead > 0) {
-          optimisticBackspacesAhead -= 1;
-        } else {
-          trimZeroLagInput();
-        }
+        zeroLag.onTerminalData(data);
         connection.sendInput(data);
         return;
       }
 
       if (data.length === 1 && data.charCodeAt(0) >= 32) {
-        if (!consumeOptimisticPrintable(data)) {
-          appendZeroLagInput(data);
-        }
+        zeroLag.onTerminalData(data);
       }
 
       connection.sendInput(data);
@@ -1019,6 +990,7 @@
       // batcher so a late timer cannot write after dispose.
       if (term) writeBatcher.flush();
       writeBatcher.dispose();
+      zeroLag.reset();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
       if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
@@ -1054,14 +1026,6 @@
   <div class="terminal-host task-terminal-viewport" bind:this={container}>
     {#if placeholderMode}
       <div data-testid="terminal-placeholder" class="terminal-placeholder">Terminal placeholder</div>
-    {:else if zeroLagInput}
-      <div
-        class="terminal-zero-lag-input"
-        data-testid="terminal-zero-lag-input"
-        aria-hidden="true"
-        style={zeroLagStyle}>
-        {zeroLagInput}
-      </div>
     {/if}
     {#if hasUnseenOutput}
       <button
@@ -1381,11 +1345,13 @@
     caret-color: transparent;
   }
 
-  .terminal-zero-lag-input {
+  /* Imperative overlay (createZeroLagEcho → paintZeroLag). Position comes only
+     from zeroLagOverlayStyle (left/top) — never CSS bottom, or top+bottom
+     stretches into a second full-height echo. :global so the JS-created node
+     still gets these rules under Svelte scoping. */
+  .terminal-host :global(.terminal-zero-lag-input) {
     position: absolute;
     z-index: 1;
-    left: 8px;
-    bottom: 8px;
     max-width: calc(100% - 16px);
     overflow: hidden;
     color: #f4eee0;
@@ -1513,6 +1479,15 @@
   .terminal-status.is-empty {
     visibility: hidden;
     pointer-events: none;
+  }
+
+  :global(html.keyboard-open) .terminal-bottom-controls {
+    /* Keyboard covers the home indicator; safe-area pad is dead space. */
+    padding-bottom: 6px;
+  }
+
+  :global(html.keyboard-open) .terminal-status.is-empty {
+    display: none;
   }
 
   .terminal-status-detail {
