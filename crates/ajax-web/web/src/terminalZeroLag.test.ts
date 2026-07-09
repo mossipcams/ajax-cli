@@ -102,6 +102,41 @@ describe("createZeroLagEcho", () => {
     echo.clearIfEchoedIn("say hello now");
     expect(echo.text()).toBe("");
   });
+
+  it("clearIfEchoedIn consumes matching prefixes from sequential chunks", () => {
+    const echo = createZeroLagEcho({
+      onChange: vi.fn(),
+      measure: () => metrics(),
+    });
+
+    echo.noteBeforeInputPrintable("hi");
+    echo.clearIfEchoedIn("h");
+    expect(echo.text()).toBe("i");
+    echo.clearIfEchoedIn("i");
+    expect(echo.text()).toBe("");
+  });
+
+  it("clearIfEchoedIn ignores unrelated chunks that are not a pending prefix", () => {
+    const echo = createZeroLagEcho({
+      onChange: vi.fn(),
+      measure: () => metrics(),
+    });
+
+    echo.noteBeforeInputPrintable("hi");
+    echo.clearIfEchoedIn("status bar redraw");
+    expect(echo.text()).toBe("hi");
+  });
+
+  it("clearIfEchoedIn clears when pending appears as full substring in chunk", () => {
+    const echo = createZeroLagEcho({
+      onChange: vi.fn(),
+      measure: () => metrics(),
+    });
+
+    echo.noteBeforeInputPrintable("hi");
+    echo.clearIfEchoedIn("prefix hi suffix");
+    expect(echo.text()).toBe("");
+  });
 });
 
 describe("zeroLagOverlayStyle", () => {

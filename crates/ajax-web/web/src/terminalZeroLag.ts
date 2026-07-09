@@ -112,8 +112,16 @@ export function createZeroLagEcho(options: {
     },
 
     clearIfEchoedIn(outputChunk: string) {
-      if (pending && outputChunk.includes(pending)) {
+      if (!pending) return;
+      if (outputChunk.includes(pending)) {
         clearAll();
+        return;
+      }
+      if (outputChunk.length > 0 && pending.startsWith(outputChunk)) {
+        for (let i = 0; i < outputChunk.length; i++) {
+          if (outputChunk.charCodeAt(i) < 32) return;
+        }
+        setPending(pending.slice(outputChunk.length));
       }
     },
 
