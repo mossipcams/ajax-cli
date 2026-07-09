@@ -169,10 +169,9 @@ describe("TaskDetail", () => {
     const mobileCss = mobileBlock![1];
 
     expect(mobileCss).not.toMatch(/ajax-task-open/);
-    expect(mobileCss).toMatch(/:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*overflow:\s*hidden/);
-    expect(mobileCss).not.toMatch(
-      /:global\(html\.terminal-expanded\),\s*:global\(html\.terminal-expanded body\),\s*:global\(html\.keyboard-open\),\s*:global\(html\.keyboard-open body\)\s*\{[^}]*height:\s*var\(--app-height/,
-    );
+    // Document-level keyboard/expanded scroll policy lives in styles.css, not TaskDetail.
+    expect(taskDetailSource).not.toMatch(/:global\(html\.keyboard-open/);
+    expect(taskDetailSource).not.toMatch(/:global\(html\.terminal-expanded/);
     // Fill the locked route-scroll band; do not force app-band min-height (that
     // plus route-scroll padding made the page scroll outside the terminal).
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*min-height:\s*0/);
@@ -185,6 +184,18 @@ describe("TaskDetail", () => {
     expect(terminalRawViewSource).toMatch(/class:is-expanded=\{expanded\}/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
     expect(mobileCss).toMatch(/\.detail-header,\s*\.interact-panel\s*\{[^}]*padding-left:[^;]*env\(safe-area-inset-left\)/);
+
+    const stylesSource = loadStylesSource();
+    expect(stylesSource).toMatch(/html\.keyboard-open \.cockpit-chrome/);
+    expect(stylesSource).toMatch(/html\.keyboard-open \.bottom-nav/);
+    expect(stylesSource).toMatch(/html\.terminal-expanded \.cockpit-chrome/);
+    expect(stylesSource).toMatch(/html\.terminal-expanded \.bottom-nav/);
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open \[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded \[data-testid="task-terminal-panel"\]\.is-expanded/,
+    );
   });
 
   it("mobile task terminal panel clears the 58vh max-height so it can flex-fill", () => {

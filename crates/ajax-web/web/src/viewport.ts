@@ -31,6 +31,22 @@ export function isKeyboardOpen(): boolean {
 }
 
 /**
+ * Clear document/window scroll offsets that Safari leaves behind after
+ * keyboard or expand snaps. Safe in jsdom where `scrollTo` is unimplemented.
+ */
+export function resetDocumentScroll(): void {
+  try {
+    window.scrollTo(0, 0);
+  } catch {
+    // jsdom throws "Not implemented" for scrollTo.
+  }
+  document.documentElement.scrollTop = 0;
+  document.body.scrollTop = 0;
+  const scroller = document.scrollingElement;
+  if (scroller) scroller.scrollTop = 0;
+}
+
+/**
  * Begin syncing `--app-height` / `keyboard-open` from `visualViewport`.
  * No-ops where `visualViewport` is unavailable. Returns a cleanup function
  * that removes every listener and the state it set.
@@ -56,19 +72,6 @@ export function initViewport(): () => void {
     setAppTop(vv.offsetTop ?? 0);
   };
   syncViewportGeometry();
-
-  // While the keyboard is up Safari scrolls the document to reveal the
-  // focused input; with the app's fixed shells that offset survives the
-  // keyboard closing and renders as dead space plus rubber-band bounce.
-  const resetDocumentScroll = () => {
-    try {
-      window.scrollTo(0, 0);
-    } catch {
-      // jsdom throws "Not implemented" for scrollTo.
-    }
-    const scroller = document.scrollingElement;
-    if (scroller) scroller.scrollTop = 0;
-  };
 
   const onViewportResize = () => {
     const current = vv.height;

@@ -6,7 +6,7 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { isKeyboardOpen } from "../viewport";
+  import { isKeyboardOpen, resetDocumentScroll } from "../viewport";
   import { attachTerminalGestures } from "../terminalGestures";
   import { createRefitScheduler } from "../terminalRefit";
   import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalGestures";
@@ -21,6 +21,11 @@
     MAX_FONT_SIZE,
     FIT_TERMINAL_COLS,
   } from "../terminalGeometry";
+  import {
+    scrollbackGrowthCompensation,
+    outputFollowEffects,
+    validTerminalSize,
+  } from "../terminalOutputPolicy";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
   const placeholderMode =
@@ -81,6 +86,12 @@
   // Paste key falls back to a real textarea the iOS Paste menu can target.
   let pasteFallbackOpen = $state(false);
   let pasteFallbackInput = $state<HTMLTextAreaElement | undefined>();
+  const openPasteFallback = () => {
+    pasteFallbackOpen = true;
+  };
+  const closePasteFallback = () => {
+    pasteFallbackOpen = false;
+  };
   $effect(() => {
     if (pasteFallbackOpen) pasteFallbackInput?.focus();
   });
@@ -117,6 +128,11 @@
   // Assigned inside onMount so the key bar can reach the live socket/terminal.
   let sendKey: (data: string) => void = () => {};
   let pasteToTerm: (text: string) => void = () => {};
+  const sendPasteFallbackText = (text: string) => {
+    closePasteFallback();
+    if (pasteFallbackInput) pasteFallbackInput.value = "";
+    if (text) pasteToTerm(text);
+  };
   let refocusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
@@ -527,7 +543,9 @@
       // in the same pass, so lockstep holds.
       if (isKeyboardOpen() && !pinchFlushPending && !expandFlushPending) return;
       if (!term) return;
-      connection.sendResize(term.cols, term.rows);
+      const size = validTerminalSize(term.cols, term.rows);
+      if (!size) return;
+      connection.sendResize(size.cols, size.rows);
     };
 
     sendKey = (data: string) => connection.sendInput(data);
@@ -565,18 +583,18 @@
       if (!clipboard || typeof clipboard.readText !== "function") {
         // No async clipboard on insecure (plain-http LAN) origins: offer a
         // real textarea the iOS long-press Paste menu can act on instead.
-        pasteFallbackOpen = true;
+        openPasteFallback();
         return;
       }
       clipboard
         .readText()
         .then((text) => {
-          if (text) term?.paste(text);
+          if (text) pasteToTerm(text);
+          else term?.focus();
           pasteNotice = "";
-          term?.focus();
         })
         .catch(() => {
-          pasteFallbackOpen = true;
+          openPasteFallback();
         });
     };
 
@@ -697,15 +715,7 @@
     const snapVisibleTerminal = () => {
       pinnedToBottom = true;
       hasUnseenOutput = false;
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-      const scrollingElement = document.scrollingElement;
-      if (scrollingElement) scrollingElement.scrollTop = 0;
-      try {
-        window.scrollTo(0, 0);
-      } catch {
-        // jsdom throws "Not implemented" for scrollTo.
-      }
+      resetDocumentScroll();
       if (isKeyboardOpen() && container) {
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         snapScrollbackToBottom();
@@ -776,8 +786,11 @@
         // or the text being read crawls upward.
         const scrollbackBefore = scrollbackLines();
         writeToTerminal(text);
-        const growth = scrollbackLines() - scrollbackBefore;
-        if (growth > 0) term?.scrollLines(-growth);
+        const compensation = scrollbackGrowthCompensation(
+          scrollbackBefore,
+          scrollbackLines(),
+        );
+        if (compensation !== 0) term?.scrollLines(compensation);
       }
       const pendingOptimistic = zeroLagInput;
       if (pendingOptimistic && text.includes(pendingOptimistic)) {
@@ -786,9 +799,10 @@
         zeroLagInput = "";
         zeroLagStyle = "";
       }
-      if (pinnedToBottom) {
+      const follow = outputFollowEffects(pinnedToBottom);
+      if (follow.snapToBottom) {
         snapScrollbackToBottom();
-      } else {
+      } else if (follow.markUnseenOutput) {
         hasUnseenOutput = true;
       }
     };
@@ -1033,6 +1047,14 @@
         {zeroLagInput}
       </div>
     {/if}
+    {#if hasUnseenOutput}
+      <button
+        type="button"
+        class="terminal-new-output"
+        onclick={() => {
+          jumpToBottom();
+        }}>New output ↓</button>
+    {/if}
   </div>
   <button
     type="button"
@@ -1053,14 +1075,6 @@
         refitAfterLayout();
       }
     }}>⛶</button>
-  {#if hasUnseenOutput}
-    <button
-      type="button"
-      class="terminal-new-output"
-      onclick={() => {
-        jumpToBottom();
-      }}>New output ↓</button>
-  {/if}
   {#if copyOverlayOpen}
     <button
       type="button"
@@ -1068,60 +1082,77 @@
       data-testid="terminal-copy-overlay"
       onclick={() => void handleCopyOverlay()}>Copy</button>
   {/if}
-  {#if copyFallbackOpen}
-    <div class="terminal-paste-fallback" data-testid="terminal-copy-fallback">
-      <textarea
-        class="terminal-paste-fallback-input"
-        readonly
-        rows="3"
-        aria-label="Selected text to copy"
-        bind:this={copyFallbackInput}
-        value={copyOverlayText}></textarea>
-      <button
-        type="button"
-        class="terminal-key"
-        onclick={() => {
-          copyFallbackOpen = false;
-          copyOverlayText = "";
-          clearTermSelection();
-        }}>Done</button>
-    </div>
-  {/if}
-  {#if pasteFallbackOpen}
-    <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
-      <textarea
-        class="terminal-paste-fallback-input"
-        placeholder="Long-press here, then tap Paste"
-        aria-label="Paste text for the terminal"
-        rows="1"
-        bind:this={pasteFallbackInput}
-        onpaste={(event) => {
-          const text = event.clipboardData?.getData("text") ?? "";
-          event.preventDefault();
-          pasteFallbackOpen = false;
-          if (text) pasteToTerm(text);
-        }}></textarea>
-      <button
-        type="button"
-        class="terminal-key"
-        onclick={() => {
-          const text = pasteFallbackInput?.value ?? "";
-          pasteFallbackOpen = false;
-          if (pasteFallbackInput) pasteFallbackInput.value = "";
-          if (text) pasteToTerm(text);
-        }}>Send</button>
-      <button
-        type="button"
-        class="terminal-key"
-        onclick={() => {
-          pasteFallbackOpen = false;
-        }}>Cancel</button>
-    </div>
-  {/if}
   <div
     class="terminal-bottom-controls"
     data-testid="terminal-bottom-controls"
     aria-label="Terminal input controls">
+    {#if copyFallbackOpen}
+      <div class="terminal-paste-fallback" data-testid="terminal-copy-fallback">
+        <textarea
+          class="terminal-paste-fallback-input"
+          readonly
+          rows="3"
+          aria-label="Selected text to copy"
+          bind:this={copyFallbackInput}
+          value={copyOverlayText}></textarea>
+        <button
+          type="button"
+          class="terminal-key"
+          onclick={() => {
+            copyFallbackOpen = false;
+            copyOverlayText = "";
+            clearTermSelection();
+          }}>Done</button>
+      </div>
+    {/if}
+    {#if pasteFallbackOpen}
+      <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
+        <textarea
+          class="terminal-paste-fallback-input"
+          placeholder="Long-press here, then tap Paste"
+          aria-label="Paste text for the terminal"
+          rows="1"
+          bind:this={pasteFallbackInput}
+          onpaste={(event) => {
+            const text = event.clipboardData?.getData("text") ?? "";
+            event.preventDefault();
+            sendPasteFallbackText(text);
+          }}></textarea>
+        <button
+          type="button"
+          class="terminal-key"
+          onclick={() => {
+            sendPasteFallbackText(pasteFallbackInput?.value ?? "");
+          }}>Send</button>
+        <button
+          type="button"
+          class="terminal-key"
+          onclick={() => {
+            closePasteFallback();
+          }}>Cancel</button>
+      </div>
+    {/if}
+    <div
+      class="terminal-status"
+      class:is-empty={!(status !== "connected" || statusDetail || pasteNotice)}
+      data-testid="terminal-status"
+      aria-hidden={!(status !== "connected" || statusDetail || pasteNotice)}>
+      {#if status !== "connected" || statusDetail || pasteNotice}
+        <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
+        {#if statusDetail}
+          <span class="terminal-status-detail">{statusDetail}</span>
+        {/if}
+        {#if pasteNotice}
+          <span class="terminal-status-detail">{pasteNotice}</span>
+        {/if}
+        {#if status === "reconnecting" || status === "unavailable"}
+          <button
+            type="button"
+            class="terminal-status-reconnect"
+            onclick={() => requestReconnect()}>Reconnect</button>
+        {/if}
+      {/if}
+    </div>
     <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {#each CONTROL_KEYS as key (key.label)}
         <button
@@ -1155,23 +1186,6 @@
         onclick={() => blurTerm()}>⌄</button>
     </div>
   </div>
-  {#if status !== "connected" || statusDetail || pasteNotice}
-    <div class="terminal-status" data-testid="terminal-status">
-      <span class="terminal-status-label">{STATUS_LABELS[status]}</span>
-      {#if statusDetail}
-        <span class="terminal-status-detail">{statusDetail}</span>
-      {/if}
-      {#if pasteNotice}
-        <span class="terminal-status-detail">{pasteNotice}</span>
-      {/if}
-      {#if status === "reconnecting" || status === "unavailable"}
-        <button
-          type="button"
-          class="terminal-status-reconnect"
-          onclick={() => requestReconnect()}>Reconnect</button>
-      {/if}
-    </div>
-  {/if}
   </section>
 </div>
 
@@ -1269,6 +1283,11 @@
     color: var(--paper);
   }
 
+  .terminal-panel.is-expanded .terminal-copy-overlay {
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(48px + env(safe-area-inset-right));
+  }
+
   /* A landscape phone exceeds the width breakpoint but must not get the
      fixed desktop panel height — its takeover layout flex-fills instead. */
   @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
@@ -1363,11 +1382,6 @@
   }
 
   .terminal-paste-fallback {
-    position: absolute;
-    left: 8px;
-    right: 8px;
-    bottom: 8px;
-    z-index: 3;
     display: flex;
     align-items: stretch;
     gap: 6px;
@@ -1392,9 +1406,13 @@
   }
 
   .terminal-new-output {
-    align-self: center;
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    z-index: 2;
+    transform: translateX(-50%);
     min-height: 36px;
-    margin: 0 8px 6px;
+    margin: 0;
     padding: 6px 12px;
     border: 1px solid var(--teal);
     border-radius: var(--radius-sm);
@@ -1468,12 +1486,17 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 12px;
-    border-top: 1px solid var(--rule);
+    min-height: 28px;
+    padding: 0 4px;
     font-size: 11px;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-muted);
+  }
+
+  .terminal-status.is-empty {
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .terminal-status-detail {

@@ -636,6 +636,56 @@ describe("TerminalRawView", () => {
     expect(container.querySelector("[data-testid='terminal-composer']")).toBeNull();
   });
 
+  it("owns status, paste/copy fallbacks, and key bar under bottom controls", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    Object.defineProperty(document, "execCommand", {
+      value: vi.fn().mockReturnValue(false),
+      configurable: true,
+    });
+    const { getByTestId, getByRole, host } = await mountOpenTerminal();
+
+    const bottom = getByTestId("terminal-bottom-controls");
+    expect(bottom.querySelector('[data-testid="terminal-status"]')).toBeInTheDocument();
+    expect(bottom.querySelector('[role="toolbar"][aria-label="Terminal keys"]')).toBeInTheDocument();
+
+    getByRole("button", { name: "Paste" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+    expect(bottom.contains(getByTestId("terminal-paste-fallback"))).toBe(true);
+
+    stubTerminalCanvas(host);
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 105, 105));
+    vi.advanceTimersByTime(500);
+    host.dispatchEvent(makeTouch("touchmove", 105, 305));
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getByTestId("terminal-copy-overlay")).toBeInTheDocument();
+    vi.useRealTimers();
+    getByRole("button", { name: "Copy" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-copy-fallback")).toBeInTheDocument();
+    });
+    expect(bottom.contains(getByTestId("terminal-copy-fallback"))).toBe(true);
+
+    // Source contract: fallbacks are normal-flow chrome, not absolute overlays.
+    const pasteFallbackCss = terminalRawViewSource.match(
+      /\.terminal-paste-fallback\s*\{[^}]*\}/,
+    );
+    expect(pasteFallbackCss?.[0] ?? "").not.toMatch(/position:\s*absolute/);
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-new-output\s*\{[^}]*position:\s*absolute/,
+    );
+    // Expanded copy overlay mirrors expand-corner safe-area offsets.
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-panel\.is-expanded\s+\.terminal-copy-overlay\s*\{[^}]*env\(safe-area-inset-top\)/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-panel\.is-expanded\s+\.terminal-copy-overlay\s*\{[^}]*env\(safe-area-inset-right\)/,
+    );
+  });
+
   it("renders a debug placeholder without ghostty when localStorage flag is set", () => {
     localStorage.setItem("ajax.debug.terminalPlaceholder", "true");
     ghosttyLoad.mockClear();
@@ -1178,6 +1228,15 @@ describe("TerminalRawView", () => {
 
     await waitFor(() => expect(paste).toHaveBeenCalledWith("ls"));
     expect(getByTestId("terminal-status").textContent).toContain("tmux session missing");
+  });
+
+  it("names paste fallback state transitions", () => {
+    expect(terminalRawViewSource).toContain("openPasteFallback");
+    expect(terminalRawViewSource).toContain("closePasteFallback");
+    expect(terminalRawViewSource).toContain("sendPasteFallbackText");
+    expect(terminalRawViewSource).toContain("requestPaste");
+    expect(terminalRawViewSource).toContain('data-testid="terminal-paste-fallback"');
+    expect(terminalRawViewSource).not.toContain("if (text) term?.paste(text)");
   });
 
   it("surfaces a clipboard read failure instead of silently doing nothing", async () => {

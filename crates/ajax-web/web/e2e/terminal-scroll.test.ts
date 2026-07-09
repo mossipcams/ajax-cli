@@ -101,3 +101,49 @@ test("terminal holds scrollback position when new output arrives", async ({ page
   await newOutputButton(page).click();
   await expect(newOutputButton(page)).not.toBeVisible();
 });
+
+test("New output pill does not shrink terminal host or move bottom controls", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+
+  await emitTerminalOutput(page, scrollbackChunk(0, 200));
+  await expect(newOutputButton(page)).not.toBeVisible();
+
+  await swipeIntoScrollback(page);
+
+  const host = terminalPanel(page).locator(".terminal-host");
+  const bottomControls = terminalPanel(page).locator(
+    '[data-testid="terminal-bottom-controls"]',
+  );
+  await expect(host).toBeVisible();
+  await expect(bottomControls).toBeVisible();
+
+  const before = await page.evaluate(() => {
+    const panel = document.querySelector('[data-testid="task-terminal-panel"]');
+    const hostEl = panel?.querySelector(".terminal-host");
+    const controls = panel?.querySelector('[data-testid="terminal-bottom-controls"]');
+    if (!hostEl || !controls) return null;
+    const hostBox = hostEl.getBoundingClientRect();
+    const controlsBox = controls.getBoundingClientRect();
+    return { hostHeight: hostBox.height, controlsTop: controlsBox.top };
+  });
+  expect(before).not.toBeNull();
+
+  await emitTerminalOutput(page, scrollbackChunk(200, 40));
+  await expect(newOutputButton(page)).toBeVisible({ timeout: 10_000 });
+
+  const after = await page.evaluate(() => {
+    const panel = document.querySelector('[data-testid="task-terminal-panel"]');
+    const hostEl = panel?.querySelector(".terminal-host");
+    const controls = panel?.querySelector('[data-testid="terminal-bottom-controls"]');
+    if (!hostEl || !controls) return null;
+    const hostBox = hostEl.getBoundingClientRect();
+    const controlsBox = controls.getBoundingClientRect();
+    return { hostHeight: hostBox.height, controlsTop: controlsBox.top };
+  });
+  expect(after).not.toBeNull();
+
+  expect(Math.abs(after!.hostHeight - before!.hostHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after!.controlsTop - before!.controlsTop)).toBeLessThanOrEqual(1);
+});
