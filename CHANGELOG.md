@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.2...ajax-cli-v0.37.3) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** stabilize task terminal viewport chrome ([#399](https://github.com/mossipcams/ajax-cli/issues/399)) ([d91b2a8](https://github.com/mossipcams/ajax-cli/commit/d91b2a889e38f858ba9f8833c72c8e9af7297bac))
+
 ## [0.37.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.1...ajax-cli-v0.37.2) (2026-07-09)
 
 
