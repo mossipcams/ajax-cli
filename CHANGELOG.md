@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.7...ajax-cli-v0.37.8) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** position zero-lag overlay with renderer cell metrics ([#410](https://github.com/mossipcams/ajax-cli/issues/410)) ([9113133](https://github.com/mossipcams/ajax-cli/commit/9113133e69f1167e7483a6b9320b99b0a843979c))
+
 ## [0.37.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.6...ajax-cli-v0.37.7) (2026-07-09)
 
 
