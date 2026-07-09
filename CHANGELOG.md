@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.6...ajax-cli-v0.37.7) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** clear zero-lag overlay on char-by-char PTY echo ([#408](https://github.com/mossipcams/ajax-cli/issues/408)) ([e568b16](https://github.com/mossipcams/ajax-cli/commit/e568b165d84f811eb0c6f5808f8cdfb44d4d9c6e))
+
 ## [0.37.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.5...ajax-cli-v0.37.6) (2026-07-09)
 
 
