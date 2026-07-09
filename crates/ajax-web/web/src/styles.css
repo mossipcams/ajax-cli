@@ -384,8 +384,16 @@ header .bar h1 {
   margin: 0 auto;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
   padding: 16px calc(20px + env(safe-area-inset-right)) 48px
     calc(20px + env(safe-area-inset-left));
+}
+
+[data-testid="route-scroll"]::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
@@ -660,7 +668,7 @@ header .bar h1 {
 
   html.terminal-expanded [data-testid="task-terminal-panel"].is-expanded {
     position: fixed;
-    top: var(--app-band-top, 0px);
+    top: 0;
     right: 0;
     left: 0;
     z-index: 45;
