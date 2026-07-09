@@ -196,6 +196,23 @@ describe("TaskDetail", () => {
     expect(stylesSource).toMatch(
       /html\.terminal-expanded \[data-testid="task-terminal-panel"\]\.is-expanded/,
     );
+
+    const mobileStylesBlocks = [...stylesSource.matchAll(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
+    )];
+    const mobileExpandedPanelRule = mobileStylesBlocks
+      .map((match) => match[1])
+      .find((block) =>
+        block.includes('html.terminal-expanded [data-testid="task-terminal-panel"].is-expanded'),
+      );
+    expect(mobileExpandedPanelRule).toBeDefined();
+    const expandedPanelBlock = mobileExpandedPanelRule!.match(
+      /html\.terminal-expanded \[data-testid="task-terminal-panel"\]\.is-expanded\s*\{([^}]*)\}/,
+    )?.[1];
+    expect(expandedPanelBlock).toBeDefined();
+    expect(expandedPanelBlock!).toMatch(/top:\s*0(px)?;/);
+    expect(expandedPanelBlock!).not.toMatch(/top:\s*var\(--app-band-top/);
+    expect(expandedPanelBlock!).toMatch(/height:\s*var\(--app-band-height/);
   });
 
   it("mobile task terminal panel clears the 58vh max-height so it can flex-fill", () => {

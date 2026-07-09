@@ -154,6 +154,19 @@ describe("App shell", () => {
     );
   });
 
+  it("hides route-scroll scrollbar chrome so content keeps full width", () => {
+    const stylesSource = loadStylesSource();
+    const routeScrollRule = stylesSource.match(
+      /\[data-testid="route-scroll"\]\s*\{([^}]*)\}/,
+    )?.[1] ?? "";
+
+    expect(routeScrollRule).toMatch(/scrollbar-width:\s*none/);
+    expect(routeScrollRule).toMatch(/-ms-overflow-style:\s*none/);
+    expect(stylesSource).toMatch(
+      /\[data-testid="route-scroll"\]::-webkit-scrollbar\s*\{[^}]*(?:display:\s*none|width:\s*0)/,
+    );
+  });
+
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
     const { container } = render(App);
     expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();
