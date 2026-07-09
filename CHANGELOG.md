@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.4...ajax-cli-v0.37.5) (2026-07-09)
+
+
+### Performance Improvements
+
+* **web:** cut mobile Cockpit battery cost without hurting terminal UX ([#404](https://github.com/mossipcams/ajax-cli/issues/404)) ([b83e544](https://github.com/mossipcams/ajax-cli/commit/b83e544160661b862bf825491f0bbf9182993098))
+
 ## [0.37.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.3...ajax-cli-v0.37.4) (2026-07-09)
 
 
