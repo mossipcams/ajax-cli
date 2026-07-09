@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.1...ajax-cli-v0.37.2) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** repair fullscreen blank column, off-terminal echo, and iOS backspace repeat ([#397](https://github.com/mossipcams/ajax-cli/issues/397)) ([c7d2911](https://github.com/mossipcams/ajax-cli/commit/c7d29112b7aed157224f0635b8dcb168c3413650))
+
 ## [0.37.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.0...ajax-cli-v0.37.1) (2026-07-09)
 
 
