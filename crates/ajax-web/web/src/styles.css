@@ -559,7 +559,6 @@ header .bar h1 {
 .task-detail [data-testid="task-terminal-panel"] {
   flex: 1 1 auto;
   min-height: 280px;
-  max-height: min(58vh, 560px);
   overflow: hidden;
 }
 
@@ -590,8 +589,10 @@ header .bar h1 {
     min-height: 0;
   }
 
+  .task-detail .terminal-panel,
   .task-detail [data-testid="task-terminal-panel"] {
     min-height: 200px;
+    max-height: none;
   }
 
   /* Terminal-first: strip the action card down to a minimal strip so the
@@ -661,6 +662,13 @@ header .bar h1 {
     border-right: none;
     border-bottom: none;
     border-radius: 0;
+  }
+}
+
+@media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
+  .task-detail .terminal-panel,
+  .task-detail [data-testid="task-terminal-panel"] {
+    max-height: min(58vh, 560px);
   }
 }
 

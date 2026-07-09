@@ -5,7 +5,7 @@
   "scripts": {
     "test": "npm run verify",
     "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:test -- --run",
-    "web:check": "svelte-check --tsconfig crates/ajax-web/web/tsconfig.json",
+    "web:check": "svelte-check --tsconfig crates/ajax-web/web/tsconfig.check.json",
     "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
     "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
     "web:build:check": "node scripts/web-build-check.mjs",

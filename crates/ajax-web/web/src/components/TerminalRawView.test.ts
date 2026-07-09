@@ -1147,18 +1147,54 @@ describe("TerminalRawView", () => {
       value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
       configurable: true,
     });
-    const { getByRole, getByTestId } = render(TerminalRawView, {
-      props: { handle: "web/fix-login" },
-    });
-    const socket = MockWebSocket.instances[0];
-    socket?.emit("open");
+    const { getByRole, getByTestId } = await mountOpenTerminal();
 
     getByRole("button", { name: "Paste" }).click();
 
     await waitFor(() => {
-      expect(getByTestId("terminal-status").textContent).toContain("Clipboard");
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
     });
     expect(paste).not.toHaveBeenCalled();
+  });
+
+  it("sends paste fallback textarea value through term.paste and closes the tray", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+
+    const textarea = getByTestId("terminal-paste-fallback").querySelector("textarea")!;
+    textarea.value = "hello from tray";
+    getByRole("button", { name: "Send" }).click();
+
+    await waitFor(() => {
+      expect(paste).toHaveBeenCalledWith("hello from tray");
+      expect(focus).toHaveBeenCalled();
+    });
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
+  });
+
+  it("does not paste when Send is tapped with an empty fallback value", async () => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+    const { getByRole, getByTestId, queryByTestId } = await mountOpenTerminal();
+
+    getByRole("button", { name: "Paste" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument();
+    });
+
+    getByRole("button", { name: "Send" }).click();
+
+    expect(paste).not.toHaveBeenCalled();
+    await tick();
+    expect(queryByTestId("terminal-paste-fallback")).not.toBeInTheDocument();
   });
 
   it("sends an Escape byte when the Esc key is tapped", async () => {
@@ -1712,7 +1748,7 @@ describe("TerminalRawView", () => {
       value: { writeText },
       configurable: true,
     });
-    const { host, getByTestId } = await mountTerminal();
+    const { host, getByTestId, getByRole, queryByTestId } = await mountTerminal();
     stubTerminalCanvas(host);
 
     vi.useFakeTimers();
@@ -1733,16 +1769,88 @@ describe("TerminalRawView", () => {
     host.dispatchEvent(end);
 
     await vi.advanceTimersByTimeAsync(0);
-    expect(writeText).toHaveBeenCalledWith("selected text");
-    expect(clearSelection).toHaveBeenCalled();
+    expect(writeText).not.toHaveBeenCalled();
+    expect(clearSelection).not.toHaveBeenCalled();
     expect(stopPropagation).toHaveBeenCalled();
+    expect(getByTestId("terminal-copy-overlay")).toBeInTheDocument();
+    expect(getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    vi.useRealTimers();
+
+    getByRole("button", { name: "Copy" }).click();
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("selected text");
+    });
+    expect(clearSelection).toHaveBeenCalled();
     expect(getByTestId("terminal-status").textContent).toContain("Copied");
+    expect(queryByTestId("terminal-copy-overlay")).not.toBeInTheDocument();
+  });
+
+  it("opens a readonly copy fallback when clipboard write fails", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    Object.defineProperty(document, "execCommand", {
+      value: vi.fn().mockReturnValue(false),
+      configurable: true,
+    });
+    const { host, getByTestId, getByRole, queryByTestId } = await mountTerminal();
+    stubTerminalCanvas(host);
+
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 105, 105));
+    vi.advanceTimersByTime(500);
+    host.dispatchEvent(makeTouch("touchmove", 105, 305));
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getByTestId("terminal-copy-overlay")).toBeInTheDocument();
+    vi.useRealTimers();
+
+    getByRole("button", { name: "Copy" }).click();
+    await waitFor(() => {
+      expect(getByTestId("terminal-copy-fallback")).toBeInTheDocument();
+    });
+    expect(queryByTestId("terminal-copy-overlay")).not.toBeInTheDocument();
+    const fallback = getByTestId("terminal-copy-fallback");
+    const textarea = fallback.querySelector("textarea")!;
+    expect(textarea).toBeInTheDocument();
+    expect(textarea.readOnly).toBe(true);
+    expect(textarea.value).toBe("selected text");
+    expect(textarea.selectionStart).toBe(0);
+    expect(textarea.selectionEnd).toBe("selected text".length);
+  });
+
+  it("dismisses copy overlay without copying when selection is cancelled", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const { host, queryByTestId } = await mountTerminal();
+    stubTerminalCanvas(host);
+
+    vi.useFakeTimers();
+    host.dispatchEvent(makeTouch("touchstart", 105, 105));
+    vi.advanceTimersByTime(500);
+    expect(activeSelectionManager.selectionStart).toEqual({ col: 10, absoluteRow: 5 });
+
+    // Second finger during a live selection cancels via endSelection(true).
+    host.dispatchEvent(
+      makePinch("touchstart", [
+        { x: 105, y: 105 },
+        { x: 205, y: 105 },
+      ]),
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(writeText).not.toHaveBeenCalled();
+    expect(clearSelection).toHaveBeenCalled();
+    expect(queryByTestId("terminal-copy-overlay")).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
   it("selects the word under a bare long-press", async () => {
     bufferLineText = "hello world ok";
-    const { host } = await mountTerminal();
+    const { host, getByTestId } = await mountTerminal();
     stubTerminalCanvas(host);
 
     vi.useFakeTimers();
@@ -1751,6 +1859,11 @@ describe("TerminalRawView", () => {
 
     expect(activeSelectionManager.selectionStart).toEqual({ col: 6, absoluteRow: 0 });
     expect(activeSelectionManager.selectionEnd).toEqual({ col: 10, absoluteRow: 0 });
+
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getByTestId("terminal-copy-overlay")).toBeInTheDocument();
+    expect(clearSelection).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 
@@ -2104,6 +2217,45 @@ describe("TerminalRawView", () => {
 
     expect(scrollLines).not.toHaveBeenCalled();
     expect(move.defaultPrevented).toBe(false);
+  });
+
+  it("focuses the terminal textarea on touchstart with preventScroll", async () => {
+    const { host } = await mountTerminal();
+    expect(lastTextarea).toBeDefined();
+    const focusSpy = vi.spyOn(lastTextarea!, "focus");
+
+    const start = makeTouch("touchstart", 200);
+    host.dispatchEvent(start);
+
+    // Focus must land immediately so iOS can attach native Paste — before the
+    // long-press timer fires a selection.
+    expect(focusSpy).toHaveBeenCalledWith({ preventScroll: true });
+    expect(start.defaultPrevented).toBe(false);
+  });
+
+  it("does not preventDefault on touchstart before scroll threshold", async () => {
+    const { host } = await mountTerminal();
+
+    const start = makeTouch("touchstart", 200);
+    host.dispatchEvent(start);
+    const move = makeTouch("touchmove", 198); // 2px jitter, under threshold
+    host.dispatchEvent(move);
+
+    expect(start.defaultPrevented).toBe(false);
+    expect(move.defaultPrevented).toBe(false);
+    expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("terminal textarea CSS does not fully clip the edit target", () => {
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*clip-path:\s*none/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*-webkit-clip-path:\s*none/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*opacity:\s*0\.01/,
+    );
   });
 
   it("captures touch drags from terminal child layers before they can be swallowed", async () => {

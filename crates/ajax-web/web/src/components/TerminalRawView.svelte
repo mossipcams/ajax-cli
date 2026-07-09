@@ -84,6 +84,16 @@
   $effect(() => {
     if (pasteFallbackOpen) pasteFallbackInput?.focus();
   });
+  let copyOverlayOpen = $state(false);
+  let copyOverlayText = $state("");
+  let copyFallbackOpen = $state(false);
+  let copyFallbackInput = $state<HTMLTextAreaElement | undefined>();
+  $effect(() => {
+    if (copyFallbackOpen) {
+      copyFallbackInput?.focus();
+      copyFallbackInput?.select();
+    }
+  });
   let zeroLagInput = $state("");
   let zeroLagStyle = $state("");
 
@@ -111,6 +121,8 @@
   let jumpToBottom: () => void = () => {};
   let requestReconnect: () => void = () => {};
   let requestPaste: () => void = () => {};
+  let handleCopyOverlay: () => void | Promise<void> = () => {};
+  let clearTermSelection: () => void = () => {};
   let focusTerm: () => void = () => {};
   let blurTerm: () => void = () => {};
   let refitAfterLayout: () => void = () => {};
@@ -236,6 +248,13 @@
       input.setAttribute("autocomplete", "off");
       input.setAttribute("spellcheck", "false");
       input.style.fontSize = "16px";
+      // ghostty clips the textarea to a fully invisible 1px box (opacity:0 +
+      // clipPath:inset(50%)). Soften just enough that iOS treats it as a real
+      // edit target for native Paste while it still does not paint over the canvas.
+      input.style.opacity = "0.01";
+      input.style.setProperty("clip-path", "none");
+      input.style.setProperty("-webkit-clip-path", "none");
+      input.style.setProperty("clip", "auto");
     };
 
     const cellHeightPx = (): number => {
@@ -379,18 +398,44 @@
       }, 2500);
     };
 
-    const finishSelectionCopy = (cancelled: boolean) => {
+    const dismissCopyUi = () => {
+      copyOverlayOpen = false;
+      copyFallbackOpen = false;
+      copyOverlayText = "";
+    };
+
+    const finishSelection = (cancelled: boolean) => {
       selectionAnchor = undefined;
-      const text = cancelled ? "" : (term?.getSelection() ?? "");
-      if (!text) {
+      if (cancelled) {
+        dismissCopyUi();
         term?.clearSelection();
         return;
       }
-      void copyText(text).then((copied) => {
-        flashCopyNotice(copied ? "Copied" : "Copy failed — clipboard unavailable");
+      const text = term?.getSelection() ?? "";
+      if (!text) {
+        dismissCopyUi();
         term?.clearSelection();
-      });
+        return;
+      }
+      copyOverlayText = text;
+      copyOverlayOpen = true;
+      copyFallbackOpen = false;
     };
+
+    handleCopyOverlay = async () => {
+      const text = copyOverlayText || term?.getSelection() || "";
+      copyOverlayOpen = false;
+      const ok = text ? await copyText(text) : false;
+      if (ok) {
+        flashCopyNotice("Copied");
+        copyOverlayText = "";
+        copyFallbackOpen = false;
+        term?.clearSelection();
+        return;
+      }
+      copyFallbackOpen = true;
+    };
+    clearTermSelection = () => term?.clearSelection();
 
     // Touch/wheel scroll, horizontal pan, pinch-zoom, long-press copy, and
     // momentum flings all live in terminalGestures; the component only
@@ -426,6 +471,7 @@
             });
           },
           beginSelection: (clientX, clientY) => {
+            dismissCopyUi();
             selectionAnchor = selectionCellAt(clientX, clientY);
             if (!selectionAnchor) return;
             const word = wordRangeAt(selectionAnchor);
@@ -438,7 +484,10 @@
             const { start, end } = orderedSelection(selectionAnchor, focus);
             applySelection(start, end);
           },
-          endSelection: finishSelectionCopy,
+          endSelection: finishSelection,
+          touchBegan: () => {
+            term?.textarea?.focus({ preventScroll: true });
+          },
         })
       : () => {};
 
@@ -504,7 +553,7 @@
           term?.focus();
         })
         .catch(() => {
-          pasteNotice = "Clipboard read failed — allow paste access and retry";
+          pasteFallbackOpen = true;
         });
     };
 
@@ -959,6 +1008,32 @@
         jumpToBottom();
       }}>New output ↓</button>
   {/if}
+  {#if copyOverlayOpen}
+    <button
+      type="button"
+      class="terminal-copy-overlay"
+      data-testid="terminal-copy-overlay"
+      onclick={() => void handleCopyOverlay()}>Copy</button>
+  {/if}
+  {#if copyFallbackOpen}
+    <div class="terminal-paste-fallback" data-testid="terminal-copy-fallback">
+      <textarea
+        class="terminal-paste-fallback-input"
+        readonly
+        rows="3"
+        aria-label="Selected text to copy"
+        bind:this={copyFallbackInput}
+        value={copyOverlayText}></textarea>
+      <button
+        type="button"
+        class="terminal-key"
+        onclick={() => {
+          copyFallbackOpen = false;
+          copyOverlayText = "";
+          clearTermSelection();
+        }}>Done</button>
+    </div>
+  {/if}
   {#if pasteFallbackOpen}
     <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
       <textarea
@@ -973,6 +1048,15 @@
           pasteFallbackOpen = false;
           if (text) pasteToTerm(text);
         }}></textarea>
+      <button
+        type="button"
+        class="terminal-key"
+        onclick={() => {
+          const text = pasteFallbackInput?.value ?? "";
+          pasteFallbackOpen = false;
+          if (pasteFallbackInput) pasteFallbackInput.value = "";
+          if (text) pasteToTerm(text);
+        }}>Send</button>
       <button
         type="button"
         class="terminal-key"
@@ -1098,6 +1182,21 @@
     line-height: 1;
   }
 
+  .terminal-copy-overlay {
+    position: absolute;
+    top: 6px;
+    right: 48px;
+    z-index: 2;
+    min-height: 36px;
+    padding: 6px 12px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    color: var(--ink);
+    font-size: 13px;
+    font-weight: 700;
+  }
+
   .terminal-expand-corner:hover,
   .terminal-expand-corner:focus-visible {
     border-color: var(--ink-soft);
@@ -1180,10 +1279,15 @@
     -webkit-touch-callout: none;
   }
 
-  /* The hidden input must stay selectable or iOS refuses to paste into it. */
+  /* The hidden input must stay selectable or iOS refuses to paste into it.
+     Soften ghostty's full clip (opacity:0 + clipPath:inset(50%)) just enough
+     that iOS treats it as a real edit target for native Paste. */
   .terminal-host :global(textarea) {
     user-select: text;
     -webkit-user-select: text;
+    opacity: 0.01;
+    clip-path: none;
+    -webkit-clip-path: none;
   }
 
   .terminal-zero-lag-input {
