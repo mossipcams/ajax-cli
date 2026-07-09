@@ -244,6 +244,20 @@ mod tests {
                 )
             );
             prop_assert_eq!(
+                adapter.add_worktree_existing_branch(&repo_path, &worktree_path, &branch),
+                CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        repo_path.as_str(),
+                        "worktree",
+                        "add",
+                        worktree_path.as_str(),
+                        branch.as_str(),
+                    ],
+                )
+            );
+            prop_assert_eq!(
                 adapter.remove_worktree(&repo_path, &worktree_path).args,
                 vec!["-C", repo_path.as_str(), "worktree", "remove", worktree_path.as_str()]
             );
@@ -299,6 +313,24 @@ mod tests {
                     "ajax/fix-login",
                     "/Users/matt/projects/web__worktrees/ajax-fix-login",
                     "main"
+                ]
+            )
+        );
+        assert_eq!(
+            adapter.add_worktree_existing_branch(
+                "/Users/matt/projects/web",
+                "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                "ajax/fix-login",
+            ),
+            CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "add",
+                    "/Users/matt/projects/web__worktrees/ajax-fix-login",
+                    "ajax/fix-login",
                 ]
             )
         );
