@@ -281,14 +281,6 @@
   /* Mobile: tighten chrome for terminal-first layout inside route-scroll.
      Includes landscape phones (coarse pointer, short viewport). */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    :global(html.terminal-expanded),
-    :global(html.terminal-expanded body),
-    :global(html.keyboard-open),
-    :global(html.keyboard-open body) {
-      overflow: hidden;
-      overscroll-behavior: none;
-    }
-
     /* Fill the locked route-scroll band (no page scroll); terminal owns overflow. */
     .task-detail {
       display: flex;

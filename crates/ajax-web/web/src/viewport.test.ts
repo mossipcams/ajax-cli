@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { initViewport, isKeyboardOpen } from "./viewport";
+import { initViewport, isKeyboardOpen, resetDocumentScroll } from "./viewport";
 
 // Drive a fake visualViewport the way TerminalPanel.test.ts does: capture the
 // handlers it registers and replay them after mutating the height.
@@ -197,6 +197,31 @@ describe("initViewport", () => {
     vi.stubGlobal("visualViewport", undefined);
     expect(() => initViewport()()).not.toThrow();
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("");
+  });
+});
+
+describe("resetDocumentScroll", () => {
+  it("resetDocumentScroll clears every known document scroll owner safely", () => {
+    const scrollTo = vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+    document.documentElement.scrollTop = 120;
+    document.body.scrollTop = 80;
+    if (document.scrollingElement) {
+      document.scrollingElement.scrollTop = 60;
+    }
+
+    resetDocumentScroll();
+
+    expect(scrollTo).toHaveBeenCalledWith(0, 0);
+    expect(document.documentElement.scrollTop).toBe(0);
+    expect(document.body.scrollTop).toBe(0);
+    if (document.scrollingElement) {
+      expect(document.scrollingElement.scrollTop).toBe(0);
+    }
+
+    scrollTo.mockImplementation(() => {
+      throw new Error("Not implemented");
+    });
+    expect(() => resetDocumentScroll()).not.toThrow();
   });
 });
 

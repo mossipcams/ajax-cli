@@ -318,6 +318,54 @@ test("terminal placeholder proves layout without Ghostty", async ({ page }) => {
   expect(panelStyle.minHeight).not.toBe("0px");
 });
 
+test("desktop short viewport keeps terminal min-height within max-height", async ({
+  page,
+}, testInfo) => {
+  test.skip(
+    testInfo.project.name === "mobile-webkit",
+    "desktop min/max-height contract does not apply on mobile",
+  );
+  await page.setViewportSize({ width: 900, height: 420 });
+  await enableTerminalPlaceholder(page);
+  await mockFetch(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+
+  const panel = page.locator("[data-testid='task-terminal-panel']");
+  await expect(panel).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('[data-testid="terminal-placeholder"]')).toBeVisible();
+
+  const layout = await page.evaluate(() => {
+    const panelEl = document.querySelector(
+      '[data-testid="task-terminal-panel"]',
+    ) as HTMLElement | null;
+    const routeScroll = document.querySelector(
+      '[data-testid="route-scroll"]',
+    ) as HTMLElement | null;
+    if (!panelEl || !routeScroll) return null;
+    const style = getComputedStyle(panelEl);
+    panelEl.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const panelBox = panelEl.getBoundingClientRect();
+    const routeBox = routeScroll.getBoundingClientRect();
+    return {
+      minHeight: style.minHeight,
+      maxHeight: style.maxHeight,
+      minHeightPx: Number.parseFloat(style.minHeight),
+      maxHeightPx: Number.parseFloat(style.maxHeight),
+      panelBottom: panelBox.bottom,
+      routeBottom: routeBox.bottom,
+      panelHeight: panelBox.height,
+      routeHeight: routeBox.height,
+    };
+  });
+  expect(layout).not.toBeNull();
+  expect(layout!.maxHeight).not.toBe("none");
+  expect(layout!.minHeightPx).toBeLessThanOrEqual(layout!.maxHeightPx);
+  // Panel height is capped by max-height; once scrolled into the route band,
+  // its bottom must not extend past the visible route-scroll bottom.
+  expect(layout!.panelHeight).toBeLessThanOrEqual(layout!.maxHeightPx + 1);
+  expect(layout!.panelBottom).toBeLessThanOrEqual(layout!.routeBottom + 1);
+});
+
 test("task detail route scroll survives expanded terminal close", async ({ page }, testInfo) => {
   await enableTerminalPlaceholder(page);
   await mockFetch(page);

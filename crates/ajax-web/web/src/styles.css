@@ -674,6 +674,8 @@ header .bar h1 {
 @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
   .task-detail .terminal-panel,
   .task-detail [data-testid="task-terminal-panel"] {
+    /* Cap min-height so it cannot defeat max-height on short desktop viewports. */
+    min-height: min(280px, 58vh, 560px);
     max-height: min(58vh, 560px);
   }
 }
