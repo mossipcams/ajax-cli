@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.36.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.36.0...ajax-cli-v0.36.1) (2026-07-09)
+
+
+### Code Refactoring
+
+* **core:** cut over-engineering from ponytail audit ([#391](https://github.com/mossipcams/ajax-cli/issues/391)) ([8a825bb](https://github.com/mossipcams/ajax-cli/commit/8a825bb8f7a41aa616af6191a107deeb09e8ec7e))
+
 ## [0.36.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.35.15...ajax-cli-v0.36.0) (2026-07-08)
 
 
