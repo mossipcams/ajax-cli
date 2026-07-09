@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.9...ajax-cli-v0.37.10) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** stop fullscreen translate and hide route-scroll gutter ([#414](https://github.com/mossipcams/ajax-cli/issues/414)) ([db6c025](https://github.com/mossipcams/ajax-cli/commit/db6c025488fc8f7a065b46951871f9e6a37ac807))
+
 ## [0.37.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.8...ajax-cli-v0.37.9) (2026-07-09)
 
 
