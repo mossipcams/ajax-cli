@@ -807,6 +807,7 @@
         if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
           return null;
         }
+        const metrics = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.();
         return {
           cursorX: active.cursorX,
           cursorY: active.cursorY,
@@ -814,6 +815,8 @@
           rows: term.rows,
           canvasWidth: canvas.clientWidth,
           canvasHeight: canvas.clientHeight,
+          cellWidth: metrics?.width,
+          cellHeight: metrics?.height,
           fontSize: term.options.fontSize ?? DEFAULT_FONT_SIZE,
         };
       },

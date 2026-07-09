@@ -148,4 +148,53 @@ describe("zeroLagOverlayStyle", () => {
     expect(style).toContain("line-height:");
     expect(style).not.toContain("bottom:");
   });
+
+  it("prefers explicit cell metrics over canvas divided by grid", () => {
+    const style = zeroLagOverlayStyle(
+      metrics({
+        cursorX: 2,
+        cursorY: 3,
+        cellWidth: 10,
+        cellHeight: 20,
+        canvasWidth: 800,
+        canvasHeight: 480,
+        cols: 80,
+        rows: 24,
+      }),
+    );
+    expect(style).toContain("left: 20px");
+    expect(style).toContain("top: 60px");
+    expect(style).toContain("line-height: 20px");
+
+    const style2 = zeroLagOverlayStyle(
+      metrics({
+        cursorX: 1,
+        cursorY: 4,
+        cellWidth: 8,
+        cellHeight: 16,
+        canvasWidth: 800,
+        canvasHeight: 800,
+        cols: 80,
+        rows: 24,
+      }),
+    );
+    expect(style2).toContain("left: 8px");
+    expect(style2).toContain("top: 64px");
+  });
+
+  it("falls back to canvas divided by grid when cell metrics are missing", () => {
+    const style = zeroLagOverlayStyle(
+      metrics({
+        cursorX: 2,
+        cursorY: 3,
+        canvasWidth: 800,
+        canvasHeight: 480,
+        cols: 80,
+        rows: 24,
+      }),
+    );
+    expect(style).toContain("left: 20px");
+    expect(style).toContain("top: 60px");
+    expect(style).toContain("line-height: 20px");
+  });
 });

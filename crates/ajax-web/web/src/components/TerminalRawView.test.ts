@@ -573,6 +573,29 @@ describe("TerminalRawView", () => {
     expect(inlineStyle).not.toMatch(/bottom:/);
   });
 
+  it("positions zero-lag overlay with renderer cell metrics", async () => {
+    expect(terminalRawViewSource).toMatch(/getMetrics/);
+
+    terminalCellMetrics = { width: 10, height: 16 };
+    const { container } = await mountOpenTerminal();
+    const canvas = container.querySelector("canvas") as HTMLElement;
+    Object.defineProperty(canvas, "clientWidth", { value: 800, configurable: true });
+    Object.defineProperty(canvas, "clientHeight", { value: 800, configurable: true });
+    Object.assign(
+      (lastTerminal as unknown as { buffer: { active: Record<string, unknown> } }).buffer.active,
+      { cursorX: 2, cursorY: 5 },
+    );
+
+    dispatchTextareaBeforeInput("insertText", "x");
+
+    const overlay = container.querySelector(
+      "[data-testid='terminal-zero-lag-input']",
+    ) as HTMLElement;
+    const inlineStyle = overlay.getAttribute("style") ?? "";
+    expect(inlineStyle).toContain("left: 20px");
+    expect(inlineStyle).toContain("top: 80px");
+  });
+
   it("does not duplicate optimistic text when Ghostty emits matching data", async () => {
     const { container, socket } = await mountOpenTerminal();
 
