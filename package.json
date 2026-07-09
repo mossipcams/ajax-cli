@@ -5,7 +5,7 @@
   "scripts": {
     "test": "npm run verify",
     "verify": "cargo fmt --check && cargo check --all-targets --all-features && cargo clippy --all-targets --all-features -- -D warnings && cargo nextest run --all-features --test-threads=1 && cargo test --doc && npm run web:check && npm run web:test -- --run",
-    "web:check": "svelte-check --tsconfig crates/ajax-web/web/tsconfig.check.json",
+    "web:check": "tsc -p crates/ajax-web/web/tsconfig.check.json --noEmit && node scripts/svelte-check-legacy-ts.cjs --tsconfig crates/ajax-web/web/tsconfig.check.json",
     "web:test": "vitest --config crates/ajax-web/web/vite.config.mts",
     "web:build": "vite build --config crates/ajax-web/web/vite.config.mts",
     "web:build:check": "node scripts/web-build-check.mjs",
@@ -21,8 +21,9 @@
     "husky": "^9.1.7",
     "jsdom": "^25.0.1",
     "svelte": "^5.19.0",
-    "svelte-check": "^4.1.4",
-    "typescript": "^5.7.3",
+    "svelte-check": "^4.7.2",
+    "typescript": "^7.0.2",
+    "typescript-5": "npm:typescript@^5.9.3",
     "vite": "^6.0.7",
     "vitest": "^4.1.9"
   },
