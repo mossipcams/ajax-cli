@@ -1,4 +1,3 @@
-/// <reference types="node" />
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import { readFileSync } from "node:fs";
@@ -10,6 +9,7 @@ import routeScrollSource from "./RouteScroll.svelte?raw";
 import appSource from "./App.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
 
+// Vite returns "" for `*.css?raw` under vitest, so read the stylesheet from disk.
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
   return readFileSync(join(testDir, "../styles.css"), "utf8");
