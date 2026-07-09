@@ -27,12 +27,12 @@ use std::{
 use tower_http::trace::TraceLayer;
 
 use crate::{
-    action_vocabulary::supported_web_action,
     adapters::{
         browser_session::BrowserSession,
         cloudflare_access::{CloudflareAccessConfig, CloudflareAccessError},
         server, tls,
     },
+    slices::actions::supported_web_action,
     slices::{cockpit, install},
     WebError,
 };

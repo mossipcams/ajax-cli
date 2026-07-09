@@ -7,36 +7,28 @@ pub struct AgentLaunch {
     pub prompt: String,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AgentAdapter {
-    program: String,
-}
-
-impl AgentAdapter {
-    pub fn new(program: impl Into<String>) -> Self {
-        Self {
-            program: program.into(),
+pub fn agent_launch_spec(
+    program: impl Into<String>,
+    client: AgentClient,
+    launch: &AgentLaunch,
+) -> CommandSpec {
+    let program = program.into();
+    let mut args = match client {
+        AgentClient::Codex => {
+            vec!["--cd".to_string(), launch.worktree_path.clone()]
         }
+        AgentClient::Claude => Vec::new(),
+        AgentClient::Other if program == "cursor" => vec!["agent".to_string()],
+        AgentClient::Other => Vec::new(),
+    };
+    if !launch.prompt.is_empty() {
+        args.push(launch.prompt.clone());
     }
-
-    pub fn launch(&self, client: AgentClient, launch: &AgentLaunch) -> CommandSpec {
-        let mut args = match client {
-            AgentClient::Codex => {
-                vec!["--cd".to_string(), launch.worktree_path.clone()]
-            }
-            AgentClient::Claude => Vec::new(),
-            AgentClient::Other if self.program == "cursor" => vec!["agent".to_string()],
-            AgentClient::Other => Vec::new(),
-        };
-        if !launch.prompt.is_empty() {
-            args.push(launch.prompt.clone());
-        }
-        CommandSpec {
-            program: self.program.clone(),
-            args,
-            cwd: None,
-            mode: super::command::CommandMode::Capture,
-            timeout: None,
-        }
+    CommandSpec {
+        program,
+        args,
+        cwd: None,
+        mode: super::command::CommandMode::Capture,
+        timeout: None,
     }
 }

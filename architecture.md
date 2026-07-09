@@ -305,7 +305,7 @@ mutating operation persisted to disk.
 
 `live.rs` reduces observations into live-status classifications.
 
-`live_application.rs` applies reduced observations to task state, agent status,
+`live.rs` (`application` submodule) applies reduced observations to task state, agent status,
 side flags, activity timestamps, visible live status, and the live evidence's
 own durable `observed_at` timestamp. The application path
 separates ordinary observations from trusted wrapper/supervisor observations so
@@ -321,7 +321,7 @@ failure/completion, then a passive/unknown fallback the reducer preserves.
 `classify_pane` remains the generic compatibility entry point.
 
 Opening a task persists an attention acknowledgment without changing lifecycle
-or deleting evidence. `live_application::acknowledge_attention` is agent-neutral:
+or deleting evidence. `live::acknowledge_attention` is agent-neutral:
 waiting or completion evidence is suppressed only when its durable
 `observed_at` is at or before the acknowledgment. Newer same-kind evidence is
 accepted and becomes visible normally. Acknowledgment never clears failures,
@@ -577,7 +577,7 @@ the crate:
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
-- `ajax-web::action_vocabulary` owns the shared browser action capability
+- `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
 Slices may call adapter facades, but slices are named after capabilities rather

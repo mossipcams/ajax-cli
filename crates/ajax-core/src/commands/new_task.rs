@@ -1,6 +1,6 @@
 use super::{CommandContext, CommandError, CommandPlan};
 use crate::{
-    adapters::{AgentAdapter, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
+    adapters::{agent_launch_spec, AgentLaunch, CommandSpec, GitAdapter, TmuxAdapter},
     config::WorktreePlacement,
     lifecycle::mark_provisioning,
     models::{
@@ -90,8 +90,8 @@ pub fn new_task_plan_with_observation<R: Registry>(
     let git = GitAdapter::new("git");
     let tmux = TmuxAdapter::new("tmux");
     let selected_agent = agent_from_name(&request.agent);
-    let agent = AgentAdapter::new(&request.agent);
-    let agent_launch = agent.launch(
+    let agent_launch = agent_launch_spec(
+        &request.agent,
         selected_agent,
         &AgentLaunch {
             worktree_path: worktree_path_string.clone(),

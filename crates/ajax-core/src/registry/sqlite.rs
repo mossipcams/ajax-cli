@@ -8,7 +8,7 @@ use rusqlite::{params, Connection, Row, Transaction};
 
 use super::{
     refresh_task_annotations, InMemoryRegistry, RegistryEvent, RegistryEventKind,
-    RegistrySnapshotError, RegistryStore,
+    RegistrySnapshotError,
 };
 use crate::ghost_task::is_registry_ghost_task;
 use crate::lifecycle::hydrate_lifecycle_status;
@@ -505,8 +505,8 @@ fn migrate_v2_to_v3(connection: &Connection) -> Result<(), RegistrySnapshotError
         .map_err(database_error)
 }
 
-impl RegistryStore for SqliteRegistryStore {
-    fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
+impl SqliteRegistryStore {
+    pub fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError> {
         let connection = self.open()?;
         Self::migrate(&connection)?;
 
@@ -530,7 +530,7 @@ impl RegistryStore for SqliteRegistryStore {
         })
     }
 
-    fn save(&self, registry: &InMemoryRegistry) -> Result<(), RegistrySnapshotError> {
+    pub fn save(&self, registry: &InMemoryRegistry) -> Result<(), RegistrySnapshotError> {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| RegistrySnapshotError::Io(error.to_string()))?;
@@ -1693,7 +1693,6 @@ mod tests {
     };
     use crate::registry::{
         InMemoryRegistry, Registry, RegistryEvent, RegistryEventKind, RegistrySnapshotError,
-        RegistryStore,
     };
     use rstest::rstest;
     use std::time::{Duration, SystemTime};

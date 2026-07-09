@@ -2,7 +2,7 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 4] = ["cockpit", "install", "operate", "pane"];
+    const SLICES: [&str; 4] = ["cockpit", "install", "operate", "terminal"];
     const ADAPTERS: [&str; 4] = ["assets", "http", "tls", "tmux_input"];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
@@ -24,7 +24,7 @@ mod tests {
     }
 
     #[test]
-    fn action_vocabulary_does_not_depend_on_slices_or_runtime() {
+    fn actions_module_does_not_depend_on_sibling_slices_or_runtime() {
         let forbidden_slices = forbidden_paths_for_slices(&SLICES);
         let forbidden_runtime = forbidden_runtime_dependencies();
         let forbidden = forbidden_slices
@@ -34,10 +34,10 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_module_does_not_depend_on(
-            "ajax-web::action_vocabulary",
+            "ajax-web::slices::actions",
             &forbidden,
             "module",
-            "action_vocabulary",
+            "actions",
         );
     }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { flingFrames, wheelNotchesFromDrag } from "./terminalTouchScroll";
+import { flingFrames, wheelNotchesFromDrag } from "./terminalGestures";
 
 describe("wheelNotchesFromDrag", () => {
   it("emits no notch until a full cell has been dragged", () => {

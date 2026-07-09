@@ -277,11 +277,6 @@ fn refresh_task_annotations(task: &mut Task) {
     task.annotations = crate::attention::annotate(task);
 }
 
-pub trait RegistryStore {
-    fn load(&self) -> Result<InMemoryRegistry, RegistrySnapshotError>;
-    fn save(&self, registry: &InMemoryRegistry) -> Result<(), RegistrySnapshotError>;
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RegistryError {
     DuplicateTask(TaskId),

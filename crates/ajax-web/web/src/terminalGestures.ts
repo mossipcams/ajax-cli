@@ -11,7 +11,6 @@
  */
 
 import { clampPan, pinchFontSize, pinchActivated, MIN_FONT_SIZE, MAX_FONT_SIZE } from "./terminalGeometry";
-import { flingFrames, wheelNotchesFromDrag } from "./terminalTouchScroll";
 
 export interface TerminalGestureHost {
   /** Scroll the local scrollback; positive = toward newest output. */
@@ -327,4 +326,154 @@ export function attachTerminalGestures(
     target.removeEventListener("touchcancel", onTouchCancel, scrollEndOptions);
     target.removeEventListener("wheel", onWheel, wheelOptions);
   };
+}
+
+
+// --- selection (folded from terminalSelection.ts) ---
+/**
+ * Pure math for touch (long-press) text selection on the canvas terminal.
+ *
+ * ghostty-web renders to a <canvas>, so native browser selection can never
+ * work; Ajax synthesizes it from touch gestures instead. These helpers map
+ * touch points to terminal cells and order a dragged range so the gesture
+ * wiring in terminalGestures and the terminal plumbing in TerminalRawView
+ * stay thin and the math stays unit-testable.
+ */
+
+export interface CellPoint {
+  col: number;
+  row: number;
+}
+
+/**
+ * Map a point (px, relative to the rendered grid's top-left) to the cell it
+ * falls in, clamped into the grid so a drag past any edge selects to that
+ * edge instead of vanishing. Returns undefined when the grid has no
+ * measurable size (pre-layout, jsdom).
+ */
+export function cellAtPoint(
+  xPx: number,
+  yPx: number,
+  gridWidthPx: number,
+  gridHeightPx: number,
+  cols: number,
+  rows: number,
+): CellPoint | undefined {
+  if (
+    !Number.isFinite(xPx) ||
+    !Number.isFinite(yPx) ||
+    !Number.isFinite(gridWidthPx) ||
+    !Number.isFinite(gridHeightPx) ||
+    gridWidthPx <= 0 ||
+    gridHeightPx <= 0 ||
+    !Number.isInteger(cols) ||
+    !Number.isInteger(rows) ||
+    cols <= 0 ||
+    rows <= 0
+  ) {
+    return undefined;
+  }
+  const col = Math.min(cols - 1, Math.max(0, Math.floor((xPx / gridWidthPx) * cols)));
+  const row = Math.min(rows - 1, Math.max(0, Math.floor((yPx / gridHeightPx) * rows)));
+  return { col, row };
+}
+
+/**
+ * Order two selection endpoints into reading order (top-left first), so a
+ * drag upward/backward selects the same range as the forward drag.
+ */
+export function orderedSelection(
+  a: CellPoint,
+  b: CellPoint,
+): { start: CellPoint; end: CellPoint } {
+  const backward = a.row > b.row || (a.row === b.row && a.col > b.col);
+  return backward ? { start: b, end: a } : { start: a, end: b };
+}
+
+
+// --- touch scroll (folded from terminalTouchScroll.ts) ---
+/**
+ * Touch-drag → scroll-line math for the terminal's synthetic scrolling.
+ *
+ * Browser terminal renderers expose their own layered DOM/canvas surfaces, so
+ * native touch scrolling is not reliable. terminalGestures owns scrolling instead,
+ * translating drags into local `term.scrollLines()` steps; this module holds
+ * the pure math: accumulated drag pixels become whole line "notches" while
+ * the leftover sub-cell pixels carry forward so slow drags scroll smoothly.
+ */
+
+export interface WheelNotches {
+  /** Whole line steps to scroll; positive scrolls toward newest output. */
+  notches: number;
+  /** Leftover sub-cell pixels to carry into the next move. */
+  remainderPx: number;
+}
+
+/**
+ * Split `accumulatedPx` of vertical drag into whole line notches of
+ * `cellPx` each, returning the sub-cell remainder to accumulate next time.
+ * `maxNotches` bounds a single move's local scrollback jump. (Scroll never
+ * reaches the PTY — gestures drive Ajax-owned scrollback only.)
+ */
+export function wheelNotchesFromDrag(
+  accumulatedPx: number,
+  cellPx: number,
+  maxNotches = 24,
+): WheelNotches {
+  if (!Number.isFinite(cellPx) || cellPx <= 0) {
+    return { notches: 0, remainderPx: accumulatedPx };
+  }
+  const whole = Math.trunc(accumulatedPx / cellPx);
+  const remainderPx = accumulatedPx - whole * cellPx;
+  const notches = Math.max(-maxNotches, Math.min(maxNotches, whole));
+  return { notches, remainderPx };
+}
+
+/**
+ * Convert a touch-release velocity into a momentum "fling": a finite,
+ * pre-computed sequence of per-animation-frame line steps that decays to a
+ * stop. Native momentum scrolling is disabled on the terminal (it desyncs
+ * from `scrollLines`), so this provides the inertia a drag-only scroll lacks.
+ *
+ * `velocityPxPerMs` is positive when the finger moved up (scroll toward the
+ * newest output). Sub-threshold or non-finite velocities yield no frames, and
+ * the total distance is capped so one hard swipe cannot flood the terminal.
+ */
+export function flingFrames(
+  velocityPxPerMs: number,
+  cellPx: number,
+  decayPerFrame = 0.92,
+  minVelocityPxPerMs = 0.05,
+  maxTotalLines = 200,
+): number[] {
+  if (
+    !Number.isFinite(velocityPxPerMs) ||
+    !Number.isFinite(cellPx) ||
+    cellPx <= 0 ||
+    Math.abs(velocityPxPerMs) < minVelocityPxPerMs
+  ) {
+    return [];
+  }
+
+  const FRAME_MS = 16;
+  const frames: number[] = [];
+  let velocity = velocityPxPerMs;
+  let carryPx = 0;
+  let total = 0;
+
+  while (Math.abs(velocity) >= minVelocityPxPerMs && total < maxTotalLines) {
+    carryPx += velocity * FRAME_MS;
+    let lines = Math.trunc(carryPx / cellPx);
+    if (lines !== 0) {
+      // Never exceed the cap even mid-frame.
+      const room = maxTotalLines - total;
+      lines = Math.max(-room, Math.min(room, lines));
+      carryPx -= lines * cellPx;
+      total += Math.abs(lines);
+    }
+    frames.push(lines);
+    velocity *= decayPerFrame;
+  }
+
+  return frames;
 }

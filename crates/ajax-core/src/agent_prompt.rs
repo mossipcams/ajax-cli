@@ -4,7 +4,7 @@
 //!
 //! Safety contract: an adapter may decline to understand a pane (return `None`,
 //! or a `Low`-confidence prompt), but it must never confidently emit the wrong
-//! key. The generic [`AgentPromptAdapter::answer_keys`] refuses to act on
+//! key. The free function [`answer_keys`] refuses to act on
 //! anything but a `High`-confidence, answerable approval. This is what lets a
 //! blocked agent be answered from a phone — or from a delayed notification —
 //! without the risk of a misparse landing the wrong keystroke in a live
@@ -83,64 +83,36 @@ pub enum AnswerError {
     UnknownChoice,
 }
 
-pub trait AgentPromptAdapter {
-    /// Parse cleaned pane lines (ANSI-stripped, dedup-collapsed) into a prompt.
-    fn parse(&self, lines: &[String]) -> Option<AgentPrompt>;
-
-    /// Resolve an operator answer into the keys to send. Generic over agents:
-    /// the keys live on the choices the adapter parsed, so the safety floor is
-    /// enforced in one place.
-    fn answer_keys(
-        &self,
-        prompt: &AgentPrompt,
-        answer: &OperatorAnswer,
-    ) -> Result<SendKeys, AnswerError> {
-        if prompt.confidence != Confidence::High || prompt.kind != PromptKind::Approval {
-            return Err(AnswerError::NotAnswerable);
-        }
-        let choice = match answer {
-            OperatorAnswer::Approve => prompt.choices.iter().find(|c| c.role == ChoiceRole::Affirm),
-            OperatorAnswer::Deny => prompt.choices.iter().find(|c| c.role == ChoiceRole::Deny),
-            OperatorAnswer::Select { index } => prompt.choices.get(*index),
-        }
-        .ok_or(AnswerError::UnknownChoice)?;
-        Ok(SendKeys {
-            keys: choice.keys.clone(),
-            submit: choice.submit,
-        })
+/// Resolve an operator answer into the keys to send.
+/// Safety floor: only High-confidence Approvals are answerable.
+pub fn answer_keys(prompt: &AgentPrompt, answer: &OperatorAnswer) -> Result<SendKeys, AnswerError> {
+    if prompt.confidence != Confidence::High || prompt.kind != PromptKind::Approval {
+        return Err(AnswerError::NotAnswerable);
     }
+    let choice = match answer {
+        OperatorAnswer::Approve => prompt.choices.iter().find(|c| c.role == ChoiceRole::Affirm),
+        OperatorAnswer::Deny => prompt.choices.iter().find(|c| c.role == ChoiceRole::Deny),
+        OperatorAnswer::Select { index } => prompt.choices.get(*index),
+    }
+    .ok_or(AnswerError::UnknownChoice)?;
+    Ok(SendKeys {
+        keys: choice.keys.clone(),
+        submit: choice.submit,
+    })
 }
 
-/// Return the adapter for a given agent. Unknown agents get the null adapter,
-/// which never recognizes a prompt (→ safe escalation).
-pub fn adapter_for(agent: AgentClient) -> &'static dyn AgentPromptAdapter {
-    match agent {
-        AgentClient::Codex => &CodexAdapter,
-        AgentClient::Claude | AgentClient::Other => &NullAdapter,
-    }
-}
-
-/// Convenience: parse a pane for the given agent.
+/// Parse a pane for the given agent. Unknown agents never recognize a prompt.
 pub fn parse_prompt(agent: AgentClient, lines: &[String]) -> Option<AgentPrompt> {
-    adapter_for(agent).parse(lines)
-}
-
-pub struct NullAdapter;
-
-impl AgentPromptAdapter for NullAdapter {
-    fn parse(&self, _lines: &[String]) -> Option<AgentPrompt> {
-        None
+    match agent {
+        AgentClient::Codex => parse_codex_prompt(lines),
+        AgentClient::Claude | AgentClient::Other => None,
     }
 }
 
-pub struct CodexAdapter;
-
-impl AgentPromptAdapter for CodexAdapter {
-    fn parse(&self, lines: &[String]) -> Option<AgentPrompt> {
-        parse_numbered_approval(lines)
-            .or_else(|| parse_yes_no_approval(lines))
-            .or_else(|| parse_composer(lines))
-    }
+fn parse_codex_prompt(lines: &[String]) -> Option<AgentPrompt> {
+    parse_numbered_approval(lines)
+        .or_else(|| parse_yes_no_approval(lines))
+        .or_else(|| parse_composer(lines))
 }
 
 // --- Codex parsing helpers -------------------------------------------------
@@ -446,7 +418,7 @@ mod tests {
                3. No, and tell Codex what to do differently",
         );
 
-        let prompt = CodexAdapter.parse(&pane).expect("numbered approval");
+        let prompt = parse_codex_prompt(&pane).expect("numbered approval");
 
         assert_eq!(prompt.kind, PromptKind::Approval);
         assert_eq!(prompt.confidence, Confidence::High);
@@ -466,17 +438,13 @@ mod tests {
              ❯ 1. Yes, run it
                2. No, and tell Codex what to do differently",
         );
-        let prompt = CodexAdapter.parse(&pane).unwrap();
+        let prompt = parse_codex_prompt(&pane).unwrap();
 
-        let approve = CodexAdapter
-            .answer_keys(&prompt, &OperatorAnswer::Approve)
-            .unwrap();
+        let approve = answer_keys(&prompt, &OperatorAnswer::Approve).unwrap();
         assert_eq!(approve.keys, "1");
         assert!(approve.submit);
 
-        let deny = CodexAdapter
-            .answer_keys(&prompt, &OperatorAnswer::Deny)
-            .unwrap();
+        let deny = answer_keys(&prompt, &OperatorAnswer::Deny).unwrap();
         assert_eq!(deny.keys, "2");
     }
 
@@ -488,28 +456,22 @@ mod tests {
                2. Add tests
                3. Ship it",
         );
-        assert!(CodexAdapter.parse(&pane).is_none());
+        assert!(parse_codex_prompt(&pane).is_none());
     }
 
     #[test]
     fn codex_yes_no_approval_maps_to_y_and_n() {
         let pane = lines("Run `cargo test`? [y/n]");
-        let prompt = CodexAdapter.parse(&pane).unwrap();
+        let prompt = parse_codex_prompt(&pane).unwrap();
 
         assert_eq!(prompt.kind, PromptKind::Approval);
         assert_eq!(prompt.command.as_deref(), Some("cargo test"));
         assert_eq!(
-            CodexAdapter
-                .answer_keys(&prompt, &OperatorAnswer::Approve)
-                .unwrap()
-                .keys,
+            answer_keys(&prompt, &OperatorAnswer::Approve).unwrap().keys,
             "y"
         );
         assert_eq!(
-            CodexAdapter
-                .answer_keys(&prompt, &OperatorAnswer::Deny)
-                .unwrap()
-                .keys,
+            answer_keys(&prompt, &OperatorAnswer::Deny).unwrap().keys,
             "n"
         );
     }
@@ -521,13 +483,13 @@ mod tests {
              › Write tests for @filename
              gpt-5.4 high · ~/.ajax-dev/worktrees/x/fix-login",
         );
-        let prompt = CodexAdapter.parse(&pane).expect("composer");
+        let prompt = parse_codex_prompt(&pane).expect("composer");
 
         assert_eq!(prompt.kind, PromptKind::FreeText);
         assert_eq!(prompt.confidence, Confidence::Low);
         assert!(prompt.choices.is_empty());
         assert_eq!(
-            CodexAdapter.answer_keys(&prompt, &OperatorAnswer::Approve),
+            answer_keys(&prompt, &OperatorAnswer::Approve),
             Err(AnswerError::NotAnswerable)
         );
     }
@@ -539,13 +501,13 @@ mod tests {
              warning: unused import
              Finished in 3.2s",
         );
-        assert!(CodexAdapter.parse(&pane).is_none());
+        assert!(parse_codex_prompt(&pane).is_none());
     }
 
     #[test]
     fn null_adapter_never_recognizes_a_prompt() {
         let pane = lines("Run `cargo test`? [y/n]");
-        assert!(NullAdapter.parse(&pane).is_none());
+        assert!(parse_prompt(AgentClient::Other, &pane).is_none());
         assert!(parse_prompt(AgentClient::Claude, &pane).is_none());
         assert!(parse_prompt(AgentClient::Codex, &pane).is_some());
     }
@@ -554,8 +516,8 @@ mod tests {
     fn fingerprint_changes_with_command() {
         let a = lines("Run `cargo test`? [y/n]");
         let b = lines("Run `rm -rf /`? [y/n]");
-        let fa = CodexAdapter.parse(&a).unwrap().fingerprint;
-        let fb = CodexAdapter.parse(&b).unwrap().fingerprint;
+        let fa = parse_codex_prompt(&a).unwrap().fingerprint;
+        let fb = parse_codex_prompt(&b).unwrap().fingerprint;
         assert_ne!(fa, fb);
     }
 

@@ -1,8 +1,8 @@
 use std::time::SystemTime;
 
+use super::{reduce_live_observation, LiveObservation, LiveStatusKind};
 use crate::{
     lifecycle::{transition_lifecycle, LifecycleTransitionReason},
-    live::{reduce_live_observation, LiveObservation, LiveStatusKind},
     models::{AgentRuntimeStatus, LifecycleStatus, SideFlag, Task},
 };
 

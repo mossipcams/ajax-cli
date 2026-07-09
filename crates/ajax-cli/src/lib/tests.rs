@@ -15,7 +15,7 @@ use ajax_core::{
         LiveStatusKind, OperatorAction, RuntimeHealth, RuntimeObservationSource, RuntimeProjection,
         SideFlag, Task, TaskId, TaskWindowStatus, TmuxStatus,
     },
-    registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
+    registry::{InMemoryRegistry, Registry, SqliteRegistryStore},
 };
 use std::{
     path::{Path, PathBuf},

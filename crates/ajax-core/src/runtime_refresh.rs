@@ -69,14 +69,6 @@ pub fn refresh_runtime_context<R: Registry>(
     refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, RefreshTier::Full)
 }
 
-pub fn refresh_runtime_context_with_agent_status_cache<R: Registry>(
-    context: &mut CommandContext<R>,
-    runner: &mut impl CommandRunner,
-    agent_status_cache: &impl AgentStatusCache,
-) -> Result<bool, CommandError> {
-    refresh_runtime_context_with_tier(context, runner, agent_status_cache, RefreshTier::Full)
-}
-
 pub fn refresh_runtime_context_with_tier<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -752,9 +744,8 @@ mod tests {
     };
 
     use super::{
-        refresh_runtime_context, refresh_runtime_context_with_agent_status_cache,
-        refresh_runtime_context_with_tier, AgentStatusCache, AgentStatusCacheEntry,
-        AgentStatusCacheSource, NoAgentStatusCache, RefreshTier,
+        refresh_runtime_context, refresh_runtime_context_with_tier, AgentStatusCache,
+        AgentStatusCacheEntry, AgentStatusCacheSource, NoAgentStatusCache, RefreshTier,
     };
     use crate::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
@@ -1162,7 +1153,8 @@ mod tests {
             values: vec!["working".to_string()],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
@@ -1205,10 +1197,11 @@ mod tests {
         let mut context = context_with_task_for_missing_session();
         let mut runner = HealthyRefreshRunner::default();
 
-        let changed = refresh_runtime_context_with_agent_status_cache(
+        let changed = refresh_runtime_context_with_tier(
             &mut context,
             &mut runner,
             &MixedAgentStatusCache,
+            RefreshTier::Full,
         )
         .unwrap();
 
@@ -1279,7 +1272,8 @@ mod tests {
             ],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
@@ -1311,7 +1305,8 @@ mod tests {
             ],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
@@ -1333,7 +1328,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1362,7 +1358,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1385,7 +1382,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1407,7 +1405,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 0);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1430,7 +1429,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 1);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1457,7 +1457,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 1);
     }
@@ -1481,7 +1482,8 @@ mod tests {
             ],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 0);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1561,7 +1563,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 0);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1593,7 +1596,8 @@ mod tests {
             }],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(
@@ -1624,7 +1628,8 @@ mod tests {
             )],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         assert_eq!(captured_pane(&runner), 0);
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
@@ -1660,7 +1665,8 @@ mod tests {
             }],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(task.live_status_observed_at, Some(next_observed_at));
@@ -1719,7 +1725,8 @@ mod tests {
             values: vec!["working".to_string()],
         };
 
-        refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache).unwrap();
+        refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
+            .unwrap();
 
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
@@ -1941,7 +1948,7 @@ mod tests {
         };
 
         let _changed =
-            refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache)
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
                 .unwrap();
 
         assert!(

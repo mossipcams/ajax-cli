@@ -1,7 +1,4 @@
-use ajax_core::{
-    models::CockpitActionItem,
-    output::{InboxResponse, ReposResponse, TaskCard},
-};
+use ajax_core::output::{InboxResponse, ReposResponse, TaskCard};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
@@ -20,38 +17,11 @@ use crate::{
     cockpit_state::{Origin, Severity},
     input::{handle_cockpit_event, handle_refresh_result, EventLoopAction},
     rendering::render_ui,
-    ActionOutcome, App, CockpitEventHandler, PendingAction,
+    App, CockpitEventHandler, PendingAction,
 };
 
 const NOTICE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_IDLE_POLL_INTERVAL: Duration = Duration::from_secs(1);
-
-pub fn run_interactive(
-    repos: ReposResponse,
-    cards: Vec<TaskCard>,
-    inbox: InboxResponse,
-    on_action: impl FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
-) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash(repos, cards, inbox, None, on_action)
-}
-
-pub fn run_interactive_with_flash(
-    repos: ReposResponse,
-    cards: Vec<TaskCard>,
-    inbox: InboxResponse,
-    initial_flash: Option<String>,
-    on_action: impl FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
-) -> io::Result<Option<PendingAction>> {
-    run_interactive_with_flash_and_refresh(
-        repos,
-        cards,
-        inbox,
-        initial_flash,
-        Duration::from_secs(1),
-        ActionOnly { on_action },
-        None,
-    )
-}
 
 pub fn run_interactive_with_flash_and_refresh(
     repos: ReposResponse,
@@ -80,19 +50,6 @@ pub fn run_interactive_with_flash_and_refresh(
     terminal.show_cursor()?;
 
     result
-}
-
-struct ActionOnly<F> {
-    on_action: F,
-}
-
-impl<F> CockpitEventHandler for ActionOnly<F>
-where
-    F: FnMut(&CockpitActionItem) -> io::Result<ActionOutcome>,
-{
-    fn on_action(&mut self, item: &CockpitActionItem) -> io::Result<ActionOutcome> {
-        (self.on_action)(item)
-    }
 }
 
 struct TerminalModeGuard {

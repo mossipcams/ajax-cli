@@ -126,32 +126,6 @@ impl CommandRunner for RecordingCommandRunner {
     }
 }
 
-/// Test helper that records every command spec it receives.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct CountingCommandRunner {
-    pub commands: Vec<CommandSpec>,
-}
-
-impl CountingCommandRunner {
-    pub fn count_matching(&self, predicate: impl Fn(&CommandSpec) -> bool) -> usize {
-        self.commands
-            .iter()
-            .filter(|command| predicate(command))
-            .count()
-    }
-}
-
-impl CommandRunner for CountingCommandRunner {
-    fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
-        self.commands.push(command.clone());
-        Ok(CommandOutput {
-            status_code: 0,
-            stdout: String::new(),
-            stderr: String::new(),
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

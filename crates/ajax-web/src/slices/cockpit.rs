@@ -9,7 +9,7 @@ use ajax_core::{
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::action_vocabulary::{browser_actions, WebAction};
+use crate::slices::actions::{browser_actions, WebAction};
 
 #[derive(Serialize)]
 pub struct BrowserCockpitView {

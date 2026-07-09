@@ -49,10 +49,6 @@ impl ProcessProtocol for CursorAdapter {
         self.stream_json_args(prompt)
     }
 
-    fn parse_stdout_line(&self, line: &str) -> Option<AgentEvent> {
-        self.parse_json_line(line)
-    }
-
     fn stdout_parser(&self) -> StdoutParser {
         Arc::new(parse_cursor_json_line)
     }
@@ -411,10 +407,7 @@ mod tests {
 
         assert_eq!(adapter.process_name(), "cursor");
         assert_eq!(
-            ProcessProtocol::parse_stdout_line(
-                &adapter,
-                r#"{"type":"system","subtype":"init","session_id":"abc"}"#
-            ),
+            (adapter.stdout_parser())(r#"{"type":"system","subtype":"init","session_id":"abc"}"#),
             Some(AgentEvent::Started {
                 agent: "cursor".to_string()
             })
