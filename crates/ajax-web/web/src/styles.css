@@ -628,9 +628,15 @@ header .bar h1 {
   /* Fullscreen terminal owns the screen: hide the global chrome too, so it
      cannot peek through when the visual viewport shrinks (keyboard / URL bar)
      below the layout viewport the fixed panel is sized against. */
+  html.keyboard-open .cockpit-chrome,
+  html.keyboard-open .bottom-nav,
   html.terminal-expanded .cockpit-chrome,
   html.terminal-expanded .bottom-nav {
     display: none;
+  }
+
+  html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    padding-bottom: 0;
   }
 
   /* With the chrome gone the terminal owns the fixed band top-to-bottom; the
