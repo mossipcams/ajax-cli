@@ -5,10 +5,9 @@ pub mod git;
 pub mod process;
 pub mod tmux;
 
-pub use agent::{AgentAdapter, AgentLaunch};
+pub use agent::{agent_launch_spec, AgentLaunch};
 pub use command::{
-    CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, CountingCommandRunner,
-    RecordingCommandRunner,
+    CommandMode, CommandOutput, CommandRunError, CommandRunner, CommandSpec, RecordingCommandRunner,
 };
 pub use environment::{DoctorEnvironment, REQUIRED_DOCTOR_TOOLS};
 pub use git::GitAdapter;
@@ -17,11 +16,11 @@ pub use tmux::TmuxAdapter;
 
 #[cfg(test)]
 mod tests {
-    use super::{command, process};
     use super::{
-        AgentAdapter, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
+        agent_launch_spec, AgentLaunch, CommandMode, CommandRunner, CommandSpec, GitAdapter,
         RecordingCommandRunner, TmuxAdapter,
     };
+    use super::{command, process};
     use crate::models::{TaskWindowStatus, TmuxStatus};
     use proptest::prelude::*;
     use std::path::Path;
@@ -457,28 +456,26 @@ mod tests {
 
     #[test]
     fn agent_adapter_builds_launch_command() {
-        let adapter = AgentAdapter::new("codex");
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: "fix login".to_string(),
         };
 
         assert_eq!(
-            adapter.launch(crate::models::AgentClient::Codex, &launch),
+            agent_launch_spec("codex", crate::models::AgentClient::Codex, &launch),
             CommandSpec::new("codex", ["--cd", "/tmp/worktree", "fix login"])
         );
     }
 
     #[test]
     fn agent_adapter_omits_blank_launch_prompt() {
-        let adapter = AgentAdapter::new("codex");
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: String::new(),
         };
 
         assert_eq!(
-            adapter.launch(crate::models::AgentClient::Codex, &launch),
+            agent_launch_spec("codex", crate::models::AgentClient::Codex, &launch),
             CommandSpec::new("codex", ["--cd", "/tmp/worktree"])
         );
     }
@@ -487,14 +484,13 @@ mod tests {
     fn agent_adapter_claude_launch_omits_cd_flag() {
         use crate::models::AgentClient;
 
-        let adapter = AgentAdapter::new("claude");
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: String::new(),
         };
 
         assert_eq!(
-            adapter.launch(AgentClient::Claude, &launch),
+            agent_launch_spec("claude", AgentClient::Claude, &launch),
             CommandSpec::new("claude", [])
         );
     }
@@ -503,14 +499,13 @@ mod tests {
     fn agent_adapter_cursor_launch_uses_agent_subcommand() {
         use crate::models::AgentClient;
 
-        let adapter = AgentAdapter::new("cursor");
         let launch = AgentLaunch {
             worktree_path: "/tmp/worktree".to_string(),
             prompt: "fix login".to_string(),
         };
 
         assert_eq!(
-            adapter.launch(AgentClient::Other, &launch),
+            agent_launch_spec("cursor", AgentClient::Other, &launch),
             CommandSpec::new("cursor", ["agent", "fix login"])
         );
     }

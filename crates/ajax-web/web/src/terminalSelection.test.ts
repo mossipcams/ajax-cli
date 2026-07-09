@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cellAtPoint, orderedSelection } from "./terminalSelection";
+import { cellAtPoint, orderedSelection } from "./terminalGestures";
 
 describe("cellAtPoint", () => {
   const gridW = 800;

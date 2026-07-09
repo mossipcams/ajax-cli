@@ -27,7 +27,7 @@ mod tests {
     fn architecture_rule_rejects_cockpit_state_importing_runtime() {
         assert!(
             source_mentions_dependency(
-                "use crate::runtime::run_interactive;",
+                "use crate::runtime::run_interactive_with_flash_and_refresh;",
                 &forbidden_runtime_dependencies()
             ),
             "Cockpit state must remain testable without depending on the runtime event loop"

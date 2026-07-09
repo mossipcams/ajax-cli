@@ -21,9 +21,7 @@ pub fn plan_task_command_operation<R: Registry>(
 ) -> Result<CommandPlan, CommandError> {
     Ok(match kind {
         TaskCommandKind::Resume => commands::open_task_plan(context, qualified_handle, open_mode)?,
-        TaskCommandKind::Review => {
-            crate::slices::review::review_task_plan(context, qualified_handle)?
-        }
+        TaskCommandKind::Review => crate::commands::diff_task_plan(context, qualified_handle)?,
         TaskCommandKind::Repair => repair_task_plan(context, qualified_handle, open_mode)?,
         TaskCommandKind::Ship => commands::merge_task_plan(context, qualified_handle)?,
     })

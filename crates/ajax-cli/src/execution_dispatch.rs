@@ -45,7 +45,7 @@ use crate::{
     new_task_request,
     render::{render_execution_outputs, render_plan},
     snapshot_dispatch::{render_matches_with_paths, render_snapshot_matches},
-    web_companion_backend::{serve_mobile_web, serve_mobile_web_with_paths},
+    web_backend::{serve_mobile_web, serve_mobile_web_with_paths},
     CliContextPaths, CliError, RenderedCommand,
 };
 

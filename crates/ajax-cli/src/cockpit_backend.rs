@@ -3,7 +3,7 @@ use ajax_core::{
     commands::{self, CommandContext, CommandError},
     models::OperatorAction,
     registry::InMemoryRegistry,
-    runtime_refresh::refresh_runtime_context_with_agent_status_cache,
+    runtime_refresh::{refresh_runtime_context_with_tier, RefreshTier},
 };
 use ajax_tui::CockpitSnapshot;
 use clap::ArgMatches;
@@ -399,7 +399,7 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     runner: &mut R,
 ) -> Result<bool, CliError> {
     let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&context.runtime_paths.cache_dir);
-    refresh_runtime_context_with_agent_status_cache(context, runner, &cache)
+    refresh_runtime_context_with_tier(context, runner, &cache, RefreshTier::Full)
         .map_err(crate::command_error)
 }
 
@@ -619,7 +619,7 @@ mod tests {
         },
         output::TaskCard,
         registry::{InMemoryRegistry, Registry},
-        runtime_refresh::{refresh_runtime_context_with_agent_status_cache, AgentStatusCache},
+        runtime_refresh::{refresh_runtime_context_with_tier, AgentStatusCache, RefreshTier},
     };
     use ajax_tui::CockpitSnapshot;
 
@@ -820,7 +820,7 @@ mod tests {
         let mut state_changed = false;
 
         state_changed |=
-            refresh_runtime_context_with_agent_status_cache(&mut context, &mut runner, &cache)
+            refresh_runtime_context_with_tier(&mut context, &mut runner, &cache, RefreshTier::Full)
                 .unwrap();
         let snapshot = build_cockpit_snapshot(&context);
 
@@ -1418,7 +1418,7 @@ mod cockpit_persistence_tests {
         commands::CommandContext,
         config::Config,
         models::{AgentClient, LifecycleStatus, Task, TaskId},
-        registry::{InMemoryRegistry, Registry as _, RegistryStore as _, SqliteRegistryStore},
+        registry::{InMemoryRegistry, Registry as _, SqliteRegistryStore},
     };
     use ajax_tui::CockpitEventHandler;
     use std::{thread, time::Duration};

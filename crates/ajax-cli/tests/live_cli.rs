@@ -1,6 +1,6 @@
 use ajax_core::{
     models::{AgentClient, LifecycleStatus, SideFlag, Task, TaskId},
-    registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
+    registry::{InMemoryRegistry, Registry, SqliteRegistryStore},
 };
 use serde_json::Value;
 use std::{

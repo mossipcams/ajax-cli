@@ -9,7 +9,7 @@
   import { isKeyboardOpen } from "../viewport";
   import { attachTerminalGestures } from "../terminalGestures";
   import { createRefitScheduler } from "../terminalRefit";
-  import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalSelection";
+  import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalGestures";
   import { copyText } from "../diagnostics";
   import {
     flooredCols,

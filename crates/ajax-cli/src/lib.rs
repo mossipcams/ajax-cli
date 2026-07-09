@@ -15,8 +15,7 @@ mod snapshot_dispatch;
 mod supervise;
 #[cfg(feature = "interactive")]
 mod task_session;
-#[path = "web_backend.rs"]
-mod web_companion_backend;
+mod web_backend;
 
 #[cfg(test)]
 pub(crate) use ajax_core::task_operations::task_command::TaskCommandKind;

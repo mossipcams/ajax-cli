@@ -3,9 +3,7 @@ use ajax_core::{
     config::{Config, RuntimePathRequest, RuntimePaths},
     ghost_task::is_registry_ghost_task,
     models::{LifecycleStatus, Task},
-    registry::{
-        InMemoryRegistry, Registry, RegistrySnapshotError, RegistryStore, SqliteRegistryStore,
-    },
+    registry::{InMemoryRegistry, Registry, RegistrySnapshotError, SqliteRegistryStore},
 };
 use clap::ArgMatches;
 use std::{path::PathBuf, time::SystemTime};
@@ -466,9 +464,7 @@ mod tests {
         commands::CommandContext,
         config::{Config, RuntimePathRequest, WorktreePlacement},
         models::{AgentClient, LifecycleStatus, Task, TaskId},
-        registry::{
-            InMemoryRegistry, Registry, RegistryEventKind, RegistryStore, SqliteRegistryStore,
-        },
+        registry::{InMemoryRegistry, Registry, RegistryEventKind, SqliteRegistryStore},
     };
     use std::{path::Path, thread, time::Duration};
 

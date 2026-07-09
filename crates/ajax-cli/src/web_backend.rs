@@ -407,7 +407,7 @@ mod tests {
         models::{
             AgentClient, GitStatus, LifecycleStatus, Task, TaskId, TaskWindowStatus, TmuxStatus,
         },
-        registry::{InMemoryRegistry, Registry, RegistryStore, SqliteRegistryStore},
+        registry::{InMemoryRegistry, Registry, SqliteRegistryStore},
     };
     use ajax_web::runtime::{self, RuntimeBridge};
     use axum::{body::Body, http::Request as AxumRequest};

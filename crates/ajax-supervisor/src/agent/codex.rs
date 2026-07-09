@@ -43,10 +43,6 @@ impl ProcessProtocol for CodexAdapter {
         self.exec_json_args(prompt)
     }
 
-    fn parse_stdout_line(&self, line: &str) -> Option<AgentEvent> {
-        self.parse_json_line(line)
-    }
-
     fn stdout_parser(&self) -> StdoutParser {
         Arc::new(parse_codex_json_line)
     }
@@ -330,7 +326,7 @@ mod tests {
             vec!["exec", "--json", "fix tests"]
         );
         assert_eq!(
-            ProcessProtocol::parse_stdout_line(&adapter, r#"{"type":"turn.started"}"#),
+            (adapter.stdout_parser())(r#"{"type":"turn.started"}"#),
             Some(AgentEvent::Thinking)
         );
         assert_eq!(

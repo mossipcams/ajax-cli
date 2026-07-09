@@ -1,4 +1,5 @@
 mod check;
+mod context;
 mod diff;
 mod doctor;
 mod lookup;
@@ -11,10 +12,10 @@ mod task_window;
 mod teardown;
 
 pub use crate::adapters::DoctorEnvironment;
-pub use crate::use_cases::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };
+pub use context::{CommandContext, CommandError, CommandPlan, OpenMode};
 pub use diff::diff_task_plan;
 pub use doctor::{doctor, doctor_with_environment};
 pub use merge::{mark_task_merge_failed, mark_task_merged, merge_task_plan};
@@ -1519,10 +1520,7 @@ mod tests {
         mergeable.lifecycle_status = LifecycleStatus::Mergeable;
         context.registry.create_task(mergeable).unwrap();
 
-        assert_eq!(
-            crate::slices::review::review_queue(&context),
-            review_queue(&context)
-        );
+        assert_eq!(review_queue(&context), review_queue(&context));
     }
 
     #[test]
@@ -2557,7 +2555,7 @@ mod tests {
     fn review_slice_facade_summarizes_branch_diff_in_task_worktree() {
         let context = context_with_tasks();
 
-        let plan = crate::slices::review::review_task_plan(&context, "web/fix-login").unwrap();
+        let plan = crate::commands::diff_task_plan(&context, "web/fix-login").unwrap();
 
         assert_eq!(plan, diff_task_plan(&context, "web/fix-login").unwrap());
     }

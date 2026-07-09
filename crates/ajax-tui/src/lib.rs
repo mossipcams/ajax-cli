@@ -28,9 +28,7 @@ use rendering::{
     action_glyph, bucket_color, bucket_glyph, priority_accent, project_subtitle, render_ui,
     task_glyph, StatusBucket,
 };
-pub use runtime::{
-    run_interactive, run_interactive_with_flash, run_interactive_with_flash_and_refresh,
-};
+pub use runtime::run_interactive_with_flash_and_refresh;
 use std::io;
 
 // ── Text renderer (watch mode) ────────────────────────────────────────────────

@@ -21,7 +21,6 @@ pub trait ProcessProtocol {
     fn process_name(&self) -> &str;
     fn program(&self) -> &str;
     fn args(&self, prompt: &str) -> Vec<String>;
-    fn parse_stdout_line(&self, line: &str) -> Option<AgentEvent>;
     fn stdout_parser(&self) -> StdoutParser;
 }
 
