@@ -137,6 +137,59 @@ describe("createZeroLagEcho", () => {
     echo.clearIfEchoedIn("prefix hi suffix");
     expect(echo.text()).toBe("");
   });
+
+  // Backstops that guarantee a prediction can never persist as duplicate text.
+  const noTimer = {
+    schedule: () => 1 as unknown as ReturnType<typeof setTimeout>,
+    clearSchedule: () => {},
+  };
+
+  it("force-clears an unmatched prediction after the idle window", () => {
+    let fire: (() => void) | null = null;
+    const echo = createZeroLagEcho({
+      onChange: vi.fn(),
+      measure: () => metrics(),
+      schedule: (fn) => {
+        fire = fn;
+        return 1 as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearSchedule: () => {
+        fire = null;
+      },
+    });
+
+    echo.noteBeforeInputPrintable("hello");
+    expect(echo.text()).toBe("hello");
+    fire?.(); // idle window elapses with no matching echo
+    expect(echo.text()).toBe("");
+  });
+
+  it("clears the prediction once the real echo advances the cursor", () => {
+    let cursorX = 3;
+    const echo = createZeroLagEcho({
+      ...noTimer,
+      onChange: vi.fn(),
+      measure: () => metrics({ cursorX }),
+    });
+
+    echo.noteBeforeInputPrintable("hi"); // anchor captured at cursorX=3
+    cursorX = 5; // PTY echo rendered and advanced the terminal cursor
+    // Chunk does NOT contain "hi", so only cursor-advance can clear it.
+    echo.clearIfEchoedIn("\x1b[C");
+    expect(echo.text()).toBe("");
+  });
+
+  it("keeps the prediction while the cursor has not moved and no echo matched", () => {
+    const echo = createZeroLagEcho({
+      ...noTimer,
+      onChange: vi.fn(),
+      measure: () => metrics({ cursorX: 3 }),
+    });
+
+    echo.noteBeforeInputPrintable("hi");
+    echo.clearIfEchoedIn("unrelated status redraw");
+    expect(echo.text()).toBe("hi");
+  });
 });
 
 describe("zeroLagOverlayStyle", () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { RESULT_AUTO_DISMISS_MS } from "../polling";
+  import { RESULT_AUTO_DISMISS_MS, RESULT_SUCCESS_DISMISS_MS } from "../polling";
 
   interface Props {
     message: string;
@@ -12,11 +12,12 @@
 
   let trimmedOutput = $derived(output?.trim() || null);
 
-  // Auto-dismiss mirrors the legacy 12s result timer. Re-arm whenever the
-  // message changes so each result gets its own countdown.
+  // Success toasts dismiss in 4s so they overlay briefly and clear; errors keep
+  // the longer window so output stays readable. Re-arm on message change.
   $effect(() => {
     void message;
-    const timer = setTimeout(() => onDismiss?.(), RESULT_AUTO_DISMISS_MS);
+    const dismissMs = isError ? RESULT_AUTO_DISMISS_MS : RESULT_SUCCESS_DISMISS_MS;
+    const timer = setTimeout(() => onDismiss?.(), dismissMs);
     return () => clearTimeout(timer);
   });
 </script>

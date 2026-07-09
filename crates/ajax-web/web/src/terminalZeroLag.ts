@@ -32,9 +32,17 @@ export function zeroLagOverlayStyle(m: ZeroLagCursorMetrics): string {
   return `left: ${left}px; top: ${top}px; font-size: ${m.fontSize}px; line-height: ${cellHeight}px;`;
 }
 
+/** Idle window after the last keystroke before an unmatched prediction is
+ *  force-cleared, so a ghost can never persist as duplicated text. */
+export const ZERO_LAG_IDLE_CLEAR_MS = 300;
+
 export function createZeroLagEcho(options: {
   onChange: (text: string, style: string) => void;
   measure: () => ZeroLagCursorMetrics | null;
+  /** Idle-clear delay; injectable for tests. Defaults to 300ms. */
+  idleClearMs?: number;
+  schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
+  clearSchedule?: (id: ReturnType<typeof setTimeout>) => void;
 }): {
   text(): string;
   noteBeforeInputPrintable(data: string): void;
@@ -47,6 +55,27 @@ export function createZeroLagEcho(options: {
   let printableAhead = "";
   let backspacesAhead = 0;
   let pending = "";
+  // Cursor cell where the current prediction run started. Once the real PTY
+  // echo advances the terminal cursor past it, the input has rendered for real
+  // and the overlay must clear or it doubles the text.
+  let anchor: { x: number; y: number } | null = null;
+
+  const idleClearMs = options.idleClearMs ?? ZERO_LAG_IDLE_CLEAR_MS;
+  const schedule = options.schedule ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearSchedule = options.clearSchedule ?? ((id) => clearTimeout(id));
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelIdleClear = () => {
+    if (idleTimer !== undefined) {
+      clearSchedule(idleTimer);
+      idleTimer = undefined;
+    }
+  };
+
+  const armIdleClear = () => {
+    cancelIdleClear();
+    if (pending) idleTimer = schedule(() => clearAll(), idleClearMs);
+  };
 
   const notify = () => {
     if (!pending) {
@@ -59,8 +88,16 @@ export function createZeroLagEcho(options: {
   };
 
   const setPending = (next: string) => {
+    const wasEmpty = pending === "";
     pending = next;
+    if (!pending) {
+      anchor = null;
+    } else if (wasEmpty) {
+      const measured = options.measure();
+      anchor = measured ? { x: measured.cursorX, y: measured.cursorY } : null;
+    }
     notify();
+    armIdleClear();
   };
 
   const trimPending = () => {
@@ -121,6 +158,14 @@ export function createZeroLagEcho(options: {
 
     clearIfEchoedIn(outputChunk: string) {
       if (!pending) return;
+      // The batcher writes this chunk to the terminal before calling us, so if
+      // the real echo landed the cursor has moved off the prediction anchor.
+      // Drop the whole prediction rather than risk a lingering duplicate.
+      const measured = options.measure();
+      if (measured && anchor && (measured.cursorX !== anchor.x || measured.cursorY !== anchor.y)) {
+        clearAll();
+        return;
+      }
       if (outputChunk.includes(pending)) {
         clearAll();
         return;

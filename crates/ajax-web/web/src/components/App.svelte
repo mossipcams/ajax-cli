@@ -204,15 +204,6 @@
   <AppShell>
     {#snippet chrome()}
       <div class="cockpit-chrome">
-        {#if result}
-          <ResultPanel
-            message={result.message}
-            output={result.output}
-            isError={result.isError}
-            onDismiss={() => (result = null)}
-          />
-        {/if}
-
         <header>
           <div class="bar">
             <h1>Ajax</h1>
@@ -320,6 +311,15 @@
       </nav>
     {/snippet}
   </AppShell>
+
+  {#if result}
+    <ResultPanel
+      message={result.message}
+      output={result.output}
+      isError={result.isError}
+      onDismiss={() => (result = null)}
+    />
+  {/if}
 
   {#if sheetOpen}
     <NewTaskSheet
