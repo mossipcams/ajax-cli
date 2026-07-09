@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.36.1...ajax-cli-v0.37.0) (2026-07-09)
+
+
+### Features
+
+* **web:** fix inline terminal fill and paste/copy on iOS ([#393](https://github.com/mossipcams/ajax-cli/issues/393)) ([7ad8edc](https://github.com/mossipcams/ajax-cli/commit/7ad8edc6379e40314a9262997fc561c435b228d0))
+
 ## [0.36.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.36.0...ajax-cli-v0.36.1) (2026-07-09)
 
 
