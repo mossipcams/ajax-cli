@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.5...ajax-cli-v0.37.6) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** stop iOS typing echo stretch and tighten keyboard chrome ([#406](https://github.com/mossipcams/ajax-cli/issues/406)) ([7697e85](https://github.com/mossipcams/ajax-cli/commit/7697e853aefc9bbd44ff1aaee8355c2f1fb0be40))
+
 ## [0.37.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.4...ajax-cli-v0.37.5) (2026-07-09)
 
 
