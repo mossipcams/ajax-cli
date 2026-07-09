@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.0...ajax-cli-v0.37.1) (2026-07-09)
+
+
+### Bug Fixes
+
+* **web:** pin keyboard-open shell to the visual viewport band ([#395](https://github.com/mossipcams/ajax-cli/issues/395)) ([cec3c56](https://github.com/mossipcams/ajax-cli/commit/cec3c561a923e7dd226004d114496c803dd10367))
+
 ## [0.37.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.36.1...ajax-cli-v0.37.0) (2026-07-09)
 
 
