@@ -11,6 +11,9 @@ export const VERSION_POLL_HIDDEN_MS = 300_000;
 
 export const CONFIRM_TIMEOUT_MS = 8000;
 export const RESULT_AUTO_DISMISS_MS = 12000;
+// Success toasts (e.g. Drop) are informational — dismiss fast so they can't
+// linger. Errors keep the longer window so failure output stays readable.
+export const RESULT_SUCCESS_DISMISS_MS = 4000;
 export const RESTART_POLL_MS = 500;
 export const RESTART_TIMEOUT_MS = 30000;
 

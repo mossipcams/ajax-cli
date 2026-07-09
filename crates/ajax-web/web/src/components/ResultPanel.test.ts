@@ -30,11 +30,20 @@ describe("ResultPanel", () => {
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 
-  it("auto-dismisses after the timeout", () => {
+  it("auto-dismisses success toasts after 4s", () => {
     const onDismiss = vi.fn();
     render(ResultPanel, { props: { message: "Done", isError: false, onDismiss } });
     expect(onDismiss).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(12000);
+    vi.advanceTimersByTime(4000);
+    expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("keeps error toasts up longer than success toasts", () => {
+    const onDismiss = vi.fn();
+    render(ResultPanel, { props: { message: "Boom", isError: true, onDismiss } });
+    vi.advanceTimersByTime(4000);
+    expect(onDismiss).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(8000);
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 });

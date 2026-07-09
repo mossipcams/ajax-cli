@@ -172,12 +172,18 @@ fn fallback_operator_reason(task: &Task) -> &'static str {
 }
 
 pub fn available_operator_actions(task: &Task) -> Vec<OperatorAction> {
-    if task_is_known_invalid(task) {
+    // A missing worktree is recoverable while the branch still exists — the
+    // repair plan recreates it (see `task_window_repair_plan`). Offer Repair
+    // (plus Drop) instead of collapsing to Drop-only. Shell-only gaps
+    // (tmux / task window) stay Drop-first per existing policy.
+    let worktree_repairable = task.has_missing_worktree() && !task.has_missing_branch();
+
+    if task_is_known_invalid(task) && !worktree_repairable {
         return vec![OperatorAction::Drop];
     }
 
     if task.has_missing_substrate() && !has_only_shell_substrate_gap(task) {
-        return vec![OperatorAction::Repair];
+        return vec![OperatorAction::Repair, OperatorAction::Drop];
     }
 
     let mut actions =
@@ -345,6 +351,36 @@ mod tests {
             assert_eq!(plan.action, OperatorAction::Drop);
             assert_eq!(plan.available_actions, vec![OperatorAction::Drop]);
         }
+    }
+
+    #[test]
+    fn operator_actions_offer_repair_when_worktree_missing_but_branch_exists() {
+        let mut t = clean_reviewable_task("reviewable");
+        t.git_status.as_mut().unwrap().worktree_exists = false;
+
+        let plan = operator_action(&t);
+
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Repair),
+            "recoverable worktree should offer repair: {:?}",
+            plan.available_actions
+        );
+        assert!(
+            plan.available_actions.contains(&OperatorAction::Drop),
+            "repairable worktree should still offer drop: {:?}",
+            plan.available_actions
+        );
+    }
+
+    #[test]
+    fn operator_actions_stay_drop_only_when_branch_is_also_missing() {
+        let mut t = clean_reviewable_task("reviewable");
+        t.git_status.as_mut().unwrap().worktree_exists = false;
+        t.git_status.as_mut().unwrap().branch_exists = false;
+
+        let plan = operator_action(&t);
+
+        assert_eq!(plan.available_actions, vec![OperatorAction::Drop]);
     }
 
     #[test]

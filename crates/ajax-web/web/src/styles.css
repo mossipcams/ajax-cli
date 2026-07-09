@@ -277,11 +277,20 @@ header .bar h1 {
 
 /* RESULT PANEL ------------------------------------------------------------ */
 .result-panel {
-  width: min(var(--shell), 100%);
+  /* Overlay toast — pinned near the top, out of flow so it never shifts the
+     cockpit layout. Above chrome (10) / bottom-nav (20), below the sheet (45). */
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 12px);
+  left: max(12px, env(safe-area-inset-left));
+  right: max(12px, env(safe-area-inset-right));
+  width: min(var(--shell), calc(100% - 24px));
   margin: 0 auto;
+  z-index: 40;
   padding: 12px 20px;
   background: var(--paper-raised);
-  border-top: 1px solid var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
 .result-panel.is-error {

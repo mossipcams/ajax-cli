@@ -321,7 +321,10 @@ pub(crate) mod tests {
         let detail = super::browser_task_detail_view(&context, "web/fix-login").unwrap();
 
         assert_eq!(detail.qualified_handle, "web/fix-login");
-        assert_eq!(detail.actions[0].action, "drop");
+        // A missing worktree with an intact branch is recoverable — Repair is
+        // surfaced (primary), and Drop stays available as an escape hatch.
+        assert_eq!(detail.actions[0].action, "repair");
+        assert!(detail.actions.iter().any(|action| action.action == "drop"));
         assert_eq!(detail.status, ajax_core::ui_state::TaskStatus::Error);
         assert_eq!(
             detail.status_explanation.as_deref(),
