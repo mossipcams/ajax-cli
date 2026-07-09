@@ -5,12 +5,20 @@ export type ZeroLagCursorMetrics = {
   rows: number;
   canvasWidth: number;
   canvasHeight: number;
+  cellWidth?: number;
+  cellHeight?: number;
   fontSize: number;
 };
 
 export function zeroLagOverlayStyle(m: ZeroLagCursorMetrics): string {
-  const cellWidth = m.canvasWidth / m.cols;
-  const cellHeight = m.canvasHeight / m.rows;
+  const cellWidth =
+    Number.isFinite(m.cellWidth) && (m.cellWidth as number) > 0
+      ? (m.cellWidth as number)
+      : m.canvasWidth / m.cols;
+  const cellHeight =
+    Number.isFinite(m.cellHeight) && (m.cellHeight as number) > 0
+      ? (m.cellHeight as number)
+      : m.canvasHeight / m.rows;
   if (
     !Number.isFinite(cellWidth) ||
     !Number.isFinite(cellHeight) ||
