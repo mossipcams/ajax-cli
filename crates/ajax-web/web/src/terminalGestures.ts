@@ -35,6 +35,9 @@ export interface TerminalGestureHost {
    * gesture (or a second finger landed) and the selection must be dropped
    * instead of copied. */
   endSelection?(cancelled: boolean): void;
+  /** A single finger just touched down. Hosts use this to focus the hidden
+   * textarea early so iOS can attach native Paste before long-press fires. */
+  touchBegan?(): void;
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
@@ -161,6 +164,9 @@ export function attachTerminalGestures(
         host.beginSelection?.(touchLastX, touchLastY);
       }, LONG_PRESS_MS);
     }
+    // Focus before the long-press timer so iOS can target native Paste at an
+    // editable field. Do not preventDefault here — that would kill Paste.
+    host.touchBegan?.();
   };
 
   const onTouchMove = (event: TouchEvent) => {

@@ -1,11 +1,19 @@
+/// <reference types="node" />
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 import routeScrollSource from "./RouteScroll.svelte?raw";
 import appSource from "./App.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
+
+function loadStylesSource(): string {
+  const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
+  return readFileSync(join(testDir, "../styles.css"), "utf8");
+}
 
 vi.mock("ghostty-web", () => ({
   Ghostty: {
@@ -177,6 +185,31 @@ describe("TaskDetail", () => {
     expect(terminalRawViewSource).toMatch(/class:is-expanded=\{expanded\}/);
     expect(mobileCss).toMatch(/\.task-detail\s*\{[^}]*padding:\s*env\(safe-area-inset-top\)\s*0\s*0/);
     expect(mobileCss).toMatch(/\.detail-header,\s*\.interact-panel\s*\{[^}]*padding-left:[^;]*env\(safe-area-inset-left\)/);
+  });
+
+  it("mobile task terminal panel clears the 58vh max-height so it can flex-fill", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlocks = [...stylesSource.matchAll(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
+    )];
+    const mobileCss = mobileBlocks
+      .map((match) => match[1])
+      .find((block) => block.includes(".task-detail .terminal-panel"));
+    expect(mobileCss).toBeDefined();
+
+    expect(mobileCss!).toMatch(
+      /\.task-detail \.terminal-panel,\s*\.task-detail \[data-testid="task-terminal-panel"\]\s*\{[^}]*max-height:\s*none/,
+    );
+    expect(mobileCss!).not.toMatch(
+      /\.task-detail \.terminal-panel,\s*\.task-detail \[data-testid="task-terminal-panel"\]\s*\{[^}]*max-height:\s*min\(58vh,\s*560px\)/,
+    );
+
+    expect(stylesSource).toMatch(
+      /@media \(min-width: 768px\) and \(not \(\(pointer: coarse\) and \(max-height: 500px\)\)\) \{[\s\S]*\.task-detail \.terminal-panel,\s*\.task-detail \[data-testid="task-terminal-panel"\]\s*\{[^}]*max-height:\s*min\(58vh,\s*560px\)/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /@media \(min-width: 768px\)[\s\S]*height:\s*min\(58vh,\s*560px\)/,
+    );
   });
 
   it("does not toggle document classes on mount", () => {
