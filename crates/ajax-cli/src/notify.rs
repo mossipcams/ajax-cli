@@ -157,6 +157,7 @@ mod tests {
         let config = Config {
             notify: Some(NotifyConfig {
                 webhook_url: "https://ntfy.sh/topic".to_string(),
+                poll_seconds: None,
             }),
             ..Config::default()
         };

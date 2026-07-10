@@ -6,7 +6,7 @@ pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
     apply_observation, apply_observation_at, apply_trusted_observation,
-    apply_trusted_observation_at,
+    apply_trusted_observation_at, has_pending_waiting_candidate, WAITING_CANDIDATE_SINCE_KEY,
 };
 
 /// Freshness window for a Codex `working` hook value.

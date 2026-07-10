@@ -1,6 +1,6 @@
 use crate::models::{
-    AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusKind,
-    RuntimeHealth, SideFlag, SubstrateGap, Task,
+    AgentRuntimeStatus, Annotation, AnnotationKind, Evidence, LifecycleStatus, LiveStatusClass,
+    LiveStatusKind, RuntimeHealth, SideFlag, SubstrateGap, Task,
 };
 use crate::ui_state::{derive_operator_status, TaskStatus};
 
@@ -179,25 +179,14 @@ fn evidence_preference(kind: AnnotationKind, evidence: &Evidence) -> u32 {
 }
 
 fn annotation_kind_for_live_status(status: LiveStatusKind) -> Option<AnnotationKind> {
-    match status {
-        LiveStatusKind::WaitingForApproval
-        | LiveStatusKind::WaitingForInput
-        | LiveStatusKind::AuthRequired
-        | LiveStatusKind::RateLimited
-        | LiveStatusKind::ContextLimit => Some(AnnotationKind::NeedsMe),
-        LiveStatusKind::WorktreeMissing
-        | LiveStatusKind::TmuxMissing
-        | LiveStatusKind::TaskWindowMissing
-        | LiveStatusKind::MergeConflict
-        | LiveStatusKind::CommandFailed
-        | LiveStatusKind::Blocked => Some(AnnotationKind::Broken),
-        LiveStatusKind::Done => Some(AnnotationKind::Reviewable),
-        LiveStatusKind::ShellIdle
-        | LiveStatusKind::CommandRunning
-        | LiveStatusKind::TestsRunning
-        | LiveStatusKind::AgentRunning
-        | LiveStatusKind::Unknown => None,
-        LiveStatusKind::CiFailed => Some(AnnotationKind::Broken),
+    // Done is Waiting-class for status reduction but reads as Reviewable here.
+    if status == LiveStatusKind::Done {
+        return Some(AnnotationKind::Reviewable);
+    }
+    match status.class() {
+        LiveStatusClass::Waiting => Some(AnnotationKind::NeedsMe),
+        LiveStatusClass::Error | LiveStatusClass::MissingSubstrate => Some(AnnotationKind::Broken),
+        LiveStatusClass::Running | LiveStatusClass::Neutral => None,
     }
 }
 
@@ -528,6 +517,39 @@ mod tests {
             transition.map(|transition| transition.status),
             Some(TaskStatus::Error)
         );
+    }
+
+    #[test]
+    fn busy_flap_does_not_fire_notification() {
+        use std::time::{Duration, UNIX_EPOCH};
+        let mut task = task_with_flags("flap", &[]);
+        crate::lifecycle::mark_active(&mut task).unwrap();
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::AgentRunning, "working"),
+            UNIX_EPOCH + Duration::from_secs(100),
+        );
+
+        // One flappy waiting sample while the agent works: no notification.
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+
+        // Dwell-confirmed waiting: fires exactly once.
+        crate::live::apply_observation_at(
+            &mut task,
+            LiveObservation::new(LiveStatusKind::WaitingForInput, "still waiting"),
+            UNIX_EPOCH + Duration::from_secs(115),
+        );
+        let transition = super::take_attention_transition(&mut task);
+        assert_eq!(
+            transition.map(|transition| transition.status),
+            Some(TaskStatus::Waiting)
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
     }
 
     #[test]

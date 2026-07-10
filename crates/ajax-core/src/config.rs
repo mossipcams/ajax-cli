@@ -264,6 +264,10 @@ impl ManagedRepo {
 #[serde(deny_unknown_fields)]
 pub struct NotifyConfig {
     pub webhook_url: String,
+    /// Web-server notification poll interval in seconds. Absent = default,
+    /// 0 = disable the background tick.
+    #[serde(default)]
+    pub poll_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -494,10 +498,33 @@ mod tests {
         assert_eq!(
             config.notify,
             Some(NotifyConfig {
-                webhook_url: "https://ntfy.sh/topic".to_string()
+                webhook_url: "https://ntfy.sh/topic".to_string(),
+                poll_seconds: None,
             })
         );
         assert_eq!(Config::from_toml_str("").unwrap().notify, None);
+    }
+
+    #[test]
+    fn notify_poll_seconds_parses_and_defaults() {
+        let config = Config::from_toml_str(
+            r#"
+            [notify]
+            webhook_url = "https://ntfy.sh/topic"
+            poll_seconds = 60
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.notify.unwrap().poll_seconds, Some(60));
+
+        let config = Config::from_toml_str(
+            r#"
+            [notify]
+            webhook_url = "https://ntfy.sh/topic"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.notify.unwrap().poll_seconds, None);
     }
 
     #[test]

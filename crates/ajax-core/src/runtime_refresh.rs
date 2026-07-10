@@ -369,7 +369,10 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                         .is_some_and(|current| current >= observed_at);
                 let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                     && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-                if live_status_unchanged && !needs_agent_running_flag {
+                if live_status_unchanged
+                    && !needs_agent_running_flag
+                    && !live::has_pending_waiting_candidate(task)
+                {
                     continue;
                 }
                 let previous = task.clone();
@@ -429,7 +432,11 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                 || task.has_side_flag(crate::models::SideFlag::TaskWindowMissing);
             let needs_agent_running_flag = observation.kind == LiveStatusKind::AgentRunning
                 && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
-            if live_status_unchanged && !had_recoverable_missing_flag && !needs_agent_running_flag {
+            if live_status_unchanged
+                && !had_recoverable_missing_flag
+                && !needs_agent_running_flag
+                && !live::has_pending_waiting_candidate(task)
+            {
                 continue;
             }
             let previous = task.clone();
@@ -1671,6 +1678,40 @@ mod tests {
         let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
         assert_eq!(task.live_status_observed_at, Some(next_observed_at));
         assert!(task.has_side_flag(SideFlag::NeedsInput));
+    }
+
+    #[test]
+    fn pending_waiting_candidate_bypasses_unchanged_short_circuit() {
+        let mut context = context_with_active_task();
+        let mut runner = HealthyRefreshRunner::default();
+        refresh_runtime_context(&mut context, &mut runner).unwrap();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            assert_eq!(
+                task.live_status.as_ref().map(|status| status.kind),
+                Some(LiveStatusKind::AgentRunning)
+            );
+            task.metadata.insert(
+                crate::live::WAITING_CANDIDATE_SINCE_KEY.to_string(),
+                "100".to_string(),
+            );
+        }
+
+        // The pane still classifies busy and matches the stored live status;
+        // the unchanged short-circuit must not strand the pending candidate.
+        refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert!(!task
+            .metadata
+            .contains_key(crate::live::WAITING_CANDIDATE_SINCE_KEY));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
     }
 
     #[test]

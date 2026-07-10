@@ -183,6 +183,20 @@ inside each task worktree before the agent starts. Ajax runs the command from
 the newly created worktree after `git worktree add` succeeds and before tmux or
 the selected agent CLI are launched.
 
+Add an optional `[notify]` block to receive a webhook (for example an
+[ntfy](https://ntfy.sh) topic) whenever a task transitions into `Waiting` or
+`Error`:
+
+```toml
+[notify]
+webhook_url = "https://ntfy.sh/your-topic"
+# poll_seconds = 30   # background poll interval for `ajax web`; 0 disables
+```
+
+Notifications fire from CLI/cockpit refreshes and from a background poll inside
+`ajax web`, so a running web server delivers them even when no browser tab is
+open. `poll_seconds` defaults to 30 when `[notify]` is present.
+
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`
 (or your configured default branch).
