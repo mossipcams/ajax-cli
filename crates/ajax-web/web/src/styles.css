@@ -765,6 +765,19 @@ header .bar h1 {
   background: var(--teal-bright);
 }
 
+.bottom-nav button[aria-current="page"] {
+  border-color: var(--teal);
+  background: color-mix(in srgb, var(--teal-deep) 55%, var(--paper-tint));
+  color: var(--ink);
+}
+
+.bottom-nav button[aria-current="page"]:hover,
+.bottom-nav button[aria-current="page"]:focus-visible {
+  border-color: var(--teal-bright);
+  background: color-mix(in srgb, var(--teal-deep) 45%, var(--paper-raised));
+  color: var(--ink);
+}
+
 /* MOTION ------------------------------------------------------------------ */
 @keyframes pulse {
   0%, 100% { opacity: 1; }
