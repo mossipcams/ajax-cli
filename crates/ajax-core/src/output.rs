@@ -15,6 +15,7 @@ pub struct TaskCard {
     pub status: TaskStatus,
     pub status_explanation: Option<String>,
     pub lifecycle: LifecycleStatus,
+    pub last_activity_at: std::time::SystemTime,
     pub annotations: Vec<Annotation>,
     pub primary_action: OperatorAction,
     pub available_actions: Vec<OperatorAction>,

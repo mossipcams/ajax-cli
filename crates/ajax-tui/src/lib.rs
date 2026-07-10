@@ -204,6 +204,7 @@ mod tests {
             status,
             status_explanation: Some(status.as_str().to_string()),
             lifecycle,
+            last_activity_at: std::time::UNIX_EPOCH,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],

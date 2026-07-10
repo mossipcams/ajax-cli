@@ -22,7 +22,7 @@
   });
 </script>
 
-<div class="result-panel" class:is-error={isError} role="status" aria-live="polite">
+<div class="result-panel" class:is-error={isError} role={isError ? "alert" : "status"} aria-live={isError ? "assertive" : "polite"}>
   <p class="result-message">{message}</p>
   {#if trimmedOutput}
     <pre class="result-output">{trimmedOutput}</pre>

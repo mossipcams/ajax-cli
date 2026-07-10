@@ -3,9 +3,16 @@ import { render, fireEvent } from "@testing-library/svelte";
 import TaskList from "./TaskList.svelte";
 import type { BrowserCockpitView } from "../types";
 
+const NOW_SECS = Math.floor(Date.now() / 1000);
+
 const cockpit: BrowserCockpitView = {
   backend: { authority: "host-native", control_enabled: true },
-  repos: { repos: [{ name: "web" }, { name: "api" }] },
+  repos: {
+    repos: [
+      { name: "web", attention_items: 2 },
+      { name: "api", attention_items: 0 },
+    ],
+  },
   cards: [
     {
       id: "web/a",
@@ -14,6 +21,7 @@ const cockpit: BrowserCockpitView = {
       title: "A",
       status: "error",
       status_explanation: "CI failed",
+      last_activity_unix_secs: NOW_SECS - 60,
       actions: [
         { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
         { action: "fix-ci", label: "Fix CI", destructive: false, confirmation_required: false },
@@ -27,6 +35,7 @@ const cockpit: BrowserCockpitView = {
       title: "B",
       status: "running",
       status_explanation: "Agent working",
+      last_activity_unix_secs: NOW_SECS - 300,
       actions: [
         { action: "resume", label: "Resume", destructive: false, confirmation_required: false },
       ],
@@ -37,6 +46,7 @@ const cockpit: BrowserCockpitView = {
       repo: "api",
       title: "C",
       status: "idle",
+      last_activity_unix_secs: 0,
       actions: [],
     },
   ],
@@ -44,6 +54,14 @@ const cockpit: BrowserCockpitView = {
 };
 
 describe("TaskList", () => {
+  it("shows relative last-activity time on task rows and omits it when unset", () => {
+    const { container } = render(TaskList, { props: { cockpit } });
+    const rowB = container.querySelector(".task-row[data-handle='web/b']");
+    expect(rowB!.textContent).toContain("5m ago");
+    const rowC = container.querySelector(".task-row[data-handle='api/c']");
+    expect(rowC!.textContent).not.toContain("ago");
+  });
+
   it("renders the inbox item as a compact row with explanation and a swipe-revealed action", () => {
     const { container, getByText, queryByText } = render(TaskList, { props: { cockpit } });
     const inboxRow = container.querySelector(".task-row.is-inbox[data-handle='web/a']");
@@ -67,12 +85,33 @@ describe("TaskList", () => {
     expect(container.querySelector(".group.inbox [data-handle='web/a']")).not.toBeNull();
   });
 
+  it("shows per-repo attention counts on project pills", () => {
+    const { container } = render(TaskList, { props: { cockpit } });
+    const pills = [...container.querySelectorAll(".project-pill")];
+    const webPill = pills.find((pill) => pill.textContent?.includes("web"))!;
+    expect(webPill.querySelector(".pill-badge")).toHaveTextContent("2");
+    expect(webPill).toHaveAttribute("aria-label", "web — 2 need attention");
+    const apiPill = pills.find((pill) => pill.textContent?.includes("api"))!;
+    expect(apiPill.querySelector(".pill-badge")).toBeNull();
+  });
+
+  it("marks the active project pill for assistive tech", () => {
+    const { container } = render(TaskList, {
+      props: { cockpit, selectedProject: "api" },
+    });
+    const pills = [...container.querySelectorAll(".project-pill")];
+    const allPill = pills.find((pill) => pill.textContent?.trim().startsWith("All"))!;
+    const apiPill = pills.find((pill) => pill.textContent?.includes("api"))!;
+    expect(apiPill).toHaveAttribute("aria-current", "true");
+    expect(allPill).not.toHaveAttribute("aria-current");
+  });
+
   it("offers project pills and reports selection", async () => {
     const onSelectProject = vi.fn();
     const { getByText, container } = render(TaskList, { props: { cockpit, onSelectProject } });
     expect(getByText("All")).toBeInTheDocument();
     const pills = [...container.querySelectorAll(".project-pill")];
-    const webPill = pills.find((pill) => pill.textContent?.trim() === "web")!;
+    const webPill = pills.find((pill) => pill.getAttribute("aria-label")?.startsWith("web"))!;
     await fireEvent.click(webPill);
     expect(onSelectProject).toHaveBeenCalledWith("web");
   });
@@ -83,6 +122,27 @@ describe("TaskList", () => {
     });
     expect(container.querySelector(".task-row[data-handle='api/c']")).not.toBeNull();
     expect(container.querySelector(".task-row[data-handle='web/b']")).toBeNull();
+  });
+
+  it("empty state points at the new-task CTA", () => {
+    const docsCockpit: BrowserCockpitView = {
+      ...cockpit,
+      repos: { repos: [...cockpit.repos.repos, { name: "docs" }] },
+    };
+    const { getByText: getDocsEmpty } = render(TaskList, {
+      props: { cockpit: docsCockpit, selectedProject: "docs" },
+    });
+    expect(getDocsEmpty("No tasks in docs yet — start one below.")).toBeInTheDocument();
+
+    const emptyCockpit: BrowserCockpitView = {
+      ...cockpit,
+      cards: [],
+      inbox: { items: [] },
+    };
+    const { getByText: getAllEmpty } = render(TaskList, {
+      props: { cockpit: emptyCockpit },
+    });
+    expect(getAllEmpty("All quiet — start a new task below.")).toBeInTheDocument();
   });
 
   it("opens a task when a row is tapped", async () => {
@@ -116,6 +176,7 @@ describe("TaskList", () => {
           repo: "web",
           title: "B",
           status: "idle",
+          last_activity_unix_secs: 0,
           actions: [
             { action: "review", label: "Review", destructive: false, confirmation_required: false },
           ],

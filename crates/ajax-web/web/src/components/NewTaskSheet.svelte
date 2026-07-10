@@ -15,25 +15,59 @@
 
   let { repos, selectedProject = null, onClose, onCockpit, onResult }: Props = $props();
 
-  // Capture the initial repo once; the form then owns the selection locally.
-  let repo = $state(
-    untrack(() =>
-      selectedProject && repos.some((r) => r.name === selectedProject)
-        ? selectedProject
-        : (repos[0]?.name ?? ""),
-    ),
-  );
-  let title = $state("");
-  let agent = $state("codex");
+  // Remembered form defaults — a browser-side convenience only, never task truth.
+  const LAST_AGENT_KEY = "ajax.newTask.agent";
+  const LAST_REPO_KEY = "ajax.newTask.repo";
+
+  function readPref(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function savePrefs() {
+    try {
+      localStorage.setItem(LAST_AGENT_KEY, agent);
+      localStorage.setItem(LAST_REPO_KEY, repo);
+    } catch {
+      // Private mode / storage denied: defaults just won't stick.
+    }
+  }
+
   const AGENTS = [
     { value: "codex", label: "Codex" },
     { value: "claude", label: "Claude" },
     { value: "cursor", label: "Cursor" },
     { value: "opencode", label: "OpenCode" },
   ];
+
+  // Capture the initial repo once; the form then owns the selection locally.
+  // Priority: the project the user is looking at, then the last-used repo.
+  let repo = $state(
+    untrack(() => {
+      if (selectedProject && repos.some((r) => r.name === selectedProject)) return selectedProject;
+      const remembered = readPref(LAST_REPO_KEY);
+      if (remembered && repos.some((r) => r.name === remembered)) return remembered;
+      return repos[0]?.name ?? "";
+    }),
+  );
+  let title = $state("");
+  let agent = $state(
+    untrack(() => {
+      const remembered = readPref(LAST_AGENT_KEY);
+      return AGENTS.some((option) => option.value === remembered) ? remembered! : "codex";
+    }),
+  );
   let error = $state<string | null>(null);
   let submitting = $state(false);
   let dragOffset = $state(0);
+  let sheetEl = $state<HTMLDivElement | null>(null);
+
+  $effect(() => {
+    sheetEl?.focus();
+  });
 
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -60,6 +94,7 @@
         onResult?.(error, result.response.output, true);
         return;
       }
+      savePrefs();
       onResult?.("Task started", result.response.output, false);
       onClose?.();
     } catch {
@@ -79,6 +114,7 @@
   aria-modal="true"
   aria-labelledby="new-task-title"
   tabindex="-1"
+  bind:this={sheetEl}
   onclick={(event) => {
     if (event.target === event.currentTarget) onClose?.();
   }}
@@ -120,6 +156,7 @@
       id="new-task-title-input"
       type="text"
       maxlength="80"
+      enterkeyhint="go"
       placeholder="Short title"
       bind:value={title}
     />

@@ -100,7 +100,10 @@
 
   async function loadDetail(handle: string) {
     try {
-      detail = await fetchDetail(handle);
+      const next = await fetchDetail(handle);
+      // Stale response: the user already navigated to another task (or away).
+      if (taskOpenHandle !== handle) return;
+      detail = next;
       connection = "connected";
       connectionDetail = null;
     } catch (error) {
@@ -198,6 +201,19 @@
       ? `${cockpit.cards.length} ${cockpit.cards.length === 1 ? "task" : "tasks"}`
       : "— loading",
   );
+
+  $effect(() => {
+    const kind = route.kind;
+    if (kind === "task" && route.handle) {
+      document.title = `${route.handle} — Ajax`;
+    } else if (kind === "settings") {
+      document.title = "Settings — Ajax";
+    } else if (kind === "project" && route.project) {
+      document.title = `${route.project} — Ajax`;
+    } else {
+      document.title = "Ajax";
+    }
+  });
 </script>
 
 <AppViewport>
@@ -306,7 +322,14 @@
 
     {#snippet nav()}
       <nav class="bottom-nav" aria-label="Mobile navigation">
-        <button type="button" data-bottom-route="#/" onclick={() => go(dashboardHash())}>Dashboard</button>
+        <button
+          type="button"
+          data-bottom-route="#/"
+          aria-current={route.kind === "dashboard" || route.kind === "project" ? "page" : undefined}
+          onclick={() => go(dashboardHash())}
+        >
+          Dashboard
+        </button>
         <button type="button" data-bottom-action="new-task" onclick={() => (sheetOpen = true)}>New</button>
       </nav>
     {/snippet}

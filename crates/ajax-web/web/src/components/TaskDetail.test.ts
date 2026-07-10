@@ -251,3 +251,85 @@ describe("TaskDetail", () => {
     expect(document.documentElement.classList.contains("ajax-task-open")).toBe(false);
   });
 });
+
+describe("TaskDetail projection surface", () => {
+  it("surfaces the runtime observation error as a warning", () => {
+    const { getByTestId } = render(TaskDetail, {
+      props: { detail: detail({ runtime_observation_error: "tmux capture failed" }) },
+    });
+    expect(getByTestId("observation-error").textContent).toContain("tmux capture failed");
+  });
+
+  it("omits the observation warning when observation succeeded", () => {
+    const { queryByTestId } = render(TaskDetail, { props: { detail: detail() } });
+    expect(queryByTestId("observation-error")).not.toBeInTheDocument();
+  });
+
+  it("shows agent activity when it adds information beyond the status line", () => {
+    const { getByTestId } = render(TaskDetail, {
+      props: { detail: detail({ agent_activity: "running cargo nextest" }) },
+    });
+    expect(getByTestId("agent-activity").textContent).toContain("running cargo nextest");
+  });
+
+  it("hides agent activity when it just repeats the status explanation", () => {
+    const { queryByTestId } = render(TaskDetail, {
+      props: {
+        detail: detail({ agent_activity: "Ready for review", status_explanation: "Ready for review" }),
+      },
+    });
+    expect(queryByTestId("agent-activity")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the live status summary for the activity line", () => {
+    const { getByTestId } = render(TaskDetail, {
+      props: { detail: detail({ agent_activity: null, live_status_summary: "waiting on approval" }) },
+    });
+    expect(getByTestId("agent-activity").textContent).toContain("waiting on approval");
+  });
+
+  it("renders created and last-activity relative times in task details", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { getByText } = render(TaskDetail, {
+      props: {
+        detail: detail({
+          created_unix_secs: now - 2 * 86400,
+          last_activity_unix_secs: now - 5 * 60,
+        }),
+      },
+    });
+    expect(getByText("2d ago")).toBeInTheDocument();
+    expect(getByText("5m ago")).toBeInTheDocument();
+  });
+
+  it("lists agent attempts with outcome and duration", () => {
+    const now = Math.floor(Date.now() / 1000);
+    const { getByTestId } = render(TaskDetail, {
+      props: {
+        detail: detail({
+          agent_attempts: [
+            { started_unix_secs: now - 600, completed_unix_secs: now - 480, outcome: "completed" },
+            { started_unix_secs: now - 300, completed_unix_secs: null, outcome: "running" },
+          ],
+        }),
+      },
+    });
+    const attempts = getByTestId("agent-attempts");
+    expect(attempts.textContent).toContain("completed");
+    expect(attempts.textContent).toContain("2m");
+    expect(attempts.textContent).toContain("running");
+  });
+
+  it("lists annotations when the task carries notes", () => {
+    const { getByTestId } = render(TaskDetail, {
+      props: { detail: detail({ annotations: ["needs rebase", "check CI"] }) },
+    });
+    expect(getByTestId("task-annotations").textContent).toContain("needs rebase");
+    expect(getByTestId("task-annotations").textContent).toContain("check CI");
+  });
+
+  it("omits the annotations block when the task has none", () => {
+    const { queryByTestId } = render(TaskDetail, { props: { detail: detail() } });
+    expect(queryByTestId("task-annotations")).not.toBeInTheDocument();
+  });
+});

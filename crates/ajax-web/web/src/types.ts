@@ -26,6 +26,7 @@ export interface WebAction {
 
 export interface RepoSummary {
   name: string;
+  attention_items?: number;
   [key: string]: unknown;
 }
 
@@ -56,6 +57,7 @@ export interface BrowserTaskCard {
   title: string;
   status: TaskStatus;
   status_explanation?: string | null;
+  last_activity_unix_secs: number;
   actions: WebAction[];
 }
 
