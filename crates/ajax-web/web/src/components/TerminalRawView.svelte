@@ -1422,8 +1422,17 @@
     display: flex;
     gap: 4px;
     overflow-x: auto;
+    /* Overlay-only scroll policy: the key row pans but never paints a bar. */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
     padding: 2px 4px;
     background: var(--paper);
+  }
+
+  .terminal-keys::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   .terminal-key {
