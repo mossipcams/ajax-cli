@@ -263,9 +263,9 @@
   }
 
   .project-pill.is-active {
-    background: var(--mustard);
-    border-color: var(--mustard);
-    color: #1c1714;
+    background: var(--teal);
+    border-color: var(--teal);
+    color: var(--ink);
     font-weight: 600;
   }
 

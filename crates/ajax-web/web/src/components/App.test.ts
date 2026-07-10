@@ -216,6 +216,16 @@ describe("App shell", () => {
     expect(dashboardNav()).not.toHaveAttribute("aria-current");
   });
 
+  it("styles the current bottom-nav page with a teal selected state", () => {
+    const stylesSource = loadStylesSource();
+    const currentPageRule =
+      stylesSource.match(/\.bottom-nav button\[aria-current(?:="page")?\]\s*\{([^}]*)\}/)?.[1] ??
+      "";
+
+    expect(stylesSource).toMatch(/\.bottom-nav button\[aria-current/);
+    expect(currentPageRule).toMatch(/var\(--teal(?:-bright|-deep)?\)/);
+  });
+
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
     const { container } = render(App);
     expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();

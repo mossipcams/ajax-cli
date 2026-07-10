@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@testing-library/svelte";
 import TaskList from "./TaskList.svelte";
+import taskListSource from "./TaskList.svelte?raw";
 import type { BrowserCockpitView } from "../types";
 
 const NOW_SECS = Math.floor(Date.now() / 1000);
@@ -197,5 +198,23 @@ describe("TaskList", () => {
     const wrap = container.querySelector(".task-row-wrap[data-handle='api/c']");
     expect(wrap).not.toBeNull();
     expect(wrap!.querySelector(".task-row-reveal")).toBeNull();
+  });
+
+  it("uses teal for the active project pill and mustard for attention badges", () => {
+    const activePillRule =
+      taskListSource.match(/\.project-pill\.is-active\s*\{([^}]*)\}/)?.[1] ?? "";
+    const pillBadgeRule = taskListSource.match(/\.pill-badge\s*\{([^}]*)\}/)?.[1] ?? "";
+    const attentionTitleRule =
+      taskListSource.match(/\.section-head\.attention \.section-head-title\s*\{([^}]*)\}/)?.[1] ??
+      "";
+    const attentionCountRule =
+      taskListSource.match(/\.section-head\.attention \.section-head-count\s*\{([^}]*)\}/)?.[1] ??
+      "";
+
+    expect(activePillRule).toMatch(/var\(--teal(?:-bright|-deep)?\)/);
+    expect(activePillRule).not.toMatch(/var\(--mustard/);
+    expect(pillBadgeRule).toMatch(/var\(--mustard/);
+    expect(attentionTitleRule).toMatch(/var\(--mustard/);
+    expect(attentionCountRule).toMatch(/var\(--mustard/);
   });
 });
