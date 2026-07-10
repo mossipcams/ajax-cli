@@ -2618,6 +2618,15 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).not.toContain(".xterm-scrollable-element");
   });
 
+  it("hides the terminal-keys overflow scrollbar (overlay-only, no chrome)", () => {
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-keys\s*\{[^}]*scrollbar-width:\s*none/,
+    );
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-keys::-webkit-scrollbar\s*\{[^}]*display:\s*none/,
+    );
+  });
+
   it("intercepts wheel scroll from terminal child layers into local scrollback", async () => {
     const { host } = await mountTerminal();
     const layer = appendTerminalLayer(host);
