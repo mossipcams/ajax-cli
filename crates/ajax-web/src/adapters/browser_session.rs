@@ -84,13 +84,7 @@ fn generate_session_token() -> Result<String, WebError> {
     getrandom::fill(&mut bytes).map_err(|error| {
         WebError::CommandFailed(format!("web session token generation failed: {error}"))
     })?;
-    let mut token = String::with_capacity(bytes.len() * 2);
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for byte in bytes {
-        token.push(HEX[(byte >> 4) as usize] as char);
-        token.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    Ok(token)
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 fn is_valid_session_token(token: &str) -> bool {

@@ -13,7 +13,6 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-use tracing::warn;
 
 const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -80,12 +79,11 @@ async fn cleanup_spawned_child_async_with_timeout<C: TerminalChild + Send + 'sta
     match tokio::time::timeout(wait_timeout, wait_task).await {
         Ok(Ok(())) => {}
         Ok(Err(join_error)) => {
-            warn!("terminal child cleanup task failed: {join_error}");
+            eprintln!("Ajax web terminal child cleanup task failed: {join_error}");
         }
         Err(_) => {
-            warn!(
-                "terminal child cleanup timed out after {:?}; continuing websocket close",
-                wait_timeout
+            eprintln!(
+                "Ajax web terminal child cleanup timed out after {wait_timeout:?}; continuing websocket close"
             );
         }
     }
@@ -212,13 +210,7 @@ fn random_session_token() -> String {
             .unwrap_or(0);
         bytes.copy_from_slice(&nanos.to_le_bytes()[..6]);
     }
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut token = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        token.push(HEX[(byte >> 4) as usize] as char);
-        token.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    token
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn run_tmux_command_blocking(command: &TmuxCommand) -> std::io::Result<std::process::Output> {
@@ -314,40 +306,6 @@ fn filter_scrollback_hostile_sequences(carry: &mut Vec<u8>, chunk: &[u8]) -> Vec
     }
 
     output
-}
-
-struct TerminalOutputBatch {
-    buf: Vec<u8>,
-}
-
-impl TerminalOutputBatch {
-    fn new() -> Self {
-        Self { buf: Vec::new() }
-    }
-
-    fn push(&mut self, bytes: &[u8]) {
-        self.buf.extend_from_slice(bytes);
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.buf.len()
-    }
-
-    #[cfg(test)]
-    fn is_empty(&self) -> bool {
-        self.buf.is_empty()
-    }
-
-    /// true when buffered bytes >= TERMINAL_OUTPUT_MAX_BYTES
-    fn should_flush_by_size(&self) -> bool {
-        self.buf.len() >= TERMINAL_OUTPUT_MAX_BYTES
-    }
-
-    /// Drain all buffered bytes (empty → empty Vec).
-    fn take(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.buf)
-    }
 }
 
 /// Non-empty drained batch bytes ready for `Message::Binary` (no JSON/base64 wrap).
@@ -454,7 +412,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     });
 
     let mut scrollback_filter_carry = Vec::new();
-    let mut output_batch = TerminalOutputBatch::new();
+    let mut output_batch: Vec<u8> = Vec::new();
     let mut flush_deadline: Option<tokio::time::Instant> = None;
 
     loop {
@@ -467,7 +425,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         tokio::select! {
             _ = &mut flush_wait, if flush_deadline.is_some() => {
                 flush_deadline = None;
-                let drained = output_batch.take();
+                let drained = std::mem::take(&mut output_batch);
                 if let Some(payload) = output_frame_bytes(drained) {
                     if socket.send(Message::Binary(payload.into())).await.is_err() {
                         break;
@@ -482,10 +440,10 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
                         if filtered.is_empty() {
                             continue;
                         }
-                        output_batch.push(&filtered);
-                        if output_batch.should_flush_by_size() {
+                        output_batch.extend_from_slice(&filtered);
+                        if output_batch.len() >= TERMINAL_OUTPUT_MAX_BYTES {
                             flush_deadline = None;
-                            let drained = output_batch.take();
+                            let drained = std::mem::take(&mut output_batch);
                             if let Some(payload) = output_frame_bytes(drained) {
                                 if socket.send(Message::Binary(payload.into())).await.is_err() {
                                     break;
@@ -499,7 +457,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
                         }
                     }
                     None => {
-                        let drained = output_batch.take();
+                        let drained = std::mem::take(&mut output_batch);
                         if let Some(payload) = output_frame_bytes(drained) {
                             let _ = socket.send(Message::Binary(payload.into())).await;
                         }
@@ -843,36 +801,6 @@ mod tests {
     fn terminal_output_flush_constants_match_targets() {
         assert_eq!(TERMINAL_OUTPUT_FLUSH_MS, 16);
         assert_eq!(TERMINAL_OUTPUT_MAX_BYTES, 16 * 1024);
-    }
-
-    #[test]
-    fn terminal_output_batch_pushes_until_max_bytes_then_take_drains() {
-        let mut batch = TerminalOutputBatch::new();
-        batch.push(b"abc");
-        assert!(!batch.should_flush_by_size());
-        assert_eq!(batch.len(), 3);
-
-        let remaining = TERMINAL_OUTPUT_MAX_BYTES - batch.len();
-        batch.push(&vec![b'x'; remaining]);
-        assert!(batch.should_flush_by_size());
-        assert_eq!(batch.len(), TERMINAL_OUTPUT_MAX_BYTES);
-
-        let drained = batch.take();
-        assert_eq!(drained.len(), TERMINAL_OUTPUT_MAX_BYTES);
-        assert_eq!(&drained[..3], b"abc");
-        assert!(drained[3..].iter().all(|&b| b == b'x'));
-        assert!(batch.is_empty());
-        assert_eq!(batch.len(), 0);
-        assert!(!batch.should_flush_by_size());
-    }
-
-    #[test]
-    fn terminal_output_batch_take_on_empty_returns_none_or_empty() {
-        let mut batch = TerminalOutputBatch::new();
-        assert!(batch.is_empty());
-        let drained = batch.take();
-        assert!(drained.is_empty());
-        assert!(batch.is_empty());
     }
 
     #[test]

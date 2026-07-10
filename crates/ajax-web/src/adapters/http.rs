@@ -19,12 +19,6 @@ const CONTENT_SECURITY_POLICY: &str = concat!(
     "font-src 'self' data:"
 );
 
-pub struct Request<'a> {
-    pub method: &'a str,
-    pub path: &'a str,
-    pub body: &'a str,
-}
-
 #[derive(Clone)]
 pub struct Response {
     pub status_code: u16,
@@ -35,14 +29,6 @@ pub struct Response {
 impl Response {
     pub(crate) fn into_axum_response(self) -> AxumResponse {
         bytes_axum_response(self.status_code, self.content_type, self.body)
-    }
-}
-
-pub fn text_response(status_code: u16, body: &str) -> Response {
-    Response {
-        status_code,
-        content_type: "text/plain; charset=utf-8",
-        body: body.as_bytes().to_vec(),
     }
 }
 
@@ -162,15 +148,10 @@ fn apply_security_headers(response: &mut AxumResponse) {
 
 #[cfg(test)]
 mod tests {
-    use super::{json_response, json_value_response, text_response};
+    use super::{json_response, json_value_response};
 
     #[test]
-    fn http_adapter_builds_json_and_text_responses() {
-        let text = text_response(404, "not found");
-        assert_eq!(text.status_code, 404);
-        assert_eq!(text.content_type, "text/plain; charset=utf-8");
-        assert_eq!(text.body, b"not found");
-
+    fn http_adapter_builds_json_responses() {
         let json = json_response(200, serde_json::json!({ "ok": true })).unwrap();
         assert_eq!(json.status_code, 200);
         assert_eq!(json.content_type, "application/json; charset=utf-8");

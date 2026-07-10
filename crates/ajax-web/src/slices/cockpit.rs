@@ -2,7 +2,7 @@
 
 use ajax_core::{
     commands::{self, CommandContext},
-    models::{AgentAttempt, GitStatus, LifecycleStatus, TmuxStatus},
+    models::{AgentAttempt, GitStatus, TmuxStatus},
     output::{InboxResponse, ReposResponse, TaskCard},
     registry::Registry,
 };
@@ -116,13 +116,6 @@ pub struct BrowserAgentAttempt {
     pub outcome: String,
 }
 
-pub fn browser_task_detail_json<R: Registry>(
-    context: &CommandContext<R>,
-    qualified_handle: &str,
-) -> Option<Result<String, serde_json::Error>> {
-    browser_task_detail_view(context, qualified_handle).map(|detail| serde_json::to_string(&detail))
-}
-
 pub fn browser_task_detail_view<R: Registry>(
     context: &CommandContext<R>,
     qualified_handle: &str,
@@ -149,7 +142,7 @@ pub fn browser_task_detail_view<R: Registry>(
         base_branch: task.base_branch.clone(),
         worktree_path: task.worktree_path.display().to_string(),
         tmux_session: task.tmux_session.clone(),
-        lifecycle: lifecycle_label(task.lifecycle_status),
+        lifecycle: format!("{:?}", task.lifecycle_status),
         agent: format!("{:?}", task.selected_agent),
         agent_status: format!("{:?}", task.agent_status),
         status: card.status,
@@ -174,10 +167,6 @@ pub fn browser_task_detail_view<R: Registry>(
             .map(browser_agent_attempt)
             .collect(),
     })
-}
-
-fn lifecycle_label(status: LifecycleStatus) -> String {
-    format!("{status:?}")
 }
 
 fn unix_secs(time: SystemTime) -> u64 {

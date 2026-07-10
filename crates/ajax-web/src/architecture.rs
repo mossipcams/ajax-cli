@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     const SLICES: [&str; 4] = ["cockpit", "install", "operate", "terminal"];
-    const ADAPTERS: [&str; 4] = ["assets", "http", "tls", "tmux_input"];
+    const ADAPTERS: [&str; 3] = ["assets", "http", "tls"];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
 
