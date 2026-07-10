@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.38.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.11...ajax-cli-v0.38.0) (2026-07-10)
+
+
+### Features
+
+* send webhook notifications when tasks need attention ([#419](https://github.com/mossipcams/ajax-cli/issues/419)) ([b565a45](https://github.com/mossipcams/ajax-cli/commit/b565a45d91de1b9e9b33b7b58f3711bc8ab96db0))
+* **web:** task recency, remembered defaults, and cockpit a11y polish ([#421](https://github.com/mossipcams/ajax-cli/issues/421)) ([a0ddeeb](https://github.com/mossipcams/ajax-cli/commit/a0ddeeb2c726c174244fe4fc6312302b494ed9d9))
+
 ## [0.37.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.10...ajax-cli-v0.37.11) (2026-07-10)
 
 
