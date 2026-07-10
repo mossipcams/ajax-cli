@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.38.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.0...ajax-cli-v0.38.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* **web:** separate selection teal from attention mustard ([#422](https://github.com/mossipcams/ajax-cli/issues/422)) ([042046f](https://github.com/mossipcams/ajax-cli/commit/042046f1a0a129ec6280ea1fb3ca055447c19d16))
+
 ## [0.38.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.11...ajax-cli-v0.38.0) (2026-07-10)
 
 
