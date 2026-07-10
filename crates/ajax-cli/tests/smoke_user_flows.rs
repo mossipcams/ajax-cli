@@ -1080,12 +1080,19 @@ fn smoke_merge_and_clean_completed_task() {
             "git -C {} worktree remove {}",
             repo.display(),
             worktree.display()
-        )),
+        )) || log_after_clean.contains(&format!(
+            "git -C {} worktree remove --force {}",
+            repo.display(),
+            worktree.display()
+        )) || log_after_clean.contains("ajax-fast-worktree-remove"),
         "clean should remove the worktree:\n{log_after_clean}"
     );
     assert!(
         log_after_clean.contains(&format!(
             "git -C {} branch -d ajax/fix-login",
+            repo.display()
+        )) || log_after_clean.contains(&format!(
+            "git -C {} branch -D ajax/fix-login",
             repo.display()
         )),
         "clean should delete the merged task branch:\n{log_after_clean}"

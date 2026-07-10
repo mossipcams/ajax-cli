@@ -317,8 +317,17 @@ fn drop_needs_force<R: Registry>(
     }
     let task = task(context, qualified_handle)?;
     if cleanup_lifecycle {
+        // Merged lifecycle means ship already landed the branch; don't force-delete
+        // just because cached git_status.merged is stale. Cleanable + !merged still
+        // needs -D so confirmed cleanup actually removes the ajax/* branch.
+        let unmerged_cleanable = task.lifecycle_status != LifecycleStatus::Merged
+            && task
+                .git_status
+                .as_ref()
+                .is_some_and(|status| !status.merged);
         return Ok(task.has_side_flag(SideFlag::Dirty)
             || task.has_side_flag(SideFlag::Conflicted)
+            || unmerged_cleanable
             || task.git_status.as_ref().is_some_and(|status| {
                 status.dirty || status.untracked_files > 0 || status.conflicted
             }));
