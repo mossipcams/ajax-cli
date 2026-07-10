@@ -16,6 +16,7 @@ const fitDispose = vi.fn();
 
 const focus = vi.fn();
 const blur = vi.fn();
+const reset = vi.fn();
 const paste = vi.fn();
 const resize = vi.fn();
 const getSelection = vi.fn(() => "selected text");
@@ -98,6 +99,7 @@ vi.mock("ghostty-web", () => ({
     dispose = dispose;
     focus = focus;
     blur = blur;
+    reset = reset;
     paste = paste;
     resize = (cols: number, rows: number) => {
       this.cols = cols;
@@ -208,6 +210,7 @@ beforeEach(() => {
   fitDispose.mockClear();
   focus.mockClear();
   blur.mockClear();
+  reset.mockClear();
   paste.mockClear();
   resize.mockClear();
   scrollLines.mockClear();
@@ -1166,6 +1169,31 @@ describe("TerminalRawView", () => {
 
     expect(fit).toHaveBeenCalled();
     expect(focus).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("resets the terminal buffer and snaps to bottom on reconnect", async () => {
+    const { socket: first } = await mountOpenTerminal();
+    await settleFrames();
+
+    first?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("session output") }),
+    } as MessageEvent);
+    await waitFor(() => expect(write).toHaveBeenCalledWith("session output"));
+
+    vi.useFakeTimers();
+    reset.mockClear();
+    scrollToBottom.mockClear();
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close");
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const second = MockWebSocket.instances[1];
+    second?.emit("open");
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(reset).toHaveBeenCalled();
+    expect(scrollToBottom).toHaveBeenCalled();
     vi.useRealTimers();
   });
 

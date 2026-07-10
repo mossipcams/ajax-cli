@@ -166,6 +166,23 @@ describe("App shell", () => {
     );
   });
 
+  it("zeros horizontal padding on the mobile task route-scroll", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlocks = [...stylesSource.matchAll(
+      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
+    )];
+    const mobileCss = mobileBlocks.map((match) => match[1]).join("\n");
+    const taskRouteScrollRule =
+      mobileCss.match(
+        /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(taskRouteScrollRule).toMatch(/padding-top:\s*0/);
+    expect(taskRouteScrollRule).toMatch(/padding-left:\s*0/);
+    expect(taskRouteScrollRule).toMatch(/padding-right:\s*0/);
+    expect(taskRouteScrollRule).not.toMatch(/padding-bottom:\s*0/);
+  });
+
   it("hides route-scroll scrollbar chrome so content keeps full width", () => {
     const stylesSource = loadStylesSource();
     const routeScrollRule = stylesSource.match(
