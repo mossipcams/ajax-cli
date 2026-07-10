@@ -9,6 +9,7 @@ mod cockpit_backend;
 mod context;
 mod dispatch;
 mod execution_dispatch;
+mod notify;
 mod render;
 mod snapshot_dispatch;
 #[cfg(feature = "supervisor")]

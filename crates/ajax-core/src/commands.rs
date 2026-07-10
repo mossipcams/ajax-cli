@@ -1770,6 +1770,7 @@ mod tests {
                 ManagedRepo::new("api", "/missing/api", "main"),
             ],
             test_commands: vec![TestCommand::new("web", "cargo test")],
+            notify: None,
         };
         let context = CommandContext::new(config, InMemoryRegistry::default());
         let environment = DoctorEnvironment::from_available_tools(["git", "tmux", "codex"])

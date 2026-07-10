@@ -399,8 +399,10 @@ pub(crate) fn refresh_live_context<R: CommandRunner>(
     runner: &mut R,
 ) -> Result<bool, CliError> {
     let cache = TmuxAgentStatusSnapshot::from_runtime_cache(&context.runtime_paths.cache_dir);
-    refresh_runtime_context_with_tier(context, runner, &cache, RefreshTier::Full)
-        .map_err(crate::command_error)
+    let refreshed = refresh_runtime_context_with_tier(context, runner, &cache, RefreshTier::Full)
+        .map_err(crate::command_error)?;
+    let notified = crate::notify::notify_attention_transitions(context, runner);
+    Ok(refreshed || notified)
 }
 
 fn cached_snapshot_needs_rebuild(

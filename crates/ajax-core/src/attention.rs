@@ -4,6 +4,49 @@ use crate::models::{
 };
 use crate::ui_state::{derive_operator_status, TaskStatus};
 
+pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AttentionTransition {
+    pub repo: String,
+    pub handle: String,
+    pub status: TaskStatus,
+    pub explanation: Option<String>,
+}
+
+/// Rising-edge detector for operator attention. Fires once when a task
+/// crosses into Waiting or Error, deduplicated by a metadata stamp that
+/// persists with the normal registry snapshot save.
+/// ponytail: best-effort dedup; a concurrent first observation can produce
+/// one duplicate delivery — add per-key CAS only if duplicates ever annoy.
+pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition> {
+    let operator_status = derive_operator_status(task);
+    match operator_status.status {
+        TaskStatus::Waiting | TaskStatus::Error => {
+            let stamp = operator_status.status.as_str();
+            if task
+                .metadata
+                .get(LAST_NOTIFIED_STATUS_KEY)
+                .is_some_and(|last| last == stamp)
+            {
+                return None;
+            }
+            task.metadata
+                .insert(LAST_NOTIFIED_STATUS_KEY.to_string(), stamp.to_string());
+            Some(AttentionTransition {
+                repo: task.repo.clone(),
+                handle: task.handle.clone(),
+                status: operator_status.status,
+                explanation: operator_status.explanation,
+            })
+        }
+        TaskStatus::Running | TaskStatus::Idle => {
+            task.metadata.remove(LAST_NOTIFIED_STATUS_KEY);
+            None
+        }
+    }
+}
+
 pub fn annotate(task: &Task) -> Vec<Annotation> {
     let mut annotations = Vec::new();
     let operator_status = derive_operator_status(task);
@@ -231,6 +274,7 @@ mod tests {
         LiveStatusKind, OperatorAction, RuntimeObservationSource, SideFlag, SubstrateGap, Task,
         TaskId,
     };
+    use crate::ui_state::TaskStatus;
 
     fn task_with_flags(handle: &str, flags: &[SideFlag]) -> Task {
         let mut task = Task::new(
@@ -432,5 +476,71 @@ mod tests {
                 Evidence::Lifecycle(crate::models::LifecycleStatus::Cleanable),
             )]
         );
+    }
+
+    fn waiting_task(handle: &str) -> Task {
+        let mut task = task_with_flags(handle, &[]);
+        mark_active(&mut task).unwrap();
+        task.add_side_flag(SideFlag::NeedsInput);
+        task
+    }
+
+    #[test]
+    fn idle_to_waiting_fires_once() {
+        let mut task = waiting_task("notify");
+
+        let transition = super::take_attention_transition(&mut task);
+
+        assert_eq!(
+            transition,
+            Some(super::AttentionTransition {
+                repo: "web".to_string(),
+                handle: "notify".to_string(),
+                status: TaskStatus::Waiting,
+                explanation: Some("Waiting for input".to_string()),
+            })
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+    }
+
+    #[test]
+    fn waiting_then_idle_then_waiting_fires_again() {
+        let mut task = waiting_task("notify");
+        assert!(super::take_attention_transition(&mut task).is_some());
+
+        task.remove_side_flag(SideFlag::NeedsInput);
+        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
+
+        task.add_side_flag(SideFlag::NeedsInput);
+        assert!(super::take_attention_transition(&mut task).is_some());
+    }
+
+    #[test]
+    fn waiting_to_error_fires() {
+        let mut task = waiting_task("notify");
+        assert!(super::take_attention_transition(&mut task).is_some());
+
+        task.add_side_flag(SideFlag::Conflicted);
+        let transition = super::take_attention_transition(&mut task);
+
+        assert_eq!(
+            transition.map(|transition| transition.status),
+            Some(TaskStatus::Error)
+        );
+    }
+
+    #[test]
+    fn running_and_idle_never_fire() {
+        let mut running = task_with_flags("running", &[SideFlag::AgentRunning]);
+        mark_active(&mut running).unwrap();
+        running.agent_status = AgentRuntimeStatus::Running;
+        assert_eq!(super::take_attention_transition(&mut running), None);
+        assert!(running.metadata.is_empty());
+
+        let mut idle = task_with_flags("idle", &[]);
+        mark_active(&mut idle).unwrap();
+        assert_eq!(super::take_attention_transition(&mut idle), None);
+        assert!(idle.metadata.is_empty());
     }
 }
