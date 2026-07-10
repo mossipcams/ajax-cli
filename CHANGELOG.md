@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.37.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.10...ajax-cli-v0.37.11) (2026-07-10)
+
+
+### Bug Fixes
+
+* **web:** hide terminal key row overflow scrollbar ([#417](https://github.com/mossipcams/ajax-cli/issues/417)) ([532ca1e](https://github.com/mossipcams/ajax-cli/commit/532ca1e6ba8b876b3143caee3ca38eb2b6b03ce1))
+* **web:** share start agent allowlist and delete dead web code ([#416](https://github.com/mossipcams/ajax-cli/issues/416)) ([787a136](https://github.com/mossipcams/ajax-cli/commit/787a136612fd0fdfbe7e27ef476f25c8a683ca40))
+
 ## [0.37.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.37.9...ajax-cli-v0.37.10) (2026-07-09)
 
 
