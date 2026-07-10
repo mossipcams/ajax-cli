@@ -24,6 +24,21 @@ pub fn registry_persistence_disposition(task: &Task) -> RegistryPersistenceDispo
         return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Removed);
     }
     if task.has_side_flag(SideFlag::Stale) {
+        if has_no_recoverable_git_substrate(task) {
+            return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale);
+        }
+        // Keep stale tasks that still show recoverable git substrate so drop can
+        // finish teardown. Pure Stale with no substrate evidence stays pruned so
+        // Cockpit can hide long-inactive tasks.
+        if task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists || status.branch_exists)
+            || task.has_side_flag(SideFlag::WorktreeMissing)
+            || task.has_side_flag(SideFlag::BranchMissing)
+        {
+            return RegistryPersistenceDisposition::Persist;
+        }
         return RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale);
     }
     if is_abandoned_provisioning_ghost(task) {
@@ -140,12 +155,63 @@ mod tests {
 
         let mut stale = task_with_lifecycle(LifecycleStatus::Active);
         stale.add_side_flag(SideFlag::Stale);
-        stale.add_side_flag(SideFlag::WorktreeMissing);
         assert_eq!(
             registry_persistence_disposition(&stale),
             RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale)
         );
         assert!(!is_cockpit_visible_task(&stale));
+    }
+
+    #[test]
+    fn stale_task_with_existing_branch_is_not_a_registry_ghost() {
+        let mut task = task_with_lifecycle(LifecycleStatus::Active);
+        task.add_side_flag(SideFlag::Stale);
+        task.git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+
+        assert_eq!(
+            registry_persistence_disposition(&task),
+            RegistryPersistenceDisposition::Persist
+        );
+        assert!(is_cockpit_visible_task(&task));
+    }
+
+    #[test]
+    fn stale_task_with_partial_missing_substrate_is_not_a_registry_ghost() {
+        let mut task = task_with_lifecycle(LifecycleStatus::Active);
+        task.add_side_flag(SideFlag::Stale);
+        task.add_side_flag(SideFlag::WorktreeMissing);
+
+        assert_eq!(
+            registry_persistence_disposition(&task),
+            RegistryPersistenceDisposition::Persist
+        );
+        assert!(is_cockpit_visible_task(&task));
+    }
+
+    #[test]
+    fn stale_task_without_recoverable_git_substrate_is_a_registry_ghost() {
+        let mut task = task_with_lifecycle(LifecycleStatus::Active);
+        task.add_side_flag(SideFlag::Stale);
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        task.add_side_flag(SideFlag::BranchMissing);
+
+        assert_eq!(
+            registry_persistence_disposition(&task),
+            RegistryPersistenceDisposition::Prune(RegistryGhostReason::Stale)
+        );
+        assert!(!is_cockpit_visible_task(&task));
     }
 
     #[test]

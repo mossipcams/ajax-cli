@@ -1959,6 +1959,8 @@ mod tests {
         registry.create_task(removed).unwrap();
         let mut stale = task("task-stale", "web", "stale-task");
         stale.add_side_flag(SideFlag::Stale);
+        stale.add_side_flag(SideFlag::WorktreeMissing);
+        stale.add_side_flag(SideFlag::BranchMissing);
         registry.create_task(stale).unwrap();
         registry
             .record_event(

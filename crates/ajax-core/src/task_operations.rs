@@ -1220,6 +1220,49 @@ mod tests {
     }
 
     #[test]
+    fn drop_operation_force_deletes_unmerged_branch_on_confirmed_cleanup() {
+        let mut context = context_with_cleanable_task();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new("web/fix-login"))
+                .unwrap();
+            if let Some(git_status) = task.git_status.as_mut() {
+                git_status.merged = false;
+            }
+        }
+        let mut outputs = present_drop_observation_outputs();
+        outputs.extend([output(0, "", ""), output(0, "", ""), output(0, "", "")]);
+        outputs.extend(absent_drop_observation_outputs());
+        let mut runner = RecordingQueuedRunner::new(outputs);
+        let operation =
+            plan_drop_task_operation(&mut context, "web/fix-login", &mut runner).unwrap();
+
+        let (_outputs, completion) = execute_drop_task_operation(
+            &mut context,
+            "web/fix-login",
+            operation,
+            true,
+            &mut runner,
+        )
+        .unwrap();
+
+        assert_eq!(completion, DropTaskCompletion::Removed);
+        assert!(runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "branch")
+                && command.args.iter().any(|arg| arg == "-D")
+                && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        }));
+        assert!(!runner.commands.iter().any(|command| {
+            command.program == "git"
+                && command.args.iter().any(|arg| arg == "branch")
+                && command.args.iter().any(|arg| arg == "-d")
+                && command.args.iter().any(|arg| arg == "ajax/fix-login")
+        }));
+    }
+
+    #[test]
     fn confirmed_drop_renames_worktree_to_trash_instead_of_deleting_inline() {
         let mut context = context_with_cleanable_task();
         let task_id = TaskId::new("web/fix-login");
