@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BrowserCockpitView, BrowserTaskDetail } from "../types";
-  import { statusMeta } from "../state";
+  import { formatDuration, relativeTime, statusMeta } from "../state";
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
@@ -20,6 +20,18 @@
   let meta = $derived(statusMeta(detail.status));
   let actions = $derived(visibleTaskActions(detail.actions));
   let metaOpen = $state(false);
+
+  // Secondary agent line — only when it adds information beyond the headline.
+  let activityLine = $derived.by(() => {
+    const line = detail.agent_activity ?? detail.live_status_summary;
+    return line && line !== detail.status_explanation ? line : null;
+  });
+
+  const nowSecs = () => Math.floor(Date.now() / 1000);
+
+  function absoluteTime(unixSecs: number): string | undefined {
+    return unixSecs ? new Date(unixSecs * 1000).toLocaleString() : undefined;
+  }
 </script>
 
 <div class="task-detail is-terminal-first">
@@ -30,8 +42,16 @@
   </div>
 
   <section class="interact-panel" data-mobile-chrome="actions">
+    {#if detail.runtime_observation_error}
+      <p class="interact-warning" data-testid="observation-error">
+        Observation error: {detail.runtime_observation_error}
+      </p>
+    {/if}
     {#if detail.status_explanation}
       <p class="interact-summary">{detail.status_explanation}</p>
+    {/if}
+    {#if activityLine}
+      <p class="interact-summary interact-activity" data-testid="agent-activity">{activityLine}</p>
     {/if}
     {#if actions.length}
       <ActionBar
@@ -80,6 +100,44 @@
       <dt>Tmux</dt>
       <dd>{detail.tmux_session}</dd>
     </dl>
+
+    <div class="meta-group-label">Activity</div>
+    <dl class="detail-grid">
+      <dt>Created</dt>
+      <dd title={absoluteTime(detail.created_unix_secs)}>
+        {relativeTime(detail.created_unix_secs, nowSecs())}
+      </dd>
+      <dt>Active</dt>
+      <dd title={absoluteTime(detail.last_activity_unix_secs)}>
+        {relativeTime(detail.last_activity_unix_secs, nowSecs())}
+      </dd>
+    </dl>
+
+    {#if detail.agent_attempts.length}
+      <div class="meta-group-label">Attempts</div>
+      <ol class="attempt-list" data-testid="agent-attempts">
+        {#each detail.agent_attempts as attempt (attempt.started_unix_secs)}
+          <li>
+            <span class="attempt-outcome">{attempt.outcome}</span>
+            <span class="attempt-when">
+              {relativeTime(attempt.started_unix_secs, nowSecs())}
+              · {attempt.completed_unix_secs
+                ? formatDuration(attempt.completed_unix_secs - attempt.started_unix_secs)
+                : "in progress"}
+            </span>
+          </li>
+        {/each}
+      </ol>
+    {/if}
+
+    {#if detail.annotations.length}
+      <div class="meta-group-label">Notes</div>
+      <ul class="annotation-list" data-testid="task-annotations">
+        {#each detail.annotations as note (note)}
+          <li>{note}</li>
+        {/each}
+      </ul>
+    {/if}
   </details>
 </div>
 
@@ -199,6 +257,21 @@
     margin-bottom: 0;
   }
 
+  /* Rare runtime-observation failure — stays visible on mobile, unlike the
+     summary lines, because it explains why status may be stale. */
+  .interact-warning {
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--terracotta-bright);
+    overflow-wrap: anywhere;
+  }
+
+  .interact-activity {
+    color: var(--ink-muted);
+    font-size: 13px;
+  }
+
   /* META DETAILS ---------------------------------------------------------- */
   .meta-details {
     margin-top: 18px;
@@ -276,6 +349,28 @@
     border-color: var(--ink-soft);
     color: var(--ink);
     outline: none;
+  }
+
+  .attempt-list,
+  .annotation-list {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 13px;
+    color: var(--ink);
+  }
+
+  .attempt-list li,
+  .annotation-list li {
+    margin: 2px 0;
+    overflow-wrap: anywhere;
+  }
+
+  .attempt-outcome {
+    font-weight: 600;
+  }
+
+  .attempt-when {
+    color: var(--ink-muted);
   }
 
   /* Mobile: tighten chrome for terminal-first layout inside route-scroll.

@@ -34,6 +34,7 @@ pub struct BrowserTaskCard {
     pub title: String,
     pub status: ajax_core::ui_state::TaskStatus,
     pub status_explanation: Option<String>,
+    pub last_activity_unix_secs: u64,
     pub actions: Vec<WebAction>,
 }
 
@@ -69,6 +70,7 @@ fn browser_task_card(card: &TaskCard) -> BrowserTaskCard {
         title: card.title.clone(),
         status: card.status,
         status_explanation: card.status_explanation.clone(),
+        last_activity_unix_secs: unix_secs(card.last_activity_at),
         actions: browser_actions(card),
     }
 }
@@ -377,6 +379,7 @@ pub(crate) mod tests {
             status: ajax_core::ui_state::TaskStatus::Waiting,
             status_explanation: Some("Ready for review".to_string()),
             lifecycle: LifecycleStatus::Reviewable,
+            last_activity_at: std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000),
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![
@@ -390,6 +393,7 @@ pub(crate) mod tests {
 
         let browser = browser_task_card(&card);
 
+        assert_eq!(browser.last_activity_unix_secs, 1_700_000_000);
         assert_eq!(browser.qualified_handle, "web/fix-login");
         assert_eq!(browser.status, ajax_core::ui_state::TaskStatus::Waiting);
         assert_eq!(
@@ -421,6 +425,7 @@ pub(crate) mod tests {
             status: ajax_core::ui_state::TaskStatus::Error,
             status_explanation: Some("CI failed".to_string()),
             lifecycle: LifecycleStatus::Error,
+            last_activity_at: std::time::UNIX_EPOCH,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![OperatorAction::Resume],
@@ -447,6 +452,7 @@ pub(crate) mod tests {
             status: ajax_core::ui_state::TaskStatus::Waiting,
             status_explanation: Some("Ready for review".to_string()),
             lifecycle: LifecycleStatus::Reviewable,
+            last_activity_at: std::time::UNIX_EPOCH,
             annotations: Vec::new(),
             primary_action: OperatorAction::Resume,
             available_actions: vec![
@@ -490,6 +496,7 @@ pub(crate) mod tests {
             status: ajax_core::ui_state::TaskStatus::Waiting,
             status_explanation: None,
             lifecycle: LifecycleStatus::Reviewable,
+            last_activity_at: std::time::UNIX_EPOCH,
             annotations: Vec::new(),
             primary_action: OperatorAction::Review,
             available_actions: vec![OperatorAction::Review],

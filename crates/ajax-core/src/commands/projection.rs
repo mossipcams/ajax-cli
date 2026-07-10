@@ -96,6 +96,7 @@ pub(super) fn task_card(task: &Task) -> TaskCard {
         status: operator_status.status,
         status_explanation: operator_status.explanation.clone(),
         lifecycle: task.lifecycle_status,
+        last_activity_at: task.last_activity_at,
         annotations,
         primary_action: plan.action,
         available_actions: plan.available_actions,

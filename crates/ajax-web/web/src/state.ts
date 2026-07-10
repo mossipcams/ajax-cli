@@ -56,10 +56,30 @@ export function sortCards(cards: BrowserTaskCard[]): BrowserTaskCard[] {
     .sort(
       (a, b) =>
         statusRank(a.status) - statusRank(b.status) ||
+        (b.last_activity_unix_secs ?? 0) - (a.last_activity_unix_secs ?? 0) ||
         a.qualified_handle.localeCompare(b.qualified_handle),
     );
 }
 
 export function isConfirmExpired(entry: { expiresAt: number }, now: number): boolean {
   return now > entry.expiresAt;
+}
+
+/** Compact relative timestamp for glanceable metadata: "now", "5m ago",
+ * "2d ago". Unset (zero) timestamps render as "—"; clock skew clamps to "now". */
+export function relativeTime(unixSecs: number, nowSecs: number): string {
+  if (!unixSecs) return "—";
+  const delta = Math.max(0, nowSecs - unixSecs);
+  if (delta < 60) return "now";
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+  return `${Math.floor(delta / 86400)}d ago`;
+}
+
+/** Compact duration: "42s", "3m", "1h 12m". */
+export function formatDuration(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  if (total < 60) return `${total}s`;
+  if (total < 3600) return `${Math.floor(total / 60)}m`;
+  return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
 }

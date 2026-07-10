@@ -28,6 +28,7 @@
         "title": "Fix login",
         "status": "waiting",
         "status_explanation": "Waiting for approval",
+        "last_activity_unix_secs": 1700001000,
         "actions": [
           {
             "action": "resume",

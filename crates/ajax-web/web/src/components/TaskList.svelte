@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BrowserCockpitView, BrowserTaskCard } from "../types";
-  import { filterByProject, sortCards, statusMeta } from "../state";
+  import { filterByProject, relativeTime, sortCards, statusMeta } from "../state";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
   import { swipeReveal } from "../gestures/swipeRevealAction";
@@ -9,6 +9,14 @@
   // Per-row reveal offset, keyed by handle. A swipe slides the row left to
   // expose its first action; tapping an open row closes it instead of opening.
   let offsets = $state<Record<string, number>>({});
+
+  // Slow clock for the "active Xm ago" labels — keeps them honest on a page
+  // left open without re-rendering every second.
+  let nowSecs = $state(Math.floor(Date.now() / 1000));
+  $effect(() => {
+    const timer = setInterval(() => (nowSecs = Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(timer);
+  });
   function setOffset(handle: string, offset: number) {
     offsets = { ...offsets, [handle]: offset };
   }
@@ -52,6 +60,12 @@
         ...(cockpit.repos?.repos ?? []).map((repo) => repo.name),
       ]),
     ].sort(),
+  );
+
+  let attentionByRepo = $derived(
+    new Map(
+      (cockpit.repos?.repos ?? []).map((repo) => [repo.name, repo.attention_items ?? 0]),
+    ),
   );
 
   let inboxItems = $derived(
@@ -102,13 +116,19 @@
       All
     </button>
     {#each projects as project (project)}
+      {@const count = attentionByRepo.get(project) ?? 0}
       <button
         type="button"
         class="project-pill"
         class:is-active={selectedProject === project}
+        aria-label={count ? `${project} — ${count} need attention` : project}
+        aria-current={selectedProject === project ? "true" : undefined}
         onclick={() => onSelectProject?.(project)}
       >
         {project}
+        {#if count}
+          <span class="pill-badge" aria-hidden="true">{count}</span>
+        {/if}
       </button>
     {/each}
   </nav>
@@ -151,7 +171,12 @@
           <span class="task-row-sub">{card.status_explanation}</span>
         {/if}
       </div>
-      <span class="task-row-status">{meta.label}</span>
+      <span class="task-row-side">
+        <span class="task-row-status">{meta.label}</span>
+        {#if card.last_activity_unix_secs}
+          <span class="task-row-time">{relativeTime(card.last_activity_unix_secs, nowSecs)}</span>
+        {/if}
+      </span>
       <span class="task-row-chevron">›</span>
     </button>
   </div>
@@ -193,7 +218,7 @@
 {/if}
 
 {#if visibleCount === 0}
-  <p class="empty">{selectedProject ? `No tasks in ${selectedProject}` : "All quiet"}</p>
+  <p class="empty">{selectedProject ? `No tasks in ${selectedProject} yet — start one below.` : "All quiet — start a new task below."}</p>
 {/if}
 
 <style>
@@ -242,6 +267,21 @@
     border-color: var(--mustard);
     color: #1c1714;
     font-weight: 600;
+  }
+
+  .pill-badge {
+    background: var(--mustard);
+    color: #1c1714;
+    border-radius: 999px;
+    min-width: 16px;
+    height: 16px;
+    font-size: 10px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 4px;
+    margin-left: 6px;
   }
 
   /* SECTION HEADS — small caps + count chip ------------------------------- */
@@ -401,6 +441,14 @@
     text-overflow: ellipsis;
   }
 
+  .task-row-side {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+  }
+
   .task-row-status {
     flex: none;
     font-size: 10.5px;
@@ -408,6 +456,13 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--tone, var(--ink-muted));
+  }
+
+  .task-row-time {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    font-feature-settings: "tnum";
+    white-space: nowrap;
   }
 
   .task-row-chevron {

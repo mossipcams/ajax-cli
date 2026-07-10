@@ -15,6 +15,16 @@ describe("NewTaskSheet", () => {
     expect(getByTestId("new-task-sheet")).toHaveAttribute("id", "new-task-sheet");
   });
 
+  it("moves focus onto the dialog when opened", () => {
+    const { getByTestId } = render(NewTaskSheet, { props: { repos } });
+    expect(document.activeElement).toBe(getByTestId("new-task-sheet"));
+  });
+
+  it("hints the go key on the title input", () => {
+    const { container } = render(NewTaskSheet, { props: { repos } });
+    expect(container.querySelector("#new-task-title-input")).toHaveAttribute("enterkeyhint", "go");
+  });
+
   it("scrolls the sheet card internally when content exceeds the band", () => {
     expect(newTaskSheetSource).toMatch(/FullscreenLayer/);
     expect(newTaskSheetSource).not.toMatch(/--app-height|--app-top/);
@@ -117,5 +127,43 @@ describe("NewTaskSheet", () => {
     await fireEvent.submit(container.querySelector("form")!);
     expect(await findByText("Repo busy")).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("NewTaskSheet remembered defaults", () => {
+  afterEach(() => localStorage.clear());
+
+  it("restores the last-used agent and repo", () => {
+    localStorage.setItem("ajax.newTask.agent", "cursor");
+    localStorage.setItem("ajax.newTask.repo", "api");
+    const { container, getByRole } = render(NewTaskSheet, { props: { repos } });
+    expect(getByRole("radio", { name: "Cursor" })).toHaveAttribute("aria-checked", "true");
+    expect(container.querySelector<HTMLSelectElement>("#new-task-repo")!.value).toBe("api");
+  });
+
+  it("prefers the selected project over the remembered repo", () => {
+    localStorage.setItem("ajax.newTask.repo", "web");
+    const { container } = render(NewTaskSheet, { props: { repos, selectedProject: "api" } });
+    expect(container.querySelector<HTMLSelectElement>("#new-task-repo")!.value).toBe("api");
+  });
+
+  it("ignores a remembered repo that is no longer configured", () => {
+    localStorage.setItem("ajax.newTask.repo", "gone");
+    localStorage.setItem("ajax.newTask.agent", "not-an-agent");
+    const { container, getByRole } = render(NewTaskSheet, { props: { repos } });
+    expect(container.querySelector<HTMLSelectElement>("#new-task-repo")!.value).toBe("web");
+    expect(getByRole("radio", { name: "Codex" })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("remembers the agent and repo after a successful start", async () => {
+    vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const { container, getByRole } = render(NewTaskSheet, { props: { repos } });
+    await fireEvent.input(container.querySelector("#new-task-title-input")!, {
+      target: { value: "Fix login" },
+    });
+    await fireEvent.click(getByRole("radio", { name: "OpenCode" }));
+    await fireEvent.submit(container.querySelector("form")!);
+    expect(localStorage.getItem("ajax.newTask.agent")).toBe("opencode");
+    expect(localStorage.getItem("ajax.newTask.repo")).toBe("web");
   });
 });

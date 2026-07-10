@@ -7,6 +7,8 @@ import {
   isConfirmExpired,
   statusMeta,
   severityBucket,
+  relativeTime,
+  formatDuration,
 } from "./state";
 import type { BrowserTaskCard } from "./types";
 
@@ -17,6 +19,7 @@ function card(handle: string, status: BrowserTaskCard["status"]): BrowserTaskCar
     repo: handle.split("/")[0],
     title: handle,
     status,
+    last_activity_unix_secs: 0,
     actions: [],
   };
 }
@@ -39,6 +42,17 @@ describe("status ordering (presentation only)", () => {
       "web/a",
       "web/c",
       "web/b",
+    ]);
+  });
+
+  it("breaks status ties by most recent activity, then handle", () => {
+    const stale = { ...card("web/a", "running"), last_activity_unix_secs: 100 };
+    const fresh = { ...card("web/c", "running"), last_activity_unix_secs: 500 };
+    const freshTwin = { ...card("web/b", "running"), last_activity_unix_secs: 500 };
+    expect(sortCards([stale, fresh, freshTwin]).map((c) => c.qualified_handle)).toEqual([
+      "web/b",
+      "web/c",
+      "web/a",
     ]);
   });
 });
@@ -85,5 +99,32 @@ describe("severityBucket", () => {
   });
   it("maps high numbers to low urgency", () => {
     expect(severityBucket(5)).toBe("low");
+  });
+});
+
+describe("relativeTime", () => {
+  const now = 1_700_000_000;
+
+  it("renders sub-minute deltas as now", () => {
+    expect(relativeTime(now - 30, now)).toBe("now");
+  });
+
+  it("renders minutes, hours, and days", () => {
+    expect(relativeTime(now - 120, now)).toBe("2m ago");
+    expect(relativeTime(now - 3 * 3600, now)).toBe("3h ago");
+    expect(relativeTime(now - 2 * 86400, now)).toBe("2d ago");
+  });
+
+  it("never renders a future or unset timestamp", () => {
+    expect(relativeTime(now + 60, now)).toBe("now");
+    expect(relativeTime(0, now)).toBe("—");
+  });
+});
+
+describe("formatDuration", () => {
+  it("renders seconds, minutes, and hours", () => {
+    expect(formatDuration(42)).toBe("42s");
+    expect(formatDuration(3 * 60 + 5)).toBe("3m");
+    expect(formatDuration(3661)).toBe("1h 1m");
   });
 });

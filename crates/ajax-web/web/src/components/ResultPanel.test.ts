@@ -46,4 +46,17 @@ describe("ResultPanel", () => {
     vi.advanceTimersByTime(8000);
     expect(onDismiss).toHaveBeenCalledOnce();
   });
+
+  it("announces errors assertively", () => {
+    const { container, rerender } = render(ResultPanel, {
+      props: { message: "x", isError: true },
+    });
+    const panel = container.querySelector(".result-panel");
+    expect(panel).toHaveAttribute("role", "alert");
+    expect(panel).toHaveAttribute("aria-live", "assertive");
+
+    rerender({ message: "ok", isError: false });
+    expect(panel).toHaveAttribute("role", "status");
+    expect(panel).toHaveAttribute("aria-live", "polite");
+  });
 });

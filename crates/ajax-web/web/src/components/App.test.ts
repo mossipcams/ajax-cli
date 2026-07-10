@@ -45,6 +45,17 @@ vi.mock("ghostty-web", () => ({
   },
 }));
 
+// Hard file-scope stub: late microtasks (detail loads settling between a
+// test's unstubAllGlobals and DOM cleanup) must never reach jsdom's real
+// WebSocket, whose `ws` shim rejects asynchronously outside any test.
+class StubWebSocket {
+  readyState = 1;
+  close() {}
+  addEventListener() {}
+  send() {}
+}
+globalThis.WebSocket = StubWebSocket as unknown as typeof WebSocket;
+
 function setHash(hash: string) {
   window.location.hash = hash;
   window.dispatchEvent(new HashChangeEvent("hashchange"));
@@ -61,6 +72,7 @@ function jsonResponse(body: unknown, status = 200) {
 describe("App shell", () => {
   beforeEach(() => {
     window.location.hash = "";
+    document.title = "";
     vi.stubGlobal("WebSocket", class {
       readyState = 1;
       close() {}
@@ -167,6 +179,43 @@ describe("App shell", () => {
     );
   });
 
+  it("sets the document title per route", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    render(App);
+    expect(document.title).toBe("Ajax");
+
+    setHash("#/settings");
+    await tick();
+    expect(document.title).toBe("Settings — Ajax");
+
+    setHash("#/t/web%2Ffix-login");
+    await tick();
+    expect(document.title).toBe("web/fix-login — Ajax");
+  });
+
+  it("marks the dashboard nav button as current", async () => {
+    const { container } = render(App);
+    const dashboardNav = () =>
+      container.querySelector<HTMLButtonElement>("[data-bottom-route='#/']")!;
+
+    expect(dashboardNav()).toHaveAttribute("aria-current", "page");
+
+    setHash("#/settings");
+    await tick();
+    expect(dashboardNav()).not.toHaveAttribute("aria-current");
+  });
+
   it("shows a dashboard skeleton while the cockpit projection is loading", () => {
     const { container } = render(App);
     expect(container.querySelector("[data-testid='dashboard-skeleton']")).toBeInTheDocument();
@@ -227,6 +276,45 @@ describe("App shell", () => {
     setHash("#/t/web%2Fother");
     await vi.waitFor(() => expect(operations).toHaveLength(2));
     expect(operations[1]).toMatchObject({ task_handle: "web/other", action: "resume" });
+
+    // Let the in-flight detail load land while WebSocket is still stubbed —
+    // a late mount after unstubAllGlobals hits jsdom's real WebSocket and
+    // rejects asynchronously outside any test.
+    await findByTestId("task-terminal-panel");
+  });
+
+  it("ignores a stale detail response after switching tasks", async () => {
+    let resolveFirstDetail!: (value: unknown) => void;
+    const firstDetail = new Promise((resolve) => (resolveFirstDetail = resolve));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path === "/api/tasks/web%2Ffix-login") return firstDetail;
+        if (path === "/api/tasks/web%2Fother")
+          return Promise.resolve(
+            jsonResponse({ ...taskDetail, qualified_handle: "web/other", title: "Other task" }),
+          );
+        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByText, queryByText } = render(App);
+    setHash("#/t/web%2Ffix-login");
+    await tick();
+    setHash("#/t/web%2Fother");
+    await findByText("Other task");
+
+    // The slow response for the task we left must not clobber the open one.
+    resolveFirstDetail(jsonResponse({ ...taskDetail, title: "STALE fix-login" }));
+    // Macrotask boundary: let the whole fetch→parse→assign chain settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await tick();
+    expect(queryByText("STALE fix-login")).not.toBeInTheDocument();
+    expect(queryByText("Other task")).toBeInTheDocument();
   });
 
   it("mounts the task terminal panel after detail loads", async () => {
