@@ -149,6 +149,8 @@ pub struct IsolatedAttachPlan {
     pub ephemeral_session: String,
     /// Commands to run before attaching (create the grouped session).
     pub setup: Vec<TmuxCommand>,
+    /// Existing task-pane history to seed before live PTY output.
+    pub history: TmuxCommand,
     /// The attach command spawned inside the outer PTY.
     pub attach: TmuxAttachCommandPlan,
     /// Commands to run on disconnect (remove the grouped session).
@@ -168,6 +170,7 @@ fn build_isolated_attach_plan_with_token(
     token: &str,
 ) -> IsolatedAttachPlan {
     let ephemeral = format!("{}{EPHEMERAL_SESSION_INFIX}{token}", plan.tmux_session);
+    let history_target = tmux_attach_target(&ephemeral, &plan.task_window);
     // Reuse the shared attach builder against the ephemeral session so the
     // "never attach through the browser handle" and task-window guarantees
     // are preserved for the isolated client too.
@@ -192,6 +195,19 @@ fn build_isolated_attach_plan_with_token(
             TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-activity", "off"]),
             TmuxCommand::new(["set-option", "-t", &ephemeral, "visual-bell", "off"]),
         ],
+        history: TmuxCommand::new([
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
+            "-t",
+            &history_target,
+            "-S",
+            // ponytail: matches the mobile Ghostty cap; raise both caps if deeper history matters.
+            "-2000",
+            "-E",
+            "-1",
+        ]),
         attach: build_tmux_attach_command_plan(&ephemeral_plan),
         teardown: vec![TmuxCommand::new(["kill-session", "-t", &ephemeral])],
         ephemeral_session: ephemeral,
@@ -375,6 +391,22 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
             return;
         }
     };
+
+    // Seed history after attach starts so output produced during capture is
+    // already queued in the PTY, then forward that live stream afterward.
+    if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
+        if output.status.success() {
+            if let Some(payload) = output_frame_bytes(output.stdout) {
+                if socket.send(Message::Binary(payload.into())).await.is_err() {
+                    cleanup_spawned_child_async(child).await;
+                    for command in &isolated.teardown {
+                        let _ = run_tmux_command_blocking(command);
+                    }
+                    return;
+                }
+            }
+        }
+    }
 
     let mut reader = match pty_pair.master.try_clone_reader() {
         Ok(reader) => reader,
@@ -745,6 +777,35 @@ mod tests {
             .any(|arg| arg == "ajax-web-fix-login:task"));
         assert!(!isolated
             .attach
+            .args
+            .iter()
+            .any(|arg| arg.contains("web/fix-login")));
+    }
+
+    #[test]
+    fn isolated_attach_plan_seeds_browser_scrollback_from_task_window() {
+        let plan = attach_plan("web/fix-login");
+
+        let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
+
+        assert_eq!(isolated.history.program, "tmux");
+        assert_eq!(
+            isolated.history.args,
+            vec![
+                "capture-pane",
+                "-p",
+                "-e",
+                "-J",
+                "-t",
+                "ajax-web-fix-login-m1a2b3c:task",
+                "-S",
+                "-2000",
+                "-E",
+                "-1",
+            ]
+        );
+        assert!(!isolated
+            .history
             .args
             .iter()
             .any(|arg| arg.contains("web/fix-login")));
