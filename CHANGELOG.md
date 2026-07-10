@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.39.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.2...ajax-cli-v0.39.0) (2026-07-10)
+
+
+### Features
+
+* confirm waiting status before notifying and poll in background ([#427](https://github.com/mossipcams/ajax-cli/issues/427)) ([071bcb0](https://github.com/mossipcams/ajax-cli/commit/071bcb0219fad71848b46ef0a1c30e4b7cedea22))
+
 ## [0.38.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.1...ajax-cli-v0.38.2) (2026-07-10)
 
 
