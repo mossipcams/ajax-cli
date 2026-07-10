@@ -205,6 +205,41 @@ pub enum LiveStatusKind {
     Unknown,
 }
 
+/// Attention class of a live-status kind. One shared classification consumed
+/// by the operator-status reducer, annotations, and the waiting-confirmation
+/// gate so their memberships cannot drift apart.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum LiveStatusClass {
+    Running,
+    Waiting,
+    Error,
+    MissingSubstrate,
+    Neutral,
+}
+
+impl LiveStatusKind {
+    pub const fn class(self) -> LiveStatusClass {
+        match self {
+            Self::AgentRunning | Self::CommandRunning | Self::TestsRunning => {
+                LiveStatusClass::Running
+            }
+            Self::WaitingForApproval
+            | Self::WaitingForInput
+            | Self::AuthRequired
+            | Self::RateLimited
+            | Self::ContextLimit
+            | Self::Done => LiveStatusClass::Waiting,
+            Self::CiFailed | Self::MergeConflict | Self::CommandFailed | Self::Blocked => {
+                LiveStatusClass::Error
+            }
+            Self::WorktreeMissing | Self::TmuxMissing | Self::TaskWindowMissing => {
+                LiveStatusClass::MissingSubstrate
+            }
+            Self::ShellIdle | Self::Unknown => LiveStatusClass::Neutral,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct LiveObservation {
     pub kind: LiveStatusKind,

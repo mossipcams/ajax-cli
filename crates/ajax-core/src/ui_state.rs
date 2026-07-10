@@ -1,4 +1,6 @@
-use crate::models::{AgentRuntimeStatus, LifecycleStatus, LiveStatusKind, SideFlag, Task};
+use crate::models::{
+    AgentRuntimeStatus, LifecycleStatus, LiveStatusClass, LiveStatusKind, SideFlag, Task,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -124,15 +126,7 @@ fn live_evidence_is_acknowledged(task: &Task) -> bool {
     let Some(live) = task.live_status.as_ref() else {
         return false;
     };
-    if !matches!(
-        live.kind,
-        LiveStatusKind::WaitingForApproval
-            | LiveStatusKind::WaitingForInput
-            | LiveStatusKind::AuthRequired
-            | LiveStatusKind::RateLimited
-            | LiveStatusKind::ContextLimit
-            | LiveStatusKind::Done
-    ) {
+    if live.kind.class() != LiveStatusClass::Waiting {
         return false;
     }
     matches!(
@@ -695,6 +689,48 @@ mod tests {
         let after = super::derive_operator_status(&task);
         assert_eq!(after.status, TaskStatus::Idle);
         assert_eq!(after.explanation, None);
+    }
+
+    #[test]
+    fn live_status_class_matches_canonical_explanations() {
+        use crate::models::{LiveStatusClass, LiveStatusKind};
+        let all = [
+            LiveStatusKind::WorktreeMissing,
+            LiveStatusKind::TmuxMissing,
+            LiveStatusKind::TaskWindowMissing,
+            LiveStatusKind::ShellIdle,
+            LiveStatusKind::CommandRunning,
+            LiveStatusKind::TestsRunning,
+            LiveStatusKind::AgentRunning,
+            LiveStatusKind::WaitingForApproval,
+            LiveStatusKind::WaitingForInput,
+            LiveStatusKind::Blocked,
+            LiveStatusKind::RateLimited,
+            LiveStatusKind::AuthRequired,
+            LiveStatusKind::MergeConflict,
+            LiveStatusKind::CiFailed,
+            LiveStatusKind::ContextLimit,
+            LiveStatusKind::CommandFailed,
+            LiveStatusKind::Done,
+            LiveStatusKind::Unknown,
+        ];
+        for kind in all {
+            assert_eq!(
+                super::canonical_waiting_explanation(kind).is_some(),
+                kind.class() == LiveStatusClass::Waiting,
+                "waiting membership diverged for {kind:?}"
+            );
+            assert_eq!(
+                super::canonical_error_explanation(kind).is_some(),
+                kind.class() == LiveStatusClass::Error,
+                "error membership diverged for {kind:?}"
+            );
+            assert_eq!(
+                super::canonical_running_explanation(kind).is_some(),
+                kind.class() == LiveStatusClass::Running,
+                "running membership diverged for {kind:?}"
+            );
+        }
     }
 
     #[test]

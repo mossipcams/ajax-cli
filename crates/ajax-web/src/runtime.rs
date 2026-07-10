@@ -11,8 +11,8 @@ use crate::{
     WebError,
 };
 use ajax_core::{
-    adapters::CommandRunner, commands::CommandContext, models::OperatorAction,
-    registry::InMemoryRegistry, runtime_refresh::RefreshTier,
+    adapters::CommandRunner, commands::CommandContext, config::NotifyConfig,
+    models::OperatorAction, registry::InMemoryRegistry, runtime_refresh::RefreshTier,
 };
 use axum::{
     body::Bytes,
@@ -44,6 +44,7 @@ use crate::adapters::http::{
 };
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
+const DEFAULT_NOTIFY_POLL_SECONDS: u64 = 30;
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_COMPLETED_OPERATIONS: usize = 128;
 
@@ -354,6 +355,7 @@ where
     crate::adapters::terminal_pty::reap_orphan_terminal_sessions();
 
     runtime.block_on(async move {
+        spawn_notify_tick(&state);
         let tls_config = tls::tls_server_config(&identity)?;
         let tcp_listener = tokio::net::TcpListener::bind(address)
             .await
@@ -369,6 +371,40 @@ where
             .await
             .map_err(|error| WebError::CommandFailed(format!("web server failed: {error}")))
     })
+}
+
+fn notify_poll_interval(notify: Option<&NotifyConfig>) -> Option<Duration> {
+    match notify?.poll_seconds.unwrap_or(DEFAULT_NOTIFY_POLL_SECONDS) {
+        0 => None,
+        seconds => Some(Duration::from_secs(seconds)),
+    }
+}
+
+/// Background attention poll: keeps webhook notifications firing while no
+/// browser is polling `/api/cockpit`.
+fn spawn_notify_tick<C, B>(state: &WebAppState<C, B>)
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
+    let period = {
+        let guard = state.shared();
+        notify_poll_interval(guard.context.config.notify.as_ref())
+    };
+    let Some(period) = period else {
+        return;
+    };
+    let tick_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(period);
+        interval.tick().await; // consume the immediate first tick
+        loop {
+            interval.tick().await;
+            // ponytail: refreshes even while a browser polls — one redundant
+            // refresh per period, cheap; gate on cache age if it ever matters.
+            let _ = refresh_cockpit_and_cache(&tick_state).await;
+        }
+    });
 }
 
 struct TlsListener {
@@ -537,6 +573,19 @@ where
         return response.into_axum_response();
     }
 
+    refresh_cockpit_and_cache(&state).await
+}
+
+/// Refresh the cockpit projection and cache the response, firing attention
+/// notifications through the bridge as a side effect. Shared by the
+/// `/api/cockpit` handler and the background notify tick, so both serialize on
+/// the same lock, honor the same cache TTL, and commit under the same revision
+/// check.
+async fn refresh_cockpit_and_cache<C, B>(state: &WebAppState<C, B>) -> AxumResponse
+where
+    C: CommandRunner + Clone + Send + 'static,
+    B: RuntimeBridge<C> + Clone + Send + 'static,
+{
     let _refresh_guard = state.cockpit_refresh_lock.lock().await;
     if let Some(response) = state.cached_cockpit_response() {
         return response.into_axum_response();
@@ -1729,6 +1778,53 @@ mod tests {
             );
         }
 
+        assert_eq!(state.shared().bridge.refresh_count, 1);
+    }
+
+    #[test]
+    fn notify_poll_interval_maps_config() {
+        use ajax_core::config::NotifyConfig;
+
+        assert_eq!(super::notify_poll_interval(None), None);
+
+        let base = NotifyConfig {
+            webhook_url: "https://ntfy.sh/topic".to_string(),
+            poll_seconds: None,
+        };
+        assert_eq!(
+            super::notify_poll_interval(Some(&base)),
+            Some(Duration::from_secs(30))
+        );
+
+        let disabled = NotifyConfig {
+            poll_seconds: Some(0),
+            ..base.clone()
+        };
+        assert_eq!(super::notify_poll_interval(Some(&disabled)), None);
+
+        let custom = NotifyConfig {
+            poll_seconds: Some(90),
+            ..base
+        };
+        assert_eq!(
+            super::notify_poll_interval(Some(&custom)),
+            Some(Duration::from_secs(90))
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_cockpit_and_cache_refreshes_once_and_caches() {
+        let (state, _cookie, _app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "tick-refresh-cache",
+        );
+
+        super::refresh_cockpit_and_cache(&state).await;
+        assert_eq!(state.shared().bridge.refresh_count, 1);
+
+        // Within the cache TTL the tick shares the handler's cached response.
+        super::refresh_cockpit_and_cache(&state).await;
         assert_eq!(state.shared().bridge.refresh_count, 1);
     }
 

@@ -314,6 +314,18 @@ completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
 text is neutral and does not overwrite the last known agent state or fabricate
 a probe failure.
 
+Ordinary waiting-class evidence observed on a busy task is a candidate, not an
+immediate status change: it must persist for a short dwell window (a
+`waiting_candidate_since` stamp in Ajax-owned task metadata) before the
+application path accepts it. This keeps one-sample pane misreads from flipping
+a working agent to `Waiting` or firing attention webhooks. Trusted
+wrapper/hook evidence and error-class evidence apply immediately, and any
+applied observation clears a pending candidate — including through the
+runtime-refresh unchanged-status short-circuit, which falls through while a
+candidate is pending so busy samples can resolve it. The shared
+`LiveStatusKind::class()` classification keeps the gate, the operator-status
+reducer, and annotation mapping on one membership list.
+
 Pane classification is agent-aware and busy-first: `classify_agent_pane` applies
 recent busy indicators before stale prompts, then agent-specific prompts (Claude
 permission dialogs and standalone prompts, Codex composer prompts), then explicit
@@ -559,10 +571,12 @@ state database and default web port, while dev uses the development state
 database and dev web port. The browser shell must not merge profile state in
 browser storage.
 
-Notifications are out of scope. Ajax Web Cockpit must not implement Web Push,
-PushManager flows, Notification API prompts, VAPID keys, push subscriptions,
-service-worker push handlers, notification click handlers, or notification
-infrastructure.
+Browser notifications are out of scope. Ajax Web Cockpit must not implement Web
+Push, PushManager flows, Notification API prompts, VAPID keys, push
+subscriptions, service-worker push handlers, notification click handlers, or
+notification infrastructure. Server-side webhook delivery through the CLI
+notify adapter (`[notify]` config) is the supported notification channel; the
+web runtime only hosts its background poll.
 
 Browser validation should check local-only shell assets, stable/dev port
 separation, clear browser error states for failed live requests or unsupported
@@ -577,6 +591,10 @@ the crate:
   asset embedding, filesystem persistence, network clients, and browser
   serialization formats.
 - `ajax-web::runtime` composes slices and adapters into the Web Cockpit server.
+  When `[notify]` is configured it also spawns a background notify tick that
+  reuses the `/api/cockpit` refresh path (same single-flight lock, cache TTL,
+  and revision-checked commit) so attention webhooks fire without a browser
+  polling; the interval comes from `[notify] poll_seconds`.
 - `ajax-web::slices::actions` owns the shared browser action capability
   vocabulary used by both `cockpit` and `operate` without cross-slice imports.
 
