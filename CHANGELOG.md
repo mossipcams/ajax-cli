@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.38.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.1...ajax-cli-v0.38.2) (2026-07-10)
+
+
+### Bug Fixes
+
+* **core:** force-delete unmerged branches on cleanup drop ([#426](https://github.com/mossipcams/ajax-cli/issues/426)) ([2d56235](https://github.com/mossipcams/ajax-cli/commit/2d56235f9b5b6829e5b8c7bfb81d64954562293f))
+* **web:** align task page full-bleed and reset terminal on reconnect ([#424](https://github.com/mossipcams/ajax-cli/issues/424)) ([262ab16](https://github.com/mossipcams/ajax-cli/commit/262ab160b668f3fd92ddf4b75699bf8a925967f2))
+
 ## [0.38.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.0...ajax-cli-v0.38.1) (2026-07-10)
 
 
