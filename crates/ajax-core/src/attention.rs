@@ -5,6 +5,15 @@ use crate::models::{
 use crate::ui_state::{derive_operator_status, TaskStatus};
 
 pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
+pub const LAST_NOTIFIED_AT_KEY: &str = "last_notified_at";
+
+/// How long a delivery keeps the detector armed against re-fires. A genuine
+/// agent turn cycle (Waiting → Running → Waiting) inside this window is one
+/// episode and gets one ping; without it an actively driven session pings on
+/// every turn boundary.
+/// ponytail: constant; gate on tmux client activity if a ping per window is
+/// still too chatty during active use.
+const NOTIFY_REARM_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(300);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionTransition {
@@ -16,10 +25,19 @@ pub struct AttentionTransition {
 
 /// Rising-edge detector for operator attention. Fires once when a task
 /// crosses into Waiting or Error, deduplicated by a metadata stamp that
-/// persists with the normal registry snapshot save.
+/// persists with the normal registry snapshot save. Returning to Running or
+/// Idle re-arms the detector only after `NOTIFY_REARM_COOLDOWN`, so one
+/// Waiting episode interrupted by short Running bursts delivers one ping.
 /// ponytail: best-effort dedup; a concurrent first observation can produce
 /// one duplicate delivery — add per-key CAS only if duplicates ever annoy.
 pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition> {
+    take_attention_transition_at(task, std::time::SystemTime::now())
+}
+
+pub fn take_attention_transition_at(
+    task: &mut Task,
+    now: std::time::SystemTime,
+) -> Option<AttentionTransition> {
     let operator_status = derive_operator_status(task);
     match operator_status.status {
         TaskStatus::Waiting | TaskStatus::Error => {
@@ -33,6 +51,10 @@ pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition>
             }
             task.metadata
                 .insert(LAST_NOTIFIED_STATUS_KEY.to_string(), stamp.to_string());
+            task.metadata.insert(
+                LAST_NOTIFIED_AT_KEY.to_string(),
+                unix_seconds(now).to_string(),
+            );
             Some(AttentionTransition {
                 repo: task.repo.clone(),
                 handle: task.handle.clone(),
@@ -41,10 +63,27 @@ pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition>
             })
         }
         TaskStatus::Running | TaskStatus::Idle => {
-            task.metadata.remove(LAST_NOTIFIED_STATUS_KEY);
+            // Missing or malformed delivery stamp re-arms immediately.
+            let cooling_down = task
+                .metadata
+                .get(LAST_NOTIFIED_AT_KEY)
+                .and_then(|value| value.parse::<u64>().ok())
+                .is_some_and(|fired_at| {
+                    unix_seconds(now).saturating_sub(fired_at) < NOTIFY_REARM_COOLDOWN.as_secs()
+                });
+            if !cooling_down {
+                task.metadata.remove(LAST_NOTIFIED_STATUS_KEY);
+                task.metadata.remove(LAST_NOTIFIED_AT_KEY);
+            }
             None
         }
     }
+}
+
+fn unix_seconds(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0)
 }
 
 pub fn annotate(task: &Task) -> Vec<Annotation> {
@@ -492,17 +531,65 @@ mod tests {
         assert_eq!(super::take_attention_transition(&mut task), None);
     }
 
+    fn at(seconds: u64) -> std::time::SystemTime {
+        std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+    }
+
     #[test]
-    fn waiting_then_idle_then_waiting_fires_again() {
+    fn waiting_then_idle_past_cooldown_then_waiting_fires_again() {
         let mut task = waiting_task("notify");
-        assert!(super::take_attention_transition(&mut task).is_some());
+        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
 
         task.remove_side_flag(SideFlag::NeedsInput);
-        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_400)),
+            None
+        );
         assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
+        assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_AT_KEY));
 
         task.add_side_flag(SideFlag::NeedsInput);
-        assert!(super::take_attention_transition(&mut task).is_some());
+        assert!(super::take_attention_transition_at(&mut task, at(1_401)).is_some());
+    }
+
+    #[test]
+    fn waiting_cycle_within_cooldown_fires_once() {
+        let mut task = waiting_task("notify");
+        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
+
+        // Agent turn boundary: brief Running, then waiting again 90s later.
+        task.remove_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_060)),
+            None
+        );
+        task.add_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_090)),
+            None
+        );
+
+        // A Running sample past the cooldown re-arms; the next wait pings.
+        task.remove_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_301)),
+            None
+        );
+        task.add_side_flag(SideFlag::NeedsInput);
+        assert!(super::take_attention_transition_at(&mut task, at(1_302)).is_some());
+    }
+
+    #[test]
+    fn error_within_cooldown_still_fires() {
+        let mut task = waiting_task("notify");
+        assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
+
+        task.add_side_flag(SideFlag::Conflicted);
+        let transition = super::take_attention_transition_at(&mut task, at(1_030));
+        assert_eq!(
+            transition.map(|transition| transition.status),
+            Some(TaskStatus::Error)
+        );
     }
 
     #[test]
