@@ -243,11 +243,12 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        if reloaded || state_changed {
+        let notified = crate::notify::notify_attention_transitions(context, runner);
+        if reloaded || state_changed || notified {
             self.persist_changed_state(context)
                 .map_err(web_error_from_cli)?;
         }
-        Ok(reloaded || state_changed)
+        Ok(reloaded || state_changed || notified)
     }
 
     fn execute_operate(

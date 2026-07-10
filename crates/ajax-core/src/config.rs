@@ -208,6 +208,8 @@ pub struct Config {
     pub repos: Vec<ManagedRepo>,
     #[serde(default)]
     pub test_commands: Vec<TestCommand>,
+    #[serde(default)]
+    pub notify: Option<NotifyConfig>,
 }
 
 impl Config {
@@ -259,6 +261,12 @@ impl ManagedRepo {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotifyConfig {
+    pub webhook_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TestCommand {
     pub repo: String,
     pub command: String,
@@ -276,8 +284,8 @@ impl TestCommand {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, ConfigParseError, ConfigPaths, ManagedRepo, RuntimePathField, RuntimePathRequest,
-        RuntimePathSource, TestCommand, WorktreePlacement,
+        Config, ConfigParseError, ConfigPaths, ManagedRepo, NotifyConfig, RuntimePathField,
+        RuntimePathRequest, RuntimePathSource, TestCommand, WorktreePlacement,
     };
     use proptest::prelude::*;
     use std::path::Path;
@@ -446,6 +454,7 @@ mod tests {
         let config = Config {
             repos: vec![ManagedRepo::new("web", "/Users/matt/projects/web", "main")],
             test_commands: vec![TestCommand::new("web", "cargo test")],
+            notify: None,
         };
 
         assert_eq!(config.repos[0].name, "web");
@@ -470,6 +479,25 @@ mod tests {
             prop_assert_eq!(test_command_value.repo, test_repo);
             prop_assert_eq!(test_command_value.command, test_command);
         }
+    }
+
+    #[test]
+    fn config_parses_optional_notify_webhook() {
+        let config = Config::from_toml_str(
+            r#"
+            [notify]
+            webhook_url = "https://ntfy.sh/topic"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.notify,
+            Some(NotifyConfig {
+                webhook_url: "https://ntfy.sh/topic".to_string()
+            })
+        );
+        assert_eq!(Config::from_toml_str("").unwrap().notify, None);
     }
 
     #[test]
