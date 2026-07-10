@@ -118,9 +118,9 @@ test("dashboard chrome and cards carry the cockpit stylesheet", async ({ page })
   const newButton = page.locator('.bottom-nav button[data-bottom-action="new-task"]');
   expect(await bg(newButton)).toBe(TEAL);
 
-  // Active project pill is filled mustard.
+  // Active project pill is filled teal (selection); mustard stays for attention.
   const activePill = page.locator(".project-pill.is-active").first();
-  expect(await bg(activePill)).toBe(MUSTARD);
+  expect(await bg(activePill)).toBe(TEAL);
 
   // Inbox row: a compact task-row (same shape as the calm list) with a tone
   // (mustard for "waiting") left accent instead of separate card chrome.
