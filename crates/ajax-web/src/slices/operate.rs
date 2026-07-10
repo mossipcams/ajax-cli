@@ -76,6 +76,9 @@ pub fn operate<R: Registry>(
     }
 }
 
+/// Test convenience: `start_task_with_checkpoint` with a noop checkpoint.
+/// Production callers (ajax-cli) always supply a real checkpoint.
+#[cfg(test)]
 pub fn start_task<R: Registry>(
     context: &mut CommandContext<R>,
     runner: &mut impl CommandRunner,
@@ -140,7 +143,9 @@ fn start_plan_observation<R: Registry>(
     commands::StartPlanObservation { origin_fetch_age }
 }
 
-fn supported_start_agent(agent: &str) -> bool {
+/// Single agent allowlist for web task starts; the route pre-check and the
+/// slice validation must never disagree.
+pub fn supported_start_agent(agent: &str) -> bool {
     matches!(agent, "codex" | "claude" | "cursor" | "opencode")
 }
 

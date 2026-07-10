@@ -8,4 +8,3 @@ pub mod server;
 pub mod skills;
 pub mod terminal_pty;
 pub mod tls;
-pub mod tmux_input;

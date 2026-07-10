@@ -1,5 +1,15 @@
 //! Web companion runtime wiring.
 
+use crate::{
+    adapters::{
+        browser_session::BrowserSession,
+        cloudflare_access::{CloudflareAccessConfig, CloudflareAccessError},
+        server, tls,
+    },
+    slices::actions::supported_web_action,
+    slices::{cockpit, install},
+    WebError,
+};
 use ajax_core::{
     adapters::CommandRunner, commands::CommandContext, models::OperatorAction,
     registry::InMemoryRegistry, runtime_refresh::RefreshTier,
@@ -24,20 +34,8 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tower_http::trace::TraceLayer;
 
-use crate::{
-    adapters::{
-        browser_session::BrowserSession,
-        cloudflare_access::{CloudflareAccessConfig, CloudflareAccessError},
-        server, tls,
-    },
-    slices::actions::supported_web_action,
-    slices::{cockpit, install},
-    WebError,
-};
-
-pub use crate::adapters::http::{Request, Response};
+pub use crate::adapters::http::Response;
 
 use crate::adapters::http::{
     bytes_axum_response, html_response, json_response, json_value_response,
@@ -334,7 +332,6 @@ where
             session_state,
             require_browser_session::<C, B>,
         ))
-        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
@@ -545,29 +542,25 @@ where
         return response.into_axum_response();
     }
 
-    let mut refresh_session = {
+    let (mut context, mut runner, mut bridge, base_revision) = {
         let guard = state.shared();
-        CockpitRefreshSession {
-            context: guard.context.clone(),
-            runner: guard.runner.clone(),
-            bridge: guard.bridge.clone(),
-            revision: guard.revision,
-        }
+        (
+            guard.context.clone(),
+            guard.runner.clone(),
+            guard.bridge.clone(),
+            guard.revision,
+        )
     };
-    let result = handle_refreshed_cockpit_request(
-        &mut refresh_session.context,
-        &mut refresh_session.runner,
-        &mut refresh_session.bridge,
-    );
+    let result = handle_refreshed_cockpit_request(&mut context, &mut runner, &mut bridge);
     let cached_response = match &result {
         Ok(response) => Some(response.clone()),
         Err(_) => None,
     };
     {
         let mut guard = state.shared();
-        if guard.revision == refresh_session.revision {
-            guard.context = refresh_session.context;
-            guard.bridge = refresh_session.bridge;
+        if guard.revision == base_revision {
+            guard.context = context;
+            guard.bridge = bridge;
             if let Some(response) = cached_response {
                 guard.cockpit_cache = Some(CockpitCacheEntry {
                     response,
@@ -581,13 +574,6 @@ where
         Ok(response) => response.into_axum_response(),
         Err(error) => web_error_response(error),
     }
-}
-
-struct CockpitRefreshSession<C, B> {
-    context: CommandContext<InMemoryRegistry>,
-    runner: C,
-    bridge: B,
-    revision: u64,
 }
 
 async fn axum_task_detail<C, B>(
@@ -744,7 +730,7 @@ where
             serde_json::json!({ "ok": false, "error": "request_id is required" }),
         );
     }
-    if !supported_web_agent(&request.agent) {
+    if !crate::slices::operate::supported_start_agent(&request.agent) {
         return json_value_response(
             400,
             serde_json::json!({
@@ -763,10 +749,15 @@ where
     let response = state.run_optimistic(
         Some(&request_id),
         "cockpit state changed while task start was running",
-        |context, runner, bridge| match handle_start_task_request(request, context, runner, bridge)
-        {
-            Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
-            Err(error) => response_from_web_error(error, Some(&request_id)),
+        |context, runner, bridge| {
+            let result = match bridge.execute_start_task(request, context, runner) {
+                Ok(outcome) => operation_success_response(outcome, context),
+                Err(error) => operation_error_response(error, context),
+            };
+            match result {
+                Ok(response) => operation_response_with_request_id(response, Some(&request_id)),
+                Err(error) => response_from_web_error(error, Some(&request_id)),
+            }
         },
     );
     state
@@ -972,22 +963,6 @@ fn unsupported_operate_action(action: &str) -> Option<ActionFailure> {
         message,
         state_changed: false,
     })
-}
-
-fn supported_web_agent(agent: &str) -> bool {
-    matches!(agent, "codex" | "claude" | "cursor")
-}
-
-fn handle_start_task_request<C: CommandRunner>(
-    request: crate::slices::operate::StartTaskRequest,
-    context: &mut CommandContext<InMemoryRegistry>,
-    runner: &mut C,
-    bridge: &mut impl RuntimeBridge<C>,
-) -> Result<Response, WebError> {
-    match bridge.execute_start_task(request, context, runner) {
-        Ok(outcome) => operation_success_response(outcome, context),
-        Err(error) => operation_error_response(error, context),
-    }
 }
 
 #[cfg(test)]
