@@ -858,10 +858,17 @@
       onStatus: (next) => {
         status = next;
       },
-      onOpen: () => {
+      onOpen: (isReconnect) => {
         statusDetail = "";
         zeroLag.reset();
         resizeDedupe.reset();
+        if (isReconnect) {
+          pendingOutput.length = 0;
+          term?.reset();
+          pinnedToBottom = true;
+          hasUnseenOutput = false;
+          snapScrollbackToBottom();
+        }
         schedulePostLayoutRefit();
         requestAnimationFrame(() => term?.focus());
       },

@@ -402,13 +402,16 @@ header .bar h1 {
   }
 
   /* Task route: page chrome must not scroll — only the terminal scrolls.
-     Keep bottom-nav clearance; drop top padding so the band fits exactly. */
+     Keep bottom-nav clearance; drop top padding so the band fits exactly.
+     TaskDetail header/actions own 12px + safe-area horizontal inset; terminal is full-bleed. */
   [data-testid="route-scroll"]:has([data-outlet="task"]) {
     display: flex;
     flex-direction: column;
     overflow: hidden;
     overscroll-behavior: none;
     padding-top: 0;
+    padding-left: 0;
+    padding-right: 0;
   }
 
   [data-testid="route-scroll"]:has([data-outlet="task"]) > [data-outlet="task"] {
