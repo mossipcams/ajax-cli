@@ -2,54 +2,10 @@
 mod tests {
     use std::path::{Path, PathBuf};
 
-    const SLICES: [&str; 1] = ["pane"];
+    const OPERATION_SLICES: [&str; 4] = ["start", "task_command", "drop_task", "sweep_cleanup"];
 
-    const SUBSTRATE_MECHANISMS: [&str; 4] = ["adapters", "registry", "analysis", "runtime"];
-
-    #[test]
-    fn each_substrate_mechanism_does_not_depend_on_any_slice() {
-        for mechanism in SUBSTRATE_MECHANISMS {
-            let forbidden = forbidden_paths_for_slices(&SLICES);
-            let module = format!("ajax-core::{mechanism}");
-
-            assert_module_does_not_depend_on(&module, &forbidden, "mechanism", mechanism);
-        }
-    }
-
-    #[test]
-    fn each_slice_is_isolated_from_sibling_slices() {
-        for slice in SLICES {
-            let forbidden = forbidden_paths_for_sibling_slices(slice);
-            if forbidden.is_empty() {
-                continue;
-            }
-            let module = format!("ajax-core::slices::{slice}");
-
-            assert_module_does_not_depend_on(&module, &forbidden, "slice", slice);
-        }
-    }
-
-    #[test]
-    fn architecture_rule_rejects_use_crate_slices_dependency() {
-        assert!(
-            source_mentions_dependency(
-                "use crate::slices::pane;",
-                &forbidden_paths_for_slices(&["pane"])
-            ),
-            "mechanism modules must not be allowed to import specific slice modules"
-        );
-    }
-
-    #[test]
-    fn architecture_rule_rejects_direct_crate_slices_dependency() {
-        assert!(
-            source_mentions_dependency(
-                "fn example() { crate::slices::pane::capture_prompt(); }",
-                &forbidden_paths_for_slices(&["pane"])
-            ),
-            "mechanism modules must not be allowed to call specific slice modules directly"
-        );
-    }
+    // sweep_cleanup composes drop_task teardown (tidy sweeps what drop leaves); kernel is shared plumbing and exempt.
+    const ALLOWED_SLICE_DEPENDENCIES: [(&str, &str); 1] = [("sweep_cleanup", "drop_task")];
 
     #[test]
     fn task_operations_submodules_are_file_backed() {
@@ -99,25 +55,51 @@ mod tests {
         }
     }
 
-    fn forbidden_paths_for_slices(slices: &[&str]) -> Vec<String> {
-        slices
-            .iter()
-            .flat_map(|slice| {
-                [
-                    format!("ajax-core::slices::{slice}"),
-                    format!("crate::slices::{slice}"),
-                ]
-            })
-            .collect()
+    #[test]
+    fn each_task_operation_slice_is_isolated_from_sibling_slices() {
+        for slice in OPERATION_SLICES {
+            let forbidden = OPERATION_SLICES
+                .iter()
+                .copied()
+                .filter(|sibling| *sibling != slice)
+                .filter(|sibling| !ALLOWED_SLICE_DEPENDENCIES.contains(&(slice, *sibling)))
+                .flat_map(|sibling| {
+                    [
+                        format!("crate::task_operations::{sibling}"),
+                        format!("task_operations::{sibling}::"),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            if forbidden.is_empty() {
+                continue;
+            }
+
+            assert_module_does_not_depend_on(
+                &format!("ajax-core::task_operations::{slice}"),
+                &forbidden,
+                "operation slice",
+                slice,
+            );
+        }
     }
 
-    fn forbidden_paths_for_sibling_slices(slice: &str) -> Vec<String> {
-        let siblings = SLICES
-            .iter()
-            .copied()
-            .filter(|sibling| *sibling != slice)
-            .collect::<Vec<_>>();
-        forbidden_paths_for_slices(&siblings)
+    #[test]
+    fn each_task_operation_slice_declares_its_operation_entry_points() {
+        for slice in OPERATION_SLICES {
+            let source =
+                std::fs::read_to_string(format!("src/task_operations/{slice}.rs")).unwrap();
+
+            assert!(
+                source.contains("pub fn execute_"),
+                "task operation slice `{slice}` should declare an execute_ entry point"
+            );
+            if slice != "sweep_cleanup" {
+                assert!(
+                    source.contains("pub fn plan_"),
+                    "task operation slice `{slice}` should declare a plan_ entry point"
+                );
+            }
+        }
     }
 
     fn assert_module_does_not_depend_on(

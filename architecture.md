@@ -155,30 +155,42 @@ operations compose those helpers into vertical operator transactions.
 
 ### Vertical Slices
 
-Ajax follows an Aroeira-style modular monolith: dependency boundaries still
-point inward, while feature work is organized around operator capabilities.
-A slice is a vertical use-case module inside its owning crate, not a new crate
-and not a cosmetic facade over unrelated layered code.
+Ajax is a modular monolith: dependency boundaries point inward, while mutating
+feature work is organized around operator capabilities. A slice is a vertical
+use-case module inside its owning crate, not a new crate and not a cosmetic
+facade over unrelated layered code.
 
-`ajax-core::slices` owns pure operator capability orchestration. Each slice
-starts with private implementation modules plus a small public facade. Code
-outside the slice depends on the facade only; private slice modules are free to
-change as the capability evolves. Slice names use operator language such as
-`review`, `resume`, `ship`, or `drop`, rather than substrate language such as
-Git diff, tmux attach, or process cleanup.
+`ajax-core::task_operations` is the core slice layer. Each operator verb is a
+file-backed submodule — `start`, `task_command` (resume/review/repair/ship),
+`drop_task`, and `sweep_cleanup` — plus `kernel` for shared execution
+plumbing. Slice names use operator language, not substrate language such as
+Git diff, tmux attach, or process cleanup. `ajax-web::slices` is the sibling
+slice layer for browser capabilities.
 
-Slices may depend on core domain models, lifecycle rules, policy, output
-contracts, registry traits, and command-spec ports. Mechanisms remain outside
-slices: filesystem, terminal, JSON, subprocess, Git, tmux, networking, SQLite,
-and process supervision stay in `adapters`, `registry/sqlite`, `ajax-web`, or
-`ajax-supervisor`, depending on the external boundary. CLI, TUI, and browser code
-are composition and presentation layers; they call public slice facades and do
-not reach into private slice modules.
+Each operation slice follows one contract: `plan_*` functions are pure — fresh
+evidence in, command plan out, no registry mutation; `execute_*` functions own
+external effects and step receipts; post-execution state decisions live in
+private reducer functions inside the slice. Slices must not import sibling
+slices, with one documented exception: `sweep_cleanup` composes `drop_task`
+teardown because tidy sweeps what drop leaves behind.
 
-Architecture tests use `rust_arkitect` to enforce slice direction as the
-codebase migrates. Migrations happen one operator capability at a time, keeping
-existing public APIs as compatibility wrappers until callers can move to the
-slice facade.
+Slices may depend on the shared kernel: domain models, lifecycle rules, live
+status, policy, output contracts, registry traits, and command-spec ports. The
+kernel is layered by authority tier — intent, events, observations, projection
+— and is never sliced; slicing it would create a second source of task truth.
+Every type belongs to exactly one tier, and mutation flows downward: operations
+write intent and events, refresh writes observations, and projections are
+always derived. Mechanisms remain outside slices: filesystem, terminal, JSON,
+subprocess, Git, tmux, networking, SQLite, and process supervision stay in
+`adapters`, `registry/sqlite`, `ajax-web`, or `ajax-supervisor`, depending on
+the external boundary. CLI, TUI, and browser code are composition and
+presentation layers; they consume projections and typed output contracts, not
+`Task` internals, and they do not reach into private slice functions.
+
+Hand-rolled architecture tests in each crate's `architecture.rs` enforce slice
+isolation and the operation entry-point shape. New operator verbs start as a
+new `task_operations` submodule following the same contract; new core items
+default to `pub(crate)` unless they are part of a consumed contract.
 
 ### Registry
 
