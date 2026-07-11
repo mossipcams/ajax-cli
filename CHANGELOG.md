@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.39.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.1...ajax-cli-v0.39.2) (2026-07-11)
+
+
+### Code Refactoring
+
+* **core:** ratify task_operations as the vertical slice layer ([#433](https://github.com/mossipcams/ajax-cli/issues/433)) ([6954be3](https://github.com/mossipcams/ajax-cli/commit/6954be352437f7ff181b465f174e6bec021588b8))
+* **web:** extract terminal layout, scroll, zero-lag, and clipboard owners ([#432](https://github.com/mossipcams/ajax-cli/issues/432)) ([a02fc20](https://github.com/mossipcams/ajax-cli/commit/a02fc20eb975f62e5f78d5f278992183beb7a857))
+
 ## [0.39.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.0...ajax-cli-v0.39.1) (2026-07-10)
 
 
