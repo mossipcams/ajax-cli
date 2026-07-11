@@ -97,6 +97,58 @@ export function outputFollowEffects(pinnedToBottom: boolean): {
   return { snapToBottom: false, markUnseenOutput: true };
 }
 
+export type ScrollFollowPolicy = {
+  isPinned(): boolean;
+  hasUnseen(): boolean;
+  pin(): void;
+  unpin(): void;
+  jumpToBottom(): { snapToBottom: true };
+  setPinnedFromViewport(atBottom: boolean): void;
+  resetOnReconnect(): void;
+  /** Apply output-follow for the current pin state; may set unseen. */
+  noteOutput(): { snapToBottom: boolean; markUnseenOutput: boolean };
+};
+
+/** Own pinned-to-bottom and unseen-output state for scroll-follow. */
+export function createScrollFollowPolicy(): ScrollFollowPolicy {
+  let pinned = true;
+  let unseen = false;
+
+  return {
+    isPinned() {
+      return pinned;
+    },
+    hasUnseen() {
+      return unseen;
+    },
+    pin() {
+      pinned = true;
+      unseen = false;
+    },
+    unpin() {
+      pinned = false;
+    },
+    jumpToBottom() {
+      pinned = true;
+      unseen = false;
+      return { snapToBottom: true };
+    },
+    setPinnedFromViewport(atBottom: boolean) {
+      pinned = atBottom;
+      if (atBottom) unseen = false;
+    },
+    resetOnReconnect() {
+      pinned = true;
+      unseen = false;
+    },
+    noteOutput() {
+      const follow = outputFollowEffects(pinned);
+      if (follow.markUnseenOutput) unseen = true;
+      return follow;
+    },
+  };
+}
+
 /** Accept only finite positive integer cols/rows; otherwise fail closed. */
 export function validTerminalSize(
   cols: number,

@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   createZeroLagEcho,
+  createZeroLagOverlayPainter,
+  measureZeroLagCursor,
+  measureZeroLagFromTerminalHost,
+  ZERO_LAG_OVERLAY_TESTID,
   zeroLagOverlayStyle,
   type ZeroLagCursorMetrics,
 } from "./terminalZeroLag";
@@ -189,6 +193,146 @@ describe("createZeroLagEcho", () => {
     echo.noteBeforeInputPrintable("hi");
     echo.clearIfEchoedIn("unrelated status redraw");
     expect(echo.text()).toBe("hi");
+  });
+});
+
+describe("createZeroLagOverlayPainter", () => {
+  it("paint creates one overlay with text and style", () => {
+    const host = document.createElement("div");
+    const painter = createZeroLagOverlayPainter(host);
+
+    painter.paint("hi", "left: 1px; top: 2px;");
+
+    const el = host.querySelector(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`);
+    expect(el).not.toBeNull();
+    expect(el?.textContent).toBe("hi");
+    expect((el as HTMLElement).style.cssText).toContain("left: 1px");
+    expect((el as HTMLElement).style.cssText).toContain("top: 2px");
+  });
+
+  it("second paint updates the same node", () => {
+    const host = document.createElement("div");
+    const painter = createZeroLagOverlayPainter(host);
+
+    painter.paint("hi", "left: 1px; top: 2px;");
+    const first = host.querySelector(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`);
+    painter.paint("bye", "left: 3px; top: 4px;");
+    const second = host.querySelector(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`);
+
+    expect(second).toBe(first);
+    expect(host.querySelectorAll(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`)).toHaveLength(1);
+    expect(second?.textContent).toBe("bye");
+  });
+
+  it("paint with empty text removes the overlay node", () => {
+    const host = document.createElement("div");
+    const painter = createZeroLagOverlayPainter(host);
+
+    painter.paint("hi", "left: 1px; top: 2px;");
+    painter.paint("", "");
+
+    expect(host.querySelector(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`)).toBeNull();
+  });
+
+  it("dispose removes the overlay node if present", () => {
+    const host = document.createElement("div");
+    const painter = createZeroLagOverlayPainter(host);
+
+    painter.paint("hi", "left: 1px; top: 2px;");
+    painter.dispose();
+
+    expect(host.querySelector(`[data-testid='${ZERO_LAG_OVERLAY_TESTID}']`)).toBeNull();
+  });
+});
+
+describe("measureZeroLagCursor", () => {
+  it("returns null for null or undefined input", () => {
+    expect(measureZeroLagCursor(null)).toBeNull();
+    expect(measureZeroLagCursor(undefined)).toBeNull();
+  });
+
+  it("returns null when cursor coordinates are missing", () => {
+    expect(
+      measureZeroLagCursor({
+        cols: 80,
+        rows: 24,
+        canvasWidth: 800,
+        canvasHeight: 480,
+        fontSize: 13,
+      }),
+    ).toBeNull();
+    expect(
+      measureZeroLagCursor({
+        cursorX: 3,
+        cols: 80,
+        rows: 24,
+        canvasWidth: 800,
+        canvasHeight: 480,
+        fontSize: 13,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns metrics when cursor coordinates are present", () => {
+    const result = measureZeroLagCursor({
+      cursorX: 3,
+      cursorY: 2,
+      cols: 80,
+      rows: 24,
+      canvasWidth: 800,
+      canvasHeight: 480,
+      cellWidth: 10,
+      cellHeight: 20,
+      fontSize: 13,
+    });
+
+    expect(result).toEqual({
+      cursorX: 3,
+      cursorY: 2,
+      cols: 80,
+      rows: 24,
+      canvasWidth: 800,
+      canvasHeight: 480,
+      cellWidth: 10,
+      cellHeight: 20,
+      fontSize: 13,
+    });
+  });
+});
+
+describe("measureZeroLagFromTerminalHost", () => {
+  it("reads canvas and term buffer into measureZeroLagCursor", () => {
+    const host = document.createElement("div");
+    const canvas = document.createElement("canvas");
+    Object.defineProperty(canvas, "clientWidth", { value: 640 });
+    Object.defineProperty(canvas, "clientHeight", { value: 360 });
+    host.appendChild(canvas);
+
+    const term = {
+      cols: 80,
+      rows: 24,
+      options: { fontSize: 14 },
+      buffer: { active: { cursorX: 5, cursorY: 7 } },
+      renderer: { getMetrics: () => ({ width: 8, height: 15 }) },
+    };
+
+    expect(
+      measureZeroLagFromTerminalHost({
+        host,
+        term,
+        defaultFontSize: 13,
+      }),
+    ).toEqual({
+      cursorX: 5,
+      cursorY: 7,
+      cols: 80,
+      rows: 24,
+      canvasWidth: 640,
+      canvasHeight: 360,
+      cellWidth: 8,
+      cellHeight: 15,
+      fontSize: 14,
+    });
   });
 });
 

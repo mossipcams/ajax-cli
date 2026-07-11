@@ -24,12 +24,24 @@
   } from "../terminalGeometry";
   import {
     scrollbackGrowthCompensation,
-    outputFollowEffects,
     validTerminalSize,
     createResizeDedupe,
+    createScrollFollowPolicy,
     createTerminalWriteBatcher,
   } from "../terminalOutputPolicy";
-  import { createZeroLagEcho } from "../terminalZeroLag";
+  import {
+    createZeroLagEcho,
+    createZeroLagOverlayPainter,
+    measureZeroLagFromTerminalHost,
+  } from "../terminalZeroLag";
+  import {
+    createTerminalLayoutPolicy,
+    EXPAND_REWRAP_MS,
+  } from "../terminalLayoutPolicy";
+  import {
+    createTerminalClipboardUi,
+    type ClipboardUiSnapshot,
+  } from "../terminalClipboard";
   const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
   const placeholderMode =
@@ -82,27 +94,30 @@
   // Clipboard feedback is its own channel: paste outcomes must never clear or
   // overwrite a bridge-reported error in statusDetail.
   let pasteNotice = $state("");
-  let ctrlArmed = $state(false);
-  let hasUnseenOutput = $state(false);
-  let expanded = $state(false);
-  let inlineSpacerHeight = $state(0);
-  // Insecure (plain-http LAN) origins have no async clipboard API, so the
-  // Paste key falls back to a real textarea the iOS Paste menu can target.
   let pasteFallbackOpen = $state(false);
   let pasteFallbackInput = $state<HTMLTextAreaElement | undefined>();
-  const openPasteFallback = () => {
-    pasteFallbackOpen = true;
-  };
-  const closePasteFallback = () => {
-    pasteFallbackOpen = false;
-  };
-  $effect(() => {
-    if (pasteFallbackOpen) pasteFallbackInput?.focus();
-  });
   let copyOverlayOpen = $state(false);
   let copyOverlayText = $state("");
   let copyFallbackOpen = $state(false);
   let copyFallbackInput = $state<HTMLTextAreaElement | undefined>();
+  const syncClipboardUi = (snap: ClipboardUiSnapshot) => {
+    pasteFallbackOpen = snap.pasteFallbackOpen;
+    copyOverlayOpen = snap.copyOverlayOpen;
+    copyFallbackOpen = snap.copyFallbackOpen;
+    copyOverlayText = snap.copyOverlayText;
+    pasteNotice = snap.notice;
+  };
+  const clipboardUi = createTerminalClipboardUi({ onChange: syncClipboardUi });
+  const openPasteFallback = () => clipboardUi.openPasteFallback();
+  const closePasteFallback = () => clipboardUi.closePasteFallback();
+  const dismissCopyUi = () => clipboardUi.dismissCopyUi();
+  $effect(() => {
+    if (pasteFallbackOpen) pasteFallbackInput?.focus();
+  });
+  let ctrlArmed = $state(false);
+  let hasUnseenOutput = $state(false);
+  let expanded = $state(false);
+  let inlineSpacerHeight = $state(0);
   $effect(() => {
     if (copyFallbackOpen) {
       copyFallbackInput?.focus();
@@ -130,9 +145,9 @@
   let sendKey: (data: string) => void = () => {};
   let pasteToTerm: (text: string) => void = () => {};
   const sendPasteFallbackText = (text: string) => {
-    closePasteFallback();
+    const trimmed = clipboardUi.takePasteFallbackText(text);
     if (pasteFallbackInput) pasteFallbackInput.value = "";
-    if (text) pasteToTerm(text);
+    if (trimmed) pasteToTerm(trimmed);
   };
   let refocusTerm: () => void = () => {};
   let jumpToBottom: () => void = () => {};
@@ -145,6 +160,7 @@
   let refitAfterLayout: () => void = () => {};
   let snapExpandedView: () => void = () => {};
   let beginExpandFlush: () => void = () => {};
+  let endExpandFlush: () => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -226,6 +242,10 @@
     const resizeDedupe = createResizeDedupe((cols, rows) => {
       connection.sendResize(cols, rows);
     });
+    const scrollFollow = createScrollFollowPolicy();
+    const syncScrollFollowUi = () => {
+      hasUnseenOutput = scrollFollow.hasUnseen();
+    };
     const terminalSubscriptions: IDisposable[] = [];
     const pendingOutput: string[] = [];
 
@@ -234,10 +254,10 @@
     // idle prompt refresh), and unconditionally calling scrollToBottom() on
     // every output frame yanked the view back down the instant a user tried
     // to scroll up — scrolling looked completely broken.
-    let pinnedToBottom = true;
     let snapTimer: ReturnType<typeof setTimeout> | undefined;
-    let expandFlushTimer: ReturnType<typeof setTimeout> | undefined;
+    let expandRewrapTimer: ReturnType<typeof setTimeout> | undefined;
     let snapFrames: number[] = [];
+    const layoutPolicy = createTerminalLayoutPolicy();
 
     // ghostty-web 0.4's write path force-scrolls to the bottom whenever the
     // viewport is away from it (writeInternal ends with
@@ -386,7 +406,6 @@
     // points to cells (terminalSelection) and writes the endpoints directly
     // (see TerminalWithSelectionInternals for why select() is bypassed).
     let selectionAnchor: CellPoint | undefined;
-    let copyNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 
     const topAbsoluteRow = (): number => {
       const scrollback = terminalInternals(term).getScrollbackLength?.() ?? 0;
@@ -432,21 +451,6 @@
       manager.requestRender?.();
     };
 
-    const flashCopyNotice = (message: string) => {
-      pasteNotice = message;
-      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
-      copyNoticeTimer = setTimeout(() => {
-        pasteNotice = "";
-        copyNoticeTimer = undefined;
-      }, 2500);
-    };
-
-    const dismissCopyUi = () => {
-      copyOverlayOpen = false;
-      copyFallbackOpen = false;
-      copyOverlayText = "";
-    };
-
     const finishSelection = (cancelled: boolean) => {
       selectionAnchor = undefined;
       if (cancelled) {
@@ -460,23 +464,18 @@
         term?.clearSelection();
         return;
       }
-      copyOverlayText = text;
-      copyOverlayOpen = true;
-      copyFallbackOpen = false;
+      clipboardUi.presentCopySelection(text);
     };
 
     handleCopyOverlay = async () => {
-      const text = copyOverlayText || term?.getSelection() || "";
-      copyOverlayOpen = false;
+      const text = clipboardUi.beginCopyAttempt() || term?.getSelection() || "";
       const ok = text ? await copyText(text) : false;
       if (ok) {
-        flashCopyNotice("Copied");
-        copyOverlayText = "";
-        copyFallbackOpen = false;
+        clipboardUi.noteCopySucceeded();
         term?.clearSelection();
         return;
       }
-      copyFallbackOpen = true;
+      clipboardUi.noteCopyFailed();
     };
     clearTermSelection = () => term?.clearSelection();
 
@@ -487,7 +486,8 @@
       ? attachTerminalGestures(container, {
           scrollLines: (lines) => {
             if (lines !== 0) {
-              pinnedToBottom = false;
+              scrollFollow.unpin();
+              syncScrollFollowUi();
               cancelExpandedSnap();
             }
             term?.scrollLines(lines);
@@ -502,16 +502,8 @@
             scheduleFontSizeRefit();
           },
           pinchEnded: () => {
-            pinchFlushPending = true;
+            layoutPolicy.pinchEnded();
             schedulePostLayoutRefit();
-            // postLayout runs fit+resize this frame and once more next frame;
-            // clear the exemption after that second frame (rAF FIFO ordering
-            // guarantees the second refit runs before this clear).
-            requestAnimationFrame(() => {
-              requestAnimationFrame(() => {
-                pinchFlushPending = false;
-              });
-            });
           },
           beginSelection: (clientX, clientY) => {
             dismissCopyUi();
@@ -543,9 +535,8 @@
     // Ghostty stays visually correct, and a single resize is flushed once the
     // viewport settles.
     const sendResize = () => {
-      // A pinch-end flush is exempt — it refits the grid and resizes the PTY
-      // in the same pass, so lockstep holds.
-      if (isKeyboardOpen() && !pinchFlushPending && !expandFlushPending) return;
+      const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
+      if (!decision.allowPtyResize) return;
       if (!term) return;
       const size = validTerminalSize(term.cols, term.rows);
       if (!size) return;
@@ -571,8 +562,9 @@
     // Reading action only: focusing here would pop the iOS keyboard and
     // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
-      snapScrollbackToBottom();
-      hasUnseenOutput = false;
+      const follow = scrollFollow.jumpToBottom();
+      if (follow.snapToBottom) snapScrollbackToBottom();
+      syncScrollFollowUi();
     };
     // iOS long-press paste doesn't reliably reach the hidden terminal input, so
     // the key bar offers an explicit Paste. term.paste() honors bracketed-paste
@@ -595,7 +587,7 @@
         .then((text) => {
           if (text) pasteToTerm(text);
           else term?.focus();
-          pasteNotice = "";
+          clipboardUi.clearNotice();
         })
         .catch(() => {
           openPasteFallback();
@@ -606,43 +598,32 @@
     // with a 40-column safety floor so phones get a readable grid without
     // horizontal panning. When the floor exceeds what fits, the font shrinks to
     // keep every column on screen; only sub-minimum overflow can pan.
-    let keyboardWasOpen = false;
-    let pinchFlushPending = false;
-    // The ⛶ expand toggle changes the panel from its padded inline width to the
-    // full-bleed fixed overlay. Entering expand focuses the terminal, which pops
-    // the iOS keyboard — so fitNow's keyboard-open guard would otherwise skip the
-    // grid resize and leave the canvas at its narrower pre-expand column count,
-    // left-aligned with an empty column down the right edge. This one-shot flag
-    // exempts the expand refit exactly like pinchFlushPending, so the grid (and
-    // PTY) resize once to the new width.
-    let expandFlushPending = false;
     const clampHorizontalPan = () => {
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
     };
     const fitNow = () => {
-      const keyboardOpen = isKeyboardOpen();
-      if (keyboardOpen && !keyboardWasOpen) {
+      const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
+      if (decision.pinToBottomOnKeyboardOpen) {
         // Opening the keyboard means the user is about to type: snap the view
         // to the cursor/input row even if they were reading scrollback, and
         // follow output from here on.
-        pinnedToBottom = true;
-        hasUnseenOutput = false;
+        scrollFollow.pin();
+        syncScrollFollowUi();
       }
-      keyboardWasOpen = keyboardOpen;
-      if (keyboardOpen && !pinchFlushPending && !expandFlushPending) {
+      if (!decision.allowLocalFit) {
         // The server resize is withheld while the keyboard is open, so the
         // local grid must not change either: a grid smaller than the PTY makes
         // tmux cursor-address rows that no longer exist locally, and the renderer
         // clamps those writes to its bottom row — the TUI input box drifts up
         // and overwrites the line below it. Keep grid == PTY and crop the
         // taller canvas bottom-anchored so the cursor/input row stays visible
-        // above the keyboard. A pinch-end flush is exempt — it refits the grid
-        // and resizes the PTY in the same pass, so lockstep holds.
-        if (container) {
+        // above the keyboard. Pinch/expand discrete intents are exempt — they
+        // refit the grid and resize the PTY in the same pass, so lockstep holds.
+        if (decision.cropToBottom && container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
-        if (pinnedToBottom) snapScrollbackToBottom();
+        if (scrollFollow.isPinned()) snapScrollbackToBottom();
         return;
       }
       if (!term || !fitAddon) return;
@@ -674,7 +655,7 @@
         fitAddon.fit();
       }
       clampHorizontalPan();
-      if (pinnedToBottom) snapScrollbackToBottom();
+      if (scrollFollow.isPinned()) snapScrollbackToBottom();
     };
 
     // When to fit and when to tell the PTY (frame coalescing, the resize
@@ -694,31 +675,24 @@
     // mirroring the pinch-end exemption so the local grid and PTY resize in the
     // same pass.
     beginExpandFlush = () => {
-      expandFlushPending = true;
+      layoutPolicy.expandEnter();
       schedulePostLayoutRefit();
-      // snapExpandedView's final settle is setTimeout(260). Keep the exemption
-      // through that window so late post-layout refits still resize the grid/PTY
-      // while the keyboard is open; clear on the next frame after settle.
-      if (expandFlushTimer) clearTimeout(expandFlushTimer);
-      const EXPAND_FLUSH_MS = 280;
-      expandFlushTimer = setTimeout(() => {
-        expandFlushTimer = undefined;
-        if (disposed) {
-          expandFlushPending = false;
-          return;
-        }
-        schedulePostLayoutRefit();
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => {
-            expandFlushPending = false;
-          });
-        });
-      }, EXPAND_FLUSH_MS);
+      // snapExpandedView's final settle is setTimeout(260). Schedule one more
+      // post-layout refit after the expand rewrap window so late layout reads
+      // still resize the grid/PTY while the keyboard is open.
+      if (expandRewrapTimer) clearTimeout(expandRewrapTimer);
+      expandRewrapTimer = setTimeout(() => {
+        expandRewrapTimer = undefined;
+        if (!disposed) schedulePostLayoutRefit();
+      }, EXPAND_REWRAP_MS);
+    };
+    endExpandFlush = () => {
+      layoutPolicy.expandExit();
     };
 
     const snapVisibleTerminal = () => {
-      pinnedToBottom = true;
-      hasUnseenOutput = false;
+      scrollFollow.pin();
+      syncScrollFollowUi();
       resetDocumentScroll();
       if (isKeyboardOpen() && container) {
         container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
@@ -778,55 +752,22 @@
       term.write(text);
     };
 
-    // Imperative zero-lag overlay: paint text/style without a sync Svelte flush.
-    // Create/remove the node so cleared state matches querySelector === null.
-    let zeroLagEl: HTMLDivElement | null = null;
-    const paintZeroLag = (text: string, style: string) => {
-      if (!container) return;
-      if (!text) {
-        zeroLagEl?.remove();
-        zeroLagEl = null;
-        return;
-      }
-      if (!zeroLagEl) {
-        zeroLagEl = document.createElement("div");
-        zeroLagEl.className = "terminal-zero-lag-input";
-        zeroLagEl.setAttribute("data-testid", "terminal-zero-lag-input");
-        zeroLagEl.setAttribute("aria-hidden", "true");
-        container.insertBefore(zeroLagEl, container.firstChild);
-      }
-      zeroLagEl.textContent = text;
-      zeroLagEl.style.cssText = style;
-    };
-
+    const zeroLagPainter = createZeroLagOverlayPainter(() => container);
     const zeroLag = createZeroLagEcho({
-      onChange: paintZeroLag,
-      measure: () => {
-        const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
-        const active = term?.buffer.active as { cursorX?: number; cursorY?: number } | undefined;
-        if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
-          return null;
-        }
-        const metrics = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.();
-        return {
-          cursorX: active.cursorX,
-          cursorY: active.cursorY,
-          cols: term.cols,
-          rows: term.rows,
-          canvasWidth: canvas.clientWidth,
-          canvasHeight: canvas.clientHeight,
-          cellWidth: metrics?.width,
-          cellHeight: metrics?.height,
-          fontSize: term.options.fontSize ?? DEFAULT_FONT_SIZE,
-        };
-      },
+      onChange: (text, style) => zeroLagPainter.paint(text, style),
+      measure: () =>
+        measureZeroLagFromTerminalHost({
+          host: container,
+          term,
+          defaultFontSize: DEFAULT_FONT_SIZE,
+        }),
     });
 
     // Coalesce WS output chunks into one write + one follow/compensation pass
     // per ~16ms (or max-char) flush. Input / zero-lag echo stays unbatched.
     const writeBatcher = createTerminalWriteBatcher({
       onFlush: (combined) => {
-        if (pinnedToBottom) {
+        if (scrollFollow.isPinned()) {
           writeToTerminal(combined);
         } else {
           // viewportY is measured from the bottom, so when this write pushes
@@ -841,11 +782,11 @@
           if (compensation !== 0) term?.scrollLines(compensation);
         }
         zeroLag.clearIfEchoedIn(combined);
-        const follow = outputFollowEffects(pinnedToBottom);
+        const follow = scrollFollow.noteOutput();
         if (follow.snapToBottom) {
           snapScrollbackToBottom();
         } else if (follow.markUnseenOutput) {
-          hasUnseenOutput = true;
+          syncScrollFollowUi();
         }
       },
     });
@@ -865,8 +806,8 @@
         if (isReconnect) {
           pendingOutput.length = 0;
           term?.reset();
-          pinnedToBottom = true;
-          hasUnseenOutput = false;
+          scrollFollow.resetOnReconnect();
+          syncScrollFollowUi();
           snapScrollbackToBottom();
         }
         schedulePostLayoutRefit();
@@ -926,7 +867,7 @@
       if (!term) return;
       for (const text of pendingOutput) term.write(text);
       pendingOutput.length = 0;
-      if (pinnedToBottom) snapScrollbackToBottom();
+      if (scrollFollow.isPinned()) snapScrollbackToBottom();
     };
 
     const mountGhosttyTerminal = async () => {
@@ -973,8 +914,8 @@
       term.textarea?.addEventListener("beforeinput", handleTextareaBeforeInput);
       terminalSubscriptions.push(
         term.onScroll(() => {
-          pinnedToBottom = term ? term.getViewportY() <= 0 : true;
-          if (pinnedToBottom) hasUnseenOutput = false;
+          scrollFollow.setPinnedFromViewport(term ? term.getViewportY() <= 0 : true);
+          syncScrollFollowUi();
         }),
         term.onData(handleTerminalData),
       );
@@ -991,19 +932,20 @@
       disposed = true;
       setExpanded(false);
       cancelExpandedSnap();
-      if (expandFlushTimer) {
-        clearTimeout(expandFlushTimer);
-        expandFlushTimer = undefined;
+      layoutPolicy.dispose();
+      if (expandRewrapTimer) {
+        clearTimeout(expandRewrapTimer);
+        expandRewrapTimer = undefined;
       }
-      expandFlushPending = false;
       // Paint any queued output while the terminal still exists, then drop the
       // batcher so a late timer cannot write after dispose.
       if (term) writeBatcher.flush();
       writeBatcher.dispose();
       zeroLag.reset();
+      zeroLagPainter.dispose();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
-      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
+      clipboardUi.dispose();
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
       term?.textarea?.removeEventListener("beforeinput", handleTextareaBeforeInput);
@@ -1061,6 +1003,7 @@
         beginExpandFlush();
         snapExpandedView();
       } else {
+        endExpandFlush();
         blurTerm();
         refitAfterLayout();
       }
@@ -1089,8 +1032,7 @@
           type="button"
           class="terminal-key"
           onclick={() => {
-            copyFallbackOpen = false;
-            copyOverlayText = "";
+            dismissCopyUi();
             clearTermSelection();
           }}>Done</button>
       </div>
@@ -1355,7 +1297,7 @@
     caret-color: transparent;
   }
 
-  /* Imperative overlay (createZeroLagEcho → paintZeroLag). Position comes only
+  /* Imperative overlay (createZeroLagEcho → createZeroLagOverlayPainter). Position comes only
      from zeroLagOverlayStyle (left/top) — never CSS bottom, or top+bottom
      stretches into a second full-height echo. :global so the JS-created node
      still gets these rules under Svelte scoping. */

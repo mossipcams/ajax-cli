@@ -10,16 +10,20 @@
 | --- | --- |
 | Keyboard / visualViewport / --app-* | viewport.ts |
 | Fit / font / pan math | terminalGeometry.ts |
-| Refit scheduling | terminalRefit.ts |
+| Refit scheduling | terminalRefit.ts (when to fit/send; not permission) |
+| Layout fit/resize permission | terminalLayoutPolicy.ts |
+| Paste/copy UI state (fallback/overlay/notice) | terminalClipboard.ts |
 | Gestures / selection geometry | terminalGestures.ts |
-| Scroll-follow / resize validity | terminalOutputPolicy.ts |
+| Scroll-follow state + resize validity | terminalOutputPolicy.ts |
 | WS connect / backoff / status | terminalConnection.ts |
 | Ghostty mount + chrome UI | TerminalRawView.svelte |
+| Zero-lag input echo + overlay paint | terminalZeroLag.ts |
 | Route scroll / chrome hide | styles.css + App layout |
 
 ## Anti-patterns
 - Do not add new one-shot `*FlushPending` (or equivalent) booleans in
-  TerminalRawView.svelte — put named policy in terminalRefit.ts / geometry
+  TerminalRawView.svelte — put fit/resize permission in terminalLayoutPolicy.ts
+  and refit scheduling in terminalRefit.ts
 - Do not fix iOS bugs only in CSS/component without a failing Vitest or
   mobile-webkit Playwright case first
 - Do not scatter Ghostty private API casts; isolate in one adapter when extracting

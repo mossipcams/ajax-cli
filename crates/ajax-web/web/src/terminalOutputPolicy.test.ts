@@ -4,6 +4,7 @@ import {
   outputFollowEffects,
   validTerminalSize,
   createResizeDedupe,
+  createScrollFollowPolicy,
   createTerminalWriteBatcher,
   TERMINAL_WRITE_FLUSH_MS,
   TERMINAL_WRITE_MAX_CHARS,
@@ -180,5 +181,92 @@ describe("terminalOutputPolicy", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(send).toHaveBeenNthCalledWith(1, 80, 24);
     expect(send).toHaveBeenNthCalledWith(2, 80, 24);
+  });
+
+  describe("createScrollFollowPolicy", () => {
+    it("starts pinned with no unseen output", () => {
+      const policy = createScrollFollowPolicy();
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+    });
+
+    it("unpin then noteOutput marks unseen without snap", () => {
+      const policy = createScrollFollowPolicy();
+      policy.unpin();
+      expect(policy.isPinned()).toBe(false);
+
+      const follow = policy.noteOutput();
+      expect(follow).toEqual({ snapToBottom: false, markUnseenOutput: true });
+      expect(policy.hasUnseen()).toBe(true);
+    });
+
+    it("while pinned, noteOutput requests snap and keeps unseen false", () => {
+      const policy = createScrollFollowPolicy();
+      const follow = policy.noteOutput();
+      expect(follow).toEqual({ snapToBottom: true, markUnseenOutput: false });
+      expect(policy.hasUnseen()).toBe(false);
+    });
+
+    it("jumpToBottom pins, clears unseen, and requests snap", () => {
+      const policy = createScrollFollowPolicy();
+      policy.unpin();
+      policy.noteOutput();
+      expect(policy.hasUnseen()).toBe(true);
+
+      const follow = policy.jumpToBottom();
+      expect(follow).toEqual({ snapToBottom: true });
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+    });
+
+    it("setPinnedFromViewport(true) clears unseen; false unpins", () => {
+      const policy = createScrollFollowPolicy();
+      policy.unpin();
+      policy.noteOutput();
+      expect(policy.hasUnseen()).toBe(true);
+
+      policy.setPinnedFromViewport(true);
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+
+      policy.noteOutput();
+      policy.setPinnedFromViewport(false);
+      expect(policy.isPinned()).toBe(false);
+    });
+
+    it("pin and resetOnReconnect pin and clear unseen", () => {
+      const policy = createScrollFollowPolicy();
+      policy.unpin();
+      policy.noteOutput();
+      expect(policy.hasUnseen()).toBe(true);
+
+      policy.pin();
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+
+      policy.unpin();
+      policy.noteOutput();
+      policy.resetOnReconnect();
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+    });
+
+    it("isPinned and hasUnseen reflect state after each transition", () => {
+      const policy = createScrollFollowPolicy();
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+
+      policy.unpin();
+      expect(policy.isPinned()).toBe(false);
+      expect(policy.hasUnseen()).toBe(false);
+
+      policy.noteOutput();
+      expect(policy.isPinned()).toBe(false);
+      expect(policy.hasUnseen()).toBe(true);
+
+      policy.setPinnedFromViewport(true);
+      expect(policy.isPinned()).toBe(true);
+      expect(policy.hasUnseen()).toBe(false);
+    });
   });
 });
