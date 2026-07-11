@@ -19,7 +19,6 @@ pub mod registry;
 pub mod remediation;
 pub mod runtime;
 pub mod runtime_refresh;
-pub mod slices;
 pub mod task_operations;
 pub mod ui_state;
 pub mod validity;
