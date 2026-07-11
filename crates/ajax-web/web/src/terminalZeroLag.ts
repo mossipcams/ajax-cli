@@ -10,6 +10,106 @@ export type ZeroLagCursorMetrics = {
   fontSize: number;
 };
 
+export const ZERO_LAG_OVERLAY_CLASS = "terminal-zero-lag-input";
+export const ZERO_LAG_OVERLAY_TESTID = "terminal-zero-lag-input";
+
+export type ZeroLagMeasureInput = {
+  cursorX?: number;
+  cursorY?: number;
+  cols: number;
+  rows: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  cellWidth?: number;
+  cellHeight?: number;
+  fontSize: number;
+};
+
+export function measureZeroLagCursor(
+  input: ZeroLagMeasureInput | null | undefined,
+): ZeroLagCursorMetrics | null {
+  if (input == null) return null;
+  if (input.cursorX === undefined || input.cursorY === undefined) return null;
+  return {
+    cursorX: input.cursorX,
+    cursorY: input.cursorY,
+    cols: input.cols,
+    rows: input.rows,
+    canvasWidth: input.canvasWidth,
+    canvasHeight: input.canvasHeight,
+    cellWidth: input.cellWidth,
+    cellHeight: input.cellHeight,
+    fontSize: input.fontSize,
+  };
+}
+
+export function measureZeroLagFromTerminalHost(args: {
+  host: HTMLElement | null | undefined;
+  term: {
+    cols: number;
+    rows: number;
+    options: { fontSize?: number };
+    buffer: { active: { cursorX?: number; cursorY?: number } };
+    renderer?: { getMetrics?: () => { width?: number; height?: number } };
+  } | null | undefined;
+  defaultFontSize: number;
+}): ZeroLagCursorMetrics | null {
+  const { host, term, defaultFontSize } = args;
+  const canvas = host?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
+  const active = term?.buffer.active;
+  if (!canvas || !term || active?.cursorX === undefined || active.cursorY === undefined) {
+    return null;
+  }
+  const rendererMetrics = term.renderer?.getMetrics?.();
+  return measureZeroLagCursor({
+    cursorX: active.cursorX,
+    cursorY: active.cursorY,
+    cols: term.cols,
+    rows: term.rows,
+    canvasWidth: canvas.clientWidth,
+    canvasHeight: canvas.clientHeight,
+    cellWidth: rendererMetrics?.width,
+    cellHeight: rendererMetrics?.height,
+    fontSize: term.options.fontSize ?? defaultFontSize,
+  });
+}
+
+export function createZeroLagOverlayPainter(
+  host: HTMLElement | null | undefined | (() => HTMLElement | null | undefined),
+): {
+  paint(text: string, style: string): void;
+  dispose(): void;
+} {
+  let el: HTMLDivElement | null = null;
+  const getHost = typeof host === "function" ? host : () => host;
+
+  const paint = (text: string, style: string) => {
+    const container = getHost();
+    if (!container) return;
+    if (!text) {
+      el?.remove();
+      el = null;
+      return;
+    }
+    if (!el) {
+      el = document.createElement("div");
+      el.className = ZERO_LAG_OVERLAY_CLASS;
+      el.setAttribute("data-testid", ZERO_LAG_OVERLAY_TESTID);
+      el.setAttribute("aria-hidden", "true");
+      container.insertBefore(el, container.firstChild);
+    }
+    el.textContent = text;
+    el.style.cssText = style;
+  };
+
+  const dispose = () => {
+    el?.remove();
+    el = null;
+  };
+
+  return { paint, dispose };
+}
+
 export function zeroLagOverlayStyle(m: ZeroLagCursorMetrics): string {
   const cellWidth =
     Number.isFinite(m.cellWidth) && (m.cellWidth as number) > 0

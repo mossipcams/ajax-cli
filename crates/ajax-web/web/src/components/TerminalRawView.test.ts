@@ -5,6 +5,7 @@ import { render, waitFor, queryByRole } from "@testing-library/svelte";
 import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
+import terminalClipboardSource from "../terminalClipboard.ts?raw";
 
 const write = vi.fn();
 const scrollToBottom = vi.fn();
@@ -1321,8 +1322,10 @@ describe("TerminalRawView", () => {
   });
 
   it("names paste fallback state transitions", () => {
-    expect(terminalRawViewSource).toContain("openPasteFallback");
-    expect(terminalRawViewSource).toContain("closePasteFallback");
+    expect(terminalClipboardSource).toContain("openPasteFallback");
+    expect(terminalClipboardSource).toContain("closePasteFallback");
+    expect(terminalClipboardSource).toContain("takePasteFallbackText");
+    expect(terminalClipboardSource).toContain("createTerminalClipboardUi");
     expect(terminalRawViewSource).toContain("sendPasteFallbackText");
     expect(terminalRawViewSource).toContain("requestPaste");
     expect(terminalRawViewSource).toContain('data-testid="terminal-paste-fallback"');
