@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.39.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.0...ajax-cli-v0.39.1) (2026-07-10)
+
+
+### Bug Fixes
+
+* hold notification re-arm for a cooldown after each delivery ([#431](https://github.com/mossipcams/ajax-cli/issues/431)) ([8d7e02c](https://github.com/mossipcams/ajax-cli/commit/8d7e02cfae55be24d075fc129681ba988955b4d8))
+* **web:** seed terminal scrollback from tmux history ([#429](https://github.com/mossipcams/ajax-cli/issues/429)) ([9f7a0e4](https://github.com/mossipcams/ajax-cli/commit/9f7a0e4a57324135c39857e5e852a0d40ac22da0))
+
 ## [0.39.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.38.2...ajax-cli-v0.39.0) (2026-07-10)
 
 
