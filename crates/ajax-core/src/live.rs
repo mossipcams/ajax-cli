@@ -6,7 +6,8 @@ pub use crate::models::{AgentClient, LiveObservation, LiveStatusKind};
 pub use application::{
     acknowledge_attention, apply_authoritative_observation, apply_authoritative_observation_at,
     apply_observation, apply_observation_at, apply_trusted_observation,
-    apply_trusted_observation_at, has_pending_waiting_candidate, WAITING_CANDIDATE_SINCE_KEY,
+    apply_trusted_observation_at, has_pending_live_class_candidate, has_pending_running_candidate,
+    has_pending_waiting_candidate, RUNNING_CANDIDATE_SINCE_KEY, WAITING_CANDIDATE_SINCE_KEY,
 };
 
 /// Freshness window for a Codex `working` hook value.
@@ -1166,7 +1167,8 @@ mod tests {
     };
 
     use super::{
-        apply_observation, classify_agent_status_value, classify_pane, reduce_agent_status_values,
+        apply_observation, apply_observation_at, classify_agent_status_value, classify_pane,
+        reduce_agent_status_values,
     };
 
     fn base_task() -> Task {
@@ -1640,6 +1642,7 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
 
     #[test]
     fn waiting_for_approval_is_cleared_by_resumed_activity() {
+        use std::time::{Duration, UNIX_EPOCH};
         for status in [
             LiveStatusKind::AgentRunning,
             LiveStatusKind::CommandRunning,
@@ -1647,11 +1650,24 @@ matt@Matts-MacBook-Pro ajax-fix-login %";
         ] {
             let mut task = base_task();
 
-            apply_observation(
+            apply_observation_at(
                 &mut task,
                 LiveObservation::new(LiveStatusKind::WaitingForApproval, "waiting for approval"),
+                UNIX_EPOCH + Duration::from_secs(100),
             );
-            apply_observation(&mut task, LiveObservation::new(status, "activity resumed"));
+            // First busy sample only stamps the running candidate.
+            apply_observation_at(
+                &mut task,
+                LiveObservation::new(status, "activity resumed"),
+                UNIX_EPOCH + Duration::from_secs(110),
+            );
+            assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting, "{status:?}");
+            // Dwell-confirmed busy sample clears waiting.
+            apply_observation_at(
+                &mut task,
+                LiveObservation::new(status, "activity resumed"),
+                UNIX_EPOCH + Duration::from_secs(115),
+            );
 
             assert_eq!(task.agent_status, AgentRuntimeStatus::Running, "{status:?}");
             assert!(!task.has_side_flag(SideFlag::NeedsInput), "{status:?}");

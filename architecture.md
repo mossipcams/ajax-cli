@@ -326,17 +326,30 @@ completion. Confirmed stop or missing runtime records `Dead`; unclassified pane
 text is neutral and does not overwrite the last known agent state or fabricate
 a probe failure.
 
-Ordinary waiting-class evidence observed on a busy task is a candidate, not an
-immediate status change: it must persist for a short dwell window (a
-`waiting_candidate_since` stamp in Ajax-owned task metadata) before the
-application path accepts it. This keeps one-sample pane misreads from flipping
-a working agent to `Waiting` or firing attention webhooks. Trusted
-wrapper/hook evidence and error-class evidence apply immediately, and any
-applied observation clears a pending candidate — including through the
-runtime-refresh unchanged-status short-circuit, which falls through while a
-candidate is pending so busy samples can resolve it. The shared
+Ordinary class evidence on a task that already shows the *opposite* class is a
+candidate, not an immediate status change. A waiting-class sample on a busy
+task, or a running-class sample on a waiting task, must persist for a short
+dwell window before the application path accepts it. The dwell is symmetric
+(Waiting↔Running) and uses two metadata stamps in Ajax-owned task metadata:
+`waiting_candidate_since` and `running_candidate_since`. The same
+`WAITING_CONFIRMATION_DWELL` (4s) gates both directions. This keeps one-sample
+pane misreads — busy chrome briefly misread as a prompt, or a stale prompt
+flapping across a busy line — from flipping the operator status, clearing
+`NeedsInput`, or firing attention webhooks. After dwell, the candidate
+confirms and the metadata stamp is removed.
+
+Trusted wrapper/hook evidence and error-class evidence apply immediately
+(bypassing the dwell), and any applied observation clears both candidate
+stamps. The runtime-refresh unchanged-status short-circuit falls through while
+a candidate is pending so the next busy sample can resolve it. The shared
 `LiveStatusKind::class()` classification keeps the gate, the operator-status
 reducer, and annotation mapping on one membership list.
+
+`Done` is a special case on the Waiting side: a busy pane must recover to
+`Running` immediately after a stale completion (agent relaunch) without
+waiting out a `Done → Running` dwell, so the gate does not block a busy pane
+from un-sticking a `Done` task. Error-class and missing-substrate live status
+likewise recover to Running immediately.
 
 Pane classification is agent-aware and busy-first: `classify_agent_pane` applies
 recent busy indicators before stale prompts, then agent-specific prompts (Claude
@@ -589,6 +602,20 @@ subscriptions, service-worker push handlers, notification click handlers, or
 notification infrastructure. Server-side webhook delivery through the CLI
 notify adapter (`[notify]` config) is the supported notification channel; the
 web runtime only hosts its background poll.
+
+The notify adapter fires once per actionable episode and only for statuses
+the operator can act on. `NeedsInput` waiting evidence (waiting for input,
+waiting for approval, auth required, rate limited, context limit) and
+`Error`-class evidence (CI failed, merge conflict, command failed, blocked,
+runtime probe failure) each fire a single webhook. Lifecycle-only
+"Ready for review" stays inbox-visible but does **not** phone-ping. Returning
+to `Running`/`Idle` arms the next episode only after a quiet window
+(`EPISODE_CLEAR_DWELL`, 30s) of sustained clear evidence, so a turn boundary
+inside one episode delivers one ping. Opening a task records an attention
+acknowledgment that silences the current episode (the next actionable
+evidence re-arms), preventing re-fires while the operator is already looking.
+There is no fixed re-arm cooldown — only the quiet-clear gate plus the
+acknowledge-suppress path.
 
 Browser validation should check local-only shell assets, stable/dev port
 separation, clear browser error states for failed live requests or unsupported

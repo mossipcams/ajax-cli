@@ -371,7 +371,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
                     && !task.has_side_flag(crate::models::SideFlag::AgentRunning);
                 if live_status_unchanged
                     && !needs_agent_running_flag
-                    && !live::has_pending_waiting_candidate(task)
+                    && !live::has_pending_live_class_candidate(task)
                 {
                     continue;
                 }
@@ -435,7 +435,7 @@ pub fn refresh_runtime_context_with_tier<R: Registry>(
             if live_status_unchanged
                 && !had_recoverable_missing_flag
                 && !needs_agent_running_flag
-                && !live::has_pending_waiting_candidate(task)
+                && !live::has_pending_live_class_candidate(task)
             {
                 continue;
             }
@@ -895,6 +895,29 @@ mod tests {
             self.commands.push(command.clone());
             let stdout = match command.args.as_slice() {
                 [command, ..] if command == "capture-pane" => "codex is working\n",
+                _ => runtime_stdout(&command.args),
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[derive(Default)]
+    struct WaitingPaneRefreshRunner {
+        commands: Vec<CommandSpec>,
+    }
+
+    impl CommandRunner for WaitingPaneRefreshRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            self.commands.push(command.clone());
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "capture-pane" => {
+                    "› Improve documentation\n\n  gpt-5.5 high · ~/repo\n"
+                }
                 _ => runtime_stdout(&command.args),
             };
 
@@ -1711,6 +1734,38 @@ mod tests {
         assert_eq!(
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::AgentRunning)
+        );
+    }
+
+    #[test]
+    fn pending_running_candidate_bypasses_unchanged_short_circuit() {
+        let mut context = context_with_active_task();
+        let mut runner = WaitingPaneRefreshRunner::default();
+        {
+            let task = context
+                .registry
+                .get_task_mut(&TaskId::new(TASK_ID))
+                .unwrap();
+            crate::live::apply_observation_at(
+                task,
+                LiveObservation::new(LiveStatusKind::WaitingForInput, "waiting"),
+                SystemTime::UNIX_EPOCH + Duration::from_secs(50),
+            );
+            task.metadata.insert(
+                crate::live::RUNNING_CANDIDATE_SINCE_KEY.to_string(),
+                "100".to_string(),
+            );
+        }
+
+        refresh_runtime_context(&mut context, &mut runner).unwrap();
+
+        let task = context.registry.get_task(&TaskId::new(TASK_ID)).unwrap();
+        assert!(!task
+            .metadata
+            .contains_key(crate::live::RUNNING_CANDIDATE_SINCE_KEY));
+        assert_eq!(
+            task.live_status.as_ref().map(|status| status.kind),
+            Some(LiveStatusKind::WaitingForInput)
         );
     }
 

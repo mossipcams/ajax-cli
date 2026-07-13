@@ -6,14 +6,14 @@ use crate::ui_state::{derive_operator_status, TaskStatus};
 
 pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
 pub const LAST_NOTIFIED_AT_KEY: &str = "last_notified_at";
+/// First Running/Idle sighting after a notified episode; stamp clears once this
+/// quiet window reaches [`EPISODE_CLEAR_DWELL`].
+pub const NOTIFY_QUIET_SINCE_KEY: &str = "notify_quiet_since";
 
-/// How long a delivery keeps the detector armed against re-fires. A genuine
-/// agent turn cycle (Waiting → Running → Waiting) inside this window is one
-/// episode and gets one ping; without it an actively driven session pings on
-/// every turn boundary.
-/// ponytail: constant; gate on tmux client activity if a ping per window is
-/// still too chatty during active use.
-const NOTIFY_REARM_COOLDOWN: std::time::Duration = std::time::Duration::from_secs(300);
+/// How long Running/Idle must persist after a delivery before the detector
+/// re-arms. Brief turn-boundary Running samples stay inside one episode.
+// ponytail: 30s constant; gate on tmux client activity if still too chatty.
+const EPISODE_CLEAR_DWELL: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionTransition {
@@ -23,11 +23,13 @@ pub struct AttentionTransition {
     pub explanation: Option<String>,
 }
 
-/// Rising-edge detector for operator attention. Fires once when a task
-/// crosses into Waiting or Error, deduplicated by a metadata stamp that
-/// persists with the normal registry snapshot save. Returning to Running or
-/// Idle re-arms the detector only after `NOTIFY_REARM_COOLDOWN`, so one
+/// Episode detector for operator attention webhooks. Fires once when a task
+/// enters actionable Waiting (needs input) or Error; lifecycle-only
+/// "Ready for review" stays inbox-visible but does not phone-ping. Returning
+/// to Running/Idle clears the stamp only after [`EPISODE_CLEAR_DWELL`], so one
 /// Waiting episode interrupted by short Running bursts delivers one ping.
+/// [`silence_notify_episode`] (from acknowledge) stamps the current episode
+/// without delivering so opening a task stops further pings until new evidence.
 /// ponytail: best-effort dedup; a concurrent first observation can produce
 /// one duplicate delivery — add per-key CAS only if duplicates ever annoy.
 pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition> {
@@ -41,6 +43,11 @@ pub fn take_attention_transition_at(
     let operator_status = derive_operator_status(task);
     match operator_status.status {
         TaskStatus::Waiting | TaskStatus::Error => {
+            if !is_actionable_attention(&operator_status) {
+                return None;
+            }
+            // Still in (or back in) attention: cancel any quiet countdown.
+            task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
             let stamp = operator_status.status.as_str();
             if task
                 .metadata
@@ -63,19 +70,58 @@ pub fn take_attention_transition_at(
             })
         }
         TaskStatus::Running | TaskStatus::Idle => {
-            // Missing or malformed delivery stamp re-arms immediately.
-            let cooling_down = task
-                .metadata
-                .get(LAST_NOTIFIED_AT_KEY)
-                .and_then(|value| value.parse::<u64>().ok())
-                .is_some_and(|fired_at| {
-                    unix_seconds(now).saturating_sub(fired_at) < NOTIFY_REARM_COOLDOWN.as_secs()
-                });
-            if !cooling_down {
-                task.metadata.remove(LAST_NOTIFIED_STATUS_KEY);
-                task.metadata.remove(LAST_NOTIFIED_AT_KEY);
-            }
+            clear_notify_episode_if_quiet(task, now);
             None
+        }
+    }
+}
+
+/// Mark the current attention episode as already notified so ack/open stops
+/// further webhook deliveries until new actionable evidence appears.
+pub fn silence_notify_episode(task: &mut Task, now: std::time::SystemTime) {
+    let operator_status = derive_operator_status(task);
+    if !is_actionable_attention(&operator_status) {
+        return;
+    }
+    task.metadata.insert(
+        LAST_NOTIFIED_STATUS_KEY.to_string(),
+        operator_status.status.as_str().to_string(),
+    );
+    task.metadata.insert(
+        LAST_NOTIFIED_AT_KEY.to_string(),
+        unix_seconds(now).to_string(),
+    );
+    task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
+}
+
+fn is_actionable_attention(status: &crate::ui_state::OperatorStatus) -> bool {
+    match status.status {
+        TaskStatus::Error => true,
+        TaskStatus::Waiting => status.explanation.as_deref() != Some("Ready for review"),
+        TaskStatus::Running | TaskStatus::Idle => false,
+    }
+}
+
+fn clear_notify_episode_if_quiet(task: &mut Task, now: std::time::SystemTime) {
+    if !task.metadata.contains_key(LAST_NOTIFIED_STATUS_KEY) {
+        task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
+        return;
+    }
+    let now_secs = unix_seconds(now);
+    let quiet_since = task
+        .metadata
+        .get(NOTIFY_QUIET_SINCE_KEY)
+        .and_then(|value| value.parse::<u64>().ok());
+    match quiet_since {
+        Some(since) if now_secs >= since + EPISODE_CLEAR_DWELL.as_secs() => {
+            task.metadata.remove(LAST_NOTIFIED_STATUS_KEY);
+            task.metadata.remove(LAST_NOTIFIED_AT_KEY);
+            task.metadata.remove(NOTIFY_QUIET_SINCE_KEY);
+        }
+        Some(_) => {}
+        None => {
+            task.metadata
+                .insert(NOTIFY_QUIET_SINCE_KEY.to_string(), now_secs.to_string());
         }
     }
 }
@@ -536,51 +582,71 @@ mod tests {
     }
 
     #[test]
-    fn waiting_then_idle_past_cooldown_then_waiting_fires_again() {
+    fn waiting_then_idle_past_episode_clear_then_waiting_fires_again() {
         let mut task = waiting_task("notify");
         assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
 
         task.remove_side_flag(SideFlag::NeedsInput);
         assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_400)),
+            super::take_attention_transition_at(&mut task, at(1_010)),
+            None
+        );
+        assert!(task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
+        assert!(task.metadata.contains_key(super::NOTIFY_QUIET_SINCE_KEY));
+
+        // Still within the 30s quiet window: stamps remain.
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_039)),
+            None
+        );
+        assert!(task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
+
+        // Quiet dwell elapsed: episode clears.
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_040)),
             None
         );
         assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_STATUS_KEY));
         assert!(!task.metadata.contains_key(super::LAST_NOTIFIED_AT_KEY));
+        assert!(!task.metadata.contains_key(super::NOTIFY_QUIET_SINCE_KEY));
 
         task.add_side_flag(SideFlag::NeedsInput);
-        assert!(super::take_attention_transition_at(&mut task, at(1_401)).is_some());
+        assert!(super::take_attention_transition_at(&mut task, at(1_041)).is_some());
     }
 
     #[test]
-    fn waiting_cycle_within_cooldown_fires_once() {
+    fn waiting_cycle_within_episode_clear_fires_once() {
         let mut task = waiting_task("notify");
         assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
 
-        // Agent turn boundary: brief Running, then waiting again 90s later.
+        // Agent turn boundary: brief Running, then waiting again before clear.
         task.remove_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_010)),
+            None
+        );
+        task.add_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_020)),
+            None
+        );
+
+        // Sustained Idle past episode clear, then Waiting again → re-fire.
+        task.remove_side_flag(SideFlag::NeedsInput);
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_030)),
+            None
+        );
         assert_eq!(
             super::take_attention_transition_at(&mut task, at(1_060)),
             None
         );
         task.add_side_flag(SideFlag::NeedsInput);
-        assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_090)),
-            None
-        );
-
-        // A Running sample past the cooldown re-arms; the next wait pings.
-        task.remove_side_flag(SideFlag::NeedsInput);
-        assert_eq!(
-            super::take_attention_transition_at(&mut task, at(1_301)),
-            None
-        );
-        task.add_side_flag(SideFlag::NeedsInput);
-        assert!(super::take_attention_transition_at(&mut task, at(1_302)).is_some());
+        assert!(super::take_attention_transition_at(&mut task, at(1_061)).is_some());
     }
 
     #[test]
-    fn error_within_cooldown_still_fires() {
+    fn error_within_episode_still_fires() {
         let mut task = waiting_task("notify");
         assert!(super::take_attention_transition_at(&mut task, at(1_000)).is_some());
 
@@ -603,6 +669,39 @@ mod tests {
         assert_eq!(
             transition.map(|transition| transition.status),
             Some(TaskStatus::Error)
+        );
+    }
+
+    #[test]
+    fn ready_for_review_does_not_notify() {
+        let mut task = task_with_flags("review", &[]);
+        mark_active(&mut task).unwrap();
+        mark_reviewable(&mut task).unwrap();
+
+        assert_eq!(
+            crate::ui_state::derive_operator_status(&task)
+                .explanation
+                .as_deref(),
+            Some("Ready for review")
+        );
+        assert_eq!(super::take_attention_transition(&mut task), None);
+        assert!(task.metadata.is_empty());
+    }
+
+    #[test]
+    fn acknowledge_silences_current_episode() {
+        let mut task = waiting_task("notify");
+        crate::live::acknowledge_attention(&mut task, at(1_010));
+
+        assert_eq!(
+            task.metadata
+                .get(super::LAST_NOTIFIED_STATUS_KEY)
+                .map(String::as_str),
+            Some("Waiting")
+        );
+        assert_eq!(
+            super::take_attention_transition_at(&mut task, at(1_011)),
+            None
         );
     }
 

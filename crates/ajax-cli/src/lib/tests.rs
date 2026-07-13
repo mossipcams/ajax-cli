@@ -1055,7 +1055,7 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
     let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
-    let second_refresh = tmux_live_outputs("codex is working\n");
+    let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
     let mut runner = QueuedRunner::new(vec![
         first_refresh[0].clone(),
         first_refresh[1].clone(),
@@ -1092,7 +1092,7 @@ fn cockpit_json_watch_renders_refreshed_live_status_over_iterations() {
     );
     assert_eq!(
         second["tasks"]["tasks"][0]["live_status"]["summary"],
-        "agent running"
+        "waiting for input"
     );
     assert!(runner.commands.len() >= 5);
 }
@@ -1107,7 +1107,7 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
     task.lifecycle_status = LifecycleStatus::Active;
     task.remove_side_flag(SideFlag::NeedsInput);
     let first_refresh = tmux_live_outputs("Do you want to proceed? y/n\n");
-    let second_refresh = tmux_live_outputs("codex is working\n");
+    let second_refresh = tmux_live_outputs("› Improve documentation\n\n  gpt-5.5 high · ~/repo\n");
     let mut runner = QueuedRunner::new(vec![
         first_refresh[0].clone(),
         first_refresh[1].clone(),
@@ -1148,7 +1148,7 @@ fn cockpit_json_watch_streams_each_refreshed_frame_to_writer() {
     );
     assert_eq!(
         second["tasks"]["tasks"][0]["live_status"]["summary"],
-        "agent running"
+        "waiting for input"
     );
 }
 
