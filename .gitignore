@@ -9,3 +9,4 @@ __pycache__/
 # Playwright (web:smoke) run artifacts
 test-results/
 playwright-report/
+crates/ajax-web/web/e2e/artifacts/

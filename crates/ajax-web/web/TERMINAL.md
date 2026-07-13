@@ -9,7 +9,7 @@
 | Concern | Owner |
 | --- | --- |
 | Keyboard / visualViewport / --app-* | viewport.ts |
-| Fit / font / pan math | terminalGeometry.ts |
+| Fit / font / pan / scale math | terminalGeometry.ts |
 | Refit scheduling | terminalRefit.ts (when to fit/send; not permission) |
 | Layout fit/resize permission | terminalLayoutPolicy.ts |
 | Paste/copy UI state (fallback/overlay/notice) | terminalClipboard.ts |

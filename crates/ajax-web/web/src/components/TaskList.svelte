@@ -82,6 +82,11 @@
 
   let inboxHandles = $derived(new Set(inboxItems.map((entry) => entry.card.qualified_handle)));
 
+  // Sticky within-status order: cockpit polls every ~1s and activity timestamps
+  // leapfrog, which used to reshuffle rows under the finger. Remember the last
+  // visible order and pass it into sortCards so same-status ties stay put.
+  let stableOrder = $state<string[]>([]);
+
   // Calm list: visible cards not already in the inbox, grouped by repo.
   let groups = $derived(
     (() => {
@@ -95,9 +100,17 @@
       }
       return [...byRepo.keys()]
         .sort()
-        .map((repo) => ({ repo, cards: sortCards(byRepo.get(repo)!) }));
+        .map((repo) => ({ repo, cards: sortCards(byRepo.get(repo)!, stableOrder) }));
     })(),
   );
+
+  $effect(() => {
+    const next = groups.flatMap((group) => group.cards.map((card) => card.qualified_handle));
+    if (next.length === stableOrder.length && next.every((handle, i) => handle === stableOrder[i])) {
+      return;
+    }
+    stableOrder = next;
+  });
 
   let calmCount = $derived(groups.reduce((sum, group) => sum + group.cards.length, 0));
   let showRepoTitles = $derived(!selectedProject && groups.length > 1);

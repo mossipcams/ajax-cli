@@ -1009,7 +1009,7 @@ describe("TerminalRawView", () => {
     vi.advanceTimersByTime(100);
 
     expect(resizeFrames()).toHaveLength(1);
-    expect(resizeFrames()[0]).toEqual({ type: "resize", cols: 72, rows: 20 });
+    expect(resizeFrames()[0]).toEqual({ type: "resize", cols: 80, rows: 20 });
     vi.useRealTimers();
   });
 
@@ -1045,18 +1045,19 @@ describe("TerminalRawView", () => {
     );
   });
 
-  it("uses a fit proposal below 80 columns", async () => {
-    proposedDimensions = { cols: 55, rows: 30 };
+  it("uses agent-sized floor of 80 columns on a narrow host", async () => {
+    terminalHostClientWidth = 390;
+    proposedDimensions = { cols: 43, rows: 30 };
     const { socket } = await mountTerminal();
 
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(55, 30);
-      expect(socket?.send).toHaveBeenCalledWith(
-        JSON.stringify({ type: "resize", cols: 55, rows: 30 }),
-      );
+      const [cols] = resize.mock.calls.at(-1) ?? [];
+      expect(cols).toBeGreaterThanOrEqual(80);
+      expect(lastTerminal?.element.style.transform).toMatch(/scale\(/);
     });
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 30 });
   });
 
   it("keeps a wide fit proposal above the column floor untouched", async () => {
@@ -1597,7 +1598,7 @@ describe("TerminalRawView", () => {
     // Two animation frames, far below the 300ms debounce window.
     vi.advanceTimersByTime(50);
 
-    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 55, rows: 60 });
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
     vi.useRealTimers();
   });
 
@@ -1615,8 +1616,8 @@ describe("TerminalRawView", () => {
     await settleFrames();
     await settleFrames();
 
-    await waitFor(() => expect(resize).toHaveBeenCalledWith(55, 60));
-    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 55, rows: 60 });
+    await waitFor(() => expect(resize).toHaveBeenCalledWith(80, 60));
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 60 });
     document.documentElement.classList.remove("keyboard-open");
   });
 
@@ -1658,7 +1659,7 @@ describe("TerminalRawView", () => {
     socket!.send.mockClear();
     vi.advanceTimersByTime(300);
 
-    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 55, rows: 90 });
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 90 });
     vi.useRealTimers();
   });
 
@@ -1860,9 +1861,8 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("caps a pinch spread at the size where the column floor still fits", async () => {
-    // 100 columns fit at 13px, so 40 columns fit up to the max: a pinch that
-    // asks for more stops there instead of pushing text off-screen.
+  it("caps a pinch spread at the size where the 80-column floor still fits", async () => {
+    // 100 columns fit at 13px, so 80 columns fit up to floor(13 * 100 / 80) = 16.
     proposedDimensions = { cols: 100, rows: 30 };
     const { host } = await mountTerminal();
 
@@ -1879,8 +1879,8 @@ describe("TerminalRawView", () => {
       ]),
     );
 
-    expect(liveOptions?.fontSize).toBe(20);
-    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("20");
+    expect(liveOptions?.fontSize).toBe(16);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("16");
   });
 
   it("grows the font on a pinch spread, clamps it, and persists the choice", async () => {
@@ -1928,7 +1928,7 @@ describe("TerminalRawView", () => {
     expect(scrollLines).not.toHaveBeenCalled();
   });
 
-  it("fits columns to the full host width", async () => {
+  it("fits columns to the full host width with agent-sized floor", async () => {
     terminalHostClientWidth = 384;
     proposedDimensions = { cols: 46, rows: 30 };
     const { socket } = await mountTerminal();
@@ -1936,7 +1936,7 @@ describe("TerminalRawView", () => {
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(48, 30);
+      expect(resize).toHaveBeenCalledWith(80, 30);
     });
   });
 
@@ -2236,27 +2236,27 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("resizes the PTY to the fitted columns below 80 in fit mode", async () => {
+  it("resizes the PTY to agent-sized 80 columns in fit mode", async () => {
     proposedDimensions = { cols: 48, rows: 30 };
     const { socket } = await mountTerminal();
 
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(48, 30);
+      expect(resize).toHaveBeenCalledWith(80, 30);
       expect(liveOptions?.fontSize).toBe(13);
-      expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 48, rows: 30 });
+      expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 30 });
     });
   });
 
-  it("floors fit mode at 40 columns", async () => {
+  it("floors fit mode at 80 columns", async () => {
     proposedDimensions = { cols: 12, rows: 30 };
     const { socket } = await mountTerminal();
 
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(40, 30);
+      expect(resize).toHaveBeenCalledWith(80, 30);
     });
   });
 
@@ -2274,8 +2274,8 @@ describe("TerminalRawView", () => {
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(55, 30);
-      expect(resize).not.toHaveBeenCalledWith(80, 30);
+      expect(resize).toHaveBeenCalledWith(80, 30);
+      expect(resize).not.toHaveBeenCalledWith(55, 30);
     });
   });
 

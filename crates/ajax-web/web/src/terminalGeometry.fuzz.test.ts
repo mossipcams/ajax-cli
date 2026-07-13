@@ -4,6 +4,8 @@ import {
   MIN_FONT_SIZE,
   MAX_FONT_SIZE,
   flooredCols,
+  logicalCols,
+  fitScale,
   clampPan,
   fitCapFontSize,
   pinchActivated,
@@ -507,6 +509,25 @@ describe("terminalGeometry fuzz invariants", () => {
       expect(floored).toBeGreaterThanOrEqual(minCols);
       if (!Number.isFinite(cols) || cols <= 0) {
         expect(floored).toBe(minCols);
+      }
+
+      const logical = logicalCols(cols);
+      expect(logical).toBe(flooredCols(cols, MIN_TERMINAL_COLS));
+
+      const hostWidth = pick(rng);
+      const cellWidth = pick(rng);
+      const scale = fitScale(hostWidth, logical, cellWidth);
+      expect(Number.isFinite(scale)).toBe(true);
+      expect(scale).toBeGreaterThan(0);
+      expect(scale).toBeLessThanOrEqual(1);
+      if (
+        !Number.isFinite(hostWidth) ||
+        hostWidth <= 0 ||
+        logical <= 0 ||
+        !Number.isFinite(cellWidth) ||
+        cellWidth <= 0
+      ) {
+        expect(scale).toBe(1);
       }
 
       const pan = pick(rng);
