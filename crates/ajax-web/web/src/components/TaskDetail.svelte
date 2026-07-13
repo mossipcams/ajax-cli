@@ -4,7 +4,6 @@
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
-  import TerminalRawView from "./TerminalRawView.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -66,7 +65,9 @@
   </section>
 
   <div class="terminal-primary" data-mobile-primary="terminal">
-    <TerminalRawView handle={detail.qualified_handle} />
+    {#await import("./TerminalRawView.svelte") then { default: TerminalRawView }}
+      <TerminalRawView handle={detail.qualified_handle} />
+    {/await}
   </div>
 
   <details class="meta-details" bind:open={metaOpen}>

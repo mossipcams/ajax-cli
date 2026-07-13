@@ -54,7 +54,8 @@ function copyGhosttyWasm() {
 
 // The Rust asset adapter embeds and fingerprints the built files by exact
 // name, so the build must emit deterministic, non-hashed output:
-//   dist/index.html, dist/app.js, dist/app.css, dist/ghostty-vt.wasm
+//   dist/index.html, dist/app.js, dist/terminal.js, dist/app.css,
+//   dist/ghostty-vt.wasm
 // Do not enable content hashing here without updating adapters/assets.rs.
 export default defineConfig({
   root,
@@ -65,14 +66,21 @@ export default defineConfig({
     emptyOutDir: true,
     // No hashing: filenames are part of the Rust embed contract.
     assetsInlineLimit: 0,
+    cssCodeSplit: false,
     rollupOptions: {
       input: join(root, "app.html"),
       output: {
-        inlineDynamicImports: true,
         entryFileNames: "app.js",
-        // Dynamic imports are forbidden: splitting would produce app2.js etc.
-        // which the Rust embed contract does not account for (see assets.rs).
-        chunkFileNames: "app.js",
+        chunkFileNames: "terminal.js",
+        experimentalMinChunkSize: 1000,
+        onlyExplicitManualChunks: true,
+        manualChunks(id) {
+          if (
+            id.includes("/node_modules/ghostty-web/") ||
+            id.includes("/components/TerminalRawView.svelte") ||
+            id.includes("/web/src/terminal")
+          ) return "terminal";
+        },
         assetFileNames: (asset) => {
           const name = asset.names?.[0] ?? "";
           if (name.endsWith(".css")) return "app.css";
