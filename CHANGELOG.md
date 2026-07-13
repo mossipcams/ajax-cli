@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.2...ajax-cli-v0.40.0) (2026-07-13)
+
+
+### Features
+
+* **web:** retire ajax-cli feature lattice and collapse duplicated guards ([#435](https://github.com/mossipcams/ajax-cli/issues/435)) ([e09e0a6](https://github.com/mossipcams/ajax-cli/commit/e09e0a6424c9a1926a5a3d688f4329bbb980bdf6))
+
+
+### Performance Improvements
+
+* **web:** defer terminal bundle and skip Git probe on browser resume ([#437](https://github.com/mossipcams/ajax-cli/issues/437)) ([83bedbe](https://github.com/mossipcams/ajax-cli/commit/83bedbe95e5b7fbff0fb853fe768a67c3c8d2c95))
+
 ## [0.39.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.1...ajax-cli-v0.39.2) (2026-07-11)
 
 
