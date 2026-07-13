@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.2...ajax-cli-v0.40.3) (2026-07-13)
+
+
+### Bug Fixes
+
+* **web:** scale terminal on inner layer so expand stays tappable ([#442](https://github.com/mossipcams/ajax-cli/issues/442)) ([494156c](https://github.com/mossipcams/ajax-cli/commit/494156c9cea5e09c1104d8467ee88a06d74487b9))
+
 ## [0.40.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.1...ajax-cli-v0.40.2) (2026-07-13)
 
 
