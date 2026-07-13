@@ -155,10 +155,7 @@ fn execute_task_command<R: Registry>(
     kind: TaskCommandKind,
     task_handle: &str,
 ) -> Result<OperateOutcome, OperateError> {
-    if matches!(
-        kind,
-        TaskCommandKind::Resume | TaskCommandKind::Review | TaskCommandKind::Repair
-    ) {
+    if matches!(kind, TaskCommandKind::Review | TaskCommandKind::Repair) {
         let _ = commands::refresh_git_substrate_evidence(context, runner);
     }
 
@@ -369,7 +366,7 @@ mod tests {
         adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{LifecycleStatus, LiveObservation, LiveStatusKind, TmuxStatus},
+        models::{GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, TaskId, TmuxStatus},
         registry::{InMemoryRegistry, Registry as _},
     };
 
@@ -382,6 +379,23 @@ mod tests {
     #[test]
     fn operate_slice_delegates_resume_to_core_operation_without_attach() {
         let mut context = context_with_reviewable_task();
+        context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap()
+            .git_status = Some(GitStatus {
+            worktree_exists: true,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
         let mut runner = RecordingCommandRunner::default();
         let outcome = operate(
             &mut context,
@@ -394,6 +408,10 @@ mod tests {
         .unwrap();
 
         assert!(outcome.state_changed);
+        assert!(
+            runner.commands().is_empty(),
+            "browser resume should acknowledge the open without probing Git"
+        );
         assert!(
             !runner
                 .commands()

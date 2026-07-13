@@ -87,6 +87,9 @@ test("task detail Copy buttons copy branch and worktree path", async ({ page }) 
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator("[data-testid='task-terminal-panel']")).toBeVisible({
+    timeout: 10_000,
+  });
 
   await page.locator(".meta-details summary").click();
   const copyButtons = page.locator(".meta-copy");

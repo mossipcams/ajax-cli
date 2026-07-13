@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Build-layout check. Runs the production build and asserts the
 // emitted shell is deterministic and serving-compatible:
-//   - dist/index.html, dist/app.js, dist/app.css, dist/ghostty-vt.wasm all exist
+//   - shell, terminal chunk, stylesheet, and Ghostty WASM all exist
 //   - the HTML keeps the __AJAX_APP_VERSION__ placeholder Rust replaces
 //   - exactly one local module script and one local stylesheet
 // Run via `npm run web:build:check`. Exits non-zero on any violation.
@@ -21,7 +21,7 @@ function check(condition, message) {
 
 execFileSync("npm", ["run", "web:build"], { cwd: repoRoot, stdio: "inherit" });
 
-for (const name of ["index.html", "app.js", "app.css"]) {
+for (const name of ["index.html", "app.js", "terminal.js", "app.css"]) {
   const assetPath = join(distDir, name);
   if (!existsSync(assetPath)) continue;
   const contents = readFileSync(assetPath, "utf8");
@@ -29,7 +29,7 @@ for (const name of ["index.html", "app.js", "app.css"]) {
   if (contents !== normalized) writeFileSync(assetPath, normalized);
 }
 
-for (const name of ["index.html", "app.js", "app.css", "ghostty-vt.wasm"]) {
+for (const name of ["index.html", "app.js", "terminal.js", "app.css", "ghostty-vt.wasm"]) {
   check(existsSync(join(distDir, name)), `missing dist/${name}`);
 }
 
@@ -37,9 +37,19 @@ const jsFiles = existsSync(distDir)
   ? readdirSync(distDir).filter((name) => name.endsWith(".js"))
   : [];
 check(
-  jsFiles.length === 1 && jsFiles[0] === "app.js",
-  `expected exactly dist/app.js as the only JS bundle, found ${jsFiles.join(", ") || "none"}`,
+  jsFiles.length === 2 && jsFiles.includes("app.js") && jsFiles.includes("terminal.js"),
+  `expected exactly dist/app.js and dist/terminal.js, found ${jsFiles.join(", ") || "none"}`,
 );
+
+if (existsSync(join(distDir, "app.js")) && existsSync(join(distDir, "terminal.js"))) {
+  const app = readFileSync(join(distDir, "app.js"), "utf8");
+  const terminal = readFileSync(join(distDir, "terminal.js"), "utf8");
+  check(!app.includes("/ghostty-vt.wasm"), "dist/app.js still contains the Ghostty terminal runtime");
+  check(!app.includes('from"./terminal.js"'), "dist/app.js statically imports the terminal chunk");
+  check(app.includes('import("./terminal.js")'), "dist/app.js is missing the lazy terminal import");
+  check(terminal.includes("/ghostty-vt.wasm"), "dist/terminal.js is missing the Ghostty WASM path");
+  check(app.length < terminal.length, "dist/app.js should be smaller than the deferred terminal chunk");
+}
 
 if (existsSync(join(distDir, "ghostty-vt.wasm"))) {
   check(
@@ -61,6 +71,10 @@ if (existsSync(join(distDir, "index.html"))) {
   check(
     !html.includes('rel="apple-touch-icon"'),
     "built index.html should not advertise Home Screen icons",
+  );
+  check(
+    !html.includes('href="/terminal.js"'),
+    "built index.html should not preload the deferred terminal chunk",
   );
   const scripts = html.match(/<script[^>]*(?<![a-z-])src=/g) ?? [];
   check(scripts.length === 1, `expected one local script, found ${scripts.length}`);

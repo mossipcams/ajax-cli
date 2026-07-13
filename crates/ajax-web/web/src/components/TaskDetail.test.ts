@@ -117,9 +117,9 @@ describe("TaskDetail", () => {
     expect(getByText("Review")).toBeInTheDocument();
   });
 
-  it("renders the task terminal panel for the qualified handle", () => {
-    const { getByTestId } = render(TaskDetail, { props: { detail: detail() } });
-    expect(getByTestId("task-terminal-panel")).toBeInTheDocument();
+  it("renders the task terminal panel for the qualified handle", async () => {
+    const { findByTestId } = render(TaskDetail, { props: { detail: detail() } });
+    expect(await findByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
   it("exposes mobile terminal-first layout hooks", () => {
