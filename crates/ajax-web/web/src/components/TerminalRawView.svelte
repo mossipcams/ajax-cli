@@ -1152,7 +1152,6 @@
     display: flex;
     flex-direction: column;
     flex: 1 1 auto;
-    min-height: 0;
     min-width: 0;
     max-width: 100%;
     margin-top: 16px;
