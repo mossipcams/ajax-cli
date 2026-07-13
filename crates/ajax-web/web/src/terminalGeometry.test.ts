@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   flooredCols,
   logicalCols,
+  scaledLogicalRows,
   fitScale,
   clampPan,
   pinchFontSize,
@@ -92,6 +93,15 @@ describe("logicalCols", () => {
     expect(logicalCols(undefined)).toBe(80);
     expect(logicalCols(Number.NaN)).toBe(80);
     expect(logicalCols(0)).toBe(80);
+  });
+});
+
+describe("scaledLogicalRows", () => {
+  it("raises host-fit rows when scale is below 1", () => {
+    expect(scaledLogicalRows(30, 0.609375)).toBe(50);
+    expect(scaledLogicalRows(30, 1)).toBe(30);
+    expect(scaledLogicalRows(30, 0)).toBe(30);
+    expect(scaledLogicalRows(undefined, 0.5)).toBe(24);
   });
 });
 

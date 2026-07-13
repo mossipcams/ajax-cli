@@ -1,6 +1,7 @@
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
+    models::OperatorAction,
     registry::InMemoryRegistry,
     runtime_refresh::RefreshTier,
 };
@@ -242,7 +243,18 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
     ) -> Result<OperateOutcome, ActionFailure> {
-        self.persist_operate(operate(context, runner, request), context)
+        let authorize_empty = request.action == OperatorAction::Drop.as_str();
+        let result = operate(context, runner, request);
+        if authorize_empty
+            && match &result {
+                Ok(outcome) => outcome.state_changed,
+                Err(OperateError::Command(_, true)) => true,
+                _ => false,
+            }
+        {
+            self.save_state.allow_empty_registry_once();
+        }
+        self.persist_operate(result, context)
     }
 
     fn execute_start_task(
@@ -804,6 +816,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    #[test]
+    fn web_bridge_drop_of_last_task_persists_empty_registry() {
+        let dir = scratch_dir("drop-empty-registry");
+        let paths = super::CliContextPaths::new(dir.join("config.toml"), dir.join("state.db"));
+        let context = reviewable_context();
+        SqliteRegistryStore::new(&paths.state_file)
+            .save(&context.registry)
+            .unwrap();
+        let mut context = context;
+        let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
+        let mut runner = AbsentDropRunner;
+
+        let outcome = bridge
+            .execute_operate(
+                super::OperateRequest {
+                    task_handle: "web/fix-login".to_string(),
+                    action: "drop".to_string(),
+                },
+                &mut context,
+                &mut runner,
+            )
+            .expect("drop of the sole task should succeed");
+
+        assert!(outcome.state_changed);
+        assert!(context.registry.list_tasks().is_empty());
+
+        let reloaded = crate::context::load_context(&paths).expect("reload after drop");
+        assert!(
+            reloaded.registry.list_tasks().is_empty(),
+            "empty registry should be persisted after dropping the last task"
+        );
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     fn scratch_dir(tag: &str) -> std::path::PathBuf {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -877,6 +924,39 @@ mod tests {
                     "main\najax/fix-login\n"
                 }
                 _ => "diff stat",
+            };
+
+            Ok(CommandOutput {
+                status_code: 0,
+                stdout: stdout.to_string(),
+                stderr: String::new(),
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct AbsentDropRunner;
+
+    impl CommandRunner for AbsentDropRunner {
+        fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+            let stdout = match command.args.as_slice() {
+                [command, ..] if command == "list-sessions" => "",
+                [_, repo, subcommand, action, flag]
+                    if repo == "/repo/web"
+                        && subcommand == "worktree"
+                        && action == "list"
+                        && flag == "--porcelain" =>
+                {
+                    "worktree /repo/web\nHEAD 1111111\nbranch refs/heads/main\n\n"
+                }
+                [_, repo, subcommand, format]
+                    if repo == "/repo/web"
+                        && subcommand == "branch"
+                        && format == "--format=%(refname:short)" =>
+                {
+                    "main\n"
+                }
+                _ => "",
             };
 
             Ok(CommandOutput {

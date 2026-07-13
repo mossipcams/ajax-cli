@@ -13,7 +13,7 @@
   import { copyText } from "../diagnostics";
   import {
     logicalCols,
-    logicalRows,
+    scaledLogicalRows,
     fitScale,
     clampPan,
     fitCapFontSize,
@@ -695,7 +695,18 @@
       }
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
         const cols = logicalCols(fitProposal);
-        const rows = logicalRows(proposed.rows);
+        const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
+        const hostWidth = container?.clientWidth;
+        const scale =
+          cellWidth &&
+          Number.isFinite(cellWidth) &&
+          cellWidth > 0 &&
+          hostWidth !== undefined &&
+          Number.isFinite(hostWidth) &&
+          hostWidth > 0
+            ? fitScale(hostWidth, cols, cellWidth)
+            : 1;
+        const rows = scaledLogicalRows(proposed.rows, scale);
         term.resize(cols, rows);
         applyTerminalScale();
       } else {
@@ -1374,6 +1385,8 @@
     position: absolute;
     left: 0;
     top: 0;
+    width: 100%;
+    height: 100%;
     transform-origin: 0 0;
   }
 

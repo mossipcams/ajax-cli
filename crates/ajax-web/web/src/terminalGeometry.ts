@@ -135,6 +135,21 @@ export function logicalRows(proposedRows: number | undefined): number {
 }
 
 /**
+ * Raise logical rows when CSS scale shrinks the canvas below the host height.
+ * Invalid or unity scale leaves rows unchanged.
+ */
+export function scaledLogicalRows(proposedRows: number | undefined, scale: number): number {
+  if (proposedRows === undefined || !Number.isFinite(proposedRows) || proposedRows <= 0) {
+    return logicalRows(proposedRows);
+  }
+  const rows = logicalRows(proposedRows);
+  if (!Number.isFinite(scale) || scale <= 0 || scale >= 1) {
+    return rows;
+  }
+  return Math.max(1, Math.ceil(rows / scale));
+}
+
+/**
  * Clamp a horizontal pan offset to the scrollable range
  * `[0, max(0, contentPx - viewportPx)]`. Non-finite inputs return 0 so a
  * bad measurement can never fling the canvas off-screen.
