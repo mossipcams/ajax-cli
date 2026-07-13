@@ -72,14 +72,17 @@ vi.mock("ghostty-web", () => ({
       },
     };
     loadAddon = vi.fn();
-    open = vi.fn((container: HTMLElement) => {
+    open = vi.fn((parent: HTMLElement) => {
+      // Match ghostty-web: open() assigns this.element = parent.
+      this.element = parent;
+      const host = parent.closest(".terminal-host") ?? parent;
       if (terminalHostClientWidth !== undefined) {
-        Object.defineProperty(container, "clientWidth", {
+        Object.defineProperty(host, "clientWidth", {
           value: terminalHostClientWidth,
           configurable: true,
         });
       }
-      container.appendChild(document.createElement("canvas"));
+      parent.appendChild(document.createElement("canvas"));
     });
     // Mimics ghostty-web 0.4.0's writeInternal, which force-scrolls to the
     // bottom on every write while the viewport is away from it
