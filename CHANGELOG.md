@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.0...ajax-cli-v0.40.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **web:** stabilize Waiting/Running status and notify once per episode ([#438](https://github.com/mossipcams/ajax-cli/issues/438)) ([94dca90](https://github.com/mossipcams/ajax-cli/commit/94dca909f0e9ae21d437dc6171730fdde719d911))
+
 ## [0.40.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.39.2...ajax-cli-v0.40.0) (2026-07-13)
 
 
