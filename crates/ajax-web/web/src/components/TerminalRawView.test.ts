@@ -6,6 +6,7 @@ import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 import terminalClipboardSource from "../terminalClipboard.ts?raw";
+import { fitScale, scaledLogicalRows } from "../terminalGeometry";
 
 const write = vi.fn();
 const scrollToBottom = vi.fn();
@@ -1060,7 +1061,9 @@ describe("TerminalRawView", () => {
       expect(cols).toBeGreaterThanOrEqual(80);
       expect(lastTerminal?.element.style.transform).toMatch(/scale\(/);
     });
-    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 30 });
+    const expectedRows = scaledLogicalRows(30, fitScale(390, 80, 8));
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: expectedRows });
+    expect(expectedRows).toBe(50);
   });
 
   it("keeps a wide fit proposal above the column floor untouched", async () => {
@@ -1939,7 +1942,8 @@ describe("TerminalRawView", () => {
     socket?.emit("open");
 
     await waitFor(() => {
-      expect(resize).toHaveBeenCalledWith(80, 30);
+      const expectedRows = scaledLogicalRows(30, fitScale(384, 80, 8));
+      expect(resize).toHaveBeenCalledWith(80, expectedRows);
     });
   });
 
