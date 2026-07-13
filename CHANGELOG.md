@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.1...ajax-cli-v0.40.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* **web:** scale phone terminal to agent width and stabilize task order ([#440](https://github.com/mossipcams/ajax-cli/issues/440)) ([137c4b7](https://github.com/mossipcams/ajax-cli/commit/137c4b76d331071ed4b6686400e41266de0a0422))
+
 ## [0.40.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.0...ajax-cli-v0.40.1) (2026-07-13)
 
 
