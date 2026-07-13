@@ -694,13 +694,11 @@ from `github:rcarmo/ghostty-web#v0.9.4` (fork of coder's unmaintained npm
 task-terminal WebSocket lifecycle and reconnect behavior, and
 `terminalGestures.ts`, `terminalGeometry.ts`, and `terminalRefit.ts` keep mobile
 scrolling, panning, fit-to-width font sizing, keyboard-safe fitting, and refit
-scheduling local to the browser shell. The default fit geometry sizes the PTY
-to the visible width with a 40-column safety floor, so phone-width viewports
-get a readable grid with no horizontal panning; a persisted "Wide" key-bar
-toggle restores the 80-column floor, where the font auto-shrinks (to a readable
-minimum) and horizontal pan covers sub-minimum overflow. Pinch-zoom adjusts
-font size within that same bound in wide mode. These frontend modules do not
-own task truth or tmux target selection.
+scheduling local to the browser shell. The default fit geometry keeps the PTY at least 80 columns and CSS-scales the
+terminal element to the host width on phone viewports, so live and scrollback
+share an agent-sized layout without mid-token soft wrap. Pinch-zoom adjusts
+font size within readable bounds. These frontend modules do not own task truth
+or tmux target selection.
 Frontend ownership rules for these modules are in `crates/ajax-web/web/TERMINAL.md`.
 Layout fit/resize permission (keyboard freeze, pinch/expand exemptions) lives in
 `terminalLayoutPolicy.ts`; refit scheduling remains in `terminalRefit.ts`.

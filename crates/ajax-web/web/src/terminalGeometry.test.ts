@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   flooredCols,
+  logicalCols,
+  fitScale,
   clampPan,
   pinchFontSize,
   pinchActivated,
@@ -74,6 +76,38 @@ describe("flooredCols", () => {
     expect(flooredCols(Number.NaN, 80)).toBe(80);
     expect(flooredCols(0, 80)).toBe(80);
     expect(flooredCols(-3, 80)).toBe(80);
+  });
+});
+
+describe("logicalCols", () => {
+  it("floors phone hostFit up to MIN_TERMINAL_COLS", () => {
+    expect(logicalCols(43)).toBe(80);
+  });
+
+  it("keeps a wide hostFit proposal untouched", () => {
+    expect(logicalCols(120)).toBe(120);
+  });
+
+  it("falls back to MIN_TERMINAL_COLS when hostFit is absent or invalid", () => {
+    expect(logicalCols(undefined)).toBe(80);
+    expect(logicalCols(Number.NaN)).toBe(80);
+    expect(logicalCols(0)).toBe(80);
+  });
+});
+
+describe("fitScale", () => {
+  it("is below 1 when logical canvas is wider than host", () => {
+    expect(fitScale(390, 80, 9)).toBeLessThan(1);
+  });
+
+  it("is 1 when the logical canvas fits the host", () => {
+    expect(fitScale(1200, 80, 9)).toBe(1);
+  });
+
+  it("returns 1 for invalid measurements", () => {
+    expect(fitScale(0, 80, 9)).toBe(1);
+    expect(fitScale(390, 0, 9)).toBe(1);
+    expect(fitScale(390, 80, 0)).toBe(1);
   });
 });
 

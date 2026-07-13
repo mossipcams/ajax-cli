@@ -55,6 +55,31 @@ describe("status ordering (presentation only)", () => {
       "web/a",
     ]);
   });
+
+  it("keeps same-status order stable across activity leapfrogs when previous order is supplied", () => {
+    const first = { ...card("web/a", "running"), last_activity_unix_secs: 100 };
+    const second = { ...card("web/b", "running"), last_activity_unix_secs: 200 };
+    const initial = sortCards([first, second]).map((c) => c.qualified_handle);
+    expect(initial).toEqual(["web/b", "web/a"]);
+
+    // Poll refresh: a becomes newer than b — without sticky order the rows swap
+    // every second and taps miss. Previous order must win within the status.
+    const leapfrogA = { ...card("web/a", "running"), last_activity_unix_secs: 900 };
+    const leapfrogB = { ...card("web/b", "running"), last_activity_unix_secs: 300 };
+    expect(
+      sortCards([leapfrogA, leapfrogB], initial).map((c) => c.qualified_handle),
+    ).toEqual(["web/b", "web/a"]);
+  });
+
+  it("still promotes a card when its status rank changes despite previous order", () => {
+    const prev = ["web/a", "web/b"];
+    const idle = { ...card("web/a", "idle"), last_activity_unix_secs: 900 };
+    const running = { ...card("web/b", "running"), last_activity_unix_secs: 100 };
+    expect(sortCards([idle, running], prev).map((c) => c.qualified_handle)).toEqual([
+      "web/b",
+      "web/a",
+    ]);
+  });
 });
 
 describe("filterByProject", () => {

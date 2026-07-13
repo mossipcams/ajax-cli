@@ -50,15 +50,30 @@ export function filterByProject(
   return cards.filter((card) => card.repo === project);
 }
 
-export function sortCards(cards: BrowserTaskCard[]): BrowserTaskCard[] {
+export function sortCards(
+  cards: BrowserTaskCard[],
+  previousOrder: readonly string[] = [],
+): BrowserTaskCard[] {
+  const prevIndex = new Map(previousOrder.map((handle, index) => [handle, index]));
   return cards
     .slice()
-    .sort(
-      (a, b) =>
-        statusRank(a.status) - statusRank(b.status) ||
+    .sort((a, b) => {
+      const byStatus = statusRank(a.status) - statusRank(b.status);
+      if (byStatus !== 0) return byStatus;
+
+      const aPrev = prevIndex.get(a.qualified_handle);
+      const bPrev = prevIndex.get(b.qualified_handle);
+      if (aPrev !== undefined && bPrev !== undefined && aPrev !== bPrev) {
+        return aPrev - bPrev;
+      }
+      if (aPrev !== undefined && bPrev === undefined) return -1;
+      if (aPrev === undefined && bPrev !== undefined) return 1;
+
+      return (
         (b.last_activity_unix_secs ?? 0) - (a.last_activity_unix_secs ?? 0) ||
-        a.qualified_handle.localeCompare(b.qualified_handle),
-    );
+        a.qualified_handle.localeCompare(b.qualified_handle)
+      );
+    });
 }
 
 export function isConfirmExpired(entry: { expiresAt: number }, now: number): boolean {

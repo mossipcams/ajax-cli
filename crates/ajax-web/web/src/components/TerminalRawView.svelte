@@ -12,7 +12,9 @@
   import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalGestures";
   import { copyText } from "../diagnostics";
   import {
-    flooredCols,
+    logicalCols,
+    logicalRows,
+    fitScale,
     clampPan,
     fitCapFontSize,
     persistedFontSize,
@@ -20,7 +22,7 @@
     terminalScrollbackLines,
     DEFAULT_FONT_SIZE,
     MAX_FONT_SIZE,
-    FIT_TERMINAL_COLS,
+    MIN_TERMINAL_COLS,
   } from "../terminalGeometry";
   import {
     scrollbackGrowthCompensation,
@@ -324,7 +326,9 @@
       const viewport = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])") ?? container;
       const height = viewport?.clientHeight ?? 0;
       // jsdom and pre-layout paints report 0; fall back to a sane line height.
-      return height > 0 && term && term.rows > 0 ? height / term.rows : 18;
+      const base =
+        height > 0 && term && term.rows > 0 ? height / term.rows : 18;
+      return base * terminalFitScale;
     };
 
     // The operator's font size — persisted pinch choice or the default. The
@@ -332,7 +336,10 @@
     // width, and climbs back toward this choice when the viewport widens again.
     let chosenFontSize = persistedFontSize() ?? DEFAULT_FONT_SIZE;
 
-    const colsFloor = () => FIT_TERMINAL_COLS;
+    // CSS scale applied to term.element after fit; 1 on wide hosts.
+    let terminalFitScale = 1;
+
+    const colsFloor = () => MIN_TERMINAL_COLS;
 
     const cssPx = (style: CSSStyleDeclaration, property: string): number => {
       const value = Number.parseFloat(style.getPropertyValue(property));
@@ -372,13 +379,57 @@
       );
     };
 
-    const fitFontCap = (): number =>
-      hostWidthFitCap() ??
-      fitCapFontSize(
-        term?.options.fontSize ?? DEFAULT_FONT_SIZE,
-        fitAddon?.proposeDimensions()?.cols,
-        colsFloor(),
+    const fitFontCap = (): number => {
+      const hostFit = hostFitCols();
+      const proposed = fitAddon?.proposeDimensions()?.cols;
+      const fitProposal = hostFit ?? proposed;
+      if (
+        fitProposal !== undefined &&
+        logicalCols(fitProposal) > Math.floor(fitProposal)
+      ) {
+        return MAX_FONT_SIZE;
+      }
+      return (
+        hostWidthFitCap() ??
+        fitCapFontSize(
+          term?.options.fontSize ?? DEFAULT_FONT_SIZE,
+          fitAddon?.proposeDimensions()?.cols,
+          colsFloor(),
+        )
       );
+    };
+
+    const applyTerminalScale = () => {
+      if (!term || !container) return;
+      const element = term.element;
+      if (!element) return;
+      const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
+      const hostWidth = container.clientWidth;
+      const cols = term.cols;
+      if (
+        !Number.isFinite(hostWidth) ||
+        hostWidth <= 0 ||
+        !cellWidth ||
+        !Number.isFinite(cellWidth) ||
+        cellWidth <= 0 ||
+        !Number.isFinite(cols) ||
+        cols <= 0
+      ) {
+        terminalFitScale = 1;
+        element.style.transform = "";
+        element.style.transformOrigin = "";
+        return;
+      }
+      const scale = fitScale(hostWidth, cols, cellWidth);
+      terminalFitScale = scale;
+      if (scale < 1) {
+        element.style.transformOrigin = "0 0";
+        element.style.transform = `scale(${scale})`;
+      } else {
+        element.style.transform = "";
+        element.style.transformOrigin = "";
+      }
+    };
 
     // ghostty-web's FitAddon reserves 15px of width for the scrollbar Ajax
     // suppresses (see mountGhosttyTerminal), so its column proposal stops a
@@ -416,11 +467,12 @@
       const canvas = container?.querySelector<HTMLElement>("canvas:not([aria-hidden='true'])");
       if (!canvas || !term) return undefined;
       const rect = canvas.getBoundingClientRect();
+      const scale = terminalFitScale > 0 ? terminalFitScale : 1;
       return cellAtPoint(
-        clientX - rect.left,
-        clientY - rect.top,
-        rect.width,
-        rect.height,
+        (clientX - rect.left) / scale,
+        (clientY - rect.top) / scale,
+        rect.width / scale,
+        rect.height / scale,
         term.cols,
         term.rows,
       );
@@ -594,10 +646,8 @@
         });
     };
 
-    // Fit rows to the container. Fit mode sizes the PTY to the visible width
-    // with a 40-column safety floor so phones get a readable grid without
-    // horizontal panning. When the floor exceeds what fits, the font shrinks to
-    // keep every column on screen; only sub-minimum overflow can pan.
+    // Agent-sized fit: logical cols stay at least 80; CSS scale shrinks the
+    // canvas to the host width on phones so live and scrollback share layout.
     const clampHorizontalPan = () => {
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
@@ -605,21 +655,10 @@
     const fitNow = () => {
       const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
       if (decision.pinToBottomOnKeyboardOpen) {
-        // Opening the keyboard means the user is about to type: snap the view
-        // to the cursor/input row even if they were reading scrollback, and
-        // follow output from here on.
         scrollFollow.pin();
         syncScrollFollowUi();
       }
       if (!decision.allowLocalFit) {
-        // The server resize is withheld while the keyboard is open, so the
-        // local grid must not change either: a grid smaller than the PTY makes
-        // tmux cursor-address rows that no longer exist locally, and the renderer
-        // clamps those writes to its bottom row — the TUI input box drifts up
-        // and overwrites the line below it. Keep grid == PTY and crop the
-        // taller canvas bottom-anchored so the cursor/input row stays visible
-        // above the keyboard. Pinch/expand discrete intents are exempt — they
-        // refit the grid and resize the PTY in the same pass, so lockstep holds.
         if (decision.cropToBottom && container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
@@ -629,30 +668,37 @@
       if (!term || !fitAddon) return;
       if (container) container.scrollTop = 0;
       const proposed = fitAddon.proposeDimensions();
-      // Fit-to-width: the font tracks the operator's chosen size but shrinks
-      // as far as the readable minimum so the column floor fits the host —
-      // a narrow screen must not hide half of every line off the right edge
-      // (horizontal pan remains only for the sub-minimum overflow). Growth
-      // back (rotating to a wider viewport) is one step per pass and stops a
-      // pixel short of the cap: integer cell metrics make the cap jitter ±1
-      // between adjacent font sizes, and a margin-less grow would oscillate
-      // against the shrink rule.
       const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-      const cap = hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, colsFloor());
-      const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
-      const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
-      const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
-      if (nextFont !== currentFont) {
-        term.options.fontSize = nextFont;
-        // Renderer cell metrics settle after a size change; refit next frame
-        // so rows/cols and the server resize reflect the new font.
-        scheduleDebouncedRefit();
+      const fitProposal = hostFitCols() ?? proposed?.cols;
+      const usingScale =
+        fitProposal !== undefined &&
+        logicalCols(fitProposal) > Math.floor(fitProposal);
+      if (!usingScale) {
+        const cap =
+          hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, colsFloor());
+        const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
+        const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
+        const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
+        if (nextFont !== currentFont) {
+          term.options.fontSize = nextFont;
+          scheduleDebouncedRefit();
+        }
+      } else {
+        const grownFont = Math.min(chosenFontSize, currentFont + 1, MAX_FONT_SIZE);
+        const nextFont = Math.max(currentFont, grownFont);
+        if (nextFont !== currentFont) {
+          term.options.fontSize = nextFont;
+          scheduleDebouncedRefit();
+        }
       }
       if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
-        term.resize(flooredCols(hostFitCols() ?? proposed.cols, colsFloor()), proposed.rows);
+        const cols = logicalCols(fitProposal);
+        const rows = logicalRows(proposed.rows);
+        term.resize(cols, rows);
+        applyTerminalScale();
       } else {
-        // jsdom / pre-layout paints propose nothing; plain fit is the best guess.
         fitAddon.fit();
+        applyTerminalScale();
       }
       clampHorizontalPan();
       if (scrollFollow.isPinned()) snapScrollbackToBottom();
@@ -755,12 +801,15 @@
     const zeroLagPainter = createZeroLagOverlayPainter(() => container);
     const zeroLag = createZeroLagEcho({
       onChange: (text, style) => zeroLagPainter.paint(text, style),
-      measure: () =>
-        measureZeroLagFromTerminalHost({
+      measure: () => {
+        const measured = measureZeroLagFromTerminalHost({
           host: container,
           term,
           defaultFontSize: DEFAULT_FONT_SIZE,
-        }),
+        });
+        if (!measured || terminalFitScale >= 1) return measured;
+        return { ...measured, fitScale: terminalFitScale };
+      },
     });
 
     // Coalesce WS output chunks into one write + one follow/compensation pass
@@ -919,6 +968,34 @@
         }),
         term.onData(handleTerminalData),
       );
+      // E2E-only probe: fixtures set window.__ajaxTerminalProbeEnable before boot
+      // so Playwright can assert buffer integrity without canvas OCR.
+      const probeHost = window as Window & {
+        __ajaxTerminalProbeEnable?: boolean;
+        __ajaxTerminalProbe?: {
+          cols(): number;
+          rows(): number;
+          viewportY(): number;
+          lines(): string[];
+        };
+      };
+      if (probeHost.__ajaxTerminalProbeEnable) {
+        probeHost.__ajaxTerminalProbe = {
+          cols: () => term?.cols ?? 0,
+          rows: () => term?.rows ?? 0,
+          viewportY: () => term?.getViewportY() ?? 0,
+          lines: () => {
+            if (!term) return [];
+            const buf = term.buffer.active;
+            const out: string[] = [];
+            for (let i = 0; i < buf.length; i += 1) {
+              const line = buf.getLine?.(i)?.translateToString?.(true) ?? "";
+              out.push(line.replace(/\s+$/u, ""));
+            }
+            return out;
+          },
+        };
+      }
       flushPendingOutput();
       schedulePostLayoutRefit();
       requestAnimationFrame(() => term?.focus());
@@ -958,6 +1035,8 @@
       detachGestures();
       fitAddon?.dispose();
       term?.dispose();
+      const probeHost = window as Window & { __ajaxTerminalProbe?: unknown };
+      if (probeHost.__ajaxTerminalProbe) delete probeHost.__ajaxTerminalProbe;
     };
   });
 </script>

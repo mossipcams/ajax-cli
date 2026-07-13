@@ -8,6 +8,8 @@ export type ZeroLagCursorMetrics = {
   cellWidth?: number;
   cellHeight?: number;
   fontSize: number;
+  /** CSS scale on term.element when agent-sized fit shrinks the canvas. */
+  fitScale?: number;
 };
 
 export const ZERO_LAG_OVERLAY_CLASS = "terminal-zero-lag-input";
@@ -127,8 +129,8 @@ export function zeroLagOverlayStyle(m: ZeroLagCursorMetrics): string {
   ) {
     return "";
   }
-  const left = Math.max(0, m.cursorX) * cellWidth;
-  const top = Math.max(0, m.cursorY) * cellHeight;
+  const left = Math.max(0, m.cursorX) * cellWidth * (m.fitScale ?? 1);
+  const top = Math.max(0, m.cursorY) * cellHeight * (m.fitScale ?? 1);
   return `left: ${left}px; top: ${top}px; font-size: ${m.fontSize}px; line-height: ${cellHeight}px;`;
 }
 

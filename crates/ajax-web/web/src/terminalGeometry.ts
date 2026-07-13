@@ -2,17 +2,18 @@
  * Pure sizing math for the mobile terminal.
  *
  * On a phone the viewport fits far fewer than the ~80 columns the hosted
- * tmux/Claude Code TUI assumes. Fit geometry sizes the PTY to the visible width
- * with a 40-column safety floor so the grid stays readable without horizontal
- * panning. These helpers own the column floor, the fit-to-width font cap, the
- * horizontal pan clamp, and the pinch-distance → font-size mapping so the
+ * tmux/Claude Code TUI assumes. Agent-sized fit geometry keeps the PTY at
+ * least 80 columns and CSS-scales the terminal element to the host width so
+ * live and scrollback share the same layout without mid-token soft wrap.
+ * These helpers own the column floor, scale-to-fit, the fit-to-width font cap,
+ * the horizontal pan clamp, and the pinch-distance → font-size mapping so the
  * gesture wiring in TerminalRawView stays thin and the math stays unit-testable.
  */
 
 /** Fallback column floor for callers that pass an invalid minimum. */
 export const MIN_TERMINAL_COLS = 80;
 
-/** Safety floor for fit geometry mode (real phones fit 45+ cols in practice). */
+/** Legacy fit floor; prefer {@link logicalCols} with {@link MIN_TERMINAL_COLS}. */
 export const FIT_TERMINAL_COLS = 40;
 
 /** Pinch-zoom font bounds: below 7px text is unreadable, above 20px the
@@ -92,6 +93,45 @@ export function flooredCols(proposedCols: number | undefined, minCols: number): 
     return floor;
   }
   return Math.max(Math.floor(proposedCols), floor);
+}
+
+/**
+ * Agent-sized column count: raise a host-fit proposal to {@link MIN_TERMINAL_COLS}.
+ */
+export function logicalCols(hostFitCols: number | undefined): number {
+  return flooredCols(hostFitCols, MIN_TERMINAL_COLS);
+}
+
+/**
+ * CSS scale that fits a logical `cols * cellWidth` canvas into `hostWidthPx`.
+ * Returns 1 when the canvas already fits or measurements are invalid.
+ */
+export function fitScale(
+  hostWidthPx: number,
+  cols: number,
+  cellWidthPx: number,
+): number {
+  if (
+    !Number.isFinite(hostWidthPx) ||
+    hostWidthPx <= 0 ||
+    !Number.isFinite(cols) ||
+    cols <= 0 ||
+    !Number.isFinite(cellWidthPx) ||
+    cellWidthPx <= 0
+  ) {
+    return 1;
+  }
+  const logicalWidth = cols * cellWidthPx;
+  if (logicalWidth <= 0) return 1;
+  return Math.min(1, hostWidthPx / logicalWidth);
+}
+
+/** Whole-row count from a fit proposal; invalid proposals fall back to 24. */
+export function logicalRows(proposedRows: number | undefined): number {
+  if (proposedRows === undefined || !Number.isFinite(proposedRows) || proposedRows <= 0) {
+    return 24;
+  }
+  return Math.floor(proposedRows);
 }
 
 /**
