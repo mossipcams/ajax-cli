@@ -10,6 +10,8 @@ use crate::{
 /// busy→waiting observation. Persists with the registry like
 /// `attention::LAST_NOTIFIED_STATUS_KEY`.
 pub const WAITING_CANDIDATE_SINCE_KEY: &str = "waiting_candidate_since";
+/// Metadata key for an unconfirmed waiting→running observation (symmetric gate).
+pub const RUNNING_CANDIDATE_SINCE_KEY: &str = "running_candidate_since";
 // ponytail: fixed dwell; make configurable only if a real agent needs tuning.
 const WAITING_CONFIRMATION_DWELL: Duration = Duration::from_secs(4);
 
@@ -24,6 +26,9 @@ pub fn apply_observation_at(
 ) {
     let observation = reduce_task_live_observation(task, observation);
     if defers_unconfirmed_waiting(task, observation.kind, observed_at) {
+        return;
+    }
+    if defers_unconfirmed_running(task, observation.kind, observed_at) {
         return;
     }
     apply_reduced_observation(task, observation, observed_at);
@@ -41,19 +46,51 @@ fn defers_unconfirmed_waiting(
     if kind.class() != LiveStatusClass::Waiting || !shows_running_evidence(task) {
         return false;
     }
+    defer_class_candidate(
+        task,
+        WAITING_CANDIDATE_SINCE_KEY,
+        RUNNING_CANDIDATE_SINCE_KEY,
+        observed_at,
+    )
+}
+
+/// Running evidence on a waiting task must persist for the same dwell window
+/// before it is applied: brief busy chrome in scrollback must not clear
+/// NeedsInput or flip the operator status mid-wait.
+fn defers_unconfirmed_running(
+    task: &mut Task,
+    kind: LiveStatusKind,
+    observed_at: SystemTime,
+) -> bool {
+    if kind.class() != LiveStatusClass::Running || !shows_waiting_evidence(task) {
+        return false;
+    }
+    defer_class_candidate(
+        task,
+        RUNNING_CANDIDATE_SINCE_KEY,
+        WAITING_CANDIDATE_SINCE_KEY,
+        observed_at,
+    )
+}
+
+fn defer_class_candidate(
+    task: &mut Task,
+    candidate_key: &str,
+    opposite_key: &str,
+    observed_at: SystemTime,
+) -> bool {
     let observed_secs = unix_seconds(observed_at);
     let candidate_since = task
         .metadata
-        .get(WAITING_CANDIDATE_SINCE_KEY)
+        .get(candidate_key)
         .and_then(|value| value.parse::<u64>().ok());
     match candidate_since {
         Some(since) if observed_secs >= since + WAITING_CONFIRMATION_DWELL.as_secs() => false,
         Some(_) => true,
         None => {
-            task.metadata.insert(
-                WAITING_CANDIDATE_SINCE_KEY.to_string(),
-                observed_secs.to_string(),
-            );
+            task.metadata.remove(opposite_key);
+            task.metadata
+                .insert(candidate_key.to_string(), observed_secs.to_string());
             true
         }
     }
@@ -63,12 +100,41 @@ pub fn has_pending_waiting_candidate(task: &Task) -> bool {
     task.metadata.contains_key(WAITING_CANDIDATE_SINCE_KEY)
 }
 
+pub fn has_pending_running_candidate(task: &Task) -> bool {
+    task.metadata.contains_key(RUNNING_CANDIDATE_SINCE_KEY)
+}
+
+pub fn has_pending_live_class_candidate(task: &Task) -> bool {
+    has_pending_waiting_candidate(task) || has_pending_running_candidate(task)
+}
+
 fn shows_running_evidence(task: &Task) -> bool {
     task.live_status
         .as_ref()
         .is_some_and(|live| live.kind.class() == LiveStatusClass::Running)
         || task.agent_status == AgentRuntimeStatus::Running
         || task.has_side_flag(SideFlag::AgentRunning)
+}
+
+fn shows_waiting_evidence(task: &Task) -> bool {
+    // Error-class live status recovers to Running immediately (same as applying
+    // error evidence). Done likewise must not block a busy pane after stale
+    // completion. Only NeedsInput-style waiting is dwell-gated.
+    if task.live_status.as_ref().is_some_and(|live| {
+        matches!(
+            live.kind.class(),
+            LiveStatusClass::Error | LiveStatusClass::MissingSubstrate
+        ) || live.kind == LiveStatusKind::Done
+    }) {
+        return false;
+    }
+    task.live_status.as_ref().is_some_and(|live| {
+        matches!(
+            live.kind,
+            LiveStatusKind::WaitingForInput | LiveStatusKind::WaitingForApproval
+        )
+    }) || task.agent_status == AgentRuntimeStatus::Waiting
+        || task.has_side_flag(SideFlag::NeedsInput)
 }
 
 fn unix_seconds(at: SystemTime) -> u64 {
@@ -115,7 +181,10 @@ pub fn apply_trusted_observation_at(
 ///
 /// Records the acknowledgment time without erasing runtime evidence or changing
 /// lifecycle. Projection and refresh compare evidence time with this timestamp.
+/// Also silences the current notify episode so opening a task stops webhook
+/// re-fires until newer actionable evidence appears.
 pub fn acknowledge_attention(task: &mut Task, at: SystemTime) {
+    crate::attention::silence_notify_episode(task, at);
     task.record_attention_acknowledgment(at);
 }
 
@@ -124,9 +193,10 @@ fn apply_reduced_observation(
     observation: LiveObservation,
     observed_at: SystemTime,
 ) {
-    // Any applied observation resolves a pending waiting candidacy; a stale
+    // Any applied observation resolves pending class candidacy; a stale
     // candidate must never confirm a later, unrelated flap.
     task.metadata.remove(WAITING_CANDIDATE_SINCE_KEY);
+    task.metadata.remove(RUNNING_CANDIDATE_SINCE_KEY);
     let refresh_activity = refreshes_activity(observation.kind);
     let has_missing_substrate_flag = has_missing_substrate_flag(task);
     clear_recovered_live_flags(task, observation.kind);
@@ -623,6 +693,165 @@ mod tests {
         let status = crate::ui_state::derive_operator_status(&task);
 
         assert_eq!(status.status, crate::ui_state::TaskStatus::Waiting);
+    }
+
+    fn waiting_task_at(at: std::time::SystemTime) -> Task {
+        let mut task = active_task();
+        apply_observation_at(&mut task, waiting("waiting for input"), at);
+        task
+    }
+
+    fn running(summary: &str) -> LiveObservation {
+        LiveObservation::new(LiveStatusKind::AgentRunning, summary)
+    }
+
+    #[test]
+    fn waiting_task_defers_first_running_observation() {
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert_eq!(
+            task.metadata.get(super::RUNNING_CANDIDATE_SINCE_KEY),
+            Some(&"110".to_string())
+        );
+    }
+
+    #[test]
+    fn running_confirms_after_dwell() {
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+
+        apply_observation_at(
+            &mut task,
+            running("still working"),
+            UNIX_EPOCH + Duration::from_secs(115),
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Running);
+        assert!(!task.has_side_flag(SideFlag::NeedsInput));
+        assert!(!task
+            .metadata
+            .contains_key(super::RUNNING_CANDIDATE_SINCE_KEY));
+    }
+
+    #[test]
+    fn running_within_dwell_stays_deferred() {
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+
+        apply_observation_at(
+            &mut task,
+            running("still working"),
+            UNIX_EPOCH + Duration::from_secs(111),
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(
+            task.metadata.get(super::RUNNING_CANDIDATE_SINCE_KEY),
+            Some(&"110".to_string())
+        );
+    }
+
+    #[test]
+    fn waiting_observation_clears_pending_running_candidate() {
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+        assert!(super::has_pending_running_candidate(&task));
+
+        apply_observation_at(
+            &mut task,
+            waiting("still waiting"),
+            UNIX_EPOCH + Duration::from_secs(112),
+        );
+        assert!(!super::has_pending_running_candidate(&task));
+
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(900),
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::WaitingForInput)
+        );
+        assert_eq!(
+            task.metadata.get(super::RUNNING_CANDIDATE_SINCE_KEY),
+            Some(&"900".to_string())
+        );
+    }
+
+    #[test]
+    fn idle_task_applies_running_immediately() {
+        let mut task = active_task();
+
+        apply_observation_at(
+            &mut task,
+            running("working"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+        assert!(!task
+            .metadata
+            .contains_key(super::RUNNING_CANDIDATE_SINCE_KEY));
+    }
+
+    #[test]
+    fn trusted_running_bypasses_gate() {
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+        super::apply_trusted_observation_at(
+            &mut task,
+            running("wrapper running"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
+
+        let mut task = waiting_task_at(UNIX_EPOCH + Duration::from_secs(100));
+        super::apply_authoritative_observation_at(
+            &mut task,
+            running("hook running"),
+            UNIX_EPOCH + Duration::from_secs(110),
+        );
+        assert_eq!(
+            task.live_status.as_ref().map(|live| live.kind),
+            Some(LiveStatusKind::AgentRunning)
+        );
     }
 
     #[test]

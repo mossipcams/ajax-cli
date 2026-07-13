@@ -864,6 +864,57 @@ mod tests {
             .iter()
             .find(|card| card.qualified_handle == "web/fix-login")
             .expect("task should stay visible in cockpit");
+        assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Waiting);
+        assert_eq!(
+            card.status_explanation.as_deref(),
+            Some("Waiting for input")
+        );
+        assert!(
+            card.annotations
+                .iter()
+                .any(|annotation| { annotation.evidence.label() == "waiting for input" }),
+            "{:?}",
+            card.annotations
+        );
+        assert!(snapshot
+            .inbox
+            .items
+            .iter()
+            .any(|item| item.task_handle == "web/fix-login"));
+
+        let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+        assert_eq!(task.agent_status, AgentRuntimeStatus::Waiting);
+        assert!(task.has_side_flag(SideFlag::NeedsInput));
+        assert!(
+            task.metadata
+                .contains_key(ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY),
+            "running_candidate_since should be recorded while dwell is pending"
+        );
+
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let backdated = now_secs.saturating_sub(10);
+        context
+            .registry
+            .get_task_mut(&TaskId::new("task-1"))
+            .unwrap()
+            .metadata
+            .insert(
+                ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY.to_string(),
+                backdated.to_string(),
+            );
+
+        let snapshot =
+            refresh_cockpit_snapshot(&mut context, &mut runner, &mut state_changed, &mut None)
+                .unwrap();
+
+        let card = snapshot
+            .cards
+            .iter()
+            .find(|card| card.qualified_handle == "web/fix-login")
+            .expect("task should stay visible in cockpit");
         assert_eq!(card.status, ajax_core::ui_state::TaskStatus::Running);
         assert_eq!(card.status_explanation.as_deref(), Some("Agent working"));
         assert!(card.annotations.is_empty(), "{:?}", card.annotations);
@@ -880,6 +931,9 @@ mod tests {
             task.live_status.as_ref().map(|status| status.kind),
             Some(LiveStatusKind::AgentRunning)
         );
+        assert!(!task
+            .metadata
+            .contains_key(ajax_core::live::RUNNING_CANDIDATE_SINCE_KEY));
     }
 
     struct WorkingPromptRunner;

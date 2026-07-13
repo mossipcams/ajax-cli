@@ -184,14 +184,22 @@ the newly created worktree after `git worktree add` succeeds and before tmux or
 the selected agent CLI are launched.
 
 Add an optional `[notify]` block to receive a webhook (for example an
-[ntfy](https://ntfy.sh) topic) whenever a task transitions into `Waiting` or
-`Error`:
+[ntfy](https://ntfy.sh) topic) for actionable attention episodes:
 
 ```toml
 [notify]
 webhook_url = "https://ntfy.sh/your-topic"
 # poll_seconds = 30   # background poll interval for `ajax web`; 0 disables
 ```
+
+Webhooks fire once per episode for `NeedsInput` waiting evidence (waiting
+for input, waiting for approval, auth required, rate limited, context limit)
+and `Error`-class evidence (CI failed, merge conflict, command failed,
+blocked, runtime probe failure). Lifecycle-only "Ready for review" stays
+inbox-visible in the Cockpit but does **not** phone-ping. Sustained
+`Running`/`Idle` evidence for 30 seconds re-arms the detector so the next
+actionable episode delivers one ping; opening a task silences the current
+episode so further pings wait for new evidence.
 
 Notifications fire from CLI/cockpit refreshes and from a background poll inside
 `ajax web`, so a running web server delivers them even when no browser tab is
