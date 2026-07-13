@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.3...ajax-cli-v0.40.4) (2026-07-13)
+
+
+### Bug Fixes
+
+* **scripts:** always pull origin/main on web restart ([#444](https://github.com/mossipcams/ajax-cli/issues/444)) ([6fbf242](https://github.com/mossipcams/ajax-cli/commit/6fbf2429781d2f07bc882adbc48bf60876b35436))
+* **web:** fill scaled terminal height and authorize last-task Drop save ([#445](https://github.com/mossipcams/ajax-cli/issues/445)) ([561df9f](https://github.com/mossipcams/ajax-cli/commit/561df9fdc2dc5fa1fa076d7e1043e86bda0e1b4e))
+
 ## [0.40.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.2...ajax-cli-v0.40.3) (2026-07-13)
 
 
