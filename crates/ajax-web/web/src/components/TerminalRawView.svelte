@@ -89,6 +89,8 @@
   let { handle }: Props = $props();
 
   let container: HTMLDivElement | undefined = $state();
+  /** Ghostty open() parent; CSS scale applies here, never on `.terminal-host`. */
+  let scaleLayer: HTMLDivElement | undefined = $state();
   // A dead socket always auto-recovers (terminalConnection's backoff), so
   // there is no terminal "disconnected" state — only the reconnecting one.
   let status = $state<TerminalConnectionStatus>("connecting");
@@ -944,7 +946,11 @@
         },
       });
       term.loadAddon(fitAddon);
-      term.open(container);
+      // ghostty-web sets `this.element = parent` in open(). Scaling the host
+      // crushed the whole viewport into the top-left corner and broke expand.
+      // Open into an inner layer so transform never touches `.terminal-host`.
+      if (!scaleLayer) return;
+      term.open(scaleLayer);
       // Keep the real scrollToBottom for Ajax's intentional snaps, then blind
       // the instance method so ghostty-web's write-time force-scroll (and the
       // pinnedToBottom-corrupting scroll event it fires) can never run. See
@@ -1055,6 +1061,7 @@
     data-terminal-engine={placeholderMode ? "placeholder" : "ghostty"}
     aria-label="Task terminal">
   <div class="terminal-host task-terminal-viewport" bind:this={container}>
+    <div class="terminal-scale-layer" bind:this={scaleLayer}></div>
     {#if placeholderMode}
       <div data-testid="terminal-placeholder" class="terminal-placeholder">Terminal placeholder</div>
     {/if}
@@ -1247,7 +1254,7 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    z-index: 2;
+    z-index: 5;
     min-width: 36px;
     min-height: 36px;
     padding: 4px;
@@ -1359,6 +1366,15 @@
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
+  }
+
+  /* Ghostty open() target. Scale-to-fit transforms this node only — never the
+     host — so the expand control and host hit box stay full-size. */
+  .terminal-scale-layer {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
   }
 
   /* The hidden input must stay selectable or iOS refuses to paste into it.

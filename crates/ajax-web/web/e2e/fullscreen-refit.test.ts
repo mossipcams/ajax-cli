@@ -34,6 +34,48 @@ async function openTerminal(page: Page) {
   await waitForTerminalSocket(page);
 }
 
+test("expand button stays in viewport and is the hit target after scale-to-fit", async ({ page }) => {
+  await openTerminal(page);
+  // Let fit/scale settle.
+  await page.waitForTimeout(300);
+
+  const info = await page.evaluate(() => {
+    const panel = document.querySelector("[data-testid='task-terminal-panel']");
+    const host = panel?.querySelector(".terminal-host") as HTMLElement | null;
+    const scale = panel?.querySelector(".terminal-scale-layer") as HTMLElement | null;
+    const btn = panel?.querySelector(".terminal-expand-corner") as HTMLElement | null;
+    const br = btn?.getBoundingClientRect();
+    const pr = panel?.getBoundingClientRect();
+    const hr = host?.getBoundingClientRect();
+    const cx = br ? br.left + br.width / 2 : 0;
+    const cy = br ? br.top + br.height / 2 : 0;
+    const at = br ? document.elementFromPoint(cx, cy) : null;
+    return {
+      viewportW: window.innerWidth,
+      panelW: pr?.width ?? 0,
+      hostClientW: host?.clientWidth ?? 0,
+      hostScrollW: host?.scrollWidth ?? 0,
+      hostRectW: hr?.width ?? 0,
+      btnRight: br?.right ?? 0,
+      btnInViewport: !!br && br.right <= window.innerWidth + 1 && br.left >= -1,
+      hitIsExpand:
+        !!at &&
+        (at === btn ||
+          at.closest?.(".terminal-expand-corner") === btn ||
+          at.getAttribute?.("aria-label") === "Expand terminal"),
+      hitClass: (at as HTMLElement | null)?.className ?? null,
+      hostTransform: host?.style?.transform ?? "",
+      scaleTransform: scale?.style?.transform ?? "",
+    };
+  });
+
+  expect(info.btnInViewport, JSON.stringify(info)).toBe(true);
+  expect(info.hitIsExpand, JSON.stringify(info)).toBe(true);
+  expect(info.hostTransform, JSON.stringify(info)).toBe("");
+  expect(info.hostRectW, JSON.stringify(info)).toBeGreaterThan(300);
+  expect(info.hostScrollW, JSON.stringify(info)).toBeLessThanOrEqual(info.hostClientW + 2);
+});
+
 test("entering fullscreen refits the terminal and does not zoom the PWA", async ({ page }) => {
   await openTerminal(page);
 
