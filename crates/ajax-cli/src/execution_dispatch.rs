@@ -2,9 +2,7 @@ use ajax_core::adapters::{CommandRunError, CommandRunner};
 use ajax_core::commands::CommandError;
 use ajax_core::commands::OpenMode;
 use ajax_core::commands::{self, CommandContext};
-#[cfg(feature = "supervisor")]
 use ajax_core::events::apply_monitor_event_to_registry;
-#[cfg(feature = "interactive")]
 use ajax_core::task_operations::kernel::execute_external_plan_with_success;
 use ajax_core::{
     adapters::environment::origin_fetch_age,
@@ -16,20 +14,15 @@ use ajax_core::{
     task_operations::sweep_cleanup::execute_sweep_cleanup_operation,
     task_operations::task_command::TaskCommandKind,
 };
-#[cfg(any(feature = "interactive", feature = "supervisor"))]
 use ajax_core::{models::LifecycleStatus, registry::Registry};
-#[cfg(feature = "interactive")]
 use ajax_core::{
     models::{RuntimeObservationSource, SideFlag, Task},
     runtime::RUNTIME_PROJECTION_FRESH_FOR,
 };
 use clap::ArgMatches;
-#[cfg(feature = "interactive")]
 use std::time::SystemTime;
 
-#[cfg(feature = "supervisor")]
 use crate::supervise::supervise_command_output_and_events;
-#[cfg(feature = "interactive")]
 use crate::{
     cockpit_backend::{
         mobile_web_port_for_command, refresh_live_context, render_interactive_cockpit_command,
@@ -154,7 +147,6 @@ pub(crate) fn render_matches_mut(
                 state_changed,
             })
         }
-        #[cfg(feature = "supervisor")]
         Some(("supervise", subcommand)) => {
             let supervised_task = validate_supervised_task(context, subcommand)?;
             let task_agent = supervised_task
@@ -175,18 +167,9 @@ pub(crate) fn render_matches_mut(
                 state_changed,
             })
         }
-        #[cfg(not(feature = "supervisor"))]
-        Some(("supervise", _)) => Err(CliError::CommandFailed(
-            "supervise support is not enabled in this build".to_string(),
-        )),
-        #[cfg(feature = "interactive")]
         Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) => {
             render_cockpit_entry_command(name, matches, subcommand, context, runner, None, None)
         }
-        #[cfg(not(feature = "interactive"))]
-        Some(("cockpit" | "stable" | "dev", _)) => Err(CliError::CommandFailed(
-            "cockpit support is not enabled in this build".to_string(),
-        )),
         _ => Ok(RenderedCommand {
             output: render_snapshot_matches(matches, context)?,
             state_changed: false,
@@ -222,7 +205,6 @@ fn render_refreshed_read_command<R: CommandRunner>(
     })
 }
 
-#[cfg(feature = "interactive")]
 fn refresh_read_context<R: CommandRunner>(
     name: &str,
     json: bool,
@@ -238,17 +220,6 @@ fn refresh_read_context<R: CommandRunner>(
     refresh_live_context(context, runner)
 }
 
-#[cfg(not(feature = "interactive"))]
-fn refresh_read_context<R: CommandRunner>(
-    _name: &str,
-    _json: bool,
-    _context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut R,
-) -> Result<bool, CliError> {
-    Ok(false)
-}
-
-#[cfg(feature = "interactive")]
 fn read_context_needs_live_refresh(context: &CommandContext<InMemoryRegistry>) -> bool {
     let now = SystemTime::now();
     context
@@ -258,7 +229,6 @@ fn read_context_needs_live_refresh(context: &CommandContext<InMemoryRegistry>) -
         .any(|task| read_task_needs_live_refresh(task, now))
 }
 
-#[cfg(feature = "interactive")]
 fn read_task_needs_live_refresh(task: &Task, now: SystemTime) -> bool {
     if task.has_side_flag(SideFlag::TmuxMissing)
         || task.has_side_flag(SideFlag::TaskWindowMissing)
@@ -330,14 +300,11 @@ pub(crate) fn render_matches_mut_with_paths(
         }
     }
 
-    #[cfg(feature = "interactive")]
     if let Some((name @ ("cockpit" | "stable" | "dev"), subcommand)) = matches.subcommand() {
         return render_cockpit_entry_command(
             name, matches, subcommand, context, runner, paths, save_state,
         );
     }
-    #[cfg(not(feature = "interactive"))]
-    let _ = save_state;
 
     if let Some(("web", subcommand)) = matches.subcommand() {
         let host = subcommand
@@ -378,7 +345,6 @@ pub(crate) fn render_matches_mut_with_paths(
     render_matches_mut(matches, context, runner, current_open_mode())
 }
 
-#[cfg(feature = "interactive")]
 fn render_cockpit_entry_command<R: CommandRunner>(
     name: &str,
     matches: &ArgMatches,
@@ -407,14 +373,12 @@ fn render_cockpit_entry_command<R: CommandRunner>(
     )
 }
 
-#[cfg(feature = "interactive")]
 fn mobile_web_port_for_cockpit_entry(name: &str, paths: Option<&CliContextPaths>) -> u16 {
     paths
         .map(|paths| mobile_web_port_for_command(&paths.runtime_paths.profile))
         .unwrap_or_else(|| mobile_web_port_for_command(name))
 }
 
-#[cfg(feature = "interactive")]
 pub(crate) struct ExecuteNewTaskWithSession<'a> {
     pub request: &'a commands::NewTaskRequest,
     pub plan: &'a commands::CommandPlan,
@@ -423,7 +387,6 @@ pub(crate) struct ExecuteNewTaskWithSession<'a> {
     pub open_mode: commands::OpenMode,
 }
 
-#[cfg(feature = "interactive")]
 pub(crate) fn execute_new_task_plan_with_task_session_and_checkpoint<
     R: CommandRunner,
     S: TaskSessionRunner,
@@ -480,7 +443,7 @@ where
     }
 }
 
-#[cfg(all(test, feature = "interactive"))]
+#[cfg(test)]
 mod cockpit_entry_tests {
     use super::mobile_web_port_for_cockpit_entry;
     use crate::CliContextPaths;
@@ -501,7 +464,6 @@ mod cockpit_entry_tests {
     }
 }
 
-#[cfg(feature = "supervisor")]
 fn validate_supervised_task(
     context: &CommandContext<InMemoryRegistry>,
     matches: &ArgMatches,
@@ -525,7 +487,6 @@ fn validate_supervised_task(
     Ok(Some(task.id.clone()))
 }
 
-#[cfg(feature = "supervisor")]
 fn supervisor_agent_for_task(task: &ajax_core::models::Task) -> ajax_supervisor::SupervisorAgent {
     use ajax_core::models::AgentClient;
     use ajax_supervisor::SupervisorAgent;

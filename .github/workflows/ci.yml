@@ -104,9 +104,6 @@ jobs:
         env:
           RUSTFLAGS: -D warnings
 
-      - name: Check no default features
-        run: cargo check --no-default-features
-
       - name: Check locked dependencies
         run: cargo check --locked
 

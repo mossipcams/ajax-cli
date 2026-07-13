@@ -61,7 +61,7 @@ fn snapshot_dispatch_module_routes_read_commands() {
 }
 
 #[test]
-fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
+fn cli_manifest_compiles_tui_and_supervisor_unconditionally() {
     let manifest = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"),
     )
@@ -73,13 +73,27 @@ fn cli_manifest_exposes_lightweight_build_without_interactive_dependencies() {
             .find(|line| line.trim_start().starts_with(&format!("{dependency} =")))
             .unwrap_or_else(|| panic!("{dependency} dependency should be declared"));
         assert!(
-            line.contains("optional = true"),
-            "{dependency} must be optional so lightweight builds can exclude it: {line}"
+            !line.contains("optional = true"),
+            "{dependency} must be unconditional: {line}"
         );
     }
 
-    assert!(manifest.contains("interactive = [\"dep:ajax-tui\", \"dep:nix\"]"));
-    assert!(manifest.contains("supervisor = [\"dep:ajax-supervisor\", \"dep:tokio\"]"));
+    assert!(
+        !manifest.contains("[features]"),
+        "ajax-cli must not declare feature flags"
+    );
+    assert!(
+        !manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("interactive =")),
+        "ajax-cli must not declare interactive feature"
+    );
+    assert!(
+        !manifest
+            .lines()
+            .any(|line| line.trim_start().starts_with("supervisor =")),
+        "ajax-cli must not declare supervisor feature"
+    );
     assert!(
         manifest.contains("ajax-web = { path = \"../ajax-web\", version = \""),
         "ajax-web is the always-compiled browser boundary used by the web companion"

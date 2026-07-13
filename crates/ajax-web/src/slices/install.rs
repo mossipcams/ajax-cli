@@ -174,7 +174,7 @@ mod tests {
             );
         }
         // Safari-first: never register a service worker, never use push.
-        assert!(!script.contains("serviceWorker.register"));
+        assert!(!script.contains("serviceWorker"));
         assert!(!script.contains("pushManager.subscribe"));
         assert!(!script.contains("/api/push"));
         // The legacy polling pane bridge was removed in favor of the live

@@ -1,10 +1,7 @@
 mod agent_runtime;
-#[cfg(feature = "interactive")]
 mod agent_status_cache;
 mod cli;
-#[cfg(feature = "interactive")]
 mod cockpit_actions;
-#[cfg(feature = "interactive")]
 mod cockpit_backend;
 mod context;
 mod dispatch;
@@ -12,22 +9,18 @@ mod execution_dispatch;
 mod notify;
 mod render;
 mod snapshot_dispatch;
-#[cfg(feature = "supervisor")]
 mod supervise;
-#[cfg(feature = "interactive")]
 mod task_session;
 mod web_backend;
 
 #[cfg(test)]
 pub(crate) use ajax_core::task_operations::task_command::TaskCommandKind;
 #[cfg(test)]
-#[cfg(feature = "interactive")]
 pub(crate) use cockpit_actions::{
     execute_pending_cockpit_action, execute_pending_cockpit_action_with_task_session,
     handle_pending_cockpit_result, tui_cockpit_action, tui_cockpit_confirmed_action,
 };
 #[cfg(test)]
-#[cfg(feature = "interactive")]
 pub(crate) use cockpit_backend::{refresh_cockpit_snapshot, render_cockpit_command};
 #[cfg(test)]
 pub(crate) use dispatch::{render_drop_command, render_task_command};
@@ -42,7 +35,6 @@ use ajax_core::{
 use clap::ArgMatches;
 pub use cli::build_cli;
 use cli::{parse_args, ParsedArgs};
-#[cfg(feature = "interactive")]
 use cockpit_backend::stream_live_cockpit_command;
 pub use context::CliContextPaths;
 use context::{
@@ -349,7 +341,6 @@ fn load_tracked_context_for_matches(
     }
 }
 
-#[cfg(feature = "interactive")]
 fn stream_command_to_writer<R, W, P>(
     matches: &ArgMatches,
     context: &mut CommandContext<InMemoryRegistry>,
@@ -375,22 +366,6 @@ where
         ));
     }
 
-    None
-}
-
-#[cfg(not(feature = "interactive"))]
-fn stream_command_to_writer<R, W, P>(
-    _matches: &ArgMatches,
-    _context: &mut CommandContext<InMemoryRegistry>,
-    _runner: &mut R,
-    _writer: &mut W,
-    _persist: P,
-) -> Option<Result<bool, CliError>>
-where
-    R: CommandRunner,
-    W: Write,
-    P: FnMut(&CommandContext<InMemoryRegistry>) -> Result<(), CliError>,
-{
     None
 }
 

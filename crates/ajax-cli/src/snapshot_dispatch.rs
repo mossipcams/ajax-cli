@@ -10,7 +10,6 @@ use ajax_core::{
 };
 use clap::ArgMatches;
 
-#[cfg(feature = "interactive")]
 use crate::cockpit_backend::render_cockpit_command;
 use crate::{
     command_error, current_open_mode, new_task_request,
@@ -126,12 +125,7 @@ pub(crate) fn render_matches_with_paths(
             render_runtime_paths(&context.runtime_paths, subcommand.get_flag("json"))
         }
         Some(("state", subcommand)) => render_state_command(context, subcommand),
-        #[cfg(feature = "interactive")]
         Some(("cockpit", subcommand)) => render_cockpit_command(context, subcommand),
-        #[cfg(not(feature = "interactive"))]
-        Some(("cockpit", _)) => Err(CliError::CommandFailed(
-            "cockpit support is not enabled in this build".to_string(),
-        )),
         Some(("supervise", _)) => Err(CliError::CommandFailed(
             "supervise requires mutable context and runner support".to_string(),
         )),

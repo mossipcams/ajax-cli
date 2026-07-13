@@ -1,5 +1,3 @@
-#[cfg(not(feature = "interactive"))]
-use ajax_core::runtime_refresh::{refresh_runtime_context_with_tier, NoAgentStatusCache};
 use ajax_core::{
     adapters::{CommandRunner, ProcessCommandRunner},
     commands::CommandContext,
@@ -36,11 +34,6 @@ use crate::{
 
 #[cfg(test)]
 pub(crate) type HttpResponse = runtime::Response;
-
-#[cfg(test)]
-pub(crate) fn render_mobile_shell() -> String {
-    web_install::browser_shell()
-}
 
 #[cfg(test)]
 pub(crate) fn cockpit_json(
@@ -200,18 +193,10 @@ fn refresh_runtime_context_for_web<C: CommandRunner>(
     runner: &mut C,
     tier: RefreshTier,
 ) -> Result<bool, ajax_core::commands::CommandError> {
-    #[cfg(feature = "interactive")]
-    {
-        let cache = crate::agent_status_cache::TmuxAgentStatusSnapshot::from_runtime_cache(
-            &context.runtime_paths.cache_dir,
-        );
-        ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &cache, tier)
-    }
-
-    #[cfg(not(feature = "interactive"))]
-    {
-        refresh_runtime_context_with_tier(context, runner, &NoAgentStatusCache, tier)
-    }
+    let cache = crate::agent_status_cache::TmuxAgentStatusSnapshot::from_runtime_cache(
+        &context.runtime_paths.cache_dir,
+    );
+    ajax_core::runtime_refresh::refresh_runtime_context_with_tier(context, runner, &cache, tier)
 }
 
 fn companion_state_dir(paths: Option<&CliContextPaths>) -> Result<PathBuf, CliError> {
@@ -396,10 +381,7 @@ fn action_failure_from_cli(error: CliError) -> ActionFailure {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths,
-        render_mobile_shell,
-    };
+    use super::{cockpit_json, handle_http_request, handle_http_request_with_runner_and_paths};
     use ajax_core::runtime_refresh::RefreshTier;
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
@@ -413,48 +395,6 @@ mod tests {
     use ajax_web::runtime::{self, RuntimeBridge};
     use axum::{body::Body, http::Request as AxumRequest};
     use tower::util::ServiceExt;
-
-    #[test]
-    fn mobile_shell_is_responsive_and_loads_cockpit_data() {
-        let html = render_mobile_shell();
-
-        assert!(html.contains("<!doctype html>"));
-        assert!(html.contains("name=\"viewport\""));
-        assert!(html.contains("width=device-width"));
-        assert!(html.contains("href=\"/app.css\""));
-        assert!(html.contains("src=\"/app.js\""));
-    }
-
-    #[test]
-    fn mobile_shell_is_the_bundled_svelte_mount_point() {
-        let html = render_mobile_shell();
-
-        // The shell is now the bundled Svelte mount point; the cockpit chrome,
-        // inbox, task rows, settings, etc. are rendered client-side.
-        assert!(html.contains("id=\"app\""));
-        assert!(html.contains("type=\"module\""));
-        assert!(html.contains("name=\"theme-color\""));
-        assert!(html.contains("name=\"color-scheme\""));
-        assert!(html.contains("name=\"mobile-web-app-capable\""));
-        assert!(html.contains("apple-mobile-web-app-capable"));
-        assert!(html.contains("apple-mobile-web-app-title"));
-        assert!(html.contains("apple-mobile-web-app-status-bar-style"));
-        assert!(!html.contains("href=\"/manifest.webmanifest\""));
-        for legacy in [
-            "id=\"inbox\"",
-            "id=\"repos\"",
-            "class=\"cockpit-chrome\"",
-            "id=\"new-task-row\"",
-            "id=\"settings-view\"",
-            "id=\"pwa-warning\"",
-            "id=\"attention-summary\"",
-        ] {
-            assert!(
-                !html.contains(legacy),
-                "static shell should no longer hardcode {legacy}"
-            );
-        }
-    }
 
     #[test]
     fn cockpit_json_serializes_the_current_cockpit_projection() {
@@ -475,7 +415,11 @@ mod tests {
         let shell = handle_http_request("GET", "/", "", &context).unwrap();
         assert_eq!(shell.status_code, 200);
         assert_eq!(shell.content_type, "text/html; charset=utf-8");
-        assert!(String::from_utf8_lossy(&shell.body).contains("Ajax Cockpit"));
+        // ajax-web owns the shell's content; ajax-cli only proves it serves those bytes.
+        assert_eq!(
+            String::from_utf8_lossy(&shell.body),
+            super::web_install::browser_shell()
+        );
 
         let cockpit = handle_http_request("GET", "/api/cockpit", "", &context).unwrap();
         assert_eq!(cockpit.status_code, 200);
@@ -494,11 +438,19 @@ mod tests {
         assert_eq!(css.status_code, 200);
         assert_eq!(css.content_type, "text/css; charset=utf-8");
         assert!(!css.body.is_empty());
+        assert_eq!(
+            css.body,
+            super::web_install::static_asset("/app.css").unwrap().body
+        );
 
         let js = handle_http_request("GET", "/app.js", "", &context).unwrap();
         assert_eq!(js.status_code, 200);
         assert_eq!(js.content_type, "text/javascript; charset=utf-8");
         assert!(!js.body.is_empty());
+        assert_eq!(
+            js.body,
+            super::web_install::static_asset("/app.js").unwrap().body
+        );
 
         let wasm = handle_http_request("GET", "/ghostty-vt.wasm", "", &context).unwrap();
         assert_eq!(wasm.status_code, 200);
@@ -522,39 +474,6 @@ mod tests {
             assert_eq!(response.status_code, 404, "{path}");
             assert_eq!(response.content_type, "text/plain; charset=utf-8", "{path}");
         }
-    }
-
-    #[test]
-    fn app_script_wires_cockpit_actions() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
-        let script = String::from_utf8_lossy(&app.body);
-        // String literals survive minification — assert the same-origin API the
-        // bundled client speaks to. Runtime behavior is covered by Vitest.
-        assert!(!app.body.is_empty());
-        assert!(script.contains("/api/cockpit"));
-        assert!(script.contains("no-store"));
-        assert!(script.contains("/api/operations"));
-        assert!(script.contains("request_id"));
-        assert!(script.contains("#/settings"));
-        assert!(script.contains("/api/server/restart"));
-    }
-
-    #[test]
-    fn app_script_is_worker_and_push_free() {
-        let context = CommandContext::new(Config::default(), InMemoryRegistry::default());
-
-        let app = handle_http_request("GET", "/app.js", "", &context).unwrap();
-        let app_text = String::from_utf8_lossy(&app.body);
-        assert!(!app_text.contains("serviceWorker"));
-        assert!(!app_text.contains("pushManager.subscribe"));
-        assert!(!app_text.contains("/api/push/config"));
-        assert!(!app_text.contains("/api/push/subscribe"));
-        // The legacy polling pane bridge (/answer, /input, /pane) was removed in
-        // favor of the live terminal websocket; the bundle must not reference it.
-        assert!(!app_text.contains("/answer"));
-        assert!(!app_text.contains("/input"));
     }
 
     #[test]
