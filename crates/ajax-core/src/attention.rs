@@ -7,7 +7,7 @@ use crate::ui_state::{derive_operator_status, TaskStatus};
 pub const LAST_NOTIFIED_STATUS_KEY: &str = "last_notified_status";
 pub const LAST_NOTIFIED_AT_KEY: &str = "last_notified_at";
 /// First Running/Idle sighting after a notified episode; stamp clears once this
-/// quiet window reaches [`EPISODE_CLEAR_DWELL`].
+/// quiet window reaches the episode-clear dwell (30s).
 pub const NOTIFY_QUIET_SINCE_KEY: &str = "notify_quiet_since";
 
 /// How long Running/Idle must persist after a delivery before the detector
@@ -26,10 +26,11 @@ pub struct AttentionTransition {
 /// Episode detector for operator attention webhooks. Fires once when a task
 /// enters actionable Waiting (needs input) or Error; lifecycle-only
 /// "Ready for review" stays inbox-visible but does not phone-ping. Returning
-/// to Running/Idle clears the stamp only after [`EPISODE_CLEAR_DWELL`], so one
-/// Waiting episode interrupted by short Running bursts delivers one ping.
-/// [`silence_notify_episode`] (from acknowledge) stamps the current episode
-/// without delivering so opening a task stops further pings until new evidence.
+/// to Running/Idle clears the stamp only after the episode-clear dwell (30s),
+/// so one Waiting episode interrupted by short Running bursts delivers one
+/// ping. [`silence_notify_episode`] (from acknowledge) stamps the current
+/// episode without delivering so opening a task stops further pings until new
+/// evidence.
 /// ponytail: best-effort dedup; a concurrent first observation can produce
 /// one duplicate delivery — add per-key CAS only if duplicates ever annoy.
 pub fn take_attention_transition(task: &mut Task) -> Option<AttentionTransition> {
