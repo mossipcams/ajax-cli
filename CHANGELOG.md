@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.4...ajax-cli-v0.40.5) (2026-07-14)
+
+
+### Bug Fixes
+
+* **cli:** keep cockpit open after ctrl-q save error ([#447](https://github.com/mossipcams/ajax-cli/issues/447)) ([b49d7a9](https://github.com/mossipcams/ajax-cli/commit/b49d7a9a1c3353a2dbcf40342d234f9ea960e577))
+* **web:** keyboard-band terminal fit, key row reach, JWT redaction, HIG taps ([#448](https://github.com/mossipcams/ajax-cli/issues/448)) ([46cc305](https://github.com/mossipcams/ajax-cli/commit/46cc305b6f3322057386ecffce24124743742532))
+
 ## [0.40.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.3...ajax-cli-v0.40.4) (2026-07-13)
 
 
