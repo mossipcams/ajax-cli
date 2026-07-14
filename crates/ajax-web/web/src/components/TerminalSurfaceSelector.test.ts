@@ -99,7 +99,6 @@ beforeEach(() => {
   vi.spyOn(setting, "isTerminalSurfaceV2Enabled").mockImplementation(() => v2Enabled);
   vi.spyOn(setting, "subscribeTerminalSurfaceV2").mockImplementation((listener) => {
     settingListener = listener;
-    listener(v2Enabled);
     return () => {
       settingListener = undefined;
     };
@@ -171,15 +170,16 @@ describe("TerminalSurfaceSelector", () => {
     });
   });
 
-  it("falls back to Ghostty with an error banner when wterm init fails", async () => {
+  it("keeps Ghostty disabled and shows an error when wterm init fails", async () => {
     ghosttyLoad.mockRejectedValueOnce(new Error("boom"));
     v2Enabled = true;
     const { getByTestId, container } = render(TerminalSurfaceSelector, {
       props: { handle: "web/fix" },
     });
     await waitFor(() => {
-      expect(getByTestId("terminal-surface-fallback-error").textContent).toContain("boom");
-      expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeTruthy();
+      expect(getByTestId("terminal-surface-v2-error").textContent).toContain("boom");
+      expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeNull();
+      expect(ghosttyWebLoad).not.toHaveBeenCalled();
     });
   });
 });
