@@ -82,15 +82,13 @@ describe("terminalWtermGhosttyCore (unit)", () => {
   });
 
   it("calls GhosttyCore.load with distinct wasm path and scrollbackLimit", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        arrayBuffer: async () =>
-          wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength),
-      })),
-    );
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () =>
+        wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
 
     const core = await loadWtermGhosttyCore();
     expect(ghosttyLoad).toHaveBeenCalledWith({
@@ -100,5 +98,21 @@ describe("terminalWtermGhosttyCore (unit)", () => {
     expect(core).toMatchObject({
       options: { wasmPath: "/wterm-ghostty-vt.wasm", scrollbackLimit: 2000 },
     });
+  });
+
+  it("validate fetch allows HTTP cache (not no-store)", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () =>
+        wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await loadWtermGhosttyCore();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
+    expect(init?.cache).not.toBe("no-store");
   });
 });
