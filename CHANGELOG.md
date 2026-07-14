@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.6...ajax-cli-v0.42.7) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** catch Surface V2 yellow banner on mobile WebKit ([#476](https://github.com/mossipcams/ajax-cli/issues/476)) ([25064f7](https://github.com/mossipcams/ajax-cli/commit/25064f72f59654f6f12e61e392d02c613fb6d084))
+
 ## [0.42.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.5...ajax-cli-v0.42.6) (2026-07-14)
 
 
