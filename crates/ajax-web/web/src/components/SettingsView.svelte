@@ -71,6 +71,20 @@
     const copied = await copyText(text);
     onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
   }
+
+  function reloadApp() {
+    window.location.reload();
+  }
+
+  const appVersion =
+    document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ?? "—";
+  const origin = window.location.origin;
+  const online = navigator.onLine;
+  const surfaceV2LastError = sessionStorage.getItem("ajax.terminal.surfaceV2.lastError");
+  const truncatedUa =
+    navigator.userAgent.length > 80
+      ? `${navigator.userAgent.slice(0, 80)}…`
+      : navigator.userAgent;
 </script>
 
 <section class="settings-view" aria-labelledby="settings-heading">
@@ -79,28 +93,10 @@
     <h2 id="settings-heading">Settings</h2>
   </div>
 
-  <div class="settings-section">
-    <h3>Web server</h3>
-    <p class="settings-note">Restarts this Cockpit process.</p>
-    <button type="button" class="pill" disabled={restarting} onclick={restart}>
-      {confirmingRestart ? "Tap to confirm" : "Restart server"}
-    </button>
-    {#if restartStatus}
-      <p class="settings-status">{restartStatus}</p>
-    {/if}
-  </div>
+  <div class="settings-section" data-testid="dev-settings">
+    <h3>Dev settings</h3>
 
-  <div class="settings-section">
-    <h3>Diagnostics</h3>
-    <button type="button" class="pill" onclick={runDiagnostics}>Run diagnostics</button>
-    <button type="button" class="pill" onclick={copyDiagnostics}>Copy Diagnostics</button>
-    {#if diagnosticsOutput}
-      <pre class="settings-status">{diagnosticsOutput}</pre>
-    {/if}
-  </div>
-
-  <div class="settings-section">
-    <h3>Experimental</h3>
+    <h4 class="settings-subheading">Experiments</h4>
     <label class="settings-toggle">
       <input
         type="checkbox"
@@ -116,6 +112,31 @@
     <p class="settings-note">
       Use the experimental DOM-rendered terminal optimized for mobile browsers.
     </p>
+
+    <h4 class="settings-subheading">Debug info</h4>
+    <dl class="settings-debug" data-testid="dev-settings-debug">
+      <div><dt>App version</dt><dd>{appVersion}</dd></div>
+      <div><dt>Origin</dt><dd>{origin}</dd></div>
+      <div><dt>Online</dt><dd>{online ? "yes" : "no"}</dd></div>
+      <div><dt>Surface V2</dt><dd>{terminalSurfaceV2 ? "on" : "off"}</dd></div>
+      <div><dt>Last error</dt><dd>{surfaceV2LastError ?? "—"}</dd></div>
+      <div><dt>User agent</dt><dd>{truncatedUa}</dd></div>
+    </dl>
+
+    <h4 class="settings-subheading">Actions</h4>
+    <button type="button" class="pill" onclick={reloadApp}>Reload app</button>
+    <button type="button" class="pill" onclick={runDiagnostics}>Run diagnostics</button>
+    <button type="button" class="pill" onclick={copyDiagnostics}>Copy Diagnostics</button>
+    <p class="settings-note">Restarts this Cockpit process.</p>
+    <button type="button" class="pill" disabled={restarting} onclick={restart}>
+      {confirmingRestart ? "Tap to confirm" : "Restart server"}
+    </button>
+    {#if restartStatus}
+      <p class="settings-status">{restartStatus}</p>
+    {/if}
+    {#if diagnosticsOutput}
+      <pre class="settings-status">{diagnosticsOutput}</pre>
+    {/if}
   </div>
 </section>
 
@@ -168,6 +189,50 @@
     letter-spacing: var(--label-tracking);
     text-transform: uppercase;
     color: var(--ink-muted);
+  }
+
+  .settings-subheading {
+    margin: 16px 0 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: var(--label-tracking);
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .settings-subheading:first-of-type {
+    margin-top: 0;
+  }
+
+  .settings-debug {
+    margin: 0 0 14px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+
+  .settings-debug div {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+
+  .settings-debug dt {
+    flex: none;
+    min-width: 88px;
+    font-weight: 600;
+    color: var(--ink-muted);
+  }
+
+  .settings-debug dd {
+    margin: 0;
+    font-family: var(--mono);
+    overflow-wrap: anywhere;
+  }
+
+  .settings-section .pill {
+    margin-right: 8px;
+    margin-bottom: 8px;
   }
 
   .settings-note {
