@@ -13,9 +13,11 @@ let termOnResize: ((cols: number, rows: number) => void) | undefined;
 const loadWtermGhosttyCore = vi.hoisted(() =>
   vi.fn(() => Promise.resolve({ runtime: "ghostty-core" })),
 );
+const smokeInitWtermGhosttyCore = vi.hoisted(() => vi.fn());
 
 vi.mock("../terminalWtermGhosttyCore", () => ({
   loadWtermGhosttyCore,
+  smokeInitWtermGhosttyCore,
 }));
 
 vi.mock("@wterm/dom", () => ({

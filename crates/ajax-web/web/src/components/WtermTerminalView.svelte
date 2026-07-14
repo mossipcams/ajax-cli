@@ -7,7 +7,7 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
+  import { loadWtermGhosttyCore, smokeInitWtermGhosttyCore } from "../terminalWtermGhosttyCore";
 
   interface Props {
     handle: string;
@@ -124,6 +124,11 @@
       if (!hostEl) return;
       try {
         const core = await loadWtermGhosttyCore();
+        if (disposed) return;
+
+        // Fail fast with a clear message if construct/init/write is broken —
+        // mocked unit tests previously missed this (yellow Surface V2 banner).
+        smokeInitWtermGhosttyCore(core);
         if (disposed) return;
 
         const liveTerm = new WTerm(hostEl, {

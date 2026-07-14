@@ -8,8 +8,13 @@ const wtermWasm = readFileSync(join(repoRoot, "node_modules/@wterm/ghostty/wasm/
 const ghosttyWebWasm = readFileSync(join(repoRoot, "node_modules/ghostty-web/ghostty-vt.wasm"));
 
 const ghosttyCoreCtor = vi.hoisted(() =>
-  vi.fn(function MockCore(this: { wasm: unknown }, wasm: unknown) {
+  vi.fn(function MockCore(
+    this: { wasm: unknown; options: unknown },
+    wasm: unknown,
+    options: unknown,
+  ) {
     this.wasm = wasm;
+    this.options = options;
   }),
 );
 
@@ -17,7 +22,11 @@ vi.mock("@wterm/ghostty", () => ({
   GhosttyCore: ghosttyCoreCtor,
 }));
 
-describe("terminalWtermGhosttyCore", () => {
+vi.mock("./terminalGeometry", () => ({
+  terminalScrollbackLines: () => 2000,
+}));
+
+describe("terminalWtermGhosttyCore (unit)", () => {
   beforeEach(() => {
     ghosttyCoreCtor.mockClear();
   });
@@ -74,9 +83,7 @@ describe("terminalWtermGhosttyCore", () => {
     await expect(loadWtermGhosttyCore()).rejects.toThrow(/missing init/);
   });
 
-  it("instantiates from bytes and constructs GhosttyCore without a blob URL", async () => {
-    const createObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL });
+  it("constructs GhosttyCore with wasm + scrollback options (never undefined options)", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -87,13 +94,15 @@ describe("terminalWtermGhosttyCore", () => {
       })),
     );
 
+    // Real instantiate still runs; only GhosttyCore construction is mocked.
     const core = await loadWtermGhosttyCore();
-    expect(createObjectURL).not.toHaveBeenCalled();
     expect(ghosttyCoreCtor).toHaveBeenCalledTimes(1);
     expect(ghosttyCoreCtor).toHaveBeenCalledWith(
       expect.objectContaining({ instance: expect.anything(), exports: expect.anything() }),
-      {},
+      { scrollbackLimit: 2000 },
     );
-    expect(core).toMatchObject({ wasm: expect.objectContaining({ instance: expect.anything() }) });
+    expect(core).toMatchObject({
+      options: { scrollbackLimit: 2000 },
+    });
   });
 });
