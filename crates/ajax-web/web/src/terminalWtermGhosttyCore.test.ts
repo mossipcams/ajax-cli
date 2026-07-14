@@ -7,19 +7,17 @@ const repoRoot = join(import.meta.dirname, "../../../..");
 const wtermWasm = readFileSync(join(repoRoot, "node_modules/@wterm/ghostty/wasm/ghostty-vt.wasm"));
 const ghosttyWebWasm = readFileSync(join(repoRoot, "node_modules/ghostty-web/ghostty-vt.wasm"));
 
-const ghosttyCoreCtor = vi.hoisted(() =>
-  vi.fn(function MockCore(
-    this: { wasm: unknown; options: unknown },
-    wasm: unknown,
-    options: unknown,
-  ) {
-    this.wasm = wasm;
-    this.options = options;
-  }),
+const ghosttyLoad = vi.hoisted(() =>
+  vi.fn(async (options: { wasmPath?: string; scrollbackLimit?: number }) => ({
+    options,
+    runtime: "ghostty-core",
+  })),
 );
 
 vi.mock("@wterm/ghostty", () => ({
-  GhosttyCore: ghosttyCoreCtor,
+  GhosttyCore: {
+    load: ghosttyLoad,
+  },
 }));
 
 vi.mock("./terminalGeometry", () => ({
@@ -28,7 +26,7 @@ vi.mock("./terminalGeometry", () => ({
 
 describe("terminalWtermGhosttyCore (unit)", () => {
   beforeEach(() => {
-    ghosttyCoreCtor.mockClear();
+    ghosttyLoad.mockClear();
   });
 
   it("detects init on wterm wasm and not on ghostty-web wasm", () => {
@@ -83,7 +81,7 @@ describe("terminalWtermGhosttyCore (unit)", () => {
     await expect(loadWtermGhosttyCore()).rejects.toThrow(/missing init/);
   });
 
-  it("constructs GhosttyCore with wasm + scrollback options (never undefined options)", async () => {
+  it("calls GhosttyCore.load with distinct wasm path and scrollbackLimit", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -94,15 +92,13 @@ describe("terminalWtermGhosttyCore (unit)", () => {
       })),
     );
 
-    // Real instantiate still runs; only GhosttyCore construction is mocked.
     const core = await loadWtermGhosttyCore();
-    expect(ghosttyCoreCtor).toHaveBeenCalledTimes(1);
-    expect(ghosttyCoreCtor).toHaveBeenCalledWith(
-      expect.objectContaining({ instance: expect.anything(), exports: expect.anything() }),
-      { scrollbackLimit: 2000 },
-    );
+    expect(ghosttyLoad).toHaveBeenCalledWith({
+      wasmPath: "/wterm-ghostty-vt.wasm",
+      scrollbackLimit: 2000,
+    });
     expect(core).toMatchObject({
-      options: { scrollbackLimit: 2000 },
+      options: { wasmPath: "/wterm-ghostty-vt.wasm", scrollbackLimit: 2000 },
     });
   });
 });

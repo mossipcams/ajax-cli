@@ -7,7 +7,7 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { loadWtermGhosttyCore, smokeInitWtermGhosttyCore } from "../terminalWtermGhosttyCore";
+  import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
 
   interface Props {
     handle: string;
@@ -126,11 +126,6 @@
         const core = await loadWtermGhosttyCore();
         if (disposed) return;
 
-        // Fail fast with a clear message if construct/init/write is broken —
-        // mocked unit tests previously missed this (yellow Surface V2 banner).
-        smokeInitWtermGhosttyCore(core);
-        if (disposed) return;
-
         const liveTerm = new WTerm(hostEl, {
           core,
           autoResize: true,
@@ -174,6 +169,12 @@
         liveTerm.focus();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        console.error("[ajax wterm] Surface V2 init failed:", error);
+        try {
+          sessionStorage.setItem("ajax.terminal.surfaceV2.lastError", message);
+        } catch {
+          // ignore
+        }
         onInitFailure?.(message);
       }
     };

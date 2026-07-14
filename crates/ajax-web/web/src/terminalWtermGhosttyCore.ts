@@ -53,18 +53,6 @@ export function wasmExportsInclude(bytes: ArrayBuffer, name: string): boolean {
   return false;
 }
 
-type GhosttyWasmModule = {
-  exports: WebAssembly.Exports;
-  instance: WebAssembly.Instance;
-};
-
-type GhosttyCoreConstructable = {
-  new (
-    wasm: GhosttyWasmModule,
-    options: { scrollbackLimit?: number; wasmPath?: string },
-  ): GhosttyCore;
-};
-
 async function fetchWtermWasmBytes(): Promise<ArrayBuffer> {
   let response: Response;
   try {
@@ -89,46 +77,30 @@ async function fetchWtermWasmBytes(): Promise<ArrayBuffer> {
   return bytes;
 }
 
-async function instantiateWtermWasm(bytes: ArrayBuffer): Promise<GhosttyWasmModule> {
-  let wasmMemory: WebAssembly.Memory | undefined;
-  let instance: WebAssembly.Instance;
-  try {
-    ({ instance } = await WebAssembly.instantiate(bytes, {
-      env: {
-        log(ptr: number, len: number) {
-          if (!wasmMemory) return;
-          const text = new TextDecoder().decode(new Uint8Array(wasmMemory.buffer, ptr, len));
-          console.log("[ghostty-vt]", text);
-        },
-      },
-    }));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`wterm wasm instantiate failed (${detail})`);
-  }
-  wasmMemory = instance.exports.memory as WebAssembly.Memory;
-  return { exports: instance.exports, instance };
-}
-
 /**
- * Load @wterm/ghostty's core from the Ajax-served distinct URL.
+ * Load @wterm/ghostty via the official API after validating Ajax's distinct URL.
  *
- * Instantiates from fetched bytes (no Safari blob: re-fetch). Constructs
- * GhosttyCore with a real options object — `init()` reads
- * `_options.scrollbackLimit` and crashes if `_options` is undefined.
+ * Uses `GhosttyCore.load({ wasmPath, scrollbackLimit })` so `_options` is always
+ * the real options object (private-constructor mistakes caused Safari yellow
+ * banners). Validates bytes first so we never accept ghostty-web's binary.
+ * Second fetch is intentional and must stay on the HTTP URL (not blob:).
  */
 export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
-  const bytes = await fetchWtermWasmBytes();
-  const wasm = await instantiateWtermWasm(bytes);
-  const options = { scrollbackLimit: terminalScrollbackLines() };
-  // Runtime constructor is public in JS; .d.ts marks it private.
-  const Core = GhosttyCore as unknown as GhosttyCoreConstructable;
-  return new Core(wasm, options);
+  await fetchWtermWasmBytes();
+  try {
+    return await GhosttyCore.load({
+      wasmPath: WTERM_GHOSTTY_WASM_URL,
+      scrollbackLimit: terminalScrollbackLines(),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`GhosttyCore.load failed (${detail}) for ${WTERM_GHOSTTY_WASM_URL}`);
+  }
 }
 
 /**
- * Prove the constructed core can init/write — used by integration tests and
- * as a post-load sanity check before handing the core to WTerm.
+ * Integration-test helper: prove init/write after load.
+ * Not used in production mount (avoid double-init before WTerm).
  */
 export function smokeInitWtermGhosttyCore(core: GhosttyCore): void {
   core.init(40, 10);
