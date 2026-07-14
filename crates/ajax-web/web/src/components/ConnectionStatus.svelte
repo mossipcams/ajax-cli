@@ -31,11 +31,3 @@
     <a href={healthHref} target="_blank" rel="noreferrer">Open Health URL</a>
   </div>
 </div>
-
-<style>
-  .connection-actions button {
-    min-height: 44px;
-    min-width: 44px;
-    padding: 8px 12px;
-  }
-</style>
