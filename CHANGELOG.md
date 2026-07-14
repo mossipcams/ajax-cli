@@ -2,7 +2,12 @@
 
 All notable Ajax CLI changes should be recorded here.
 
-## [0.42.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.11...ajax-cli-v0.42.12) (2026-07-14)
+## [0.43.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.11...ajax-cli-v0.43.0) (2026-07-14)
+
+
+### Features
+
+* **web:** overhaul Settings into Dev settings ([#491](https://github.com/mossipcams/ajax-cli/issues/491)) ([82c10c9](https://github.com/mossipcams/ajax-cli/commit/82c10c980e405ada58402155a03247b472bd3dd9))
 
 
 ### Bug Fixes
