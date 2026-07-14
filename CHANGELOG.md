@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.41.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.41.0...ajax-cli-v0.41.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** touch must not re-pin scrollback; align sub-cell translate with renderer frame ([#457](https://github.com/mossipcams/ajax-cli/issues/457)) ([367cd49](https://github.com/mossipcams/ajax-cli/commit/367cd49af6a72232e3fd4b3a7b521cf6fc403576))
+
 ## [0.41.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.7...ajax-cli-v0.41.0) (2026-07-14)
 
 
