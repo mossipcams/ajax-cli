@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.41.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.7...ajax-cli-v0.41.0) (2026-07-14)
+
+
+### Features
+
+* **web:** fluid terminal scrolling, typing echo, and task-open latency ([#455](https://github.com/mossipcams/ajax-cli/issues/455)) ([f200f8e](https://github.com/mossipcams/ajax-cli/commit/f200f8e33aa735cae02af6befe3d9bbad961ad26))
+
 ## [0.40.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.6...ajax-cli-v0.40.7) (2026-07-14)
 
 
