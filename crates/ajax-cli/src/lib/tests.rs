@@ -101,15 +101,15 @@ fn cli_manifest_compiles_tui_and_supervisor_unconditionally() {
 }
 
 #[test]
-fn ci_web_job_runs_web_build_check() {
+fn ci_web_job_runs_mobile_webkit_smoke() {
     let workflow = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.github/workflows/ci.yml"),
     )
     .unwrap();
 
     assert!(
-        workflow.contains("npm run web:build:check"),
-        "CI web job should run the web build freshness check"
+        workflow.contains("npm run web:smoke -- --project=mobile-webkit"),
+        "CI web job should run the mobile-WebKit smoke suite"
     );
 }
 
