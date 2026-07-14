@@ -170,7 +170,26 @@ pub(crate) fn render_interactive_cockpit_command<R: CommandRunner>(
                 if pending.action == OperatorAction::Drop.as_str() {
                     save_state.allow_empty_registry_once();
                 }
-                save_cockpit_state_to_sqlite(paths, context, save_state, &mut last_loaded_mtime)?;
+                match save_cockpit_state_to_sqlite(
+                    paths,
+                    context,
+                    save_state,
+                    &mut last_loaded_mtime,
+                ) {
+                    Ok(()) => {}
+                    Err(error) => match recover_cockpit_save_error(
+                        paths,
+                        context,
+                        save_state,
+                        &mut last_loaded_mtime,
+                        error,
+                    ) {
+                        Ok(flash) => {
+                            cockpit_flash = flash;
+                        }
+                        Err(error) => return Err(error),
+                    },
+                }
                 state_changed = false;
             }
         }
@@ -504,6 +523,27 @@ pub(crate) fn save_cockpit_state_to_sqlite(
     crate::context::save_context_with_state(paths, context, save_state)?;
     *last_loaded_mtime = state_file_mtime(paths);
     Ok(())
+}
+
+// Recover from a rejected post-session Cockpit save by reloading disk state
+// into the in-memory context and resetting the tracked save baseline, instead
+// of propagating the error out of the Cockpit loop. Only `CliError::ContextSave`
+// is recoverable; every other error is returned unchanged.
+fn recover_cockpit_save_error(
+    paths: &CliContextPaths,
+    context: &mut CommandContext<InMemoryRegistry>,
+    save_state: &mut crate::context::ContextSaveState,
+    last_loaded_mtime: &mut Option<SystemTime>,
+    error: CliError,
+) -> Result<Option<String>, CliError> {
+    if !matches!(error, CliError::ContextSave(_)) {
+        return Err(error);
+    }
+    let fresh = load_context(paths)?;
+    *save_state = crate::context::tracked_save_state(paths, &fresh.registry)?;
+    context.registry = fresh.registry;
+    *last_loaded_mtime = state_file_mtime(paths);
+    Ok(Some(error.to_string()))
 }
 
 pub(crate) fn build_cockpit_snapshot(
@@ -1468,7 +1508,7 @@ mod cockpit_persistence_tests {
         InteractiveCockpitHandler,
     };
     use crate::context::{load_context, load_tracked_context, state_file_mtime, ContextSaveState};
-    use crate::CliContextPaths;
+    use crate::{CliContextPaths, CliError};
     use ajax_core::{
         adapters::{CommandOutput, CommandRunError, CommandRunner, CommandSpec},
         commands::CommandContext,
@@ -1867,6 +1907,77 @@ mod cockpit_persistence_tests {
         let on_disk = SqliteRegistryStore::new(&paths.state_file)
             .load_tasks_only()
             .expect("reload SQLite after rejected cockpit save");
+        assert!(on_disk.get_task(&TaskId::new("web/a")).is_some());
+
+        let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
+    }
+
+    #[test]
+    fn cockpit_save_guard_error_returns_to_cockpit() {
+        let paths = temp_state_paths("save-guard-recovery");
+        let mut initial = InMemoryRegistry::default();
+        initial.create_task(sample_active_task("a")).unwrap();
+        let store = SqliteRegistryStore::new(&paths.state_file);
+        store.save(&initial).unwrap();
+
+        let mut tracked = load_tracked_context(&paths).unwrap();
+        let mut last_loaded_mtime = state_file_mtime(&paths);
+
+        // Simulate the Ctrl-Q post-session path attempting to persist an
+        // in-memory registry that the empty-over-non-empty guard must reject.
+        tracked.context.registry = InMemoryRegistry::default();
+
+        let error = save_cockpit_state_to_sqlite(
+            &paths,
+            &tracked.context,
+            &mut tracked.save_state,
+            &mut last_loaded_mtime,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, CliError::ContextSave(_)),
+            "guard failure should be a ContextSave error, got {error:?}"
+        );
+
+        let flash = super::recover_cockpit_save_error(
+            &paths,
+            &mut tracked.context,
+            &mut tracked.save_state,
+            &mut last_loaded_mtime,
+            error,
+        )
+        .expect("recoverable save error should not re-raise")
+        .expect("recovered save error should produce a flash message");
+
+        assert!(
+            flash.contains("refusing to save empty registry"),
+            "flash should preserve the original save error text, got: {flash}"
+        );
+
+        let reloaded = tracked
+            .context
+            .registry
+            .get_task(&TaskId::new("web/a"))
+            .expect("recovery should reload the persisted task into the cockpit context");
+        assert_eq!(reloaded.lifecycle_status, LifecycleStatus::Active);
+
+        assert_eq!(
+            tracked.save_state.loaded_revision,
+            store.current_revision().unwrap(),
+            "recovery should reset the tracked save state revision to disk"
+        );
+        assert!(
+            tracked
+                .save_state
+                .loaded_registry
+                .get_task(&TaskId::new("web/a"))
+                .is_some(),
+            "recovery should reset the tracked save state baseline to disk"
+        );
+
+        let on_disk = SqliteRegistryStore::new(&paths.state_file)
+            .load_tasks_only()
+            .expect("reload SQLite after recovery");
         assert!(on_disk.get_task(&TaskId::new("web/a")).is_some());
 
         let _ = std::fs::remove_dir_all(paths.state_file.parent().unwrap());
