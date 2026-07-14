@@ -8,7 +8,6 @@ import {
   fetchDetail,
   fetchVersion,
   openTaskTerminalSocket,
-  redactJwts,
   taskTerminalWebSocketUrl,
 } from "./api";
 
@@ -36,9 +35,6 @@ const validCockpit = {
   inbox: { items: [] },
 };
 
-const JWT_CANARY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhamF4LWNhbmFyeSJ9.dGVzdC1zaWc";
-
 const validDetail = {
   qualified_handle: "web/x",
   repo: "web",
@@ -57,62 +53,6 @@ const validDetail = {
   last_activity_unix_secs: 1700000100,
   agent_attempts: [],
 };
-
-describe("redactJwts", () => {
-  it("replaces JWT-shaped substrings in nested strings", () => {
-    const input = {
-      msg: `token ${JWT_CANARY} leaked`,
-      nested: [{ note: `again ${JWT_CANARY}` }],
-    };
-    expect(redactJwts(input)).toEqual({
-      msg: "token [redacted] leaked",
-      nested: [{ note: "again [redacted]" }],
-    });
-  });
-
-  it("leaves non-JWT text, URLs, and short base64 fragments unchanged", () => {
-    const input = {
-      url: "https://example.com/path?token=abc",
-      short: "eyJabc",
-      plain: "not a jwt at all",
-      b64: "YWJjZGVmZ2hpams=",
-    };
-    expect(redactJwts(input)).toEqual(input);
-  });
-
-  it("passes through non-string primitives and null", () => {
-    expect(redactJwts(42)).toBe(42);
-    expect(redactJwts(null)).toBe(null);
-    expect(redactJwts(true)).toBe(true);
-  });
-});
-
-describe("fetchCockpit JWT redaction", () => {
-  it("redacts JWT-shaped tokens in cockpit status_explanation at the fetch boundary", async () => {
-    const cockpitWithJwt = {
-      ...validCockpit,
-      cards: [
-        {
-          qualified_handle: "web/x",
-          repo: "web",
-          title: "Fix x",
-          branch: "ajax/x",
-          lifecycle: "Active",
-          agent: "Codex",
-          agent_status: "Waiting",
-          status: "waiting",
-          status_explanation: `leaked ${JWT_CANARY}`,
-          actions: [],
-          created_unix_secs: 1700000000,
-          last_activity_unix_secs: 1700000100,
-        },
-      ],
-    };
-    mockFetch(() => json(cockpitWithJwt));
-    const cockpit = await fetchCockpit();
-    expect(cockpit.cards[0]?.status_explanation).toBe("leaked [redacted]");
-  });
-});
 
 describe("fetchCockpit", () => {
   it("returns a validated cockpit on success", async () => {

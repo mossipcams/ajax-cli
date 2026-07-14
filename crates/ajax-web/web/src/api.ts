@@ -73,32 +73,13 @@ const SESSION_RENEW_OPTIONS: RequestInit = {
 
 let browserSessionRenewal: Promise<void> | null = null;
 
-const JWT_RE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}/g;
-
-export function redactJwts(value: unknown): unknown {
-  if (typeof value === "string") {
-    return value.replace(JWT_RE, "[redacted]");
-  }
-  if (Array.isArray(value)) {
-    return value.map(redactJwts);
-  }
-  if (typeof value === "object" && value !== null) {
-    const out: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      out[key] = redactJwts(child);
-    }
-    return out;
-  }
-  return value;
-}
-
 async function readJson(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return {};
   try {
-    return redactJwts(JSON.parse(text));
+    return JSON.parse(text);
   } catch {
-    return { error: redactJwts(text) };
+    return { error: text };
   }
 }
 

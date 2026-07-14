@@ -654,56 +654,6 @@
       if (!container) return;
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
     };
-
-    const lastWrittenAbsoluteRow = (): number => {
-      if (!term) return 0;
-      const buf = term.buffer.active as {
-        baseY?: number;
-        cursorY?: number;
-        length?: number;
-        getLine?: (index: number) => { translateToString?: (trim: boolean) => string } | undefined;
-      };
-      const scrollback = scrollbackLines();
-      const baseY = buf.baseY ?? 0;
-      const cursorY = buf.cursorY ?? 0;
-      let lastInBuffer = cursorY;
-      const len = buf.length ?? term.rows;
-      for (let i = len - 1; i >= 0; i -= 1) {
-        const text = buf.getLine?.(i)?.translateToString?.(true) ?? "";
-        if (text.length > 0) {
-          lastInBuffer = i;
-          break;
-        }
-      }
-      return scrollback + baseY + lastInBuffer;
-    };
-
-    // ponytail: local row refit only — PTY resize stays withheld while keyboard-open.
-    const applyFrozenKeyboardBandFit = () => {
-      if (!term || !container) return;
-      const hostHeight = container.clientHeight;
-      if (!Number.isFinite(hostHeight) || hostHeight <= 0) {
-        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
-        if (scrollFollow.isPinned()) snapScrollbackToBottom();
-        return;
-      }
-      const cellHeight = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.height;
-      if (!cellHeight || !Number.isFinite(cellHeight) || cellHeight <= 0) return;
-      const scale = terminalFitScale > 0 ? terminalFitScale : 1;
-      const fitRows = Math.max(1, Math.floor(hostHeight / (cellHeight * scale)));
-      if (fitRows !== term.rows) term.resize(term.cols, fitRows);
-      const contentRows = lastWrittenAbsoluteRow() + 1;
-      if (scrollFollow.isPinned()) {
-        snapScrollbackToBottom();
-      } else if (contentRows <= fitRows) {
-        const targetViewportY = Math.max(0, scrollbackLines());
-        const delta = term.getViewportY() - targetViewportY;
-        if (delta !== 0) term.scrollLines(delta);
-      }
-      const overflow = container.scrollHeight - container.clientHeight;
-      container.scrollTop = overflow > 0 ? overflow : 0;
-    };
-
     const fitNow = () => {
       const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
       if (decision.pinToBottomOnKeyboardOpen) {
@@ -711,7 +661,10 @@
         syncScrollFollowUi();
       }
       if (!decision.allowLocalFit) {
-        if (decision.cropToBottom) applyFrozenKeyboardBandFit();
+        if (decision.cropToBottom && container) {
+          container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        }
+        if (scrollFollow.isPinned()) snapScrollbackToBottom();
         return;
       }
       if (!term || !fitAddon) return;
@@ -800,7 +753,10 @@
       scrollFollow.pin();
       syncScrollFollowUi();
       resetDocumentScroll();
-      if (isKeyboardOpen()) applyFrozenKeyboardBandFit();
+      if (isKeyboardOpen() && container) {
+        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        snapScrollbackToBottom();
+      }
     };
 
     // Fullscreen expand must land in the visible band above the iOS keyboard.
@@ -1309,7 +1265,7 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    z-index: 45;
+    z-index: 5;
     min-width: 36px;
     min-height: 36px;
     padding: 4px;
@@ -1387,9 +1343,9 @@
     }
 
     .terminal-key {
-      min-height: 44px;
-      padding: 6px 7px;
-      font-size: 12px;
+      min-height: 28px;
+      padding: 1px 7px;
+      font-size: 11px;
     }
   }
 
@@ -1589,7 +1545,8 @@
   }
 
   .terminal-status.is-empty {
-    display: none;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   :global(html.keyboard-open) .terminal-bottom-controls {
@@ -1597,8 +1554,6 @@
     padding-bottom: 6px;
   }
 
-  /* Redundant with the base is-empty rule, but keyboard-open must never show
-     the empty status even if the base rule changes; the unit contract pins it. */
   :global(html.keyboard-open) .terminal-status.is-empty {
     display: none;
   }
@@ -1632,20 +1587,5 @@
     display: block;
     height: 100%;
     min-width: 0;
-  }
-
-  /* Base .terminal-keys rules above use flex+overflow-x; phone widths need a
-     wrapped grid so Paste and Hide keyboard stay visible without panning. */
-  @media (max-width: 767px) {
-    .terminal-keys {
-      flex-wrap: wrap;
-      overflow-x: visible;
-    }
-
-    .terminal-key {
-      flex: 1 1 auto;
-      min-width: 44px;
-      min-height: 44px;
-    }
   }
 </style>

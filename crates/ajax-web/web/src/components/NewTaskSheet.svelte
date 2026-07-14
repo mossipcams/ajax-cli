@@ -302,17 +302,11 @@
     border-color: var(--teal-bright);
   }
 
-  /* Sticky footer: in a short keyboard band the card scrolls internally, and
-     Cancel/Start must stay reachable instead of sitting below the fold. */
   .sheet-actions {
-    position: sticky;
-    bottom: -22px; /* cancel the card's bottom padding so the row hugs the edge */
     display: flex;
     justify-content: flex-end;
     gap: 10px;
-    margin: 22px -22px -22px;
-    padding: 12px 22px 22px;
-    background: var(--paper-raised);
+    margin-top: 22px;
   }
 
   .sheet-error {
@@ -328,10 +322,5 @@
 
   @media (max-width: 380px) {
     .sheet-card { padding: 18px; }
-    .sheet-actions {
-      bottom: -18px;
-      margin: 22px -18px -18px;
-      padding: 12px 18px 18px;
-    }
   }
 </style>

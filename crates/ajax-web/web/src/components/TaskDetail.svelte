@@ -395,28 +395,18 @@
       padding-right: calc(12px + env(safe-area-inset-right));
     }
 
-  /* ponytail: presentation order only — DOM stays header → interact → terminal for a11y. */
-    .terminal-primary {
-      order: 1;
-      display: flex;
-      flex: 1 1 auto;
-      min-height: 0;
-    }
-    .detail-header {
-      order: 2;
-      flex: none;
-      margin-bottom: 4px;
-    }
+    .detail-header { margin-bottom: 4px; }
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .interact-panel {
-      order: 3;
-      flex: none;
-    }
     .interact-summary { display: none; }
     /* Meta details stay on desktop; on mobile they sit below the terminal in
        route-scroll and are hidden so the terminal gets more height. */
     .meta-details { display: none; }
+    .terminal-primary {
+      display: flex;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
   }
 
   @media (max-width: 380px) {
