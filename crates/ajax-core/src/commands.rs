@@ -12,6 +12,7 @@ mod task_window;
 mod teardown;
 
 pub use crate::adapters::DoctorEnvironment;
+pub(crate) use check::check_task_plan_after_worktree_recreate;
 pub use check::{
     check_task_plan, mark_task_check_failed, mark_task_check_started, mark_task_check_succeeded,
 };

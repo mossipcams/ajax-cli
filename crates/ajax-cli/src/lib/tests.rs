@@ -5192,6 +5192,58 @@ fn repair_execute_clears_missing_tmux_and_task_flags() {
 }
 
 #[test]
+fn repair_execute_recreated_worktree_is_marked_present() {
+    let mut context = sample_context();
+    let task = context
+        .registry
+        .get_task_mut(&TaskId::new("task-1"))
+        .unwrap();
+    task.git_status = Some(GitStatus {
+        worktree_exists: false,
+        branch_exists: true,
+        current_branch: Some("ajax/fix-login".to_string()),
+        dirty: false,
+        ahead: 0,
+        behind: 0,
+        merged: false,
+        untracked_files: 0,
+        unpushed_commits: 0,
+        conflicted: false,
+        last_commit: None,
+    });
+    task.add_side_flag(SideFlag::WorktreeMissing);
+    let mut runner = RecordingCommandRunner::default();
+
+    run_with_context_and_runner(
+        ["ajax", "repair", "web/fix-login", "--execute"],
+        &mut context,
+        &mut runner,
+    )
+    .unwrap();
+
+    assert!(runner.commands().iter().any(|command| {
+        command
+            == &CommandSpec::new(
+                "git",
+                [
+                    "-C",
+                    "/Users/matt/projects/web",
+                    "worktree",
+                    "add",
+                    "/tmp/worktrees/web-fix-login",
+                    "ajax/fix-login",
+                ],
+            )
+    }));
+    let task = context.registry.get_task(&TaskId::new("task-1")).unwrap();
+    assert!(task
+        .git_status
+        .as_ref()
+        .is_some_and(|status| status.worktree_exists));
+    assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
+}
+
+#[test]
 fn repair_execute_uses_injected_runner() {
     let mut context = sample_context();
     context.config.test_commands = vec![ajax_core::config::TestCommand::new("web", "cargo test")];

@@ -103,6 +103,15 @@ pub fn mark_task_window_repaired<R: Registry>(
     qualified_handle: &str,
 ) -> Result<(), CommandError> {
     let task = find_task(context, qualified_handle)?.clone();
+    if let Some(mut git_status) = task.git_status.clone() {
+        if !git_status.worktree_exists {
+            git_status.worktree_exists = true;
+            context
+                .registry
+                .update_git_status(&task.id, git_status)
+                .map_err(CommandError::Registry)?;
+        }
+    }
     context
         .registry
         .update_tmux_status(&task.id, Some(TmuxStatus::present(task.tmux_session)))
