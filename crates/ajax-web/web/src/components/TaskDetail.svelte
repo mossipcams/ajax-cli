@@ -4,6 +4,7 @@
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
+  import TerminalSurfaceSelector from "./TerminalSurfaceSelector.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -65,9 +66,7 @@
   </section>
 
   <div class="terminal-primary" data-mobile-primary="terminal">
-    {#await import("./TerminalSurfaceSelector.svelte") then { default: TerminalSurfaceSelector }}
-      <TerminalSurfaceSelector handle={detail.qualified_handle} />
-    {/await}
+    <TerminalSurfaceSelector handle={detail.qualified_handle} />
   </div>
 
   <details class="meta-details" bind:open={metaOpen}>
