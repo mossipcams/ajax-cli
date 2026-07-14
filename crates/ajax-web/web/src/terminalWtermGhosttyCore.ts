@@ -52,29 +52,65 @@ export function wasmExportsInclude(bytes: ArrayBuffer, name: string): boolean {
   return false;
 }
 
+type GhosttyWasmModule = {
+  exports: WebAssembly.Exports;
+  instance: WebAssembly.Instance;
+};
+
+type GhosttyCoreConstructable = {
+  new (wasm: GhosttyWasmModule, options?: { scrollbackLimit?: number }): GhosttyCore;
+};
+
 /**
  * Load @wterm/ghostty's core from the Ajax-served distinct URL.
  *
- * Never call bare `GhosttyCore.load()` — Vite rewrites that package's default
- * asset to `/ghostty-vt.wasm` (ghostty-web), which lacks `init`.
+ * Instantiates from the fetched bytes directly. Do not re-fetch via a blob:
+ * URL — iOS Safari often throws opaque `TypeError: Load failed` on that path.
+ * Do not call bare `GhosttyCore.load()` either; Vite rewrites that package's
+ * default asset to `/ghostty-vt.wasm` (ghostty-web), which lacks `init`.
  */
 export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
-  const response = await fetch(WTERM_GHOSTTY_WASM_URL, { cache: "no-store" });
+  let response: Response;
+  try {
+    response = await fetch(WTERM_GHOSTTY_WASM_URL, { cache: "no-store" });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `wterm wasm fetch failed (${detail}) at ${WTERM_GHOSTTY_WASM_URL} — rebuild/restart ajax and hard-refresh`,
+    );
+  }
   if (!response.ok) {
     throw new Error(
       `wterm wasm HTTP ${response.status} at ${WTERM_GHOSTTY_WASM_URL} — rebuild/restart ajax so that asset is embedded`,
     );
   }
+
   const bytes = await response.arrayBuffer();
   if (!wasmExportsInclude(bytes, "init")) {
     throw new Error(
       `wterm wasm at ${WTERM_GHOSTTY_WASM_URL} is missing init() (wrong/stale binary). Hard-refresh or rebuild ajax.`,
     );
   }
-  const blobUrl = URL.createObjectURL(new Blob([new Uint8Array(bytes)], { type: "application/wasm" }));
+
+  let wasmMemory: WebAssembly.Memory | undefined;
+  let instance: WebAssembly.Instance;
   try {
-    return await GhosttyCore.load({ wasmPath: blobUrl });
-  } finally {
-    URL.revokeObjectURL(blobUrl);
+    ({ instance } = await WebAssembly.instantiate(bytes, {
+      env: {
+        log(ptr: number, len: number) {
+          if (!wasmMemory) return;
+          const text = new TextDecoder().decode(new Uint8Array(wasmMemory.buffer, ptr, len));
+          console.log("[ghostty-vt]", text);
+        },
+      },
+    }));
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`wterm wasm instantiate failed (${detail})`);
   }
+  wasmMemory = instance.exports.memory as WebAssembly.Memory;
+
+  // Runtime constructor is public in the JS build; .d.ts marks it private.
+  const Core = GhosttyCore as unknown as GhosttyCoreConstructable;
+  return new Core({ exports: instance.exports, instance });
 }

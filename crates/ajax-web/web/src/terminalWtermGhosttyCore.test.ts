@@ -7,27 +7,34 @@ const repoRoot = join(import.meta.dirname, "../../../..");
 const wtermWasm = readFileSync(join(repoRoot, "node_modules/@wterm/ghostty/wasm/ghostty-vt.wasm"));
 const ghosttyWebWasm = readFileSync(join(repoRoot, "node_modules/ghostty-web/ghostty-vt.wasm"));
 
-
-const ghosttyLoad = vi.hoisted(() => vi.fn(async () => ({ core: "ok" })));
+const ghosttyCoreCtor = vi.hoisted(() =>
+  vi.fn(function MockCore(this: { wasm: unknown }, wasm: unknown) {
+    this.wasm = wasm;
+  }),
+);
 
 vi.mock("@wterm/ghostty", () => ({
-  GhosttyCore: {
-    load: ghosttyLoad,
-  },
+  GhosttyCore: ghosttyCoreCtor,
 }));
 
 describe("terminalWtermGhosttyCore", () => {
   beforeEach(() => {
-    ghosttyLoad.mockClear();
+    ghosttyCoreCtor.mockClear();
   });
 
   it("detects init on wterm wasm and not on ghostty-web wasm", () => {
-    expect(wasmExportsInclude(wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength), "init")).toBe(
-      true,
-    );
     expect(
       wasmExportsInclude(
-        ghosttyWebWasm.buffer.slice(ghosttyWebWasm.byteOffset, ghosttyWebWasm.byteOffset + ghosttyWebWasm.byteLength),
+        wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength),
+        "init",
+      ),
+    ).toBe(true);
+    expect(
+      wasmExportsInclude(
+        ghosttyWebWasm.buffer.slice(
+          ghosttyWebWasm.byteOffset,
+          ghosttyWebWasm.byteOffset + ghosttyWebWasm.byteLength,
+        ),
         "init",
       ),
     ).toBe(false);
@@ -41,6 +48,16 @@ describe("terminalWtermGhosttyCore", () => {
     await expect(loadWtermGhosttyCore()).rejects.toThrow(/HTTP 404/);
   });
 
+  it("wraps fetch network failures with path context", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Load failed");
+      }),
+    );
+    await expect(loadWtermGhosttyCore()).rejects.toThrow(/wterm wasm fetch failed \(Load failed\)/);
+  });
+
   it("rejects ghostty-web bytes served at the wterm URL", async () => {
     vi.stubGlobal(
       "fetch",
@@ -48,16 +65,18 @@ describe("terminalWtermGhosttyCore", () => {
         ok: true,
         status: 200,
         arrayBuffer: async () =>
-          ghosttyWebWasm.buffer.slice(ghosttyWebWasm.byteOffset, ghosttyWebWasm.byteOffset + ghosttyWebWasm.byteLength),
+          ghosttyWebWasm.buffer.slice(
+            ghosttyWebWasm.byteOffset,
+            ghosttyWebWasm.byteOffset + ghosttyWebWasm.byteLength,
+          ),
       })),
     );
     await expect(loadWtermGhosttyCore()).rejects.toThrow(/missing init/);
   });
 
-  it("loads GhosttyCore from a blob URL after validating wterm bytes", async () => {
-    const createObjectURL = vi.fn(() => "blob:wterm-ok");
-    const revokeObjectURL = vi.fn();
-    vi.stubGlobal("URL", { ...URL, createObjectURL, revokeObjectURL });
+  it("instantiates from bytes and constructs GhosttyCore without a blob URL", async () => {
+    const createObjectURL = vi.fn();
+    vi.stubGlobal("URL", { ...URL, createObjectURL });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -68,8 +87,9 @@ describe("terminalWtermGhosttyCore", () => {
       })),
     );
 
-    await expect(loadWtermGhosttyCore()).resolves.toEqual({ core: "ok" });
-    expect(ghosttyLoad).toHaveBeenCalledWith({ wasmPath: "blob:wterm-ok" });
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:wterm-ok");
+    const core = await loadWtermGhosttyCore();
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(ghosttyCoreCtor).toHaveBeenCalledTimes(1);
+    expect(core).toMatchObject({ wasm: expect.objectContaining({ instance: expect.anything() }) });
   });
 });
