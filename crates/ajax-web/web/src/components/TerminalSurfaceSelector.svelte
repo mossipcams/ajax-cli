@@ -34,6 +34,7 @@
   }
 </script>
 
+<div class="surface-selector">
 {#if v2Enabled}
   {#if initError}
     <p class="surface-fallback-error" data-testid="terminal-surface-v2-error">
@@ -54,17 +55,28 @@
     {/await}
   {/key}
 {/if}
+</div>
 
 <style>
+  .surface-selector {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    width: 100%;
+  }
+
   .surface-fallback-error {
     margin: 0 0 8px;
-    padding: 8px 10px;
+    padding: 6px 8px;
     font-size: 12px;
     line-height: 1.4;
     color: var(--ink);
-    background: color-mix(in srgb, var(--mustard-bright) 18%, transparent);
+    background: var(--surface-raised);
     border: 1px solid var(--rule);
-    border-radius: 8px;
+    border-left: 3px solid var(--mustard-bright);
+    border-radius: 6px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;

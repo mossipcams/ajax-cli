@@ -6,6 +6,7 @@ import WtermTerminalView from "./WtermTerminalView.svelte";
 const termWrite = vi.fn();
 const termFocus = vi.fn();
 const termDestroy = vi.fn();
+const termResize = vi.fn();
 let termOnData: ((data: string) => void) | undefined;
 let termOnResize: ((cols: number, rows: number) => void) | undefined;
 
@@ -34,6 +35,7 @@ vi.mock("@wterm/dom", () => ({
       termOnResize = options?.onResize;
     }
     init = vi.fn(() => Promise.resolve(this));
+    resize = termResize;
     write = termWrite;
     focus = termFocus;
     destroy = termDestroy;
@@ -76,6 +78,10 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    cb(0);
+    return 0;
+  });
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -111,16 +117,41 @@ describe("WtermTerminalView", () => {
     expect(sendInput).toHaveBeenCalledWith("a");
   });
 
-  it("routes resize through connection.sendResize with the resize protocol", async () => {
+  it("routes resize through connection.sendResize with actual cols and rows", async () => {
     render(WtermTerminalView, { props: { handle: "web/fix" } });
     await waitFor(() => expect(termOnResize).toBeTypeOf("function"));
+    sendResize.mockClear();
     termOnResize!(40, 20);
-    expect(sendResize).toHaveBeenCalledWith(80, 20);
+    expect(sendResize).toHaveBeenLastCalledWith(40, 20);
+  });
+
+  it("clamps tiny resize dimensions to at least one col and row", async () => {
+    render(WtermTerminalView, { props: { handle: "web/fix" } });
+    await waitFor(() => expect(termOnResize).toBeTypeOf("function"));
+    sendResize.mockClear();
+    termOnResize!(0, 0);
+    expect(sendResize).toHaveBeenLastCalledWith(1, 1);
+  });
+
+  it("force-fits the terminal after init when the host has non-zero dimensions", async () => {
+    let resolveLoad: (value: { runtime: string }) => void = () => {};
+    const loadPromise = new Promise<{ runtime: string }>((resolve) => {
+      resolveLoad = resolve;
+    });
+    ghosttyLoad.mockImplementationOnce(() => loadPromise);
+
+    const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+    const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+    Object.defineProperty(host, "clientWidth", { configurable: true, value: 320 });
+    Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
+    resolveLoad({ runtime: "ghostty-core" });
+
+    await waitFor(() => expect(termResize).toHaveBeenCalledWith(40, 10));
   });
 
   it("unmount calls connection.dispose and term.destroy", async () => {
     const { unmount } = render(WtermTerminalView, { props: { handle: "web/fix" } });
-    await waitFor(() => expect(ghosttyLoad).toHaveBeenCalled());
+    await waitFor(() => expect(sendResize).toHaveBeenCalled());
     unmount();
     expect(dispose).toHaveBeenCalled();
     expect(termDestroy).toHaveBeenCalled();

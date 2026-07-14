@@ -8,7 +8,6 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { MIN_TERMINAL_COLS } from "../terminalGeometry";
   import { WTERM_GHOSTTY_WASM_URL } from "../terminalWtermWasm";
 
   interface Props {
@@ -80,7 +79,21 @@
   };
 
   const reportResize = (cols: number, rows: number) => {
-    connection?.sendResize(Math.max(cols, MIN_TERMINAL_COLS), rows);
+    connection?.sendResize(Math.max(cols, 1), Math.max(rows, 1));
+  };
+
+  const forceFitTerminal = (liveTerm: WTerm, host: HTMLDivElement) => {
+    const width = host.clientWidth;
+    const height = host.clientHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const charWidth = 8;
+    const charHeight = 17;
+    const cols = Math.max(1, Math.floor(width / charWidth));
+    const rows = Math.max(1, Math.floor(height / charHeight));
+    if (cols !== liveTerm.cols || rows !== liveTerm.rows) {
+      liveTerm.resize(cols, rows);
+    }
   };
 
   const sendKey = (data: string) => {
@@ -125,6 +138,18 @@
           liveTerm.destroy();
           return;
         }
+
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            if (hostEl) forceFitTerminal(liveTerm, hostEl);
+            resolve();
+          });
+        });
+        if (disposed) {
+          liveTerm.destroy();
+          return;
+        }
+
         term = liveTerm;
 
         const liveConnection = connectTaskTerminal(handle, {
@@ -226,20 +251,37 @@
 
 <style>
   .wterm-root {
-    display: contents;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
   }
 
   .terminal-panel {
     display: flex;
     flex-direction: column;
+    flex: 1;
     min-height: 0;
-    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .wterm-host {
-    flex: 1 1 auto;
-    min-height: 120px;
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    width: 100%;
+    height: 100%;
     overflow: hidden;
+    background: #1c1714;
+  }
+
+  :global(.wterm-host.wterm) {
+    padding: 4px;
+    box-shadow: none;
+    border-radius: 0;
   }
 
   .terminal-keys {

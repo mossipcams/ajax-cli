@@ -121,6 +121,10 @@ beforeEach(() => {
       disconnect = vi.fn();
     },
   );
+  vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+    cb(0);
+    return 0;
+  });
 });
 
 afterEach(() => {
@@ -177,7 +181,10 @@ describe("TerminalSurfaceSelector", () => {
       props: { handle: "web/fix" },
     });
     await waitFor(() => {
-      expect(getByTestId("terminal-surface-v2-error").textContent).toContain("boom");
+      const errorEl = getByTestId("terminal-surface-v2-error");
+      expect(errorEl.textContent).toContain("boom");
+      expect(errorEl.classList.contains("surface-fallback-error")).toBe(true);
+      expect(errorEl.classList.contains("surface-fallback-error--full-viewport")).toBe(false);
       expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeNull();
       expect(ghosttyWebLoad).not.toHaveBeenCalled();
     });
