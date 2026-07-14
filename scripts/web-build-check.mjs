@@ -29,7 +29,7 @@ for (const name of ["index.html", "app.js", "terminal.js", "app.css"]) {
   if (contents !== normalized) writeFileSync(assetPath, normalized);
 }
 
-for (const name of ["index.html", "app.js", "terminal.js", "app.css", "ghostty-vt.wasm"]) {
+for (const name of ["index.html", "app.js", "terminal.js", "app.css", "ghostty-vt.wasm", "wterm-ghostty-vt.wasm"]) {
   check(existsSync(join(distDir, name)), `missing dist/${name}`);
 }
 
@@ -48,6 +48,10 @@ if (existsSync(join(distDir, "app.js")) && existsSync(join(distDir, "terminal.js
   check(!app.includes('from"./terminal.js"'), "dist/app.js statically imports the terminal chunk");
   check(app.includes('import("./terminal.js")'), "dist/app.js is missing the lazy terminal import");
   check(terminal.includes("/ghostty-vt.wasm"), "dist/terminal.js is missing the Ghostty WASM path");
+  check(
+    terminal.includes("/wterm-ghostty-vt.wasm"),
+    "dist/terminal.js is missing the wterm Ghostty WASM path",
+  );
   check(app.length < terminal.length, "dist/app.js should be smaller than the deferred terminal chunk");
 }
 
@@ -55,6 +59,19 @@ if (existsSync(join(distDir, "ghostty-vt.wasm"))) {
   check(
     statSync(join(distDir, "ghostty-vt.wasm")).size > 0,
     "dist/ghostty-vt.wasm is empty",
+  );
+}
+
+if (
+  existsSync(join(distDir, "ghostty-vt.wasm")) &&
+  existsSync(join(distDir, "wterm-ghostty-vt.wasm"))
+) {
+  const ghostty = readFileSync(join(distDir, "ghostty-vt.wasm"));
+  const wterm = readFileSync(join(distDir, "wterm-ghostty-vt.wasm"));
+  check(wterm.length > 0, "dist/wterm-ghostty-vt.wasm is empty");
+  check(
+    !ghostty.equals(wterm),
+    "dist/wterm-ghostty-vt.wasm must differ from ghostty-web ghostty-vt.wasm",
   );
 }
 

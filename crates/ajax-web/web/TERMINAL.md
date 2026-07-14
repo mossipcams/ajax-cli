@@ -26,7 +26,11 @@
 - Packages pinned from npm: `@wterm/dom@0.3.0`, `@wterm/ghostty@0.3.0`
 - Settings toggle: `ajax.terminal.surfaceV2` (default off)
 - Uses Ajax `connectTaskTerminal`; does **not** use wterm `WebSocketTransport`
-- Ghostty remains default and fallback when init fails
+- Ghostty remains default when the experiment is off
+- While Surface V2 is enabled, Ghostty is not mounted or preloaded (failure shows
+  an error + Retry; it does not fall back to Ghostty until the flag is turned off)
+- WASM: ghostty-web stays at `/ghostty-vt.wasm`; `@wterm/ghostty` is served at
+  `/wterm-ghostty-vt.wasm` (same filename upstream, incompatible exports)
 - Intentionally smaller than Ghostty: no zero-lag overlay, no selection-manager casts, native wterm scroll/selection
 - Known upstream gaps (document-only): scroll-follow parity, expand/fullscreen chrome, copy/paste fallback depth
 

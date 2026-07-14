@@ -88,6 +88,15 @@ describe("WtermTerminalView", () => {
     });
   });
 
+  it("loads GhosttyCore with the distinct wterm WASM path", async () => {
+    render(WtermTerminalView, { props: { handle: "web/fix" } });
+    await waitFor(() =>
+      expect(ghosttyLoad).toHaveBeenCalledWith({
+        wasmPath: "/wterm-ghostty-vt.wasm",
+      }),
+    );
+  });
+
   it("routes PTY output from the connection callback to term.write", async () => {
     render(WtermTerminalView, { props: { handle: "web/fix" } });
     await waitFor(() => expect(onOutput).toBeTypeOf("function"));
