@@ -28,6 +28,8 @@
     "vitest": "^4.1.9"
   },
   "dependencies": {
+    "@wterm/dom": "0.3.0",
+    "@wterm/ghostty": "0.3.0",
     "ghostty-web": "github:rcarmo/ghostty-web#v0.9.4"
   }
 }

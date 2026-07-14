@@ -77,7 +77,10 @@ export default defineConfig({
         manualChunks(id) {
           if (
             id.includes("/node_modules/ghostty-web/") ||
+            id.includes("/node_modules/@wterm/") ||
             id.includes("/components/TerminalRawView.svelte") ||
+            id.includes("/components/WtermTerminalView.svelte") ||
+            id.includes("/components/TerminalSurfaceSelector.svelte") ||
             id.includes("/web/src/terminal")
           ) return "terminal";
         },

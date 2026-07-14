@@ -2,6 +2,11 @@
   import { restartServer, waitForServerOnline } from "../api";
   import { buildDiagnosticsReport, copyText } from "../diagnostics";
   import { CONFIRM_TIMEOUT_MS } from "../polling";
+  import {
+    isTerminalSurfaceV2Enabled,
+    setTerminalSurfaceV2Enabled,
+    subscribeTerminalSurfaceV2,
+  } from "../terminalSurfaceSetting";
 
   interface Props {
     detailHandle?: string | null;
@@ -17,6 +22,14 @@
   let restarting = $state(false);
   let diagnosticsOutput = $state<string | null>(null);
   let confirmTimer: ReturnType<typeof setTimeout> | null = null;
+  let terminalSurfaceV2 = $state(isTerminalSurfaceV2Enabled());
+
+  $effect(() => {
+    const unsubscribe = subscribeTerminalSurfaceV2((enabled) => {
+      terminalSurfaceV2 = enabled;
+    });
+    return unsubscribe;
+  });
 
   async function restart() {
     if (!confirmingRestart) {
@@ -84,6 +97,25 @@
     {#if diagnosticsOutput}
       <pre class="settings-status">{diagnosticsOutput}</pre>
     {/if}
+  </div>
+
+  <div class="settings-section">
+    <h3>Experimental</h3>
+    <label class="settings-toggle">
+      <input
+        type="checkbox"
+        data-testid="setting-terminal-surface-v2"
+        checked={terminalSurfaceV2}
+        onchange={(event) => {
+          const enabled = (event.currentTarget as HTMLInputElement).checked;
+          setTerminalSurfaceV2Enabled(enabled);
+          terminalSurfaceV2 = enabled;
+        }} />
+      Terminal Surface V2
+    </label>
+    <p class="settings-note">
+      Use the experimental DOM-rendered terminal optimized for mobile browsers.
+    </p>
   </div>
 </section>
 
@@ -158,5 +190,21 @@
     font-family: var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+
+  .settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 14px;
+    color: var(--ink);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .settings-toggle input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--mustard-bright);
   }
 </style>

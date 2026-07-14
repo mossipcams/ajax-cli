@@ -65,8 +65,8 @@
   </section>
 
   <div class="terminal-primary" data-mobile-primary="terminal">
-    {#await import("./TerminalRawView.svelte") then { default: TerminalRawView }}
-      <TerminalRawView handle={detail.qualified_handle} />
+    {#await import("./TerminalSurfaceSelector.svelte") then { default: TerminalSurfaceSelector }}
+      <TerminalSurfaceSelector handle={detail.qualified_handle} />
     {/await}
   </div>
 

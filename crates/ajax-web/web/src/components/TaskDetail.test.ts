@@ -5,6 +5,7 @@ import { join } from "node:path";
 import TaskDetail from "./TaskDetail.svelte";
 import taskDetailSource from "./TaskDetail.svelte?raw";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
+import terminalSurfaceSelectorSource from "./TerminalSurfaceSelector.svelte?raw";
 import routeScrollSource from "./RouteScroll.svelte?raw";
 import appSource from "./App.svelte?raw";
 import type { BrowserTaskDetail } from "../types";
@@ -120,6 +121,12 @@ describe("TaskDetail", () => {
   it("renders the task terminal panel for the qualified handle", async () => {
     const { findByTestId } = render(TaskDetail, { props: { detail: detail() } });
     expect(await findByTestId("task-terminal-panel")).toBeInTheDocument();
+  });
+
+  it("routes the terminal through TerminalSurfaceSelector", () => {
+    expect(taskDetailSource).toMatch(/TerminalSurfaceSelector/);
+    expect(taskDetailSource).not.toMatch(/TerminalRawView\.svelte/);
+    expect(terminalSurfaceSelectorSource).toMatch(/TerminalRawView/);
   });
 
   it("exposes mobile terminal-first layout hooks", () => {
