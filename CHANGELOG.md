@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.41.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.41.1...ajax-cli-v0.41.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** trail output flushes while reading scrollback ([#459](https://github.com/mossipcams/ajax-cli/issues/459)) ([e3e007c](https://github.com/mossipcams/ajax-cli/commit/e3e007c7eb5b8a8d330647a47b772260ce2bc8cc))
+
 ## [0.41.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.41.0...ajax-cli-v0.41.1) (2026-07-14)
 
 
