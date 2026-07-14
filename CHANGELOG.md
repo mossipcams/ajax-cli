@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.6...ajax-cli-v0.40.7) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** anchor keyboard input and speed up terminal load ([#453](https://github.com/mossipcams/ajax-cli/issues/453)) ([4304bce](https://github.com/mossipcams/ajax-cli/commit/4304bce29df98413c01fc3fba2bec2fb2ac1d1ac))
+
 ## [0.40.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.5...ajax-cli-v0.40.6) (2026-07-14)
 
 
