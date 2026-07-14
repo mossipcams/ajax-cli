@@ -75,6 +75,13 @@ describe("initViewport", () => {
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
   });
 
+  it("clears document scroll when the keyboard opens", () => {
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
+  });
+
   it("clears keyboard-open when the viewport returns toward baseline", () => {
     start();
     vvHeight = 480;
@@ -89,6 +96,7 @@ describe("initViewport", () => {
     start();
     vvHeight = 480;
     dispatchVV("resize");
+    (window.scrollTo as ReturnType<typeof vi.fn>).mockClear();
     window.dispatchEvent(new Event("scroll"));
     expect(window.scrollTo).not.toHaveBeenCalled();
   });
@@ -101,13 +109,9 @@ describe("initViewport", () => {
 
   it("clears document scroll when the keyboard closes", () => {
     start();
-    const scrollCallsBeforeOpen = (window.scrollTo as ReturnType<typeof vi.fn>).mock.calls.length;
-
     vvHeight = 600;
     dispatchVV("resize");
-    expect((window.scrollTo as ReturnType<typeof vi.fn>).mock.calls.length).toBe(
-      scrollCallsBeforeOpen,
-    );
+    (window.scrollTo as ReturnType<typeof vi.fn>).mockClear();
 
     vvHeight = 800;
     dispatchVV("resize");

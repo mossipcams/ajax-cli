@@ -90,6 +90,19 @@ describe("NewTaskSheet", () => {
     expect(spy).not.toHaveBeenCalled();
   });
 
+  it("opens the new task route on successful start", async () => {
+    vi.spyOn(api, "startTask").mockResolvedValue({ ok: true, response: {} });
+    const onOpenTask = vi.fn();
+    const onClose = vi.fn();
+    const { container } = render(NewTaskSheet, { props: { repos, onOpenTask, onClose } });
+    await fireEvent.input(container.querySelector("#new-task-title-input")!, {
+      target: { value: "Fix Login" },
+    });
+    await fireEvent.submit(container.querySelector("form")!);
+    expect(onOpenTask).toHaveBeenCalledWith("web/fix-login");
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("submits with a request id and applies the refreshed cockpit on success", async () => {
     const cockpit = {
       backend: { authority: "host-native", control_enabled: true },

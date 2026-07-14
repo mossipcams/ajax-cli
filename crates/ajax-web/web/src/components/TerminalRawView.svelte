@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Ghostty, Terminal, FitAddon, type IDisposable } from "ghostty-web";
+  import { Terminal, FitAddon, type IDisposable } from "ghostty-web";
+  import { preloadGhosttyRuntime } from "../terminalPreload";
   import {
     connectTaskTerminal,
     type TerminalConnection,
@@ -44,12 +45,10 @@
     createTerminalClipboardUi,
     type ClipboardUiSnapshot,
   } from "../terminalClipboard";
-  const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
   const TERMINAL_PLACEHOLDER_KEY = "ajax.debug.terminalPlaceholder";
   const placeholderMode =
     typeof localStorage !== "undefined" &&
     localStorage.getItem(TERMINAL_PLACEHOLDER_KEY) === "true";
-  let ghosttyRuntime: Promise<Ghostty> | undefined;
 
   type TerminalWithRendererMetrics = Terminal & {
     renderer?: {
@@ -76,11 +75,6 @@
   };
   const terminalInternals = (candidate: Terminal | undefined): TerminalSelectionInternals =>
     (candidate ?? {}) as unknown as TerminalSelectionInternals;
-
-  const loadGhosttyRuntime = () => {
-    ghosttyRuntime ??= Ghostty.load(GHOSTTY_WASM_URL);
-    return ghosttyRuntime;
-  };
 
   interface Props {
     handle: string;
@@ -308,6 +302,10 @@
       input.setAttribute("autocomplete", "off");
       input.setAttribute("spellcheck", "false");
       input.style.fontSize = "16px";
+      input.style.position = "absolute";
+      input.style.bottom = "0";
+      input.style.height = "44px";
+      input.style.width = "100%";
       // ghostty clips the textarea to a fully invisible 1px box (opacity:0 +
       // clipPath:inset(50%)). Soften just enough that iOS treats it as a real
       // edit target for native Paste. Keep the element slightly opaque/unclipped
@@ -575,6 +573,13 @@
           },
           endSelection: finishSelection,
           touchBegan: () => {
+            resetDocumentScroll();
+            scrollFollow.pin();
+            syncScrollFollowUi();
+            if (container) {
+              container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+            }
+            if (isKeyboardOpen() && scrollFollow.isPinned()) snapScrollbackToBottom();
             term?.textarea?.focus({ preventScroll: true });
           },
         })
@@ -933,7 +938,7 @@
     };
 
     const mountGhosttyTerminal = async () => {
-      const ghostty = await loadGhosttyRuntime();
+      const ghostty = await preloadGhosttyRuntime();
       if (disposed || !container) return;
       fitAddon = new FitAddon();
       term = new Terminal({
@@ -1394,6 +1399,10 @@
      Soften ghostty's full clip (opacity:0 + clipPath:inset(50%)) just enough
      that iOS treats it as a real edit target for native Paste. */
   .terminal-host :global(textarea) {
+    position: absolute;
+    bottom: 0;
+    height: 44px;
+    width: 100%;
     user-select: text;
     -webkit-user-select: text;
     opacity: 0.01;
