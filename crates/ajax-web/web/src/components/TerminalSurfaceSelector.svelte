@@ -71,7 +71,7 @@
     font-size: 12px;
     line-height: 1.4;
     color: var(--ink);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     border: 1px solid var(--rule);
     border-left: 3px solid var(--mustard-bright);
     border-radius: 6px;
@@ -86,7 +86,7 @@
     padding: 2px 8px;
     border-radius: 6px;
     border: 1px solid var(--rule);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
   }
 </style>
