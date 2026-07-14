@@ -191,7 +191,16 @@ fn repair_task_plan<R: Registry>(
     let mut plan =
         commands::task_window_repair_plan_with_open_mode(context, qualified_handle, open_mode)?;
     plan.title = format!("repair task: {qualified_handle}");
-    if let Ok(check_plan) = commands::check_task_plan(context, qualified_handle) {
+    let recreates_worktree = plan
+        .commands
+        .iter()
+        .any(commands::is_git_worktree_add_command);
+    let check_plan = if recreates_worktree {
+        commands::check_task_plan_after_worktree_recreate(context, qualified_handle)
+    } else {
+        commands::check_task_plan(context, qualified_handle)
+    };
+    if let Ok(check_plan) = check_plan {
         plan.commands.extend(check_plan.commands);
         plan.requires_confirmation |= check_plan.requires_confirmation;
         plan.blocked_reasons.extend(check_plan.blocked_reasons);

@@ -366,7 +366,10 @@ mod tests {
         adapters::{CommandOutput, RecordingCommandRunner},
         commands::CommandContext,
         config::{Config, ManagedRepo},
-        models::{GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, TaskId, TmuxStatus},
+        models::{
+            GitStatus, LifecycleStatus, LiveObservation, LiveStatusKind, SideFlag, TaskId,
+            TmuxStatus,
+        },
         registry::{InMemoryRegistry, Registry as _},
     };
 
@@ -419,6 +422,64 @@ mod tests {
                 .any(|command| command.mode == ajax_core::adapters::CommandMode::InheritStdio),
             "resume must not attach to the task terminal"
         );
+    }
+
+    #[test]
+    fn operate_slice_repair_recreated_worktree_is_marked_present() {
+        let mut context = context_with_reviewable_task();
+        let task = context
+            .registry
+            .get_task_mut(&TaskId::new("web/fix-login"))
+            .unwrap();
+        task.git_status = Some(GitStatus {
+            worktree_exists: false,
+            branch_exists: true,
+            current_branch: Some("ajax/fix-login".to_string()),
+            dirty: false,
+            ahead: 0,
+            behind: 0,
+            merged: false,
+            untracked_files: 0,
+            unpushed_commits: 0,
+            conflicted: false,
+            last_commit: None,
+        });
+        task.add_side_flag(SideFlag::WorktreeMissing);
+        let mut runner = RecordingCommandRunner::default();
+
+        operate(
+            &mut context,
+            &mut runner,
+            OperateRequest {
+                task_handle: "web/fix-login".to_string(),
+                action: "repair".to_string(),
+            },
+        )
+        .unwrap();
+
+        assert!(runner.commands().iter().any(|command| {
+            command
+                == &ajax_core::adapters::CommandSpec::new(
+                    "git",
+                    [
+                        "-C",
+                        "/repo/web",
+                        "worktree",
+                        "add",
+                        "/repo/web__worktrees/ajax-fix-login",
+                        "ajax/fix-login",
+                    ],
+                )
+        }));
+        let task = context
+            .registry
+            .get_task(&TaskId::new("web/fix-login"))
+            .unwrap();
+        assert!(task
+            .git_status
+            .as_ref()
+            .is_some_and(|status| status.worktree_exists));
+        assert!(!task.has_side_flag(SideFlag::WorktreeMissing));
     }
 
     #[test]
