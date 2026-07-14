@@ -34,6 +34,7 @@
   }
 </script>
 
+<div class="surface-selector">
 {#if v2Enabled}
   {#if initError}
     <p class="surface-fallback-error" data-testid="terminal-surface-v2-error">
@@ -54,17 +55,26 @@
     {/await}
   {/key}
 {/if}
+</div>
 
 <style>
+  /* Layout-transparent: Ghostty and wterm roots must flex directly under
+     .terminal-primary. A real flex wrapper here shrinks the Ghostty host so
+     the bottom input textarea covers swipe targets and e2e dragTo hangs. */
+  .surface-selector {
+    display: contents;
+  }
+
   .surface-fallback-error {
     margin: 0 0 8px;
-    padding: 8px 10px;
+    padding: 6px 8px;
     font-size: 12px;
     line-height: 1.4;
     color: var(--ink);
-    background: color-mix(in srgb, var(--mustard-bright) 18%, transparent);
+    background: var(--surface-raised);
     border: 1px solid var(--rule);
-    border-radius: 8px;
+    border-left: 3px solid var(--mustard-bright);
+    border-radius: 6px;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
