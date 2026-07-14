@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.1...ajax-cli-v0.42.2) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** align wterm Surface V2 sizing with PTY output ([#465](https://github.com/mossipcams/ajax-cli/issues/465)) ([2f202c3](https://github.com/mossipcams/ajax-cli/commit/2f202c382a2d96bd6df9311170f845afc3639440))
+
 ## [0.42.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.0...ajax-cli-v0.42.1) (2026-07-14)
 
 
