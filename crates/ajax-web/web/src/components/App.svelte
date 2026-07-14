@@ -85,7 +85,7 @@
   // operator action so core acknowledges attention and the inbox row clears.
   // Best-effort — a blocked/failed resume is not a connection error; the detail
   // projection already carries the status explanation.
-  async function resumeOnOpen(handle: string) {
+  async function resumeOnOpen(handle: string): Promise<boolean> {
     try {
       const result = await postOperation({
         task_handle: handle,
@@ -93,8 +93,10 @@
         request_id: requestId(),
       });
       if (result.ok && result.response.cockpit) applyCockpit(result.response.cockpit);
+      return result.ok;
     } catch {
       // swallow: resume is not required for viewing.
+      return false;
     }
   }
 
@@ -188,7 +190,10 @@
     }
     untrack(() => {
       detail = null;
-      void resumeOnOpen(handle).finally(() => void loadDetail(handle));
+      void loadDetail(handle);
+      void resumeOnOpen(handle).then((mutated) => {
+        if (mutated) void loadDetail(handle);
+      });
     });
   });
 

@@ -269,6 +269,31 @@ describe("App shell", () => {
     expect(await findByTestId("outlet-task")).toBeInTheDocument();
   });
 
+  it("renders task detail while the resume operation is still in flight", async () => {
+    let releaseResume!: (value: ReturnType<typeof jsonResponse>) => void;
+    const resumePending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      releaseResume = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
+        if (path.startsWith("/api/tasks/")) return Promise.resolve(jsonResponse(taskDetail));
+        if (path === "/api/operations") return resumePending;
+        return Promise.reject(new Error(`unexpected fetch: ${path}`));
+      }),
+    );
+
+    const { findByTestId } = render(App);
+    setHash("#/t/web%2Ffix-login");
+    await findByTestId("task-terminal-panel");
+
+    releaseResume(jsonResponse({ ok: true }));
+    await tick();
+  });
+
   it("resumes the task once when its route is entered, and re-resumes a different handle", async () => {
     const operations: Array<{ task_handle: string; action: string }> = [];
     vi.stubGlobal(
@@ -532,13 +557,26 @@ describe("App shell", () => {
 
   it("clears detail failure text after a later successful detail load", async () => {
     let detailCalls = 0;
+    let resumeCalls = 0;
+    let releaseCockpit!: (value: ReturnType<typeof jsonResponse>) => void;
+    let releaseResume!: (value: ReturnType<typeof jsonResponse>) => void;
+    const cockpitPending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      releaseCockpit = resolve;
+    });
+    const resumePending = new Promise<ReturnType<typeof jsonResponse>>((resolve) => {
+      releaseResume = resolve;
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const path = String(input);
-        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
+        if (path === "/api/cockpit") return cockpitPending;
         if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
-        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
+        if (path === "/api/operations") {
+          resumeCalls += 1;
+          if (resumeCalls === 1) return resumePending;
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
         if (path.startsWith("/api/tasks/")) {
           detailCalls += 1;
           // First open fails; reopen after leaving the task succeeds.
@@ -554,6 +592,9 @@ describe("App shell", () => {
     const { findByText, queryByText } = render(App);
     setHash("#/t/web%2Ffix-login");
     expect(await findByText("disconnected: HTTP 500")).toBeInTheDocument();
+    releaseResume(jsonResponse({ ok: true }));
+    releaseCockpit(jsonResponse(cockpit));
+    await tick();
 
     // Flush the dashboard intermediate so the detail effect observes handle=null
     // before reopening the same task (sync double-hashchange would otherwise batch).

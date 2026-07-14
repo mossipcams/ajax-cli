@@ -29,12 +29,14 @@ export function createTerminalWriteBatcher(options: {
 }): TerminalWriteBatcher {
   const flushMs = options.flushMs ?? TERMINAL_WRITE_FLUSH_MS;
   const maxChars = options.maxChars ?? TERMINAL_WRITE_MAX_CHARS;
+  const now = options.now ?? (() => performance.now());
   const schedule = options.schedule ?? setTimeout;
   const clearSchedule = options.clearSchedule ?? clearTimeout;
   const chunks: string[] = [];
   let pending = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let disposed = false;
+  let lastFlushAt = -Infinity;
 
   const cancelTimer = () => {
     if (timer !== undefined) {
@@ -49,20 +51,21 @@ export function createTerminalWriteBatcher(options: {
     const combined = chunks.join("");
     chunks.length = 0;
     pending = 0;
+    lastFlushAt = now();
     options.onFlush(combined);
   };
 
   return {
     push(text: string) {
       if (disposed || text.length === 0) return;
-      const wasEmpty = chunks.length === 0;
       chunks.push(text);
       pending += text.length;
-      if (wasEmpty) {
-        timer = schedule(flush, flushMs);
-      }
       if (pending >= maxChars) {
         flush();
+      } else if (now() - lastFlushAt >= flushMs) {
+        flush();
+      } else if (timer === undefined) {
+        timer = schedule(flush, flushMs - (now() - lastFlushAt));
       }
     },
     flush,

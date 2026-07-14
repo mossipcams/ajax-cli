@@ -7,9 +7,8 @@
     type TerminalConnectionStatus,
   } from "../terminalConnection";
   import { isKeyboardOpen, resetDocumentScroll } from "../viewport";
-  import { attachTerminalGestures } from "../terminalGestures";
+  import { attachTerminalGestures, cellAtPoint, orderedSelection, type CellPoint } from "../terminalGestures";
   import { createRefitScheduler } from "../terminalRefit";
-  import { cellAtPoint, orderedSelection, type CellPoint } from "../terminalGestures";
   import { copyText } from "../diagnostics";
   import {
     logicalCols,
@@ -165,6 +164,7 @@
   let snapExpandedView: () => void = () => {};
   let beginExpandFlush: () => void = () => {};
   let endExpandFlush: () => void = () => {};
+  let setScrollOffsetPx: (px: number) => void = () => {};
 
   const STATUS_LABELS: Record<typeof status, string> = {
     connecting: "Connecting…",
@@ -340,6 +340,32 @@
 
     // CSS scale applied to term.element after fit; 1 on wide hosts.
     let terminalFitScale = 1;
+    let subCellOffsetPx = 0;
+
+    const syncScaleLayerTransform = () => {
+      if (!container) return;
+      const element = scaleLayer ?? term?.element;
+      if (!element) return;
+      const parts: string[] = [];
+      if (subCellOffsetPx !== 0) {
+        parts.push(`translateY(${subCellOffsetPx}px)`);
+      }
+      const scale = terminalFitScale;
+      if (scale < 1) {
+        parts.push(`scale(${scale})`);
+        element.style.transformOrigin = "0 0";
+      } else {
+        element.style.transformOrigin = "";
+      }
+      element.style.transform = parts.length ? parts.join(" ") : "";
+    };
+
+    const setScrollOffsetPxImpl = (px: number) => {
+      if (px === subCellOffsetPx) return;
+      subCellOffsetPx = px;
+      syncScaleLayerTransform();
+    };
+    setScrollOffsetPx = setScrollOffsetPxImpl;
 
     const colsFloor = () => MIN_TERMINAL_COLS;
 
@@ -402,9 +428,9 @@
     };
 
     const applyTerminalScale = () => {
-      if (!term || !container) return;
-      const element = term.element;
-      if (!element) return;
+      if (!container) return;
+      const element = scaleLayer ?? term?.element;
+      if (!element || !term) return;
       const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
       const hostWidth = container.clientWidth;
       const cols = term.cols;
@@ -418,19 +444,11 @@
         cols <= 0
       ) {
         terminalFitScale = 1;
-        element.style.transform = "";
-        element.style.transformOrigin = "";
+        syncScaleLayerTransform();
         return;
       }
-      const scale = fitScale(hostWidth, cols, cellWidth);
-      terminalFitScale = scale;
-      if (scale < 1) {
-        element.style.transformOrigin = "0 0";
-        element.style.transform = `scale(${scale})`;
-      } else {
-        element.style.transform = "";
-        element.style.transformOrigin = "";
-      }
+      terminalFitScale = fitScale(hostWidth, cols, cellWidth);
+      syncScaleLayerTransform();
     };
 
     // ghostty-web's FitAddon reserves 15px of width for the scrollbar Ajax
@@ -577,6 +595,9 @@
           touchBegan: () => {
             term?.textarea?.focus({ preventScroll: true });
           },
+          setScrollOffsetPx: setScrollOffsetPxImpl,
+          atBottom: () => (term?.getViewportY() ?? 0) <= 0,
+          atTop: () => (term ? term.getViewportY() >= scrollbackLines() : true),
         })
       : () => {};
 
@@ -616,6 +637,7 @@
     // Reading action only: focusing here would pop the iOS keyboard and
     // shrink the very output the user asked to see (same contract as expand).
     jumpToBottom = () => {
+      setScrollOffsetPxImpl(0);
       const follow = scrollFollow.jumpToBottom();
       if (follow.snapToBottom) snapScrollbackToBottom();
       syncScrollFollowUi();
@@ -655,6 +677,7 @@
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
     };
     const fitNow = () => {
+      setScrollOffsetPxImpl(0);
       const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
       if (decision.pinToBottomOnKeyboardOpen) {
         scrollFollow.pin();
@@ -830,6 +853,7 @@
     const writeBatcher = createTerminalWriteBatcher({
       onFlush: (combined) => {
         if (scrollFollow.isPinned()) {
+          setScrollOffsetPxImpl(0);
           writeToTerminal(combined);
         } else {
           // viewportY is measured from the bottom, so when this write pushes
@@ -862,6 +886,7 @@
         status = next;
       },
       onOpen: (isReconnect) => {
+        setScrollOffsetPxImpl(0);
         statusDetail = "";
         zeroLag.reset();
         resizeDedupe.reset();
@@ -1094,6 +1119,7 @@
     onmousedown={(event) => event.preventDefault()}
     onclick={() => {
       const next = !expanded;
+      setScrollOffsetPx(0);
       setExpanded(next);
       if (next) {
         focusTerm();
@@ -1355,6 +1381,9 @@
     min-height: 0;
     min-width: 0;
     width: 100%;
+    /* Sub-cell drag offset can expose up to one cell of host; match the
+       terminal canvas background so the strip reads as padding, not a gap. */
+    background: #1c1714;
     /* The column floor can make the Ghostty canvas wider than the host.
        The host clips it and the touch handler pans it via
        scrollLeft (programmatic scrolling works on overflow:hidden boxes);

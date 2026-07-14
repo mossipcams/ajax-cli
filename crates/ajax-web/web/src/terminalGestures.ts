@@ -38,6 +38,12 @@ export interface TerminalGestureHost {
   /** A single finger just touched down. Hosts use this to focus the hidden
    * textarea early so iOS can attach native Paste before long-press fires. */
   touchBegan?(): void;
+  /** Visual sub-cell scroll offset in px; never reaches the PTY or buffer. */
+  setScrollOffsetPx?(px: number): void;
+  /** True when the viewport is at the oldest scrollback line. */
+  atTop?(): boolean;
+  /** True when the viewport is at the newest output (bottom). */
+  atBottom?(): boolean;
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
@@ -247,6 +253,13 @@ export function attachTerminalGestures(
 
     const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, host.cellHeightPx());
     touchAccumPx = remainderPx;
+    host.setScrollOffsetPx?.(
+      dragScrollOffsetPx(
+        touchAccumPx,
+        host.atTop?.() ?? false,
+        host.atBottom?.() ?? false,
+      ),
+    );
     if (notches === 0) return;
     host.scrollLines(notches);
   };
@@ -274,6 +287,7 @@ export function attachTerminalGestures(
     const pinchWasActive = pinchStartDistance > 0;
     // Only a gesture that actually scrolled may fling; a tap with a few
     // pixels of jitter must stay a tap.
+    host.setScrollOffsetPx?.(0);
     if (touchActive && touchScrolled) {
       const frames = flingFrames(flingVelocity, host.cellHeightPx());
       if (frames.length) startFling(frames);
@@ -293,6 +307,7 @@ export function attachTerminalGestures(
     }
     const pinchWasActive = pinchStartDistance > 0;
     if (pinchWasActive) host.pinchEnded?.();
+    host.setScrollOffsetPx?.(0);
     resetTouchState();
   };
 
@@ -416,6 +431,23 @@ export interface WheelNotches {
 }
 
 /**
+ * Map a sub-cell drag remainder to a visual translateY offset. Positive
+ * remainder (finger moved up) shifts content up; clamped to 0 at edges where
+ * the offset would expose empty space beyond scrollback.
+ */
+export function dragScrollOffsetPx(
+  remainderPx: number,
+  atTop: boolean,
+  atBottom: boolean,
+): number {
+  if (!Number.isFinite(remainderPx)) return 0;
+  const offset = -remainderPx;
+  if (atBottom && offset < 0) return 0;
+  if (atTop && offset > 0) return 0;
+  return offset;
+}
+
+/**
  * Split `accumulatedPx` of vertical drag into whole line notches of
  * `cellPx` each, returning the sub-cell remainder to accumulate next time.
  * `maxNotches` bounds a single move's local scrollback jump. (Scroll never
@@ -448,8 +480,8 @@ export function wheelNotchesFromDrag(
 export function flingFrames(
   velocityPxPerMs: number,
   cellPx: number,
-  decayPerFrame = 0.92,
-  minVelocityPxPerMs = 0.05,
+  decayPerFrame = 0.96,
+  minVelocityPxPerMs = 0.03,
   maxTotalLines = 200,
 ): number[] {
   if (

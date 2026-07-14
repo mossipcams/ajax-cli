@@ -1,5 +1,55 @@
-import { describe, it, expect } from "vitest";
-import { flingFrames, wheelNotchesFromDrag } from "./terminalGestures";
+import { describe, it, expect, vi } from "vitest";
+import { attachTerminalGestures, dragScrollOffsetPx, flingFrames, wheelNotchesFromDrag } from "./terminalGestures";
+
+describe("attachTerminalGestures sub-cell offset", () => {
+  function makeTouch(type: string, clientY: number, clientX = 10): TouchEvent {
+    const event = new Event(type, { bubbles: true, cancelable: true }) as TouchEvent;
+    Object.defineProperty(event, "touches", {
+      value: [{ clientX, clientY }],
+    });
+    return event;
+  }
+
+  it("calls setScrollOffsetPx with the sub-cell remainder during drag", () => {
+    const host = document.createElement("div");
+    const setScrollOffsetPx = vi.fn();
+    attachTerminalGestures(host, {
+      scrollLines: vi.fn(),
+      cellHeightPx: () => 18,
+      fontSize: () => 13,
+      maxFontSize: () => 20,
+      setFontSize: vi.fn(),
+      setScrollOffsetPx,
+      atTop: () => false,
+      atBottom: () => false,
+    });
+
+    host.dispatchEvent(makeTouch("touchstart", 200, 10));
+    host.dispatchEvent(makeTouch("touchmove", 190, 10));
+
+    expect(setScrollOffsetPx).toHaveBeenCalledWith(-10);
+  });
+});
+
+describe("dragScrollOffsetPx", () => {
+  it("maps sub-cell remainder to a visual translate opposite the finger", () => {
+    expect(dragScrollOffsetPx(10, false, false)).toBe(-10);
+    expect(dragScrollOffsetPx(-10, false, false)).toBe(10);
+  });
+
+  it("clamps at scrollback edges so no empty strip is exposed", () => {
+    expect(dragScrollOffsetPx(10, false, true)).toBe(0);
+    expect(dragScrollOffsetPx(-10, true, false)).toBe(0);
+    // Opposite directions still pass through at the same edge.
+    expect(dragScrollOffsetPx(-10, false, true)).toBe(10);
+    expect(dragScrollOffsetPx(10, true, false)).toBe(-10);
+  });
+
+  it("returns 0 for non-finite remainder", () => {
+    expect(dragScrollOffsetPx(Number.NaN, false, false)).toBe(0);
+    expect(dragScrollOffsetPx(Number.POSITIVE_INFINITY, false, false)).toBe(0);
+  });
+});
 
 describe("wheelNotchesFromDrag", () => {
   it("emits no notch until a full cell has been dragged", () => {
@@ -38,6 +88,11 @@ describe("wheelNotchesFromDrag", () => {
 
 describe("flingFrames", () => {
   const totalLines = (frames: number[]) => frames.reduce((sum, lines) => sum + Math.abs(lines), 0);
+
+  it("carries momentum long enough to feel like native deceleration", () => {
+    const frames = flingFrames(2, 18);
+    expect(frames.length).toBeGreaterThan(60);
+  });
 
   it("yields a finite decaying sequence of line steps for a fast release", () => {
     const frames = flingFrames(2, 18);
