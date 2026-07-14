@@ -89,6 +89,10 @@ vi.mock("../terminalConnection", () => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps mockReturnValue overrides; re-pin the core-mode
+  // defaults so a test enabling a mode cannot leak into later tests.
+  coreBracketedPaste.mockReturnValue(false);
+  coreCursorKeysApp.mockReturnValue(false);
   connectionOpen = true;
   connectionEvents = undefined;
   onOutput = undefined;
@@ -394,6 +398,33 @@ describe("WtermTerminalView ghostty parity", () => {
     expect(sendInput).not.toHaveBeenCalled();
   });
 
+  describe("parity gaps: key-bar focus discipline", () => {
+    it("does not focus the terminal from a key-bar key, so a closed keyboard stays closed", async () => {
+      const { getByRole } = await mountWterm();
+      (document.activeElement as HTMLElement | null)?.blur();
+      termFocus.mockClear();
+
+      await fireEvent.click(getByRole("button", { name: "←" }));
+
+      expect(sendInput).toHaveBeenCalledWith("\x1b[D"); // key still sends
+      expect(termFocus).not.toHaveBeenCalled();
+    });
+
+    it("refocuses without scrolling when a key-bar key is tapped mid-typing", async () => {
+      const { getByRole, getByTestId } = await mountWterm();
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      const input = document.createElement("input"); // stands in for wterm's hidden textarea
+      host.appendChild(input);
+      input.focus();
+      termFocus.mockClear();
+
+      await fireEvent.click(getByRole("button", { name: "→" }));
+
+      expect(termFocus).toHaveBeenCalled(); // WTerm.focus() uses preventScroll internally
+      input.remove();
+    });
+  });
+
   describe("parity gaps: use wterm-native capabilities the component bypasses", () => {
     it("routes the Paste key through wterm's bracketed-paste path (mode wrap + ESC strip)", async () => {
       Object.defineProperty(navigator, "clipboard", {
@@ -422,10 +453,32 @@ describe("WtermTerminalView ghostty parity", () => {
       expect(sendInput).toHaveBeenCalledWith("\x1b[1;5D");
       expect(sendInput).not.toHaveBeenCalledWith("\x1bOD");
     });
-    // WTerm natively re-pins on write; the component never exposes whether the
-    // user is scrolled away, so there is nowhere to hang the Ghostty-style
-    // "New output" affordance yet.
-    it.todo("shows a New output control while the user is scrolled away from bottom");
+    it("shows a New output control while the user is scrolled away from bottom", async () => {
+      const { getByTestId, queryByRole, getByRole } = await mountWterm();
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      Object.defineProperty(host, "scrollHeight", { configurable: true, value: 340 });
+      Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
+
+      // Pinned at bottom: output arrives, no affordance.
+      host.scrollTop = 170;
+      await fireEvent.scroll(host);
+      onOutput!("at-bottom output");
+      await tick();
+      expect(queryByRole("button", { name: "New output ↓" })).toBeNull();
+
+      // Scrolled up: output arrives, affordance appears.
+      host.scrollTop = 0;
+      await fireEvent.scroll(host);
+      onOutput!("background update");
+      const button = await waitFor(() => getByRole("button", { name: "New output ↓" }));
+
+      // Tapping is a reading action: snap to bottom, hide, never focus.
+      termFocus.mockClear();
+      await fireEvent.click(button);
+      expect(host.scrollTop).toBe(340);
+      expect(termFocus).not.toHaveBeenCalled();
+      expect(queryByRole("button", { name: "New output ↓" })).toBeNull();
+    });
   });
 
   describe("parity gaps: geometry and font", () => {
@@ -453,17 +506,73 @@ describe("WtermTerminalView ghostty parity", () => {
   });
 
   describe("parity gaps: clipboard depth", () => {
-    it.todo("surfaces a clipboard read failure with a paste fallback sheet instead of silently doing nothing");
+    it("surfaces a clipboard read failure with a paste fallback sheet instead of silently doing nothing", async () => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+        configurable: true,
+      });
+      const { getByRole, getByTestId } = await mountWterm();
+
+      await fireEvent.click(getByRole("button", { name: "Paste" }));
+
+      await waitFor(() => expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument());
+      expect(sendInput).not.toHaveBeenCalledWith(expect.stringContaining("denied"));
+    });
+
+    it("sends paste fallback textarea value through the paste encoding path and closes the tray", async () => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+        configurable: true,
+      });
+      const { getByRole, getByTestId, queryByTestId } = await mountWterm();
+      await fireEvent.click(getByRole("button", { name: "Paste" }));
+      await waitFor(() => expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument());
+
+      const textarea = getByTestId("terminal-paste-fallback").querySelector("textarea")!;
+      await fireEvent.input(textarea, { target: { value: "hello from tray" } });
+      termFocus.mockClear();
+      await fireEvent.click(getByRole("button", { name: "Send" }));
+
+      await waitFor(() => expect(sendInput).toHaveBeenCalledWith("hello from tray"));
+      expect(termFocus).toHaveBeenCalled();
+      expect(queryByTestId("terminal-paste-fallback")).toBeNull();
+    });
+
+    it("does not paste when Send is tapped with an empty fallback value", async () => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText: vi.fn().mockRejectedValue(new Error("denied")) },
+        configurable: true,
+      });
+      const { getByRole, getByTestId, queryByTestId } = await mountWterm();
+      await fireEvent.click(getByRole("button", { name: "Paste" }));
+      await waitFor(() => expect(getByTestId("terminal-paste-fallback")).toBeInTheDocument());
+
+      sendInput.mockClear();
+      await fireEvent.click(getByRole("button", { name: "Send" }));
+
+      expect(sendInput).not.toHaveBeenCalled();
+      expect(queryByTestId("terminal-paste-fallback")).toBeNull();
+    });
+
     it.todo("opens a readonly copy fallback when clipboard write fails");
   });
 
-  describe("parity gaps: key-bar focus discipline", () => {
-    it.todo("does not focus the terminal from a key-bar key, so a closed keyboard stays closed");
-    it.todo("refocuses without scrolling when a key-bar key is tapped mid-typing");
-  });
-
   describe("parity gaps: reconnect depth", () => {
-    it.todo("refits the grid, resets the buffer, and snaps to bottom on reconnect");
+    it("refits the grid, resets the buffer, and snaps to bottom on reconnect", async () => {
+      await mountWterm();
+      // First open: nothing stale — must NOT reset.
+      connectionEvents!.onOpen();
+      expect(termWrite).not.toHaveBeenCalledWith("\x1bc");
+
+      termWrite.mockClear();
+      sendResize.mockClear();
+
+      // Second open = reconnect: clear stale grid, refit, resend PTY size.
+      connectionEvents!.onOpen();
+
+      expect(termWrite).toHaveBeenCalledWith("\x1bc");
+      expect(sendResize).toHaveBeenCalledWith(72, 24);
+    });
   });
 
   describe("parity gaps: iOS device-only (bake-off, not unit-testable)", () => {

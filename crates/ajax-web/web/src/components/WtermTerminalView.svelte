@@ -9,6 +9,7 @@
     type TerminalConnectionStatus,
   } from "../terminalConnection";
   import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
+  import { createTerminalClipboardUi } from "../terminalClipboard";
 
   interface Props {
     handle: string;
@@ -24,6 +25,12 @@
   let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
   let ctrlArmed = $state(false);
+  let scrolledUp = $state(false);
+  let newOutput = $state(false);
+
+  const clipboardUi = createTerminalClipboardUi({ onChange: (snap) => (clipboard = snap) });
+  let clipboard = $state(clipboardUi.snapshot());
+  let pasteFallbackValue = $state("");
 
   const CONTROL_KEYS = [
     { label: "Esc", data: "\x1b" },
@@ -96,6 +103,20 @@
     connection?.sendResize(Math.max(cols, 1), Math.max(rows, 1));
   };
 
+  const isScrolledUp = (host: HTMLElement): boolean =>
+    host.scrollHeight - host.scrollTop - host.clientHeight >= 5;
+  const onHostScroll = () => {
+    if (!hostEl) return;
+    scrolledUp = isScrolledUp(hostEl);
+    if (!scrolledUp) newOutput = false;
+  };
+  const snapToNewest = () => {
+    if (!hostEl) return;
+    hostEl.scrollTop = hostEl.scrollHeight;
+    scrolledUp = false;
+    newOutput = false;
+  };
+
   const forceFitTerminal = (liveTerm: WTerm, host: HTMLDivElement) => {
     const width = host.clientWidth;
     const height = host.clientHeight;
@@ -116,16 +137,32 @@
   };
 
   const refocusTerm = () => {
+    // Only refocus when the terminal already owns focus: focusing from a
+    // key-bar tap with the keyboard closed would pop the iOS keyboard.
+    if (!hostEl?.contains(document.activeElement)) return;
     term?.focus();
   };
 
   const requestPaste = async () => {
     try {
       const text = await navigator.clipboard?.readText?.();
-      if (text) sendKey(encodePaste(text));
+      if (text) {
+        sendKey(encodePaste(text));
+        return;
+      }
+      clipboardUi.openPasteFallback();
     } catch {
-      // Clipboard denied — use native long-press paste in the terminal host.
+      // Clipboard denied — offer the manual tray instead of silence.
+      clipboardUi.openPasteFallback();
     }
+  };
+
+  const sendPasteFallbackText = () => {
+    const text = clipboardUi.takePasteFallbackText(pasteFallbackValue);
+    pasteFallbackValue = "";
+    if (!text) return;
+    sendKey(encodePaste(text));
+    term?.focus();
   };
 
   const requestReconnect = () => {
@@ -165,9 +202,14 @@
         }
 
         term = liveTerm;
+        hostEl.addEventListener("scroll", onHostScroll);
 
+        let hasOpened = false;
         const liveConnection = connectTaskTerminal(handle, {
-          onOutput: (text) => liveTerm.write(text),
+          onOutput: (text) => {
+            liveTerm.write(text);
+            if (scrolledUp) newOutput = true;
+          },
           onServerError: (message) => {
             statusDetail = message;
           },
@@ -176,6 +218,14 @@
           },
           onOpen: () => {
             statusDetail = "";
+            if (hasOpened) {
+              // Reconnect: clear the stale grid so the tmux repaint lands
+              // clean, then re-announce our size to the PTY.
+              liveTerm.write("\x1bc");
+              if (hostEl) forceFitTerminal(liveTerm, hostEl);
+              reportResize(liveTerm.cols, liveTerm.rows);
+            }
+            hasOpened = true;
             requestAnimationFrame(() => liveTerm.focus());
           },
         });
@@ -199,6 +249,8 @@
     return () => {
       disposed = true;
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      hostEl?.removeEventListener("scroll", onHostScroll);
+      clipboardUi.dispose();
       connection?.dispose();
       term?.destroy();
       connection = undefined;
@@ -215,6 +267,24 @@
     data-terminal-engine="wterm"
     aria-label="Task terminal">
     <div class="terminal-host wterm-host" bind:this={hostEl}></div>
+    {#if newOutput}
+      <button type="button" class="terminal-new-output" onclick={() => snapToNewest()}>New output ↓</button>
+    {/if}
+    {#if clipboard.pasteFallbackOpen}
+      <div class="terminal-paste-fallback" data-testid="terminal-paste-fallback">
+        <textarea rows="3" bind:value={pasteFallbackValue} placeholder="Paste here, then Send"></textarea>
+        <div class="terminal-paste-fallback-actions">
+          <button type="button" class="terminal-key" onclick={() => sendPasteFallbackText()}>Send</button>
+          <button
+            type="button"
+            class="terminal-key"
+            onclick={() => {
+              pasteFallbackValue = "";
+              clipboardUi.closePasteFallback();
+            }}>Cancel</button>
+        </div>
+      </div>
+    {/if}
     <div
       class="terminal-status"
       class:is-empty={!(status !== "connected" || statusDetail)}
@@ -280,6 +350,7 @@
   }
 
   .terminal-panel {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -382,5 +453,40 @@
     border: 1px solid var(--rule);
     background: var(--paper-raised);
     color: var(--ink);
+  }
+
+  .terminal-new-output {
+    position: absolute;
+    right: 12px;
+    bottom: 8px;
+    z-index: 2;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--rule);
+    background: var(--paper-raised);
+    color: var(--ink);
+  }
+
+  .terminal-paste-fallback {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 8px;
+  }
+
+  .terminal-paste-fallback textarea {
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper-raised);
+    color: var(--ink);
+    padding: 4px 6px;
+  }
+
+  .terminal-paste-fallback-actions {
+    display: flex;
+    gap: 4px;
   }
 </style>

@@ -31,6 +31,34 @@ ACCEPT. Parent rebuilt the committed dist (vendored-dist trap) and
 re-validated independently: web vitest 595 passed; cargo nextest
 -p ajax-web -p ajax-cli 464 passed.
 
+## Round 3+ (remaining todos, sequential delegation — 2026-07-14)
+
+Delegated via model-router → per-round READY packets → cursor-delegate
+(composer-2.5), one bounded behavior per round, red proven before each edit,
+gate ACCEPT on all four:
+
+- [x] R1 key-bar focus discipline (2 todos): refocusTerm gated on
+      hostEl.contains(document.activeElement). Parent added the root fix for
+      the core-mode mock leak in beforeEach (smaller than a resume order).
+- [x] R2 reconnect reset (1 todo): second+ onOpen writes RIS \x1bc, refits,
+      resends PTY size; first open untouched.
+- [x] R3 New output ↓ control (1 todo): scroll-state tracking on the host,
+      overlay button, snap-to-bottom without focusing.
+- [x] R4 paste fallback sheet (1 todo → 3 tests): reuses
+      createTerminalClipboardUi; Send routes through encodePaste.
+- [ ] R5 measured cell metrics for initial fit (1 todo) — not yet dispatched;
+      superseded by user request to PR current done work.
+
+Deferred, with reasons (16 todos): geometry floor/font/pinch/pan +
+keyboard-lockstep group need an architecture decision (taking grid ownership
+from wterm autoResize vs native fit); fullscreen chrome is iOS-device-
+sensitive (ghostty version needed simulator repro for 3 bugs); copy-fallback
+overlay has no Ajax-side copy path under wterm native selection; iOS
+backspace repeat is device-only.
+
+Validation after R4: web vitest 602 passed / 0 failed; cargo nextest
+-p ajax-web -p ajax-cli 464 passed; dist rebuilt (app.css/app.js/terminal.js).
+
 ## Tasks
 - [x] Read TerminalRawView.test.ts behaviors + WtermTerminalView implementation
 - [x] Extend WtermTerminalView.test.ts harness (capture all connection events,
