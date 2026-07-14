@@ -58,13 +58,11 @@
 </div>
 
 <style>
+  /* Layout-transparent: Ghostty and wterm roots must flex directly under
+     .terminal-primary. A real flex wrapper here shrinks the Ghostty host so
+     the bottom input textarea covers swipe targets and e2e dragTo hangs. */
   .surface-selector {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    min-height: 0;
-    min-width: 0;
-    width: 100%;
+    display: contents;
   }
 
   .surface-fallback-error {
