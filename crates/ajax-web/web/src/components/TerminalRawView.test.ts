@@ -890,6 +890,43 @@ describe("TerminalRawView", () => {
     expect(linesScrolled()).toBe(-2);
   });
 
+  it("touch while reading scrollback does not re-pin or snap to bottom", async () => {
+    scrollbackLength = 40;
+    const { getByRole, host, socket } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await settleFrames();
+
+    viewportY = 5;
+    onScrollHandler?.(5);
+
+    scrollToBottom.mockClear();
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("background update") }),
+    } as MessageEvent);
+    await settleFrames();
+
+    expect(scrollToBottom).not.toHaveBeenCalled();
+    expect(getByRole("button", { name: "New output ↓" })).toBeInTheDocument();
+  });
+
+  it("typing while scrolled up snaps the view back to the live output", async () => {
+    scrollbackLength = 40;
+    const { queryByRole, socket } = await mountOpenTerminal();
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await settleFrames();
+
+    viewportY = 5;
+    onScrollHandler?.(5);
+
+    scrollToBottom.mockClear();
+    onDataHandler?.("x");
+
+    await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    expect(queryByRole("button", { name: "New output ↓" })).not.toBeInTheDocument();
+    expect(socket?.send).toHaveBeenCalled();
+  });
+
   it("shows a New output control while the user is scrolled away from bottom", async () => {
     const { getByRole, queryByRole } = render(TerminalRawView, {
       props: { handle: "web/fix-login" },
@@ -1768,8 +1805,26 @@ describe("TerminalRawView", () => {
     host.dispatchEvent(move);
 
     expect(move.defaultPrevented).toBe(true);
+    await settleFrames();
     expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
     expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("sub-cell drag offset applies on the next animation frame", async () => {
+    scrollbackLength = 40;
+    const { host, container } = await mountOpenTerminal();
+    viewportY = 3;
+    onScrollHandler?.(3);
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+
+    host.dispatchEvent(makeTouch("touchstart", 200, 10));
+    host.dispatchEvent(makeTouch("touchmove", 190, 10));
+
+    expect(scaleLayerTransform(container)).not.toContain("translateY(-10px)");
+    await settleFrames();
+    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
   });
 
   it("clears the sub-cell translate on touchend before fling frames run", async () => {
@@ -1783,8 +1838,10 @@ describe("TerminalRawView", () => {
 
     host.dispatchEvent(makeTouch("touchstart", 200));
     host.dispatchEvent(makeTouch("touchmove", 190));
+    await settleFrames();
     expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
     host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+    await settleFrames();
 
     const transform = scaleLayerTransform(container);
     expect(transform).not.toMatch(/translateY\([^0]/);
@@ -1799,6 +1856,7 @@ describe("TerminalRawView", () => {
 
     host.dispatchEvent(makeTouch("touchstart", 200, 10));
     host.dispatchEvent(makeTouch("touchmove", 210, 10));
+    await settleFrames();
     expect(scaleLayerTransform(container)).toContain("translateY(10px)");
 
     socket?.emit("message", {
