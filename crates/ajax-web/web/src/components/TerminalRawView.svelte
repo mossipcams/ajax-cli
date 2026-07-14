@@ -865,8 +865,10 @@
     });
 
     // Coalesce WS output chunks into one write + one follow/compensation pass
-    // per ~16ms (or max-char) flush. Input / zero-lag echo stays unbatched.
+    // per ~16ms (or max-char) flush. Leading edge when pinned; trailing while
+    // reading scrollback reduces renderer row churn. Input stays unbatched.
     const writeBatcher = createTerminalWriteBatcher({
+      allowLeadingEdge: () => scrollFollow.isPinned(),
       onFlush: (combined) => {
         if (scrollFollow.isPinned()) {
           setScrollOffsetPxImpl(0);

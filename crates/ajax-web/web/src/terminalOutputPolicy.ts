@@ -22,6 +22,8 @@ export type TerminalWriteBatcher = {
 export function createTerminalWriteBatcher(options: {
   flushMs?: number;
   maxChars?: number;
+  /** When true, flush immediately after a quiet window (pinned typing echo). */
+  allowLeadingEdge?: () => boolean;
   now?: () => number;
   schedule?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearSchedule?: (id: ReturnType<typeof setTimeout>) => void;
@@ -29,6 +31,7 @@ export function createTerminalWriteBatcher(options: {
 }): TerminalWriteBatcher {
   const flushMs = options.flushMs ?? TERMINAL_WRITE_FLUSH_MS;
   const maxChars = options.maxChars ?? TERMINAL_WRITE_MAX_CHARS;
+  const allowLeadingEdge = options.allowLeadingEdge ?? (() => true);
   const now = options.now ?? (() => performance.now());
   const schedule = options.schedule ?? setTimeout;
   const clearSchedule = options.clearSchedule ?? clearTimeout;
@@ -62,10 +65,13 @@ export function createTerminalWriteBatcher(options: {
       pending += text.length;
       if (pending >= maxChars) {
         flush();
-      } else if (now() - lastFlushAt >= flushMs) {
+      } else if (allowLeadingEdge() && now() - lastFlushAt >= flushMs) {
         flush();
       } else if (timer === undefined) {
-        timer = schedule(flush, flushMs - (now() - lastFlushAt));
+        const delay = allowLeadingEdge()
+          ? flushMs - (now() - lastFlushAt)
+          : flushMs;
+        timer = schedule(flush, delay);
       }
     },
     flush,
