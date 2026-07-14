@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.3...ajax-cli-v0.42.4) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** instantiate wterm WASM without Safari blob fetch ([#469](https://github.com/mossipcams/ajax-cli/issues/469)) ([0ac5de9](https://github.com/mossipcams/ajax-cli/commit/0ac5de997e7fd5421bc6a47af2477d8bf3123fa4))
+
 ## [0.42.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.2...ajax-cli-v0.42.3) (2026-07-14)
 
 
