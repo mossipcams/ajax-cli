@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.9](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.8...ajax-cli-v0.42.9) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** stop Surface V2 full-terminal yellow wash (wterm inline bg smear) ([#480](https://github.com/mossipcams/ajax-cli/issues/480)) ([458dfef](https://github.com/mossipcams/ajax-cli/commit/458dfefd872e24a14de746506d20381b7ba1687c))
+
 ## [0.42.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.7...ajax-cli-v0.42.8) (2026-07-14)
 
 
