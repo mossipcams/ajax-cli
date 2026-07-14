@@ -287,6 +287,24 @@
     padding: 4px;
     box-shadow: none;
     border-radius: 0;
+    /* Opaque fill — never inherit a transparent/composited wash on iOS. */
+    background: #1c1714;
+    color: #d4d4d4;
+  }
+
+  /*
+   * iOS Safari (esp. 26 Liquid Glass) can paint a solid olive/yellow tile over
+   * `.term-grid` when upstream uses `contain: paint` + `will-change: contents`
+   * under Ajax backdrop-filter chrome. Keep layout containment only.
+   */
+  :global(.wterm-host.wterm .term-grid) {
+    contain: layout style;
+    will-change: auto;
+    background: #1c1714;
+  }
+
+  :global(.wterm-host.wterm .term-row) {
+    contain: layout style;
   }
 
   .terminal-keys {
@@ -309,7 +327,7 @@
     font-size: 11px;
     border-radius: 6px;
     border: 1px solid var(--rule);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
   }
 
@@ -351,7 +369,7 @@
     padding: 2px 8px;
     border-radius: 6px;
     border: 1px solid var(--rule);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
   }
 </style>

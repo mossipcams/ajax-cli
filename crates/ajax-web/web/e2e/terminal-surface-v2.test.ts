@@ -74,6 +74,13 @@ test("Surface V2 mounts wterm on mobile webkit without yellow init failure", asy
   await expect(termGrid).toBeVisible();
   await waitForTerminalSocket(page);
 
+  // Host must stay dark paper — solid mustard/olive fill is the device yellow bug.
+  const hostBg = await page.evaluate(() => {
+    const host = document.querySelector(".wterm-host");
+    return host ? getComputedStyle(host).backgroundColor : null;
+  });
+  expect(hostBg).toMatch(/rgba?\(\s*28\s*,\s*23\s*,\s*20/);
+
   await page.evaluate(() => {
     const sockets = (
       window as unknown as {
