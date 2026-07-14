@@ -339,6 +339,7 @@
     // CSS scale applied to term.element after fit; 1 on wide hosts.
     let terminalFitScale = 1;
     let subCellOffsetPx = 0;
+    let subCellOffsetFrame: number | undefined;
 
     const syncScaleLayerTransform = () => {
       if (!container) return;
@@ -358,10 +359,15 @@
       element.style.transform = parts.length ? parts.join(" ") : "";
     };
 
+    // ghostty-web schedules scrollLines repaints on rAF; batch the CSS translate
+    // into the same frame so sub-cell drag does not tear one cell per notch.
     const setScrollOffsetPxImpl = (px: number) => {
-      if (px === subCellOffsetPx) return;
+      if (px === subCellOffsetPx && subCellOffsetFrame === undefined) return;
       subCellOffsetPx = px;
-      syncScaleLayerTransform();
+      subCellOffsetFrame ??= requestAnimationFrame(() => {
+        subCellOffsetFrame = undefined;
+        syncScaleLayerTransform();
+      });
     };
     setScrollOffsetPx = setScrollOffsetPxImpl;
 
@@ -592,12 +598,17 @@
           endSelection: finishSelection,
           touchBegan: () => {
             resetDocumentScroll();
-            scrollFollow.pin();
-            syncScrollFollowUi();
-            if (container) {
-              container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+            // Touch must not change pin state — reading scrollback stays unpinned
+            // until the user types (standard scroll-on-keystroke) or taps New output.
+            if (scrollFollow.isPinned()) {
+              if (container) {
+                container.scrollTop = Math.max(
+                  0,
+                  container.scrollHeight - container.clientHeight,
+                );
+              }
+              if (isKeyboardOpen()) snapScrollbackToBottom();
             }
-            if (isKeyboardOpen() && scrollFollow.isPinned()) snapScrollbackToBottom();
             term?.textarea?.focus({ preventScroll: true });
           },
           setScrollOffsetPx: setScrollOffsetPxImpl,
@@ -936,6 +947,12 @@
       // bookkeeping instead of slipping past it.
       const data = consumeCtrl(raw);
 
+      if (!scrollFollow.isPinned()) {
+        scrollFollow.pin();
+        snapScrollbackToBottom();
+        syncScrollFollowUi();
+      }
+
       if (data === "\r") {
         zeroLag.onTerminalData(data);
         connection.sendInput(data);
@@ -1069,6 +1086,7 @@
       zeroLagPainter.dispose();
       refitScheduler.dispose();
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      if (subCellOffsetFrame !== undefined) cancelAnimationFrame(subCellOffsetFrame);
       clipboardUi.dispose();
       connection.dispose();
       for (const subscription of terminalSubscriptions) subscription.dispose();
