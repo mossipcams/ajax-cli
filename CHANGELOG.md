@@ -8,6 +8,7 @@ All notable Ajax CLI changes should be recorded here.
 ### Bug Fixes
 
 * **repair:** recreate missing worktrees ([#486](https://github.com/mossipcams/ajax-cli/issues/486)) ([5bd2641](https://github.com/mossipcams/ajax-cli/commit/5bd26416d193ca76e913a52441a33a95f67b6157))
+* **web:** Surface V2 mobile Safari parity — theme, font, keyboard, expand ([#487](https://github.com/mossipcams/ajax-cli/issues/487)) ([2d7e5f4](https://github.com/mossipcams/ajax-cli/commit/2d7e5f413669a55977023e6b8674ac5b6391ce7d))
 
 ## [0.42.10](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.9...ajax-cli-v0.42.10) (2026-07-14)
 
