@@ -111,6 +111,7 @@ export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
   wasmMemory = instance.exports.memory as WebAssembly.Memory;
 
   // Runtime constructor is public in the JS build; .d.ts marks it private.
+  // Always pass options — GhosttyCore.init reads this._options.scrollbackLimit.
   const Core = GhosttyCore as unknown as GhosttyCoreConstructable;
-  return new Core({ exports: instance.exports, instance });
+  return new Core({ exports: instance.exports, instance }, {});
 }

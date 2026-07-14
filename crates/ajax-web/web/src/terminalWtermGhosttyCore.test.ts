@@ -90,6 +90,10 @@ describe("terminalWtermGhosttyCore", () => {
     const core = await loadWtermGhosttyCore();
     expect(createObjectURL).not.toHaveBeenCalled();
     expect(ghosttyCoreCtor).toHaveBeenCalledTimes(1);
+    expect(ghosttyCoreCtor).toHaveBeenCalledWith(
+      expect.objectContaining({ instance: expect.anything(), exports: expect.anything() }),
+      {},
+    );
     expect(core).toMatchObject({ wasm: expect.objectContaining({ instance: expect.anything() }) });
   });
 });
