@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.0...ajax-cli-v0.42.1) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** serve wterm Ghostty WASM on a distinct path ([#463](https://github.com/mossipcams/ajax-cli/issues/463)) ([ecf5fd8](https://github.com/mossipcams/ajax-cli/commit/ecf5fd8902463b7dd5a52c96ea14dce32ded22c4))
+
 ## [0.42.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.41.2...ajax-cli-v0.42.0) (2026-07-14)
 
 
