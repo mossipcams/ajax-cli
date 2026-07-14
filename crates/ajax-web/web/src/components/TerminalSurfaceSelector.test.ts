@@ -5,11 +5,13 @@ import TerminalSurfaceSelector from "./TerminalSurfaceSelector.svelte";
 import * as setting from "../terminalSurfaceSetting";
 
 const termDestroy = vi.fn();
-const ghosttyLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty-core" })));
+const loadWtermGhosttyCore = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve({ runtime: "ghostty-core" })),
+);
 const ghosttyWebLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
 
-vi.mock("@wterm/ghostty", () => ({
-  GhosttyCore: { load: ghosttyLoad },
+vi.mock("../terminalWtermGhosttyCore", () => ({
+  loadWtermGhosttyCore,
 }));
 
 vi.mock("@wterm/dom", () => ({
@@ -91,8 +93,8 @@ beforeEach(() => {
   settingListener = undefined;
   termDestroy.mockClear();
   connectionDispose.mockClear();
-  ghosttyLoad.mockReset();
-  ghosttyLoad.mockResolvedValue({ runtime: "ghostty-core" });
+  loadWtermGhosttyCore.mockReset();
+  loadWtermGhosttyCore.mockResolvedValue({ runtime: "ghostty-core" });
   ghosttyWebLoad.mockReset();
   ghosttyWebLoad.mockResolvedValue({ runtime: "ghostty" });
 
@@ -175,7 +177,7 @@ describe("TerminalSurfaceSelector", () => {
   });
 
   it("keeps Ghostty disabled and shows an error when wterm init fails", async () => {
-    ghosttyLoad.mockRejectedValueOnce(new Error("boom"));
+    loadWtermGhosttyCore.mockRejectedValueOnce(new Error("boom"));
     v2Enabled = true;
     const { getByTestId, container } = render(TerminalSurfaceSelector, {
       props: { handle: "web/fix" },

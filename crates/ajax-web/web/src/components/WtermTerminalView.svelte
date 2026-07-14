@@ -2,13 +2,12 @@
   import { onMount } from "svelte";
   import { WTerm } from "@wterm/dom";
   import "@wterm/dom/css";
-  import { GhosttyCore } from "@wterm/ghostty";
   import {
     connectTaskTerminal,
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { WTERM_GHOSTTY_WASM_URL } from "../terminalWtermWasm";
+  import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
 
   interface Props {
     handle: string;
@@ -124,7 +123,7 @@
     const init = async () => {
       if (!hostEl) return;
       try {
-        const core = await GhosttyCore.load({ wasmPath: WTERM_GHOSTTY_WASM_URL });
+        const core = await loadWtermGhosttyCore();
         if (disposed) return;
 
         const liveTerm = new WTerm(hostEl, {

@@ -10,14 +10,12 @@ const termResize = vi.fn();
 let termOnData: ((data: string) => void) | undefined;
 let termOnResize: ((cols: number, rows: number) => void) | undefined;
 
-const ghosttyLoad = vi.hoisted(() =>
+const loadWtermGhosttyCore = vi.hoisted(() =>
   vi.fn(() => Promise.resolve({ runtime: "ghostty-core" })),
 );
 
-vi.mock("@wterm/ghostty", () => ({
-  GhosttyCore: {
-    load: ghosttyLoad,
-  },
+vi.mock("../terminalWtermGhosttyCore", () => ({
+  loadWtermGhosttyCore,
 }));
 
 vi.mock("@wterm/dom", () => ({
@@ -94,13 +92,9 @@ describe("WtermTerminalView", () => {
     });
   });
 
-  it("loads GhosttyCore with the distinct wterm WASM path", async () => {
+  it("loads the wterm Ghostty core via the validated loader", async () => {
     render(WtermTerminalView, { props: { handle: "web/fix" } });
-    await waitFor(() =>
-      expect(ghosttyLoad).toHaveBeenCalledWith({
-        wasmPath: "/wterm-ghostty-vt.wasm",
-      }),
-    );
+    await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalledTimes(1));
   });
 
   it("routes PTY output from the connection callback to term.write", async () => {
@@ -138,7 +132,7 @@ describe("WtermTerminalView", () => {
     const loadPromise = new Promise<{ runtime: string }>((resolve) => {
       resolveLoad = resolve;
     });
-    ghosttyLoad.mockImplementationOnce(() => loadPromise);
+    loadWtermGhosttyCore.mockImplementationOnce(() => loadPromise);
 
     const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
     const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
@@ -158,7 +152,7 @@ describe("WtermTerminalView", () => {
   });
 
   it("init failure invokes onInitFailure and does not leave a live connection", async () => {
-    ghosttyLoad.mockRejectedValueOnce(new Error("wasm missing"));
+    loadWtermGhosttyCore.mockRejectedValueOnce(new Error("wasm missing"));
     const onInitFailure = vi.fn();
     render(WtermTerminalView, { props: { handle: "web/fix", onInitFailure } });
     await waitFor(() => expect(onInitFailure).toHaveBeenCalledWith("wasm missing"));
