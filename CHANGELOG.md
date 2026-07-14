@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.12](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.11...ajax-cli-v0.42.12) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** restore wterm scrollback and stop viewport resize rebuilds ([#490](https://github.com/mossipcams/ajax-cli/issues/490)) ([5639e05](https://github.com/mossipcams/ajax-cli/commit/5639e0560da0638233f5d4731ccd6a6f233fbb41))
+
 ## [0.42.11](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.10...ajax-cli-v0.42.11) (2026-07-14)
 
 
