@@ -75,9 +75,16 @@ export default defineConfig({
         experimentalMinChunkSize: 1000,
         onlyExplicitManualChunks: true,
         manualChunks(id) {
+          // Keep terminalSurfaceSetting (+ thin selector) in the app shell.
+          // Settings imports the setting module; putting either into the deferred
+          // terminal chunk creates app↔terminal cycles / terminal2.js and fails
+          // web:build:check. Heavy engines stay deferred via dynamic imports.
+          if (id.includes("/web/src/terminalSurfaceSetting")) return;
           if (
             id.includes("/node_modules/ghostty-web/") ||
+            id.includes("/node_modules/@wterm/") ||
             id.includes("/components/TerminalRawView.svelte") ||
+            id.includes("/components/WtermTerminalView.svelte") ||
             id.includes("/web/src/terminal")
           ) return "terminal";
         },

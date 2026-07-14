@@ -17,8 +17,34 @@
 | Scroll-follow state + resize validity | terminalOutputPolicy.ts |
 | WS connect / backoff / status | terminalConnection.ts |
 | Ghostty mount + chrome UI | TerminalRawView.svelte |
+| Experimental wterm surface + selector + setting | WtermTerminalView.svelte, TerminalSurfaceSelector.svelte, terminalSurfaceSetting.ts |
 | Zero-lag input echo + overlay paint | terminalZeroLag.ts |
 | Route scroll / chrome hide | styles.css + App layout |
+
+## Experimental Terminal Surface V2
+
+- Packages pinned from npm: `@wterm/dom@0.3.0`, `@wterm/ghostty@0.3.0`
+- Settings toggle: `ajax.terminal.surfaceV2` (default off)
+- Uses Ajax `connectTaskTerminal`; does **not** use wterm `WebSocketTransport`
+- Ghostty remains default and fallback when init fails
+- Intentionally smaller than Ghostty: no zero-lag overlay, no selection-manager casts, native wterm scroll/selection
+- Known upstream gaps (document-only): scroll-follow parity, expand/fullscreen chrome, copy/paste fallback depth
+
+## iPhone Safari bake-off checklist (wterm vs Ghostty)
+
+Run on a physical iPhone (Safari / PWA) with Terminal Surface V2 on. Mark
+Pass/Fail. Do not replace Ghostty based on this spike alone.
+
+1. Open terminal
+2. Type and hold backspace
+3. Open and close keyboard repeatedly
+4. Paste text
+5. Select and copy output
+6. Scroll upward during active output
+7. Rotate the phone
+8. Run Codex or Claude inside tmux
+9. Enter and exit an alternate-screen program
+10. Toggle back to Ghostty
 
 ## Anti-patterns
 - Do not add new one-shot `*FlushPending` (or equivalent) booleans in

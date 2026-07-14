@@ -3,8 +3,12 @@ import { render, fireEvent } from "@testing-library/svelte";
 import SettingsView from "./SettingsView.svelte";
 import * as api from "../api";
 import * as diagnostics from "../diagnostics";
+import * as setting from "../terminalSurfaceSetting";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe("SettingsView", () => {
   it("requires confirmation before restarting", async () => {
@@ -57,5 +61,23 @@ describe("SettingsView", () => {
     await vi.waitFor(() =>
       expect(onResult).toHaveBeenCalledWith("Diagnostics ready to copy", null, false),
     );
+  });
+
+  it("renders Experimental / Terminal Surface V2", () => {
+    const { getByText, getByTestId } = render(SettingsView);
+    expect(getByText("Experimental")).toBeInTheDocument();
+    expect(getByText("Terminal Surface V2")).toBeInTheDocument();
+    expect(getByTestId("setting-terminal-surface-v2")).toBeInTheDocument();
+  });
+
+  it("toggle calls setter and reflects storage", async () => {
+    const setter = vi.spyOn(setting, "setTerminalSurfaceV2Enabled");
+    const { getByTestId } = render(SettingsView);
+    const toggle = getByTestId("setting-terminal-surface-v2") as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await fireEvent.click(toggle);
+    expect(setter).toHaveBeenCalledWith(true);
+    expect(localStorage.getItem("ajax.terminal.surfaceV2")).toBe("true");
+    expect(toggle.checked).toBe(true);
   });
 });
