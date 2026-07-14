@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.40.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.5...ajax-cli-v0.40.6) (2026-07-14)
+
+
+### Reverts
+
+* **web:** undo keyboard-band terminal fit, JWT redaction, HIG taps ([#448](https://github.com/mossipcams/ajax-cli/issues/448)) ([#451](https://github.com/mossipcams/ajax-cli/issues/451)) ([67b6fee](https://github.com/mossipcams/ajax-cli/commit/67b6fee0c91d9477faa6d43e7da45eb2fc1e5301))
+
 ## [0.40.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.40.4...ajax-cli-v0.40.5) (2026-07-14)
 
 
