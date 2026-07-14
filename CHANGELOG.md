@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.7...ajax-cli-v0.42.8) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** stop iOS Surface V2 solid olive terminal paint ([#478](https://github.com/mossipcams/ajax-cli/issues/478)) ([dc06f6a](https://github.com/mossipcams/ajax-cli/commit/dc06f6a1abf1effe061b229015e8f474c64abcad))
+
 ## [0.42.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.6...ajax-cli-v0.42.7) (2026-07-14)
 
 
