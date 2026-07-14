@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.42.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.5...ajax-cli-v0.42.6) (2026-07-14)
+
+
+### Bug Fixes
+
+* **web:** prove wterm GhosttyCore init with real WASM tests ([#474](https://github.com/mossipcams/ajax-cli/issues/474)) ([deb68ae](https://github.com/mossipcams/ajax-cli/commit/deb68ae8923f50f78a0262eb61ba29a35ce3d027))
+
 ## [0.42.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.42.4...ajax-cli-v0.42.5) (2026-07-14)
 
 
