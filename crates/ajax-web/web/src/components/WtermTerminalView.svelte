@@ -293,18 +293,13 @@
   }
 
   /*
-   * iOS Safari (esp. 26 Liquid Glass) can paint a solid olive/yellow tile over
-   * `.term-grid` when upstream uses `contain: paint` + `will-change: contents`
-   * under Ajax backdrop-filter chrome. Keep layout containment only.
+   * @wterm/dom's Renderer copies the bottom-right cell's background onto
+   * .term-grid as an INLINE style every render — with tmux's colored status
+   * line as the bottom row, that washes the whole terminal yellow/green.
+   * !important is required to beat the inline style.
    */
   :global(.wterm-host.wterm .term-grid) {
-    contain: layout style;
-    will-change: auto;
-    background: #1c1714;
-  }
-
-  :global(.wterm-host.wterm .term-row) {
-    contain: layout style;
+    background: #1c1714 !important;
   }
 
   .terminal-keys {
