@@ -1,4 +1,5 @@
 import { GhosttyCore } from "@wterm/ghostty";
+import { terminalScrollbackLines } from "./terminalGeometry";
 import { WTERM_GHOSTTY_WASM_URL } from "./terminalWtermWasm";
 
 /** Minimal WASM export-section scan — avoids trusting HTTP path alone. */
@@ -58,18 +59,13 @@ type GhosttyWasmModule = {
 };
 
 type GhosttyCoreConstructable = {
-  new (wasm: GhosttyWasmModule, options?: { scrollbackLimit?: number }): GhosttyCore;
+  new (
+    wasm: GhosttyWasmModule,
+    options: { scrollbackLimit?: number; wasmPath?: string },
+  ): GhosttyCore;
 };
 
-/**
- * Load @wterm/ghostty's core from the Ajax-served distinct URL.
- *
- * Instantiates from the fetched bytes directly. Do not re-fetch via a blob:
- * URL — iOS Safari often throws opaque `TypeError: Load failed` on that path.
- * Do not call bare `GhosttyCore.load()` either; Vite rewrites that package's
- * default asset to `/ghostty-vt.wasm` (ghostty-web), which lacks `init`.
- */
-export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
+async function fetchWtermWasmBytes(): Promise<ArrayBuffer> {
   let response: Response;
   try {
     response = await fetch(WTERM_GHOSTTY_WASM_URL, { cache: "no-store" });
@@ -84,14 +80,16 @@ export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
       `wterm wasm HTTP ${response.status} at ${WTERM_GHOSTTY_WASM_URL} — rebuild/restart ajax so that asset is embedded`,
     );
   }
-
   const bytes = await response.arrayBuffer();
   if (!wasmExportsInclude(bytes, "init")) {
     throw new Error(
       `wterm wasm at ${WTERM_GHOSTTY_WASM_URL} is missing init() (wrong/stale binary). Hard-refresh or rebuild ajax.`,
     );
   }
+  return bytes;
+}
 
+async function instantiateWtermWasm(bytes: ArrayBuffer): Promise<GhosttyWasmModule> {
   let wasmMemory: WebAssembly.Memory | undefined;
   let instance: WebAssembly.Instance;
   try {
@@ -109,9 +107,36 @@ export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
     throw new Error(`wterm wasm instantiate failed (${detail})`);
   }
   wasmMemory = instance.exports.memory as WebAssembly.Memory;
+  return { exports: instance.exports, instance };
+}
 
-  // Runtime constructor is public in the JS build; .d.ts marks it private.
-  // Always pass options — GhosttyCore.init reads this._options.scrollbackLimit.
+/**
+ * Load @wterm/ghostty's core from the Ajax-served distinct URL.
+ *
+ * Instantiates from fetched bytes (no Safari blob: re-fetch). Constructs
+ * GhosttyCore with a real options object — `init()` reads
+ * `_options.scrollbackLimit` and crashes if `_options` is undefined.
+ */
+export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
+  const bytes = await fetchWtermWasmBytes();
+  const wasm = await instantiateWtermWasm(bytes);
+  const options = { scrollbackLimit: terminalScrollbackLines() };
+  // Runtime constructor is public in JS; .d.ts marks it private.
   const Core = GhosttyCore as unknown as GhosttyCoreConstructable;
-  return new Core({ exports: instance.exports, instance }, {});
+  return new Core(wasm, options);
+}
+
+/**
+ * Prove the constructed core can init/write — used by integration tests and
+ * as a post-load sanity check before handing the core to WTerm.
+ */
+export function smokeInitWtermGhosttyCore(core: GhosttyCore): void {
+  core.init(40, 10);
+  core.writeString("Ajax wterm smoke\r\n");
+  const cell = core.getCell(0, 0);
+  if (cell.char !== "A".charCodeAt(0)) {
+    throw new Error(
+      `wterm smoke init wrote unexpected cell char=${cell.char} (expected 'A')`,
+    );
+  }
 }

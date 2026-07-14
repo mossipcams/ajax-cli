@@ -12,6 +12,7 @@ const ghosttyWebLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "
 
 vi.mock("../terminalWtermGhosttyCore", () => ({
   loadWtermGhosttyCore,
+  smokeInitWtermGhosttyCore: vi.fn(),
 }));
 
 vi.mock("@wterm/dom", () => ({
