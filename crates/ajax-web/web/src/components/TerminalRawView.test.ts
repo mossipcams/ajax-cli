@@ -1740,6 +1740,77 @@ describe("TerminalRawView", () => {
     return layer;
   }
 
+  function scaleLayerTransform(container: HTMLElement): string {
+    const layer = container.querySelector(".terminal-scale-layer") as HTMLElement;
+    return layer?.style.transform ?? "";
+  }
+
+  function stubCellHeight(host: HTMLElement, cellPx = 18) {
+    const canvas = host.querySelector("canvas") as HTMLElement;
+    if (!canvas) throw new Error("terminal canvas missing");
+    Object.defineProperty(canvas, "clientHeight", {
+      value: cellPx * 24,
+      configurable: true,
+    });
+  }
+
+  it("applies a sub-cell translate on the scale layer during touch drag", async () => {
+    scrollbackLength = 40;
+    const { host, container } = await mountOpenTerminal();
+    viewportY = 3;
+    onScrollHandler?.(3);
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+
+    host.dispatchEvent(makeTouch("touchstart", 200, 10));
+    const move = makeTouch("touchmove", 190, 10);
+    host.dispatchEvent(move);
+
+    expect(move.defaultPrevented).toBe(true);
+    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
+    expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("clears the sub-cell translate on touchend before fling frames run", async () => {
+    scrollbackLength = 40;
+    const { host, container } = await mountOpenTerminal();
+    viewportY = 3;
+    onScrollHandler?.(3);
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+
+    host.dispatchEvent(makeTouch("touchstart", 200));
+    host.dispatchEvent(makeTouch("touchmove", 190));
+    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
+    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
+
+    const transform = scaleLayerTransform(container);
+    expect(transform).not.toMatch(/translateY\([^0]/);
+  });
+
+  it("clears a nonzero sub-cell offset when pinned output arrives", async () => {
+    scrollbackLength = 40;
+    const { host, container, socket } = await mountOpenTerminal();
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+
+    host.dispatchEvent(makeTouch("touchstart", 200, 10));
+    host.dispatchEvent(makeTouch("touchmove", 210, 10));
+    expect(scaleLayerTransform(container)).toContain("translateY(10px)");
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("fresh line") }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("fresh line");
+      expect(scaleLayerTransform(container)).not.toMatch(/translateY\([^0]/);
+    });
+  });
+
   it("scrolls local terminal scrollback on touch drag", async () => {
     const { host } = await mountTerminal();
 

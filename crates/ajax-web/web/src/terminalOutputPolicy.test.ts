@@ -46,11 +46,12 @@ describe("terminalOutputPolicy", () => {
     expect(validTerminalSize(80, 24.5)).toBeUndefined();
   });
 
-  it("createTerminalWriteBatcher coalesces pushes until flush timer fires", () => {
+  it("createTerminalWriteBatcher flushes the first chunk immediately when idle", () => {
     const onFlush = vi.fn();
     let scheduled: (() => void) | undefined;
     const batcher = createTerminalWriteBatcher({
       onFlush,
+      now: () => 0,
       schedule: (fn) => {
         scheduled = fn;
         return 1 as ReturnType<typeof setTimeout>;
@@ -60,6 +61,90 @@ describe("terminalOutputPolicy", () => {
       },
     });
 
+    batcher.push("x");
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("x");
+    expect(batcher.pendingChars()).toBe(0);
+    expect(scheduled).toBeUndefined();
+  });
+
+  it("createTerminalWriteBatcher coalesces chunks arriving inside the flush window", () => {
+    const onFlush = vi.fn();
+    let scheduled: (() => void) | undefined;
+    let scheduledDelay: number | undefined;
+    let nowMs = 0;
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      flushMs: 16,
+      now: () => nowMs,
+      schedule: (fn, ms) => {
+        scheduled = fn;
+        scheduledDelay = ms;
+        return 1 as ReturnType<typeof setTimeout>;
+      },
+      clearSchedule: () => {
+        scheduled = undefined;
+        scheduledDelay = undefined;
+      },
+    });
+
+    batcher.push("leading");
+    onFlush.mockClear();
+
+    nowMs = 5;
+    batcher.push("a");
+    nowMs = 6;
+    batcher.push("b");
+    expect(onFlush).not.toHaveBeenCalled();
+    expect(batcher.pendingChars()).toBe(2);
+    expect(scheduledDelay).toBe(11);
+
+    scheduled?.();
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("ab");
+  });
+
+  it("createTerminalWriteBatcher flushes immediately again after a quiet window", () => {
+    const onFlush = vi.fn();
+    let nowMs = 0;
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      flushMs: 16,
+      now: () => nowMs,
+      schedule: () => 1 as ReturnType<typeof setTimeout>,
+      clearSchedule: () => {},
+    });
+
+    batcher.push("first");
+    onFlush.mockClear();
+
+    nowMs = 20;
+    batcher.push("z");
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("z");
+    expect(batcher.pendingChars()).toBe(0);
+  });
+
+  it("createTerminalWriteBatcher coalesces pushes until flush timer fires", () => {
+    const onFlush = vi.fn();
+    let scheduled: (() => void) | undefined;
+    let nowMs = 0;
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      now: () => nowMs,
+      schedule: (fn) => {
+        scheduled = fn;
+        return 1 as ReturnType<typeof setTimeout>;
+      },
+      clearSchedule: () => {
+        scheduled = undefined;
+      },
+    });
+
+    batcher.push("idle");
+    onFlush.mockClear();
+
+    nowMs = 1;
     batcher.push("a");
     batcher.push("b");
     expect(onFlush).not.toHaveBeenCalled();
@@ -72,13 +157,19 @@ describe("terminalOutputPolicy", () => {
 
   it("createTerminalWriteBatcher flushes immediately when max chars is reached", () => {
     const onFlush = vi.fn();
+    let nowMs = 0;
     const batcher = createTerminalWriteBatcher({
       onFlush,
       maxChars: 5,
+      now: () => nowMs,
       schedule: () => 1 as ReturnType<typeof setTimeout>,
       clearSchedule: () => {},
     });
 
+    batcher.push("idle");
+    onFlush.mockClear();
+
+    nowMs = 1;
     batcher.push("123");
     expect(onFlush).not.toHaveBeenCalled();
     batcher.push("45");
@@ -90,8 +181,10 @@ describe("terminalOutputPolicy", () => {
   it("createTerminalWriteBatcher flush delivers one combined string and clears the queue", () => {
     const onFlush = vi.fn();
     let scheduled: (() => void) | undefined;
+    let nowMs = 0;
     const batcher = createTerminalWriteBatcher({
       onFlush,
+      now: () => nowMs,
       schedule: (fn) => {
         scheduled = fn;
         return 1 as ReturnType<typeof setTimeout>;
@@ -101,6 +194,10 @@ describe("terminalOutputPolicy", () => {
       },
     });
 
+    batcher.push("idle");
+    onFlush.mockClear();
+
+    nowMs = 1;
     batcher.push("hello");
     batcher.push("world");
     scheduled?.();
@@ -117,8 +214,10 @@ describe("terminalOutputPolicy", () => {
     const onFlush = vi.fn();
     let scheduled: (() => void) | undefined;
     let cleared = false;
+    let nowMs = 0;
     const batcher = createTerminalWriteBatcher({
       onFlush,
+      now: () => nowMs,
       schedule: (fn) => {
         scheduled = fn;
         return 1 as ReturnType<typeof setTimeout>;
@@ -129,6 +228,10 @@ describe("terminalOutputPolicy", () => {
       },
     });
 
+    batcher.push("idle");
+    onFlush.mockClear();
+
+    nowMs = 1;
     batcher.push("x");
     expect(batcher.pendingChars()).toBe(1);
     batcher.dispose();
