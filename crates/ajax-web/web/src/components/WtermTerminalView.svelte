@@ -323,7 +323,10 @@
         detachPinch = attachWtermPinchGestures(hostEl);
 
         refitScheduler = createRefitScheduler({
-          fit: () => liveTerm.resize(liveTerm.cols, liveTerm.rows),
+          // wterm autoResize owns the local grid. Calling resize() on every
+          // visualViewport jitter rebuilds the renderer and resets scroll —
+          // which breaks scrollback and looks like duplicated typed text.
+          fit: () => {},
           sendResize: () => reportResize(liveTerm.cols, liveTerm.rows),
         });
         scheduleDebouncedRefit = () => refitScheduler!.scheduleDebounced();
@@ -510,7 +513,10 @@
     min-width: 0;
     width: 100%;
     height: 100%;
-    overflow: hidden;
+    /* wterm scrolls on this element (has-scrollback → overflow-y). A shorthand
+       overflow:hidden here beats .wterm.has-scrollback and kills scrollback. */
+    overflow-x: hidden;
+    overflow-y: auto;
     background: var(--term-bg, #1e1e1e);
   }
 
@@ -521,6 +527,15 @@
     /* Opaque fill — never inherit a transparent/composited wash on iOS. */
     background: var(--term-bg, #1e1e1e);
     color: var(--term-fg, #d4d4d4);
+  }
+
+  /* Keep the wterm hidden textarea invisible and 16px to avoid iOS focus-zoom
+     painting a second visible text box while typing. */
+  :global(.wterm-host.wterm textarea) {
+    font-size: 16px;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: transparent;
   }
 
   /*
