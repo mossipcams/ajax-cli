@@ -10,6 +10,10 @@
   } from "../terminalConnection";
   import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
   import { createTerminalClipboardUi } from "../terminalClipboard";
+  import { DEFAULT_FONT_SIZE, persistedFontSize, persistFontSize, pinchActivated, pinchFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE } from "../terminalGeometry";
+  import { isKeyboardOpen } from "../viewport";
+  import { createRefitScheduler } from "../terminalRefit";
+  import { createTerminalLayoutPolicy } from "../terminalLayoutPolicy";
 
   interface Props {
     handle: string;
@@ -27,6 +31,26 @@
   let ctrlArmed = $state(false);
   let scrolledUp = $state(false);
   let newOutput = $state(false);
+  let expanded = $state(false);
+  let layoutPolicy: ReturnType<typeof createTerminalLayoutPolicy> | undefined;
+
+  const EXPANDED_CLASS = "terminal-expanded";
+  const setExpanded = (next: boolean) => {
+    expanded = next;
+    document.documentElement.classList.toggle(EXPANDED_CLASS, next);
+  };
+
+  const toggleExpanded = () => {
+    const next = !expanded;
+    setExpanded(next);
+    if (next) {
+      layoutPolicy?.expandEnter();
+      requestAnimationFrame(() => term?.focus());
+    } else {
+      layoutPolicy?.expandExit();
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
+  };
 
   const clipboardUi = createTerminalClipboardUi({ onChange: (snap) => (clipboard = snap) });
   let clipboard = $state(clipboardUi.snapshot());
@@ -43,7 +67,9 @@
   ];
 
   const CTRL_ARM_TIMEOUT_MS = 4000;
+  const PINCH_ACTIVATION_PX = 12;
   let ctrlTimer: ReturnType<typeof setTimeout> | undefined;
+  let currentFontSize = DEFAULT_FONT_SIZE;
 
   const STATUS_LABELS: Record<TerminalConnectionStatus, string> = {
     connecting: "Connecting…",
@@ -99,10 +125,6 @@
     return `\x1b[200~${text.replace(/\x1b/g, "")}\x1b[201~`;
   };
 
-  const reportResize = (cols: number, rows: number) => {
-    connection?.sendResize(Math.max(cols, 1), Math.max(rows, 1));
-  };
-
   const isScrolledUp = (host: HTMLElement): boolean =>
     host.scrollHeight - host.scrollTop - host.clientHeight >= 5;
   const onHostScroll = () => {
@@ -117,18 +139,82 @@
     newOutput = false;
   };
 
-  const forceFitTerminal = (liveTerm: WTerm, host: HTMLDivElement) => {
-    const width = host.clientWidth;
-    const height = host.clientHeight;
-    if (width <= 0 || height <= 0) return;
+  const applyWtermTheme = (host: HTMLDivElement) => {
+    const size = persistedFontSize() ?? DEFAULT_FONT_SIZE;
+    currentFontSize = size;
+    host.style.setProperty("--term-bg", "#1e1e1e");
+    host.style.setProperty("--term-fg", "#d4d4d4");
+    host.style.setProperty("--term-font-size", `${size}px`);
+    host.style.setProperty("--term-color-0", "#1e1e1e");
+  };
 
-    const charWidth = 8;
-    const charHeight = 17;
-    const cols = Math.max(1, Math.floor(width / charWidth));
-    const rows = Math.max(1, Math.floor(height / charHeight));
-    if (cols !== liveTerm.cols || rows !== liveTerm.rows) {
-      liveTerm.resize(cols, rows);
-    }
+  const setWtermFontSize = (host: HTMLDivElement, size: number) => {
+    currentFontSize = size;
+    host.style.setProperty("--term-font-size", `${size}px`);
+    persistFontSize(size);
+  };
+
+  const attachWtermPinchGestures = (host: HTMLDivElement): (() => void) => {
+    const touchDistance = (touches: TouchList): number => {
+      if (touches.length < 2) return 0;
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    let pinchStartDistance = 0;
+    let pinchBaseFontSize = 0;
+    let pinchEngaged = false;
+
+    const resetPinch = () => {
+      pinchStartDistance = 0;
+      pinchEngaged = false;
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length === 2) {
+        if (event.cancelable) event.preventDefault();
+        pinchEngaged = false;
+        pinchStartDistance = touchDistance(event.touches);
+        pinchBaseFontSize = currentFontSize;
+        return;
+      }
+      resetPinch();
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (event.touches.length !== 2 || pinchStartDistance <= 0) return;
+      if (event.cancelable) event.preventDefault();
+      const distance = touchDistance(event.touches);
+      if (!pinchEngaged && pinchActivated(pinchStartDistance, distance, PINCH_ACTIVATION_PX)) {
+        pinchEngaged = true;
+      }
+      if (!pinchEngaged) return;
+      const next = pinchFontSize(
+        pinchBaseFontSize,
+        pinchStartDistance,
+        distance,
+        MIN_FONT_SIZE,
+        MAX_FONT_SIZE,
+      );
+      if (next !== currentFontSize) setWtermFontSize(host, next);
+    };
+
+    const onTouchEnd = () => {
+      resetPinch();
+    };
+
+    host.addEventListener("touchstart", onTouchStart, { passive: false });
+    host.addEventListener("touchmove", onTouchMove, { passive: false });
+    host.addEventListener("touchend", onTouchEnd);
+    host.addEventListener("touchcancel", onTouchEnd);
+
+    return () => {
+      host.removeEventListener("touchstart", onTouchStart);
+      host.removeEventListener("touchmove", onTouchMove);
+      host.removeEventListener("touchend", onTouchEnd);
+      host.removeEventListener("touchcancel", onTouchEnd);
+    };
   };
 
   const sendKey = (data: string) => {
@@ -171,12 +257,54 @@
 
   onMount(() => {
     let disposed = false;
+    let detachPinch: (() => void) | undefined;
+    let keyboardObserver: MutationObserver | undefined;
+    let refitScheduler: ReturnType<typeof createRefitScheduler> | undefined;
+    let scheduleDebouncedRefit: (() => void) | undefined;
+    const viewport = window.visualViewport;
+    let wasKeyboardOpen = isKeyboardOpen();
+    let lastCols = 1;
+    let lastRows = 1;
+    const policy = createTerminalLayoutPolicy();
+    layoutPolicy = policy;
+
+    const reportResize = (cols: number, rows: number) => {
+      lastCols = Math.max(cols, 1);
+      lastRows = Math.max(rows, 1);
+      const open = isKeyboardOpen();
+      const decision = policy.setKeyboardOpen(open);
+      wasKeyboardOpen = open;
+      if (!decision.allowPtyResize) return;
+      connection?.sendResize(lastCols, lastRows);
+    };
+
+    const onKeyboardClassChange = () => {
+      const open = isKeyboardOpen();
+      if (!wasKeyboardOpen && open) {
+        const decision = policy.setKeyboardOpen(true);
+        if (decision.pinToBottomOnKeyboardOpen) {
+          snapToNewest();
+        }
+      } else if (wasKeyboardOpen && !open) {
+        policy.setKeyboardOpen(false);
+        connection?.sendResize(lastCols, lastRows);
+      }
+      wasKeyboardOpen = open;
+    };
+
+    keyboardObserver = new MutationObserver(onKeyboardClassChange);
+    keyboardObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
 
     const init = async () => {
       if (!hostEl) return;
       try {
         core = await loadWtermGhosttyCore();
         if (disposed) return;
+
+        applyWtermTheme(hostEl);
 
         const liveTerm = new WTerm(hostEl, {
           core,
@@ -190,19 +318,17 @@
           return;
         }
 
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => {
-            if (hostEl) forceFitTerminal(liveTerm, hostEl);
-            resolve();
-          });
-        });
-        if (disposed) {
-          liveTerm.destroy();
-          return;
-        }
-
         term = liveTerm;
         hostEl.addEventListener("scroll", onHostScroll);
+        detachPinch = attachWtermPinchGestures(hostEl);
+
+        refitScheduler = createRefitScheduler({
+          fit: () => liveTerm.resize(liveTerm.cols, liveTerm.rows),
+          sendResize: () => reportResize(liveTerm.cols, liveTerm.rows),
+        });
+        scheduleDebouncedRefit = () => refitScheduler!.scheduleDebounced();
+        viewport?.addEventListener("resize", scheduleDebouncedRefit);
+        viewport?.addEventListener("scroll", scheduleDebouncedRefit);
 
         let hasOpened = false;
         const liveConnection = connectTaskTerminal(handle, {
@@ -222,7 +348,6 @@
               // Reconnect: clear the stale grid so the tmux repaint lands
               // clean, then re-announce our size to the PTY.
               liveTerm.write("\x1bc");
-              if (hostEl) forceFitTerminal(liveTerm, hostEl);
               reportResize(liveTerm.cols, liveTerm.rows);
             }
             hasOpened = true;
@@ -248,7 +373,17 @@
 
     return () => {
       disposed = true;
+      keyboardObserver?.disconnect();
+      refitScheduler?.dispose();
+      if (scheduleDebouncedRefit) {
+        viewport?.removeEventListener("resize", scheduleDebouncedRefit);
+        viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
+      }
+      policy.dispose();
+      layoutPolicy = undefined;
+      setExpanded(false);
       if (ctrlTimer) clearTimeout(ctrlTimer);
+      detachPinch?.();
       hostEl?.removeEventListener("scroll", onHostScroll);
       clipboardUi.dispose();
       connection?.dispose();
@@ -263,6 +398,7 @@
 <div class="wterm-root">
   <section
     class="terminal-panel"
+    class:is-expanded={expanded}
     data-testid="task-terminal-panel"
     data-terminal-engine="wterm"
     aria-label="Task terminal">
@@ -285,6 +421,14 @@
         </div>
       </div>
     {/if}
+    <button
+      type="button"
+      class="terminal-expand-corner"
+      class:is-armed={expanded}
+      aria-label="Expand terminal"
+      aria-pressed={expanded}
+      onmousedown={(event) => event.preventDefault()}
+      onclick={() => toggleExpanded()}>⛶</button>
     <div
       class="terminal-status"
       class:is-empty={!(status !== "connected" || statusDetail)}
@@ -367,7 +511,7 @@
     width: 100%;
     height: 100%;
     overflow: hidden;
-    background: #1c1714;
+    background: var(--term-bg, #1e1e1e);
   }
 
   :global(.wterm-host.wterm) {
@@ -375,8 +519,8 @@
     box-shadow: none;
     border-radius: 0;
     /* Opaque fill — never inherit a transparent/composited wash on iOS. */
-    background: #1c1714;
-    color: #d4d4d4;
+    background: var(--term-bg, #1e1e1e);
+    color: var(--term-fg, #d4d4d4);
   }
 
   /*
@@ -386,7 +530,7 @@
    * !important is required to beat the inline style.
    */
   :global(.wterm-host.wterm .term-grid) {
-    background: #1c1714 !important;
+    background: var(--term-bg, #1e1e1e) !important;
   }
 
   .terminal-keys {
@@ -394,8 +538,14 @@
     flex-wrap: nowrap;
     gap: 4px;
     padding: 2px 4px;
+    padding-bottom: max(2px, env(safe-area-inset-bottom));
     overflow-x: auto;
     scrollbar-width: none;
+  }
+
+  :global(html.keyboard-open) .terminal-keys {
+    /* Keyboard covers the home indicator; safe-area pad is dead space. */
+    padding-bottom: 6px;
   }
 
   .terminal-keys::-webkit-scrollbar {
@@ -466,6 +616,37 @@
     border: 1px solid var(--rule);
     background: var(--paper-raised);
     color: var(--ink);
+  }
+
+  .terminal-expand-corner {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    z-index: 5;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 4px;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--paper) 72%, transparent);
+    color: var(--ink-soft);
+    font-size: 16px;
+    line-height: 1;
+  }
+
+  .terminal-expand-corner:hover,
+  .terminal-expand-corner:focus-visible {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+    outline: none;
+  }
+
+  .terminal-expand-corner.is-armed {
+    top: calc(6px + env(safe-area-inset-top));
+    right: calc(6px + env(safe-area-inset-right));
+    background: var(--teal-deep);
+    border-color: var(--teal);
+    color: var(--paper);
   }
 
   .terminal-paste-fallback {

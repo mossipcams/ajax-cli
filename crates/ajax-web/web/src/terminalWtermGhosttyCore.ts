@@ -56,7 +56,7 @@ export function wasmExportsInclude(bytes: ArrayBuffer, name: string): boolean {
 async function fetchWtermWasmBytes(): Promise<ArrayBuffer> {
   let response: Response;
   try {
-    response = await fetch(WTERM_GHOSTTY_WASM_URL, { cache: "no-store" });
+    response = await fetch(WTERM_GHOSTTY_WASM_URL);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(

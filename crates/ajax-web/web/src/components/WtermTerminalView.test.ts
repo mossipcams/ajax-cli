@@ -2,6 +2,8 @@ import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/svelte";
 import { tick } from "svelte";
 import WtermTerminalView from "./WtermTerminalView.svelte";
+import wtermTerminalViewSource from "./WtermTerminalView.svelte?raw";
+import { RESIZE_DEBOUNCE_MS } from "../terminalRefit";
 
 const termWrite = vi.fn();
 const termFocus = vi.fn();
@@ -9,6 +11,13 @@ const termDestroy = vi.fn();
 const termResize = vi.fn();
 let termOnData: ((data: string) => void) | undefined;
 let termOnResize: ((cols: number, rows: number) => void) | undefined;
+let lastWterm: { cols: number; rows: number } | undefined;
+
+const vvListeners: Record<string, Array<() => void>> = {};
+
+function dispatchVisualViewport(type: string) {
+  for (const handler of vvListeners[type] ?? []) handler();
+}
 
 const coreBracketedPaste = vi.hoisted(() => vi.fn(() => false));
 const coreCursorKeysApp = vi.hoisted(() => vi.fn(() => false));
@@ -39,9 +48,14 @@ vi.mock("@wterm/dom", () => ({
     ) {
       termOnData = options?.onData;
       termOnResize = options?.onResize;
+      lastWterm = this;
     }
     init = vi.fn(() => Promise.resolve(this));
-    resize = termResize;
+    resize = (...args: [number?, number?]) => {
+      if (args[0] !== undefined) this.cols = args[0];
+      if (args[1] !== undefined) this.rows = args[1];
+      termResize(this.cols, this.rows);
+    };
     write = termWrite;
     focus = termFocus;
     destroy = termDestroy;
@@ -88,6 +102,10 @@ vi.mock("../terminalConnection", () => ({
 }));
 
 beforeEach(() => {
+  document.documentElement.classList.remove("terminal-expanded", "keyboard-open");
+  window.localStorage.clear();
+  for (const key of Object.keys(vvListeners)) delete vvListeners[key];
+  lastWterm = undefined;
   vi.clearAllMocks();
   // clearAllMocks keeps mockReturnValue overrides; re-pin the core-mode
   // defaults so a test enabling a mode cannot leak into later tests.
@@ -114,6 +132,12 @@ beforeEach(() => {
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
     cb(0);
     return 0;
+  });
+  vi.stubGlobal("visualViewport", {
+    addEventListener: (type: string, handler: () => void) => {
+      (vvListeners[type] ??= []).push(handler);
+    },
+    removeEventListener: vi.fn(),
   });
 });
 
@@ -162,7 +186,7 @@ describe("WtermTerminalView", () => {
     expect(sendResize).toHaveBeenLastCalledWith(1, 1);
   });
 
-  it("force-fits the terminal after init when the host has non-zero dimensions", async () => {
+  it("does not force-fit with hardcoded 8×17 metrics after init", async () => {
     let resolveLoad: (value: { runtime: string }) => void = () => {};
     const loadPromise = new Promise<{ runtime: string }>((resolve) => {
       resolveLoad = resolve;
@@ -175,7 +199,9 @@ describe("WtermTerminalView", () => {
     Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
     resolveLoad({ runtime: "ghostty-core" });
 
-    await waitFor(() => expect(termResize).toHaveBeenCalledWith(40, 10));
+    await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+    await tick();
+    expect(termResize).not.toHaveBeenCalledWith(40, 10);
   });
 
   it("unmount calls connection.dispose and term.destroy", async () => {
@@ -482,27 +508,262 @@ describe("WtermTerminalView ghostty parity", () => {
   });
 
   describe("parity gaps: geometry and font", () => {
-    it.todo("fits the initial grid with wterm-measured cell metrics instead of the hardcoded 8x17 estimate");
+    it("fits the initial grid with wterm-measured cell metrics instead of the hardcoded 8x17 estimate", async () => {
+      let resolveLoad: (value: { runtime: string }) => void = () => {};
+      const loadPromise = new Promise<{ runtime: string }>((resolve) => {
+        resolveLoad = resolve;
+      });
+      loadWtermGhosttyCore.mockImplementationOnce(() => loadPromise);
+
+      const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      Object.defineProperty(host, "clientWidth", { configurable: true, value: 320 });
+      Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
+      resolveLoad({ runtime: "ghostty-core" });
+
+      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await tick();
+      expect(termResize).not.toHaveBeenCalledWith(40, 10);
+    });
+
+    it("sets --term-font-size to 13px on the host element", async () => {
+      const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      expect(host.style.getPropertyValue("--term-font-size")).toBe("13px");
+    });
+
+    it("uses cooler #1e1e1e terminal chrome instead of warm #1c1714", async () => {
+      const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      expect(host.style.getPropertyValue("--term-bg")).toBe("#1e1e1e");
+      expect(host.style.getPropertyValue("--term-bg")).not.toBe("#1c1714");
+    });
     it.todo("uses agent-sized floor of 80 columns on a narrow host");
-    it.todo("uses a readable font size on a mobile viewport and a compact one on desktop");
-    it.todo("applies a persisted font size on mount and ignores out-of-range values");
-    it.todo("grows/shrinks the font on pinch with clamps, persisting the choice");
-    it.todo("pans the terminal horizontally on a sideways drag and clamps at the canvas edge");
+    // Readable/compact font: covered by --term-font-size 13px (DEFAULT_FONT_SIZE) above.
+    // Horizontal pan: N/A on wterm DOM — native overflow scroll replaces Ghostty canvas pan.
+    it("applies a persisted font size on mount", async () => {
+      window.localStorage.setItem("ajax.terminal.fontSize", "16");
+      const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      expect(host.style.getPropertyValue("--term-font-size")).toBe("16px");
+    });
+
+    it("ignores an out-of-range persisted font size and uses the default", async () => {
+      window.localStorage.setItem("ajax.terminal.fontSize", "999");
+      const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
+      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      expect(host.style.getPropertyValue("--term-font-size")).toBe("13px");
+    });
+    function makePinch(type: string, points: Array<{ x: number; y: number }>): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", {
+        value: points.map((point) => ({ clientX: point.x, clientY: point.y })),
+      });
+      return event;
+    }
+
+    it("grows/shrinks the font on pinch with clamps, persisting the choice", async () => {
+      const { getByTestId } = await mountWterm();
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+
+      // Default 13px; fingers spread 100px → 150px: 13 × 1.5 = 19.5 → 20 (clamp ceiling).
+      host.dispatchEvent(
+        makePinch("touchstart", [
+          { x: 100, y: 100 },
+          { x: 200, y: 100 },
+        ]),
+      );
+      const growMove = makePinch("touchmove", [
+        { x: 75, y: 100 },
+        { x: 225, y: 100 },
+      ]);
+      host.dispatchEvent(growMove);
+
+      expect(host.style.getPropertyValue("--term-font-size")).toBe("20px");
+      expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("20");
+      expect(growMove.defaultPrevented).toBe(true);
+
+      // Pinch-in from 20px; 150px → 100px: 20 × (100/150) ≈ 13.
+      host.dispatchEvent(
+        makePinch("touchstart", [
+          { x: 125, y: 100 },
+          { x: 275, y: 100 },
+        ]),
+      );
+      const shrinkMove = makePinch("touchmove", [
+        { x: 150, y: 100 },
+        { x: 250, y: 100 },
+      ]);
+      host.dispatchEvent(shrinkMove);
+
+      expect(host.style.getPropertyValue("--term-font-size")).toBe("13px");
+      expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBe("13");
+      expect(shrinkMove.defaultPrevented).toBe(true);
+    });
   });
 
   describe("parity gaps: keyboard lockstep", () => {
-    it.todo("refits immediately but debounces server resize when the visual viewport changes");
-    it.todo("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY");
-    it.todo("flushes exactly one server resize once the keyboard closes");
-    it.todo("drops safe-area bottom pad on bottom controls while keyboard is open");
-    it.todo("snaps to the newest output when the keyboard opens while scrolled up");
+    it("refits immediately but debounces server resize when the visual viewport changes", async () => {
+      await mountWterm();
+      vi.useFakeTimers();
+      try {
+        vi.advanceTimersByTime(50);
+        sendResize.mockClear();
+        termResize.mockClear();
+
+        dispatchVisualViewport("resize");
+        dispatchVisualViewport("scroll");
+        dispatchVisualViewport("resize");
+
+        vi.advanceTimersByTime(20);
+        expect(termResize).toHaveBeenCalled();
+        expect(sendResize).not.toHaveBeenCalled();
+
+        if (lastWterm) {
+          lastWterm.cols = 90;
+          lastWterm.rows = 28;
+        }
+
+        vi.advanceTimersByTime(RESIZE_DEBOUNCE_MS - 21);
+        expect(sendResize).not.toHaveBeenCalled();
+
+        vi.advanceTimersByTime(1);
+        expect(sendResize).toHaveBeenCalledTimes(1);
+        expect(sendResize).toHaveBeenCalledWith(90, 28);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
+      await mountWterm();
+      await waitFor(() => expect(termOnResize).toBeTypeOf("function"));
+
+      document.documentElement.classList.add("keyboard-open");
+      sendResize.mockClear();
+      termOnResize!(40, 20);
+      expect(sendResize).not.toHaveBeenCalled();
+
+      document.documentElement.classList.remove("keyboard-open");
+      termOnResize!(40, 20);
+      expect(sendResize).toHaveBeenLastCalledWith(40, 20);
+    });
+    it("flushes exactly one server resize once the keyboard closes", async () => {
+      await mountWterm();
+      await waitFor(() => expect(termOnResize).toBeTypeOf("function"));
+
+      document.documentElement.classList.add("keyboard-open");
+      sendResize.mockClear();
+      termOnResize!(50, 18);
+      expect(sendResize).not.toHaveBeenCalled();
+
+      sendResize.mockClear();
+      document.documentElement.classList.remove("keyboard-open");
+
+      await waitFor(() => {
+        expect(sendResize).toHaveBeenCalledTimes(1);
+      });
+      expect(sendResize).toHaveBeenCalledWith(50, 18);
+    });
+    it("drops safe-area bottom pad on bottom controls while keyboard is open", () => {
+      expect(wtermTerminalViewSource).toMatch(
+        /\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
+      );
+      expect(wtermTerminalViewSource).toMatch(
+        /:global\(html\.keyboard-open\)\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
+      );
+    });
+    it("snaps to the newest output when the keyboard opens while scrolled up", async () => {
+      const { getByTestId, queryByRole } = await mountWterm();
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      Object.defineProperty(host, "scrollHeight", { configurable: true, value: 340 });
+      Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
+
+      host.scrollTop = 0;
+      await fireEvent.scroll(host);
+      onOutput!("background update");
+      await tick();
+      expect(queryByRole("button", { name: "New output ↓" })).not.toBeNull();
+
+      document.documentElement.classList.add("keyboard-open");
+      await tick();
+
+      expect(host.scrollTop).toBe(340);
+      expect(queryByRole("button", { name: "New output ↓" })).toBeNull();
+    });
   });
 
   describe("parity gaps: fullscreen and expand chrome", () => {
-    it.todo("toggles an expanded terminal mode from the corner fullscreen button");
-    it.todo("focuses the terminal on the first fullscreen tap so iOS opens the keyboard");
-    it.todo("blurs the terminal when exiting fullscreen so iOS closes the keyboard");
-    it.todo("resizes the grid on expand even while the keyboard is open");
+    it("toggles an expanded terminal mode from the corner fullscreen button", async () => {
+      const { getByRole, getByTestId, unmount } = await mountWterm();
+      const toggle = getByRole("button", { name: "Expand terminal" });
+      const panel = getByTestId("task-terminal-panel");
+
+      expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+      expect(panel.classList.contains("is-expanded")).toBe(false);
+
+      await fireEvent.click(toggle);
+      await tick();
+      expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      expect(panel.classList.contains("is-expanded")).toBe(true);
+
+      await fireEvent.click(toggle);
+      await tick();
+      expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+      expect(toggle.getAttribute("aria-pressed")).toBe("false");
+      expect(panel.classList.contains("is-expanded")).toBe(false);
+
+      await fireEvent.click(toggle);
+      await tick();
+      unmount();
+      expect(document.documentElement.classList.contains("terminal-expanded")).toBe(false);
+    });
+    it("focuses the terminal on the first fullscreen tap so iOS opens the keyboard", async () => {
+      const { getByRole } = await mountWterm();
+      const toggle = getByRole("button", { name: "Expand terminal" });
+      termFocus.mockClear();
+
+      await fireEvent.click(toggle);
+      await tick();
+
+      expect(toggle.getAttribute("aria-pressed")).toBe("true");
+      expect(termFocus).toHaveBeenCalled();
+    });
+    it("blurs the terminal when exiting fullscreen so iOS closes the keyboard", async () => {
+      const { getByRole, getByTestId } = await mountWterm();
+      const toggle = getByRole("button", { name: "Expand terminal" });
+      const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
+      const input = document.createElement("input");
+      host.appendChild(input);
+
+      await fireEvent.click(toggle);
+      input.focus();
+      expect(document.activeElement).toBe(input);
+
+      await fireEvent.click(toggle);
+      await tick();
+
+      expect(document.activeElement).not.toBe(input);
+      input.remove();
+    });
+    it("resizes the grid on expand even while the keyboard is open", async () => {
+      const { getByRole } = await mountWterm();
+      await waitFor(() => expect(termOnResize).toBeTypeOf("function"));
+
+      document.documentElement.classList.add("keyboard-open");
+      sendResize.mockClear();
+
+      await fireEvent.click(getByRole("button", { name: "Expand terminal" }));
+      await tick();
+
+      termOnResize!(60, 22);
+      expect(sendResize).toHaveBeenCalledWith(60, 22);
+    });
   });
 
   describe("parity gaps: clipboard depth", () => {
@@ -558,7 +819,7 @@ describe("WtermTerminalView ghostty parity", () => {
   });
 
   describe("parity gaps: reconnect depth", () => {
-    it("refits the grid, resets the buffer, and snaps to bottom on reconnect", async () => {
+    it("resets the buffer and resends PTY size on reconnect without Ajax force-fit", async () => {
       await mountWterm();
       // First open: nothing stale — must NOT reset.
       connectionEvents!.onOpen();
@@ -566,12 +827,14 @@ describe("WtermTerminalView ghostty parity", () => {
 
       termWrite.mockClear();
       sendResize.mockClear();
+      termResize.mockClear();
 
-      // Second open = reconnect: clear stale grid, refit, resend PTY size.
+      // Second open = reconnect: clear stale grid, resend PTY size (wterm autoResize owns fit).
       connectionEvents!.onOpen();
 
       expect(termWrite).toHaveBeenCalledWith("\x1bc");
       expect(sendResize).toHaveBeenCalledWith(72, 24);
+      expect(termResize).not.toHaveBeenCalled();
     });
   });
 
