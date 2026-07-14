@@ -21,7 +21,6 @@
   import { pullToRefresh } from "../gestures/pullToRefreshAction";
   import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
   import { createCockpitApplyGate, createInFlightGuard } from "../cockpitPoll";
-  import { warmTerminalAssets } from "../terminalPreload";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -182,9 +181,13 @@
 
   // Warm Ghostty WASM and the terminal chunk while a task route or new-task
   // sheet is open so the first mount does not pay the download cost.
+  // Dynamic import only — a static import would pull terminal.js into app.js
+  // (vite manualChunks maps /web/src/terminal* into the deferred chunk).
   $effect(() => {
     if (!taskOpenHandle && !sheetOpen) return;
-    const idleHandle = whenIdle(() => void warmTerminalAssets());
+    const idleHandle = whenIdle(() => {
+      void import("../terminalPreload").then((m) => void m.warmTerminalAssets());
+    });
     return () => cancelIdle(idleHandle);
   });
 

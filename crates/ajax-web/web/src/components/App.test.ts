@@ -370,7 +370,9 @@ describe("App shell", () => {
   });
 
   it("idle-warms terminal assets when a task route or new-task sheet is open", () => {
+    expect(appSource).toMatch(/import\(["']\.\.\/terminalPreload["']\)/);
     expect(appSource).toMatch(/warmTerminalAssets/);
+    expect(appSource).not.toMatch(/import\s*\{[^}]*warmTerminalAssets[^}]*\}\s*from\s*["']\.\.\/terminalPreload["']/);
   });
 
   it("defers the version check until the browser is idle", async () => {
