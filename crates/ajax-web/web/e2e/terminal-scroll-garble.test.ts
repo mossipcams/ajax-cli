@@ -24,6 +24,10 @@ const gridCanvas = (page: Page) =>
 const newOutputButton = (page: Page) =>
   page.getByRole("button", { name: "New output ↓" });
 
+async function saveDiagnosticScreenshot(page: Page, path: string) {
+  if (!process.env.CI) await page.screenshot({ path, fullPage: true });
+}
+
 async function emitTerminalOutput(page: Page, text: string) {
   const delivered = await page.evaluate((payload) => {
     const sockets = (
@@ -166,10 +170,10 @@ test.describe("terminal scroll garble repro (mobile PWA)", () => {
 
     const after = await readProbe(page);
     assertMarkersContiguous(after.lines, 0, 240);
-    await page.screenshot({
-      path: "crates/ajax-web/web/e2e/artifacts/garble-output-while-scrolled.png",
-      fullPage: true,
-    });
+    await saveDiagnosticScreenshot(
+      page,
+      "crates/ajax-web/web/e2e/artifacts/garble-output-while-scrolled.png",
+    );
   });
 
   test("markers stay contiguous after keyboard-open resize while scrolled", async ({
@@ -214,10 +218,10 @@ test.describe("terminal scroll garble repro (mobile PWA)", () => {
 
     const after = await readProbe(page);
     assertMarkersContiguous(after.lines, 0, 220);
-    await page.screenshot({
-      path: "crates/ajax-web/web/e2e/artifacts/garble-keyboard-while-scrolled.png",
-      fullPage: true,
-    });
+    await saveDiagnosticScreenshot(
+      page,
+      "crates/ajax-web/web/e2e/artifacts/garble-keyboard-while-scrolled.png",
+    );
   });
 
   test("CSI redraw while scrolled does not shatter marker rows", async ({ page }) => {
@@ -260,10 +264,10 @@ test.describe("terminal scroll garble repro (mobile PWA)", () => {
     // Markers must not shatter mid-token across newlines.
     expect(joined).not.toMatch(/MAR\nK_/);
     expect(joined).not.toMatch(/MARK\n_/);
-    await page.screenshot({
-      path: "crates/ajax-web/web/e2e/artifacts/garble-csi-redraw-while-scrolled.png",
-      fullPage: true,
-    });
+    await saveDiagnosticScreenshot(
+      page,
+      "crates/ajax-web/web/e2e/artifacts/garble-csi-redraw-while-scrolled.png",
+    );
   });
 
   test("long soft-wrapped Claude-like paths show wrap column (hypothesis 3)", async ({
@@ -292,10 +296,10 @@ test.describe("terminal scroll garble repro (mobile PWA)", () => {
         (line.includes("(ct") && !line.includes("ctrl+o")),
     );
 
-    await page.screenshot({
-      path: "crates/ajax-web/web/e2e/artifacts/garble-softwrap-hypothesis.png",
-      fullPage: true,
-    });
+    await saveDiagnosticScreenshot(
+      page,
+      "crates/ajax-web/web/e2e/artifacts/garble-softwrap-hypothesis.png",
+    );
 
     // Diagnostic: record wrap behavior for the plan ledger; do not fail the
     // suite solely because fit geometry soft-wraps long paths.

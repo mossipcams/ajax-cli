@@ -16,7 +16,7 @@ export default defineConfig({
   },
   projects: [
     { name: "desktop-chromium", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile-webkit", use: { ...devices["iPhone 12"] } },
+    { name: "mobile-webkit", use: { ...devices["iPhone 15 Pro"] } },
   ],
   webServer: {
     command: "./node_modules/.bin/vite --config crates/ajax-web/web/vite.config.mts",

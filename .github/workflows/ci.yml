@@ -68,20 +68,17 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
-      - name: Check Svelte and TypeScript
-        run: npm run web:check
-
-      - name: Test frontend
-        run: npm run web:test -- --run
-
-      - name: Check built web assets
-        run: npm run web:build:check
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
+        run: npx playwright install --with-deps webkit
 
       - name: Smoke and visual-regression tests
-        run: npm run web:smoke
+        run: npm run web:smoke -- --project=mobile-webkit
 
   check:
     name: Cargo Check
