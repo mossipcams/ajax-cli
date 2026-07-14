@@ -93,6 +93,68 @@ test("Surface V2 mounts wterm on mobile webkit without yellow init failure", asy
   await expect
     .poll(async () => (await wtermPanel.textContent()) ?? "", { timeout: 10_000 })
     .toContain("Hello from Surface V2");
+
+  // tmux paints the bottom row (status/message line) with a colored bg.
+  // @wterm/dom's renderer copies the bottom-right cell bg onto .term-grid as
+  // an INLINE style — the whole-terminal yellow/green wash on device. The
+  // grid background must stay dark paper regardless.
+  await page.evaluate(() => {
+    const sockets = (
+      window as unknown as {
+        __terminalSockets: Array<{ emitMessage: (d: string) => void }>;
+      }
+    ).__terminalSockets;
+    sockets[sockets.length - 1].emitMessage("\x1b[999;1H\x1b[43m\x1b[2Kstatus\x1b[0m");
+  });
+
+  // Prove the write rendered before checking the background.
+  await expect
+    .poll(async () => (await wtermPanel.textContent()) ?? "", { timeout: 10_000 })
+    .toContain("status");
+
+  const gridBg = await page.evaluate(() => {
+    const grid = document.querySelector(".term-grid");
+    return grid ? getComputedStyle(grid).backgroundColor : null;
+  });
+  expect(gridBg).toMatch(/rgba?\(\s*28\s*,\s*23\s*,\s*20/);
+});
+
+test("Surface V2 keeps text after a viewport resize", async ({ page }, testInfo) => {
+  test.skip(
+    testInfo.project.name !== "mobile-webkit",
+    "iOS resizes constantly (URL bar, keyboard); WebKit is the target",
+  );
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await enableSurfaceV2(page);
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await page.goto("/app.html#/t/web%2Ffix-login");
+
+  const wtermPanel = page.locator(
+    '[data-testid="task-terminal-panel"][data-terminal-engine="wterm"]',
+  );
+  await wtermPanel.locator(".term-grid").waitFor({ state: "visible", timeout: 20_000 });
+  await waitForTerminalSocket(page);
+
+  await page.evaluate(() => {
+    const sockets = (
+      window as unknown as {
+        __terminalSockets: Array<{ emitMessage: (d: string) => void }>;
+      }
+    ).__terminalSockets;
+    sockets[sockets.length - 1].emitMessage("resize survivor\r\n");
+  });
+  await expect
+    .poll(async () => (await wtermPanel.textContent()) ?? "", { timeout: 10_000 })
+    .toContain("resize survivor");
+
+  // WTerm.resize() wipes the row DOM (renderer.setup) and repaints only rows
+  // the core reports dirty — text must survive the rebuild.
+  await page.setViewportSize({ width: 390, height: 700 });
+  await expect
+    .poll(async () => (await wtermPanel.textContent()) ?? "", { timeout: 10_000 })
+    .toContain("resize survivor");
 });
 
 test("Surface V2 stays off Ghostty when the flag is enabled", async ({ page }) => {
