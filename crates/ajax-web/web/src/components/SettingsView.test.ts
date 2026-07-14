@@ -7,6 +7,7 @@ import * as setting from "../terminalSurfaceSetting";
 
 afterEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   vi.restoreAllMocks();
 });
 
@@ -63,11 +64,45 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders Experimental / Terminal Surface V2", () => {
+  it("renders Dev settings with Surface V2 toggle", () => {
     const { getByText, getByTestId } = render(SettingsView);
-    expect(getByText("Experimental")).toBeInTheDocument();
+    expect(getByTestId("dev-settings")).toBeInTheDocument();
+    expect(getByText("Dev settings")).toBeInTheDocument();
     expect(getByText("Terminal Surface V2")).toBeInTheDocument();
     expect(getByTestId("setting-terminal-surface-v2")).toBeInTheDocument();
+  });
+
+  it("shows live debug info with origin and app version", () => {
+    const meta = document.createElement("meta");
+    meta.name = "ajax-app-version";
+    meta.content = "0.42.0-test";
+    document.head.appendChild(meta);
+
+    const { getByTestId } = render(SettingsView);
+    const debug = getByTestId("dev-settings-debug");
+    expect(debug.textContent).toContain(window.location.origin);
+    expect(debug.textContent).toContain("0.42.0-test");
+
+    meta.remove();
+  });
+
+  it("shows last Surface V2 error from sessionStorage", () => {
+    sessionStorage.setItem("ajax.terminal.surfaceV2.lastError", "wasm init failed");
+
+    const { getByTestId } = render(SettingsView);
+    const debug = getByTestId("dev-settings-debug");
+    expect(debug.textContent).toContain("wasm init failed");
+  });
+
+  it("reload app calls location.reload", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+
+    const { getByText } = render(SettingsView);
+    await fireEvent.click(getByText("Reload app"));
+    expect(reload).toHaveBeenCalledOnce();
+
+    vi.unstubAllGlobals();
   });
 
   it("toggle calls setter and reflects storage", async () => {

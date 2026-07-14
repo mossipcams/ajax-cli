@@ -74,6 +74,16 @@ describe("buildDiagnosticsReport", () => {
     expect(report.browser_mode).toBe("Safari/browser");
     expect(report).not.toHaveProperty("service_worker_controller");
   });
+
+  it("includes terminal_surface_v2 and surface_v2_last_error", async () => {
+    localStorage.setItem("ajax.terminal.surfaceV2", "true");
+    sessionStorage.setItem("ajax.terminal.surfaceV2.lastError", "boot timeout");
+
+    const report = await buildDiagnosticsReport();
+
+    expect(report.terminal_surface_v2).toBe(true);
+    expect(report.surface_v2_last_error).toBe("boot timeout");
+  });
 });
 
 describe("copyText", () => {
