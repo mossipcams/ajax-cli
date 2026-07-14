@@ -159,4 +159,10 @@
     white-space: pre-wrap;
     overflow-wrap: anywhere;
   }
+
+  .settings-section .pill {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 10px 16px;
+  }
 </style>

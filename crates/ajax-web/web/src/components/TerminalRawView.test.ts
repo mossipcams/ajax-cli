@@ -2643,9 +2643,11 @@ describe("TerminalRawView", () => {
     expect(mobileCss).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*gap:\s*4px/);
     expect(mobileCss).toMatch(/\.terminal-keys\s*\{[^}]*padding:\s*2px 4px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*1px 7px/);
-    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*11px/);
+    // Mobile keys meet the Apple HIG 44px tap minimum (L1 defect fix); the
+    // e2e pin lives in explore-webkit-qa's assertMinTapTarget.
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*44px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*padding:\s*6px 7px/);
+    expect(mobileCss).toMatch(/\.terminal-key\s*\{[^}]*font-size:\s*12px/);
 
     expect(terminalRawViewSource).not.toMatch(/\.terminal-host\s*\{[^}]*padding:\s*8px/);
     expect(terminalRawViewSource).toMatch(/\.terminal-key\s*\{[^}]*min-height:\s*28px/);
