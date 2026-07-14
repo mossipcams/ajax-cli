@@ -369,6 +369,10 @@ describe("App shell", () => {
     expect(await findByTestId("task-terminal-panel")).toBeInTheDocument();
   });
 
+  it("idle-warms terminal assets when a task route or new-task sheet is open", () => {
+    expect(appSource).toMatch(/warmTerminalAssets/);
+  });
+
   it("defers the version check until the browser is idle", async () => {
     let idleCb: (() => void) | null = null;
     vi.stubGlobal("requestIdleCallback", (cb: () => void) => {

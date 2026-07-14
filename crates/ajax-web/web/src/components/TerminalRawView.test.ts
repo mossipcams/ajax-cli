@@ -8,6 +8,13 @@ import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 import terminalClipboardSource from "../terminalClipboard.ts?raw";
 import { fitScale, scaledLogicalRows } from "../terminalGeometry";
 
+const preloadGhosttyRuntime = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve({ runtime: "ghostty" })),
+);
+vi.mock("../terminalPreload", () => ({
+  preloadGhosttyRuntime,
+}));
+
 const write = vi.fn();
 const scrollToBottom = vi.fn();
 const scrollLines = vi.fn();
@@ -220,6 +227,7 @@ beforeEach(() => {
   resize.mockClear();
   scrollLines.mockClear();
   ghosttyLoad.mockClear();
+  preloadGhosttyRuntime.mockClear();
   window.localStorage.clear();
   delete (navigator as { clipboard?: unknown }).clipboard;
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
@@ -688,7 +696,7 @@ describe("TerminalRawView", () => {
   it("loads ghostty-web with the served wasm asset", async () => {
     await mountTerminal();
 
-    expect(ghosttyLoad).toHaveBeenCalledWith("/ghostty-vt.wasm");
+    expect(preloadGhosttyRuntime).toHaveBeenCalled();
     expect((terminalOptions as { ghostty?: unknown }).ghostty).toEqual({ runtime: "ghostty" });
   });
 
@@ -761,11 +769,12 @@ describe("TerminalRawView", () => {
   it("renders a debug placeholder without ghostty when localStorage flag is set", () => {
     localStorage.setItem("ajax.debug.terminalPlaceholder", "true");
     ghosttyLoad.mockClear();
+    preloadGhosttyRuntime.mockClear();
     const { getByTestId, container } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
     expect(getByTestId("terminal-placeholder")).toBeInTheDocument();
     expect(container.querySelector("canvas")).toBeNull();
     expect(getByTestId("task-terminal-panel")).toHaveAttribute("data-terminal-engine", "placeholder");
-    expect(ghosttyLoad).not.toHaveBeenCalled();
+    expect(preloadGhosttyRuntime).not.toHaveBeenCalled();
   });
 
   it("inserts an inline spacer while expanded to preserve route scroll extent", async () => {
@@ -2494,6 +2503,17 @@ describe("TerminalRawView", () => {
     expect(start.defaultPrevented).toBe(false);
     expect(move.defaultPrevented).toBe(false);
     expect(scrollLines).not.toHaveBeenCalled();
+  });
+
+  it("anchors the hidden textarea to the host bottom for iOS keyboard placement", () => {
+    expect(terminalRawViewSource).toMatch(
+      /\.terminal-host\s+:global\(textarea\)\s*\{[^}]*bottom:\s*0/,
+    );
+    expect(terminalRawViewSource).toContain('input.style.bottom = "0"');
+  });
+
+  it("resets document scroll before touchBegan focuses the textarea", () => {
+    expect(terminalRawViewSource).toMatch(/touchBegan:\s*\(\)\s*=>\s*\{[\s\S]*resetDocumentScroll/);
   });
 
   it("terminal textarea CSS does not fully clip the edit target", () => {

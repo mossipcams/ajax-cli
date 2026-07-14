@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import type { BrowserCockpitView, RepoSummary } from "../types";
   import { requestId, startTask } from "../api";
+  import { startTaskHandle } from "../taskSlug";
   import { sheetDrag } from "../gestures/sheetDragAction";
   import FullscreenLayer from "./FullscreenLayer.svelte";
 
@@ -11,9 +12,10 @@
     onClose?: () => void;
     onCockpit?: (cockpit: BrowserCockpitView) => void;
     onResult?: (message: string, output: string | null | undefined, isError: boolean) => void;
+    onOpenTask?: (handle: string) => void;
   }
 
-  let { repos, selectedProject = null, onClose, onCockpit, onResult }: Props = $props();
+  let { repos, selectedProject = null, onClose, onCockpit, onResult, onOpenTask }: Props = $props();
 
   // Remembered form defaults — a browser-side convenience only, never task truth.
   const LAST_AGENT_KEY = "ajax.newTask.agent";
@@ -96,6 +98,7 @@
       }
       savePrefs();
       onResult?.("Task started", result.response.output, false);
+      onOpenTask?.(startTaskHandle(repo, title));
       onClose?.();
     } catch {
       error = "Action failed — network error";

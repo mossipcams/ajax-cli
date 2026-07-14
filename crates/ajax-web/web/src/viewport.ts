@@ -88,6 +88,7 @@ export function initViewport(): () => void {
     if (delta > KEYBOARD_OPEN_DELTA_PX && !keyboardOpen) {
       keyboardOpen = true;
       root.classList.add(KEYBOARD_OPEN_CLASS);
+      resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
       keyboardOpen = false;
       root.classList.remove(KEYBOARD_OPEN_CLASS);

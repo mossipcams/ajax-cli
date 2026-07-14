@@ -21,6 +21,7 @@
   import { pullToRefresh } from "../gestures/pullToRefreshAction";
   import { PULL_THRESHOLD } from "../gestures/pullToRefresh";
   import { createCockpitApplyGate, createInFlightGuard } from "../cockpitPoll";
+  import { warmTerminalAssets } from "../terminalPreload";
 
   // Shallow, replaceable projection of server truth — never an authored store.
   let route = $state<Route>(parseRoute(typeof location !== "undefined" ? location.hash : ""));
@@ -177,6 +178,14 @@
       clearInterval(cockpitTimer);
       clearInterval(versionTimer);
     };
+  });
+
+  // Warm Ghostty WASM and the terminal chunk while a task route or new-task
+  // sheet is open so the first mount does not pay the download cost.
+  $effect(() => {
+    if (!taskOpenHandle && !sheetOpen) return;
+    const idleHandle = whenIdle(() => void warmTerminalAssets());
+    return () => cancelIdle(idleHandle);
   });
 
   // Detail loading — re-run only when the selected task handle changes.
@@ -351,6 +360,7 @@
       onClose={() => (sheetOpen = false)}
       onCockpit={applyCockpit}
       onResult={showResult}
+      onOpenTask={(handle) => go(taskHash(handle))}
     />
   {/if}
 </AppViewport>
