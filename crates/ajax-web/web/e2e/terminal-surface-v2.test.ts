@@ -74,12 +74,13 @@ test("Surface V2 mounts wterm on mobile webkit without yellow init failure", asy
   await expect(termGrid).toBeVisible();
   await waitForTerminalSocket(page);
 
-  // Host must stay dark paper — solid mustard/olive fill is the device yellow bug.
+  // Host must stay cooler dark (#1e1e1e) — not warm paper brown, and not a
+  // solid mustard/olive fill (the device yellow-wash bug).
   const hostBg = await page.evaluate(() => {
     const host = document.querySelector(".wterm-host");
     return host ? getComputedStyle(host).backgroundColor : null;
   });
-  expect(hostBg).toMatch(/rgba?\(\s*28\s*,\s*23\s*,\s*20/);
+  expect(hostBg).toMatch(/rgba?\(\s*30\s*,\s*30\s*,\s*30/);
 
   await page.evaluate(() => {
     const sockets = (
@@ -97,7 +98,7 @@ test("Surface V2 mounts wterm on mobile webkit without yellow init failure", asy
   // tmux paints the bottom row (status/message line) with a colored bg.
   // @wterm/dom's renderer copies the bottom-right cell bg onto .term-grid as
   // an INLINE style — the whole-terminal yellow/green wash on device. The
-  // grid background must stay dark paper regardless.
+  // grid background must stay cooler dark (#1e1e1e) regardless.
   await page.evaluate(() => {
     const sockets = (
       window as unknown as {
@@ -116,7 +117,7 @@ test("Surface V2 mounts wterm on mobile webkit without yellow init failure", asy
     const grid = document.querySelector(".term-grid");
     return grid ? getComputedStyle(grid).backgroundColor : null;
   });
-  expect(gridBg).toMatch(/rgba?\(\s*28\s*,\s*23\s*,\s*20/);
+  expect(gridBg).toMatch(/rgba?\(\s*30\s*,\s*30\s*,\s*30/);
 });
 
 test("Surface V2 keeps text after a viewport resize", async ({ page }, testInfo) => {
