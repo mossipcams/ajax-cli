@@ -9,6 +9,7 @@
     type TerminalConnectionStatus,
   } from "../terminalConnection";
   import { MIN_TERMINAL_COLS } from "../terminalGeometry";
+  import { WTERM_GHOSTTY_WASM_URL } from "../terminalWtermWasm";
 
   interface Props {
     handle: string;
@@ -110,7 +111,7 @@
     const init = async () => {
       if (!hostEl) return;
       try {
-        const core = await GhosttyCore.load();
+        const core = await GhosttyCore.load({ wasmPath: WTERM_GHOSTTY_WASM_URL });
         if (disposed) return;
 
         const liveTerm = new WTerm(hostEl, {

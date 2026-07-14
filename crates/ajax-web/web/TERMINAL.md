@@ -27,6 +27,8 @@
 - Settings toggle: `ajax.terminal.surfaceV2` (default off)
 - Uses Ajax `connectTaskTerminal`; does **not** use wterm `WebSocketTransport`
 - Ghostty remains default and fallback when init fails
+- WASM: ghostty-web stays at `/ghostty-vt.wasm`; `@wterm/ghostty` is served at
+  `/wterm-ghostty-vt.wasm` (same filename upstream, incompatible exports)
 - Intentionally smaller than Ghostty: no zero-lag overlay, no selection-manager casts, native wterm scroll/selection
 - Known upstream gaps (document-only): scroll-follow parity, expand/fullscreen chrome, copy/paste fallback depth
 
