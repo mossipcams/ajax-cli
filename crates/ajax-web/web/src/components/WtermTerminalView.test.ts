@@ -10,8 +10,16 @@ const termResize = vi.fn();
 let termOnData: ((data: string) => void) | undefined;
 let termOnResize: ((cols: number, rows: number) => void) | undefined;
 
+const coreBracketedPaste = vi.hoisted(() => vi.fn(() => false));
+const coreCursorKeysApp = vi.hoisted(() => vi.fn(() => false));
 const loadWtermGhosttyCore = vi.hoisted(() =>
-  vi.fn(() => Promise.resolve({ runtime: "ghostty-core" })),
+  vi.fn(() =>
+    Promise.resolve({
+      runtime: "ghostty-core",
+      bracketedPaste: coreBracketedPaste,
+      cursorKeysApp: coreCursorKeysApp,
+    }),
+  ),
 );
 
 vi.mock("../terminalWtermGhosttyCore", () => ({
@@ -196,8 +204,9 @@ describe("WtermTerminalView", () => {
  * wterm and pinned with the real WASM in
  * terminalWtermGhosttyCore.integration.test.ts, not re-mocked here.
  *
- * `it.todo` entries are the remaining executable parity checklist: Ajax-side
- * chrome gaps plus wterm-native capabilities the component does not use yet.
+ * `it.todo` entries are the remaining executable parity checklist for
+ * Ajax-side chrome gaps; wterm-native bracketed paste and DECCKM arrows are
+ * covered by real tests in the parity-gaps describe block.
  *
  * Deliberately excluded (not gaps):
  * - zero-lag overlay + Ghostty selection-manager casts — TERMINAL.md marks
@@ -386,16 +395,33 @@ describe("WtermTerminalView ghostty parity", () => {
   });
 
   describe("parity gaps: use wterm-native capabilities the component bypasses", () => {
-    // wterm's own paste path (textarea paste event) wraps in \x1b[200~/\x1b[201~
-    // when the app enables bracketed paste AND strips ESC injection from the
-    // payload. The Paste key sends raw clipboard text through sendInput,
-    // skipping both the mode wrap and the security strip.
-    it.todo("routes the Paste key through wterm's bracketed-paste path (mode wrap + ESC strip)");
-    // wterm's keyboard path switches arrows to \x1bO* under DECCKM via
-    // core.cursorKeysApp(); the key-bar arrows hardcode CSI sequences and are
-    // wrong inside vim/less. (Ghostty's key bar had the same defect — improve,
-    // don't port.)
-    it.todo("key-bar arrows honor DECCKM application cursor mode via core.cursorKeysApp()");
+    it("routes the Paste key through wterm's bracketed-paste path (mode wrap + ESC strip)", async () => {
+      Object.defineProperty(navigator, "clipboard", {
+        value: { readText: vi.fn().mockResolvedValue("rm -rf\x1b[201~evil") },
+        configurable: true,
+      });
+      coreBracketedPaste.mockReturnValue(true);
+      const { getByRole } = await mountWterm();
+
+      await fireEvent.click(getByRole("button", { name: "Paste" }));
+
+      await waitFor(() => {
+        expect(sendInput).toHaveBeenCalledWith("\x1b[200~rm -rf[201~evil\x1b[201~");
+      });
+    });
+
+    it("key-bar arrows honor DECCKM application cursor mode via core.cursorKeysApp()", async () => {
+      coreCursorKeysApp.mockReturnValue(true);
+      const { getByRole } = await mountWterm();
+
+      await fireEvent.click(getByRole("button", { name: "↑" }));
+      expect(sendInput).toHaveBeenCalledWith("\x1bOA");
+
+      await fireEvent.click(getByRole("button", { name: /Ctrl/ }));
+      await fireEvent.click(getByRole("button", { name: "←" }));
+      expect(sendInput).toHaveBeenCalledWith("\x1b[1;5D");
+      expect(sendInput).not.toHaveBeenCalledWith("\x1bOD");
+    });
     // WTerm natively re-pins on write; the component never exposes whether the
     // user is scrolled away, so there is nowhere to hang the Ghostty-style
     // "New output" affordance yet.

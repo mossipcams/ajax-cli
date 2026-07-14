@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { WTerm } from "@wterm/dom";
+  import type { GhosttyCore } from "@wterm/ghostty";
   import "@wterm/dom/css";
   import {
     connectTaskTerminal,
@@ -18,6 +19,7 @@
 
   let hostEl: HTMLDivElement | undefined = $state();
   let term: WTerm | undefined = $state();
+  let core: GhosttyCore | undefined;
   let connection: TerminalConnection | undefined = $state();
   let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
@@ -77,6 +79,19 @@
     return controlModify(data);
   };
 
+  const applyCursorMode = (data: string): string => {
+    const cursor = /^\x1b\[([ABCD])$/.exec(data);
+    if (cursor && core?.cursorKeysApp()) return `\x1bO${cursor[1]}`;
+    return data;
+  };
+
+  const encodePaste = (text: string): string => {
+    if (!core?.bracketedPaste()) return text;
+    // Strip ESC so clipboard text cannot close the bracketed-paste guard
+    // and smuggle commands to the PTY (mirrors @wterm/dom's native paste).
+    return `\x1b[200~${text.replace(/\x1b/g, "")}\x1b[201~`;
+  };
+
   const reportResize = (cols: number, rows: number) => {
     connection?.sendResize(Math.max(cols, 1), Math.max(rows, 1));
   };
@@ -107,7 +122,7 @@
   const requestPaste = async () => {
     try {
       const text = await navigator.clipboard?.readText?.();
-      if (text) sendKey(text);
+      if (text) sendKey(encodePaste(text));
     } catch {
       // Clipboard denied — use native long-press paste in the terminal host.
     }
@@ -123,7 +138,7 @@
     const init = async () => {
       if (!hostEl) return;
       try {
-        const core = await loadWtermGhosttyCore();
+        core = await loadWtermGhosttyCore();
         if (disposed) return;
 
         const liveTerm = new WTerm(hostEl, {
@@ -188,6 +203,7 @@
       term?.destroy();
       connection = undefined;
       term = undefined;
+      core = undefined;
     };
   });
 </script>
@@ -224,7 +240,7 @@
           class="terminal-key"
           onmousedown={(event) => event.preventDefault()}
           onclick={() => {
-            sendKey(consumeCtrl(key.data));
+            sendKey(applyCursorMode(consumeCtrl(key.data)));
             refocusTerm();
           }}>{key.label}</button>
       {/each}

@@ -19,8 +19,17 @@ onto the wterm Surface V2 experiment (`WtermTerminalView.svelte`) as tests:
   already owns and tests those for both surfaces.
 
 ## Delegation decision
-Not delegated: the deliverable is the behavioral specification itself; a
-work order would have to enumerate every test, i.e. contain the whole diff.
+Round 1 (test authoring): not delegated — the deliverable is the behavioral
+specification itself; a work order would have to enumerate every test.
+
+Round 2 (implement findings 1+2): delegated via model-router →
+tdd-implementation-packet (READY) → cursor-delegate (composer-2.5; the GLM
+security lane was rerouted once as unavailable per its 4-hang/0-success
+record). Delegate proved red (2 intended failures, 22 pass) → green (24
+pass), touched only the two allowed files (+19/-3 production). Review Gate:
+ACCEPT. Parent rebuilt the committed dist (vendored-dist trap) and
+re-validated independently: web vitest 595 passed; cargo nextest
+-p ajax-web -p ajax-cli 464 passed.
 
 ## Tasks
 - [x] Read TerminalRawView.test.ts behaviors + WtermTerminalView implementation
