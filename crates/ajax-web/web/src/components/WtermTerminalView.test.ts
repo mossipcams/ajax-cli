@@ -607,7 +607,7 @@ describe("WtermTerminalView ghostty parity", () => {
   });
 
   describe("parity gaps: keyboard lockstep", () => {
-    it("refits immediately but debounces server resize when the visual viewport changes", async () => {
+    it("debounces server resize on visualViewport without rebuilding the local grid", async () => {
       await mountWterm();
       vi.useFakeTimers();
       try {
@@ -620,7 +620,8 @@ describe("WtermTerminalView ghostty parity", () => {
         dispatchVisualViewport("resize");
 
         vi.advanceTimersByTime(20);
-        expect(termResize).toHaveBeenCalled();
+        // Local fit is a no-op — resize() would rebuild the renderer and reset scroll.
+        expect(termResize).not.toHaveBeenCalled();
         expect(sendResize).not.toHaveBeenCalled();
 
         if (lastWterm) {
@@ -634,9 +635,17 @@ describe("WtermTerminalView ghostty parity", () => {
         vi.advanceTimersByTime(1);
         expect(sendResize).toHaveBeenCalledTimes(1);
         expect(sendResize).toHaveBeenCalledWith(90, 28);
+        expect(termResize).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("allows vertical scroll on the wterm host (scrollback container)", async () => {
+      // jsdom does not apply Svelte scoped CSS; pin the contract in source.
+      const { default: source } = await import("./WtermTerminalView.svelte?raw");
+      expect(source).toMatch(/\.wterm-host\s*\{[^}]*overflow-y:\s*auto/s);
+      expect(source).toMatch(/\.wterm-host\s*\{[^}]*overflow-x:\s*hidden/s);
     });
     it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
       await mountWterm();
