@@ -181,6 +181,18 @@
     };
   });
 
+  // Warm Ghostty WASM and the terminal chunk while a task route or new-task
+  // sheet is open so the first mount does not pay the download cost.
+  // Dynamic import only — a static import would pull terminal.js into app.js
+  // (vite manualChunks maps /web/src/terminal* into the deferred chunk).
+  $effect(() => {
+    if (!taskOpenHandle && !sheetOpen) return;
+    const idleHandle = whenIdle(() => {
+      void import("../terminalPreload").then((m) => void m.warmTerminalAssets());
+    });
+    return () => cancelIdle(idleHandle);
+  });
+
   // Detail loading — re-run only when the selected task handle changes.
   $effect(() => {
     const handle = taskOpenHandle;
@@ -356,6 +368,7 @@
       onClose={() => (sheetOpen = false)}
       onCockpit={applyCockpit}
       onResult={showResult}
+      onOpenTask={(handle) => go(taskHash(handle))}
     />
   {/if}
 </AppViewport>
