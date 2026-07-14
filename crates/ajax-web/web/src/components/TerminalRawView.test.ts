@@ -554,6 +554,13 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).not.toMatch(/\bflushSync\b/);
   });
 
+  it("gates write-batcher leading-edge flush on scroll-follow pin state", () => {
+    expect(terminalRawViewSource).toContain("allowLeadingEdge");
+    expect(terminalRawViewSource).toMatch(
+      /createTerminalWriteBatcher\(\{[\s\S]*allowLeadingEdge[\s\S]*scrollFollow\.isPinned\(\)/,
+    );
+  });
+
   it("pins the zero-lag overlay to the cursor without a bottom stretch anchor", async () => {
     // CSS bottom + inline top stretches the overlay into a second terminal.
     const zeroLagCss =

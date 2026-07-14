@@ -46,6 +46,89 @@ describe("terminalOutputPolicy", () => {
     expect(validTerminalSize(80, 24.5)).toBeUndefined();
   });
 
+  it("createTerminalWriteBatcher defers the first chunk when leading edge is disallowed", () => {
+    const onFlush = vi.fn();
+    let scheduled: (() => void) | undefined;
+    let scheduledDelay: number | undefined;
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      flushMs: 16,
+      allowLeadingEdge: () => false,
+      now: () => 0,
+      schedule: (fn, ms) => {
+        scheduled = fn;
+        scheduledDelay = ms;
+        return 1 as ReturnType<typeof setTimeout>;
+      },
+      clearSchedule: () => {
+        scheduled = undefined;
+        scheduledDelay = undefined;
+      },
+    });
+
+    batcher.push("x");
+    expect(onFlush).not.toHaveBeenCalled();
+    expect(batcher.pendingChars()).toBe(1);
+    expect(scheduled).toBeDefined();
+    expect(scheduledDelay).toBe(16);
+  });
+
+  it("createTerminalWriteBatcher stays trailing-edge across a quiet window when leading edge is disallowed", () => {
+    const onFlush = vi.fn();
+    let scheduled: (() => void) | undefined;
+    let scheduledDelay: number | undefined;
+    let nowMs = 0;
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      flushMs: 16,
+      allowLeadingEdge: () => false,
+      now: () => nowMs,
+      schedule: (fn, ms) => {
+        scheduled = fn;
+        scheduledDelay = ms;
+        return 1 as ReturnType<typeof setTimeout>;
+      },
+      clearSchedule: () => {
+        scheduled = undefined;
+        scheduledDelay = undefined;
+      },
+    });
+
+    batcher.push("a");
+    expect(onFlush).not.toHaveBeenCalled();
+    scheduled?.();
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("a");
+    onFlush.mockClear();
+
+    nowMs = 20;
+    batcher.push("b");
+    expect(onFlush).not.toHaveBeenCalled();
+    expect(batcher.pendingChars()).toBe(1);
+    expect(scheduled).toBeDefined();
+    expect(scheduledDelay).toBe(16);
+
+    scheduled?.();
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("b");
+  });
+
+  it("createTerminalWriteBatcher still flushes immediately when idle if leading edge is allowed", () => {
+    const onFlush = vi.fn();
+    const batcher = createTerminalWriteBatcher({
+      onFlush,
+      allowLeadingEdge: () => true,
+      now: () => 0,
+      schedule: () => 1 as ReturnType<typeof setTimeout>,
+      clearSchedule: () => {},
+    });
+
+    batcher.push("x");
+    expect(onFlush).toHaveBeenCalledTimes(1);
+    expect(onFlush).toHaveBeenCalledWith("x");
+    expect(batcher.pendingChars()).toBe(0);
+  });
+
   it("createTerminalWriteBatcher flushes the first chunk immediately when idle", () => {
     const onFlush = vi.fn();
     let scheduled: (() => void) | undefined;
