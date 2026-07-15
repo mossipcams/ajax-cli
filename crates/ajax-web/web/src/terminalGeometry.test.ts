@@ -8,6 +8,8 @@ import {
   pinchFontSize,
   pinchActivated,
   fitCapFontSize,
+  fitFontSize,
+  MIN_FONT_SIZE,
   MOBILE_SCROLLBACK_LINES,
   DESKTOP_SCROLLBACK_LINES,
   terminalScrollbackLines,
@@ -179,6 +181,35 @@ describe("fitCapFontSize", () => {
   it("honors custom clamp bounds", () => {
     expect(fitCapFontSize(13, 100, 80, 8, 14)).toBe(14);
     expect(fitCapFontSize(13, 30, 80, 8, 14)).toBe(8);
+  });
+});
+
+describe("fitFontSize", () => {
+  it("returns the font at which the column floor fills the host (fit-font)", () => {
+    // 13 * 384 / (80 * 8) = 7.8 → nearest whole pixel.
+    expect(fitFontSize(384, 80, 8, 13)).toBe(8);
+  });
+
+  it("returns whole pixels only, so renderer advance rounding cannot flip the fit branch (fit-font)", () => {
+    expect(fitFontSize(640, 80, 8, 13)).toBe(13);
+    expect(Number.isInteger(fitFontSize(390, 80, 8, 13))).toBe(true);
+  });
+
+  it("may return sizes below the pinch minimum (fit-font)", () => {
+    // 13 * 160 / 640 = 3.25 → 3, well under MIN_FONT_SIZE.
+    expect(fitFontSize(160, 80, 8, 13)).toBeLessThan(MIN_FONT_SIZE);
+  });
+
+  it("returns undefined when the fit would round below 1px (fit-font)", () => {
+    expect(fitFontSize(20, 80, 8, 13)).toBeUndefined();
+  });
+
+  it("returns undefined for invalid measurements (fit-font)", () => {
+    expect(fitFontSize(0, 80, 8, 13)).toBeUndefined();
+    expect(fitFontSize(384, 0, 8, 13)).toBeUndefined();
+    expect(fitFontSize(384, 80, 0, 13)).toBeUndefined();
+    expect(fitFontSize(384, 80, 8, 0)).toBeUndefined();
+    expect(fitFontSize(Number.NaN, 80, 8, 13)).toBeUndefined();
   });
 });
 

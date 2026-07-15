@@ -13,7 +13,8 @@
 | Refit scheduling | terminalRefit.ts (when to fit/send; not permission) |
 | Layout fit/resize permission | terminalLayoutPolicy.ts |
 | Paste/copy UI state (fallback/overlay/notice) | terminalClipboard.ts |
-| Gestures / selection geometry | terminalGestures.ts |
+| Gestures (horizontal pan / pinch / long-press / touch focus) | terminalGestures.ts |
+| Native vertical scroll (spacer + scrollTop ↔ viewportY mapping) | TerminalRawView.svelte |
 | Scroll-follow state + resize validity | terminalOutputPolicy.ts |
 | WS connect / backoff / status | terminalConnection.ts |
 | Ghostty mount + chrome UI | TerminalRawView.svelte |
