@@ -77,15 +77,9 @@ async function fetchWtermWasmBytes(): Promise<ArrayBuffer> {
   return bytes;
 }
 
-/**
- * Load @wterm/ghostty via the official API after validating Ajax's distinct URL.
- *
- * Uses `GhosttyCore.load({ wasmPath, scrollbackLimit })` so `_options` is always
- * the real options object (private-constructor mistakes caused Safari yellow
- * banners). Validates bytes first so we never accept ghostty-web's binary.
- * Second fetch is intentional and must stay on the HTTP URL (not blob:).
- */
-export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
+let pendingWtermGhosttyCore: Promise<GhosttyCore> | undefined;
+
+async function createWtermGhosttyCore(): Promise<GhosttyCore> {
   await fetchWtermWasmBytes();
   try {
     return await GhosttyCore.load({
@@ -96,6 +90,26 @@ export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`GhosttyCore.load failed (${detail}) for ${WTERM_GHOSTTY_WASM_URL}`);
   }
+}
+
+/** Begin loading the next unconsumed @wterm/ghostty core; repeated calls share one load. */
+export function preloadWtermGhosttyCore(): Promise<GhosttyCore> {
+  pendingWtermGhosttyCore ??= createWtermGhosttyCore();
+  return pendingWtermGhosttyCore;
+}
+
+/**
+ * Load @wterm/ghostty via the official API after validating Ajax's distinct URL.
+ *
+ * Uses `GhosttyCore.load({ wasmPath, scrollbackLimit })` so `_options` is always
+ * the real options object (private-constructor mistakes caused Safari yellow
+ * banners). Validates bytes first so we never accept ghostty-web's binary.
+ * Second fetch is intentional and must stay on the HTTP URL (not blob:).
+ */
+export async function loadWtermGhosttyCore(): Promise<GhosttyCore> {
+  const pending = pendingWtermGhosttyCore;
+  pendingWtermGhosttyCore = undefined;
+  return pending ?? createWtermGhosttyCore();
 }
 
 /**
