@@ -191,4 +191,14 @@ describe("TaskDetail projection surface", () => {
     const { queryByTestId } = render(TaskDetail, { props: { detail: detail() } });
     expect(queryByTestId("task-annotations")).not.toBeInTheDocument();
   });
+
+  it("clamps status explanation and activity to a single row", () => {
+    const summaryBlock = taskDetailSource.match(/\.interact-summary\s*\{([\s\S]*?)\}/);
+    expect(summaryBlock).not.toBeNull();
+    const body = summaryBlock![1];
+    expect(body).toMatch(/white-space:\s*nowrap/);
+    expect(body).toMatch(/overflow:\s*hidden/);
+    expect(body).toMatch(/text-overflow:\s*ellipsis/);
+    expect(body).not.toMatch(/overflow-wrap:\s*anywhere/);
+  });
 });

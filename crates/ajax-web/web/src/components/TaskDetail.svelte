@@ -248,7 +248,9 @@
     font-size: 14px;
     line-height: 1.45;
     color: var(--ink-soft);
-    overflow-wrap: anywhere;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .interact-summary:last-child {
