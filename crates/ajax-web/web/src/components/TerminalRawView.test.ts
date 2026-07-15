@@ -1789,7 +1789,7 @@ describe("TerminalRawView", () => {
     await mountOpenTerminal();
     vi.advanceTimersByTime(1000);
 
-    expect(liveOptions?.fontSize).toBe(7.75);
+    expect(liveOptions?.fontSize).toBe(8);
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
     vi.useRealTimers();
   });
@@ -1801,7 +1801,9 @@ describe("TerminalRawView", () => {
     await mountOpenTerminal();
     vi.advanceTimersByTime(1000);
 
-    expect(resize).toHaveBeenLastCalledWith(80, 30);
+    // Whole-pixel fit font (8px) leaves a 0.975 residual scale at 384px, so
+    // rows inflate by one — versus 50 under the old 0.6 CSS downscale.
+    expect(resize).toHaveBeenLastCalledWith(80, 31);
     vi.useRealTimers();
   });
 
@@ -1811,13 +1813,13 @@ describe("TerminalRawView", () => {
     proposedDimensions = { cols: 48, rows: 30 };
     await mountOpenTerminal();
     vi.advanceTimersByTime(1000);
-    expect(liveOptions?.fontSize).toBe(7.75);
+    expect(liveOptions?.fontSize).toBe(8);
 
     resize.mockClear();
     window.dispatchEvent(new Event("resize"));
     vi.advanceTimersByTime(300);
 
-    expect(liveOptions?.fontSize).toBe(7.75);
+    expect(liveOptions?.fontSize).toBe(8);
     expect(resize).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -2156,7 +2158,7 @@ describe("TerminalRawView", () => {
     await mountTerminal();
 
     await waitFor(() => {
-      expect(liveOptions?.fontSize).toBe(7.75);
+      expect(liveOptions?.fontSize).toBe(8);
     });
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
   });
@@ -2255,9 +2257,9 @@ describe("TerminalRawView", () => {
     socket?.emit("open");
 
     await waitFor(() => {
-      // 384px converges to the 7.75px fit font: 80 cols fill the width at
-      // scale 1, so the PTY gets the real 30 rows, not scale-inflated ones.
-      expect(resize).toHaveBeenCalledWith(80, 30);
+      // 384px converges to the whole-pixel 8px fit font (0.975 residual
+      // scale), so the PTY gets 31 near-real rows, not the scale-inflated 50.
+      expect(resize).toHaveBeenCalledWith(80, 31);
     });
   });
 

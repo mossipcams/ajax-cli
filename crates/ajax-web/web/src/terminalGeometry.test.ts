@@ -185,16 +185,23 @@ describe("fitCapFontSize", () => {
 });
 
 describe("fitFontSize", () => {
-  it("returns the font at which the column floor exactly fills the host (fit-font)", () => {
-    expect(fitFontSize(384, 80, 8, 13)).toBe(7.75);
+  it("returns the font at which the column floor fills the host (fit-font)", () => {
+    // 13 * 384 / (80 * 8) = 7.8 → nearest whole pixel.
+    expect(fitFontSize(384, 80, 8, 13)).toBe(8);
   });
 
-  it("quantizes to 0.25px steps (fit-font)", () => {
+  it("returns whole pixels only, so renderer advance rounding cannot flip the fit branch (fit-font)", () => {
     expect(fitFontSize(640, 80, 8, 13)).toBe(13);
+    expect(Number.isInteger(fitFontSize(390, 80, 8, 13))).toBe(true);
   });
 
   it("may return sizes below the pinch minimum (fit-font)", () => {
+    // 13 * 160 / 640 = 3.25 → 3, well under MIN_FONT_SIZE.
     expect(fitFontSize(160, 80, 8, 13)).toBeLessThan(MIN_FONT_SIZE);
+  });
+
+  it("returns undefined when the fit would round below 1px (fit-font)", () => {
+    expect(fitFontSize(20, 80, 8, 13)).toBeUndefined();
   });
 
   it("returns undefined for invalid measurements (fit-font)", () => {

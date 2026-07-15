@@ -193,13 +193,18 @@ export function fitCapFontSize(
 }
 
 /**
- * The (possibly fractional) font size at which `cols` columns exactly fill
- * `hostWidthPx`. Cell width scales linearly with font size, so
- * `fitFont = currentFontSize * hostWidthPx / (cols * cellWidthPx)`.
- * Quantized to 0.25px steps to keep refit convergence stable. May sit below
- * MIN_FONT_SIZE: it is a derived render size (visually identical to the old
- * CSS downscale), not an operator pinch choice. Invalid measurements return
- * undefined so callers keep the current font.
+ * The whole-pixel font size at which `cols` columns fill `hostWidthPx`.
+ * Cell width scales roughly linearly with font size, so
+ * `fitFont = round(currentFontSize * hostWidthPx / (cols * cellWidthPx))`.
+ * Whole pixels only: real renderers round glyph advances per font size, and
+ * a fractional target lets that rounding flip the fit branch every pass
+ * (7.75 ↔ 8 refit oscillation on Linux WebKit). Integer targets can never
+ * exceed the current font while the floor overflows the host, so
+ * convergence is a strictly decreasing integer sequence — no cycles; the
+ * residual (≤ half a font-px) stays with the shrink-only CSS fitScale.
+ * May sit below MIN_FONT_SIZE: it is a derived render size (visually
+ * identical to the old CSS downscale), not an operator pinch choice.
+ * Invalid measurements return undefined so callers keep the current font.
  */
 export function fitFontSize(
   hostWidthPx: number,
@@ -215,9 +220,9 @@ export function fitFontSize(
   ) {
     return undefined;
   }
-  const font = (currentFontSize * hostWidthPx) / (cols * cellWidthPx);
-  if (!Number.isFinite(font) || font <= 0) return undefined;
-  return Math.round(font * 4) / 4;
+  const font = Math.round((currentFontSize * hostWidthPx) / (cols * cellWidthPx));
+  if (!Number.isFinite(font) || font < 1) return undefined;
+  return font;
 }
 
 /**
