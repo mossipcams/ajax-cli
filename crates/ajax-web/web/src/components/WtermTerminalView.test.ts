@@ -12,6 +12,16 @@ const termResize = vi.fn();
 let termOnData: ((data: string) => void) | undefined;
 let termOnResize: ((cols: number, rows: number) => void) | undefined;
 let lastWterm: { cols: number; rows: number } | undefined;
+let lastWtermOptions:
+  | {
+      core?: unknown;
+      cols?: number;
+      rows?: number;
+      autoResize?: boolean;
+      onData?: (data: string) => void;
+      onResize?: (cols: number, rows: number) => void;
+    }
+  | undefined;
 
 const vvListeners: Record<string, Array<() => void>> = {};
 
@@ -21,33 +31,41 @@ function dispatchVisualViewport(type: string) {
 
 const coreBracketedPaste = vi.hoisted(() => vi.fn(() => false));
 const coreCursorKeysApp = vi.hoisted(() => vi.fn(() => false));
-const loadWtermGhosttyCore = vi.hoisted(() =>
+const wasmBridgeLoad = vi.hoisted(() =>
   vi.fn(() =>
     Promise.resolve({
-      runtime: "ghostty-core",
       bracketedPaste: coreBracketedPaste,
       cursorKeysApp: coreCursorKeysApp,
     }),
   ),
 );
 
-vi.mock("../terminalWtermGhosttyCore", () => ({
-  loadWtermGhosttyCore,
+vi.mock("@wterm/core", () => ({
+  WasmBridge: {
+    load: wasmBridgeLoad,
+  },
 }));
 
 vi.mock("@wterm/dom", () => ({
   WTerm: class MockWTerm {
-    cols = 72;
+    cols = 80;
     rows = 24;
     constructor(
       _el: HTMLElement,
       options?: {
+        core?: unknown;
+        cols?: number;
+        rows?: number;
+        autoResize?: boolean;
         onData?: (data: string) => void;
         onResize?: (cols: number, rows: number) => void;
       },
     ) {
+      lastWtermOptions = options;
       termOnData = options?.onData;
       termOnResize = options?.onResize;
+      if (options?.cols !== undefined) this.cols = options.cols;
+      if (options?.rows !== undefined) this.rows = options.rows;
       lastWterm = this;
     }
     init = vi.fn(() => Promise.resolve(this));
@@ -106,6 +124,7 @@ beforeEach(() => {
   window.localStorage.clear();
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   lastWterm = undefined;
+  lastWtermOptions = undefined;
   vi.clearAllMocks();
   // clearAllMocks keeps mockReturnValue overrides; re-pin the core-mode
   // defaults so a test enabling a mode cannot leak into later tests.
@@ -151,9 +170,20 @@ describe("WtermTerminalView", () => {
     });
   });
 
-  it("loads the wterm Ghostty core via the validated loader", async () => {
+  it("loads the built-in WasmBridge core with a fixed 80x24 grid", async () => {
     render(WtermTerminalView, { props: { handle: "web/fix" } });
-    await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalledTimes(1));
+    expect(lastWtermOptions).toMatchObject({
+      cols: 80,
+      rows: 24,
+      autoResize: false,
+    });
+    expect(lastWtermOptions?.core).toEqual(
+      expect.objectContaining({
+        bracketedPaste: coreBracketedPaste,
+        cursorKeysApp: coreCursorKeysApp,
+      }),
+    );
   });
 
   it("routes PTY output from the connection callback to term.write", async () => {
@@ -191,15 +221,15 @@ describe("WtermTerminalView", () => {
     const loadPromise = new Promise<{ runtime: string }>((resolve) => {
       resolveLoad = resolve;
     });
-    loadWtermGhosttyCore.mockImplementationOnce(() => loadPromise);
+    wasmBridgeLoad.mockImplementationOnce(() => loadPromise);
 
     const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
     const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
     Object.defineProperty(host, "clientWidth", { configurable: true, value: 320 });
     Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
-    resolveLoad({ runtime: "ghostty-core" });
+    resolveLoad({ runtime: "wasm-core" });
 
-    await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+    await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
     await tick();
     expect(termResize).not.toHaveBeenCalledWith(40, 10);
   });
@@ -213,7 +243,7 @@ describe("WtermTerminalView", () => {
   });
 
   it("init failure invokes onInitFailure and does not leave a live connection", async () => {
-    loadWtermGhosttyCore.mockRejectedValueOnce(new Error("wasm missing"));
+    wasmBridgeLoad.mockRejectedValueOnce(new Error("wasm missing"));
     const onInitFailure = vi.fn();
     render(WtermTerminalView, { props: { handle: "web/fix", onInitFailure } });
     await waitFor(() => expect(onInitFailure).toHaveBeenCalledWith("wasm missing"));
@@ -513,29 +543,29 @@ describe("WtermTerminalView ghostty parity", () => {
       const loadPromise = new Promise<{ runtime: string }>((resolve) => {
         resolveLoad = resolve;
       });
-      loadWtermGhosttyCore.mockImplementationOnce(() => loadPromise);
+      wasmBridgeLoad.mockImplementationOnce(() => loadPromise);
 
       const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
       const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
       Object.defineProperty(host, "clientWidth", { configurable: true, value: 320 });
       Object.defineProperty(host, "clientHeight", { configurable: true, value: 170 });
-      resolveLoad({ runtime: "ghostty-core" });
+      resolveLoad({ runtime: "wasm-core" });
 
-      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
       await tick();
       expect(termResize).not.toHaveBeenCalledWith(40, 10);
     });
 
     it("sets --term-font-size to 13px on the host element", async () => {
       const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
-      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
       const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
       expect(host.style.getPropertyValue("--term-font-size")).toBe("13px");
     });
 
     it("uses cooler #1e1e1e terminal chrome instead of warm #1c1714", async () => {
       const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
-      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
       const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
       expect(host.style.getPropertyValue("--term-bg")).toBe("#1e1e1e");
       expect(host.style.getPropertyValue("--term-bg")).not.toBe("#1c1714");
@@ -546,7 +576,7 @@ describe("WtermTerminalView ghostty parity", () => {
     it("applies a persisted font size on mount", async () => {
       window.localStorage.setItem("ajax.terminal.fontSize", "16");
       const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
-      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
       const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
       expect(host.style.getPropertyValue("--term-font-size")).toBe("16px");
     });
@@ -554,7 +584,7 @@ describe("WtermTerminalView ghostty parity", () => {
     it("ignores an out-of-range persisted font size and uses the default", async () => {
       window.localStorage.setItem("ajax.terminal.fontSize", "999");
       const { getByTestId } = render(WtermTerminalView, { props: { handle: "web/fix" } });
-      await waitFor(() => expect(loadWtermGhosttyCore).toHaveBeenCalled());
+      await waitFor(() => expect(wasmBridgeLoad).toHaveBeenCalled());
       const host = getByTestId("task-terminal-panel").querySelector(".wterm-host") as HTMLElement;
       expect(host.style.getPropertyValue("--term-font-size")).toBe("13px");
     });
@@ -646,6 +676,23 @@ describe("WtermTerminalView ghostty parity", () => {
       const { default: source } = await import("./WtermTerminalView.svelte?raw");
       expect(source).toMatch(/\.wterm-host\s*\{[^}]*overflow-y:\s*auto/s);
       expect(source).toMatch(/\.wterm-host\s*\{[^}]*overflow-x:\s*hidden/s);
+    });
+    it("overrides wterm inline locked height so flex sizing owns the host box", () => {
+      expect(wtermTerminalViewSource).toMatch(/\.wterm-host\s*\{[^}]*flex:\s*1/s);
+      expect(wtermTerminalViewSource).toMatch(
+        /\.wterm-host\s*\{[^}]*height:\s*auto\s*!important/s,
+      );
+      expect(wtermTerminalViewSource).toMatch(/\.wterm-host\s*\{[^}]*overflow-y:\s*auto/s);
+      expect(wtermTerminalViewSource).toMatch(/\.wterm-host\s*\{[^}]*overflow-x:\s*hidden/s);
+    });
+    it("neutralizes renderer-written per-row backgrounds and shadows without targeting ANSI cell spans", () => {
+      expect(wtermTerminalViewSource).toMatch(
+        /:global\(\.wterm-host\.wterm \.term-row\)\s*\{[^}]*background:\s*var\(--term-bg,\s*#1e1e1e\)\s*!important/s,
+      );
+      expect(wtermTerminalViewSource).toMatch(
+        /:global\(\.wterm-host\.wterm \.term-row\)\s*\{[^}]*box-shadow:\s*none\s*!important/s,
+      );
+      expect(wtermTerminalViewSource).not.toMatch(/\.term-row\s*>\s*span/);
     });
     it("freezes the local grid while the keyboard is open so it stays in lockstep with the PTY", async () => {
       await mountWterm();
@@ -838,11 +885,11 @@ describe("WtermTerminalView ghostty parity", () => {
       sendResize.mockClear();
       termResize.mockClear();
 
-      // Second open = reconnect: clear stale grid, resend PTY size (wterm autoResize owns fit).
+      // Second open = reconnect: clear stale grid, then re-announce fixed PTY size.
       connectionEvents!.onOpen();
 
       expect(termWrite).toHaveBeenCalledWith("\x1bc");
-      expect(sendResize).toHaveBeenCalledWith(72, 24);
+      expect(sendResize).toHaveBeenCalledWith(80, 24);
       expect(termResize).not.toHaveBeenCalled();
     });
   });

@@ -1,7 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { wasmExportsInclude, loadWtermGhosttyCore } from "./terminalWtermGhosttyCore";
+import {
+  wasmExportsInclude,
+  loadWtermGhosttyCore,
+  preloadWtermGhosttyCore,
+} from "./terminalWtermGhosttyCore";
 
 const repoRoot = join(import.meta.dirname, "../../../..");
 const wtermWasm = readFileSync(join(repoRoot, "node_modules/@wterm/ghostty/wasm/ghostty-vt.wasm"));
@@ -98,6 +102,31 @@ describe("terminalWtermGhosttyCore (unit)", () => {
     expect(core).toMatchObject({
       options: { wasmPath: "/wterm-ghostty-vt.wasm", scrollbackLimit: 2000 },
     });
+  });
+
+  it("prewarm shares one GhosttyCore.load and consume returns a fresh core", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      arrayBuffer: async () =>
+        wtermWasm.buffer.slice(wtermWasm.byteOffset, wtermWasm.byteOffset + wtermWasm.byteLength),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [firstPreload, secondPreload] = await Promise.all([
+      preloadWtermGhosttyCore(),
+      preloadWtermGhosttyCore(),
+    ]);
+    expect(firstPreload).toBe(secondPreload);
+    expect(ghosttyLoad).toHaveBeenCalledTimes(1);
+
+    const consumed = await loadWtermGhosttyCore();
+    expect(consumed).toBe(firstPreload);
+    expect(ghosttyLoad).toHaveBeenCalledTimes(1);
+
+    const fresh = await loadWtermGhosttyCore();
+    expect(fresh).not.toBe(firstPreload);
+    expect(ghosttyLoad).toHaveBeenCalledTimes(2);
   });
 
   it("validate fetch allows HTTP cache (not no-store)", async () => {

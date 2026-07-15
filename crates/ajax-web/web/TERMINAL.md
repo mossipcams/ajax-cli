@@ -23,16 +23,22 @@
 
 ## Experimental Terminal Surface V2
 
-- Packages pinned from npm: `@wterm/dom@0.3.0`, `@wterm/ghostty@0.3.0`
+- Packages pinned from npm: `@wterm/core@0.3.0`, `@wterm/dom@0.3.0`, `@wterm/ghostty@0.3.0`
 - Settings toggle: `ajax.terminal.surfaceV2` (default off)
 - Uses Ajax `connectTaskTerminal`; does **not** use wterm `WebSocketTransport`
 - Ghostty remains default when the experiment is off
 - While Surface V2 is enabled, Ghostty is not mounted or preloaded (failure shows
   an error + Retry; it does not fall back to Ghostty until the flag is turned off)
-- WASM: ghostty-web stays at `/ghostty-vt.wasm`; `@wterm/ghostty` is served at
-  `/wterm-ghostty-vt.wasm` (same filename upstream, incompatible exports)
+- Terminal core: Surface V2 imports built-in `WasmBridge` from `@wterm/core` and
+  passes it explicitly to `WTerm`; it does **not** load or preload `@wterm/ghostty`
+- Logical grid is fixed at **80x24** with `autoResize: false` so CSS viewport,
+  expand, or keyboard flex does not rebuild the VT grid or corrupt scrollback
+- WASM: normal ghostty-web stays at `/ghostty-vt.wasm` for the default path;
+  `@wterm/ghostty` and `/wterm-ghostty-vt.wasm` remain installed and served
+  (same upstream filename, incompatible exports) but are inactive in Surface V2
 - Intentionally smaller than Ghostty: no zero-lag overlay, no selection-manager casts, native wterm scroll/selection
-- Known upstream gaps (document-only): scroll-follow parity, expand/fullscreen chrome, copy/paste fallback depth
+- Known gaps (document-only, not blocking the spike): readonly copy fallback when
+  clipboard write fails; physical iPhone bake-off still required (see checklist below)
 
 ## iPhone Safari bake-off checklist (wterm vs Ghostty)
 

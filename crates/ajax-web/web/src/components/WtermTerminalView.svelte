@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { WTerm } from "@wterm/dom";
-  import type { GhosttyCore } from "@wterm/ghostty";
+  import { WasmBridge, type TerminalCore } from "@wterm/core";
   import "@wterm/dom/css";
   import {
     connectTaskTerminal,
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { loadWtermGhosttyCore } from "../terminalWtermGhosttyCore";
   import { createTerminalClipboardUi } from "../terminalClipboard";
   import { DEFAULT_FONT_SIZE, persistedFontSize, persistFontSize, pinchActivated, pinchFontSize, MIN_FONT_SIZE, MAX_FONT_SIZE } from "../terminalGeometry";
   import { isKeyboardOpen } from "../viewport";
@@ -24,7 +23,7 @@
 
   let hostEl: HTMLDivElement | undefined = $state();
   let term: WTerm | undefined = $state();
-  let core: GhosttyCore | undefined;
+  let core: TerminalCore | undefined;
   let connection: TerminalConnection | undefined = $state();
   let status = $state<TerminalConnectionStatus>("connecting");
   let statusDetail = $state("");
@@ -219,6 +218,7 @@
 
   const sendKey = (data: string) => {
     if (!connection?.isOpen()) return;
+    snapToNewest();
     connection.sendInput(data);
   };
 
@@ -301,14 +301,16 @@
     const init = async () => {
       if (!hostEl) return;
       try {
-        core = await loadWtermGhosttyCore();
+        core = await WasmBridge.load();
         if (disposed) return;
 
         applyWtermTheme(hostEl);
 
         const liveTerm = new WTerm(hostEl, {
           core,
-          autoResize: true,
+          cols: 80,
+          rows: 24,
+          autoResize: false,
           onData: (data) => sendKey(consumeCtrl(data)),
           onResize: (cols, rows) => reportResize(cols, rows),
         });
@@ -323,9 +325,7 @@
         detachPinch = attachWtermPinchGestures(hostEl);
 
         refitScheduler = createRefitScheduler({
-          // wterm autoResize owns the local grid. Calling resize() on every
-          // visualViewport jitter rebuilds the renderer and resets scroll —
-          // which breaks scrollback and looks like duplicated typed text.
+          // Fixed 80x24 grid — no local resize on visualViewport jitter.
           fit: () => {},
           sendResize: () => reportResize(liveTerm.cols, liveTerm.rows),
         });
@@ -512,7 +512,7 @@
     min-height: 0;
     min-width: 0;
     width: 100%;
-    height: 100%;
+    height: auto !important;
     /* wterm scrolls on this element (has-scrollback → overflow-y). A shorthand
        overflow:hidden here beats .wterm.has-scrollback and kills scrollback. */
     overflow-x: hidden;
@@ -546,6 +546,11 @@
    */
   :global(.wterm-host.wterm .term-grid) {
     background: var(--term-bg, #1e1e1e) !important;
+  }
+
+  :global(.wterm-host.wterm .term-row) {
+    background: var(--term-bg, #1e1e1e) !important;
+    box-shadow: none !important;
   }
 
   .terminal-keys {

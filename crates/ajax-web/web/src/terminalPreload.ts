@@ -1,6 +1,5 @@
 import { Ghostty, type Ghostty as GhosttyRuntime } from "ghostty-web";
 import { isTerminalSurfaceV2Enabled } from "./terminalSurfaceSetting";
-import { WTERM_GHOSTTY_WASM_URL } from "./terminalWtermWasm";
 
 export const GHOSTTY_WASM_URL = "/ghostty-vt.wasm";
 
@@ -22,10 +21,7 @@ export function preloadWtermTerminalView(): Promise<unknown> {
 /** Warm the active surface only — never Ghostty while Surface V2 is enabled. */
 export function warmTerminalAssets(): Promise<unknown[]> {
   if (isTerminalSurfaceV2Enabled()) {
-    return Promise.all([
-      preloadWtermTerminalView(),
-      fetch(WTERM_GHOSTTY_WASM_URL).catch(() => null),
-    ]);
+    return Promise.all([preloadWtermTerminalView()]);
   }
   return Promise.all([preloadGhosttyRuntime(), preloadTerminalView()]);
 }

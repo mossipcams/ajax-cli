@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const ghosttyLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
 const fetchMock = vi.hoisted(() => vi.fn(() => Promise.resolve({ ok: true })));
+const preloadWtermGhosttyCore = vi.hoisted(() =>
+  vi.fn(() => Promise.resolve({ runtime: "wterm-ghostty-core" })),
+);
 
 vi.mock("ghostty-web", () => ({
   Ghostty: {
@@ -17,10 +20,15 @@ vi.mock("./components/WtermTerminalView.svelte", () => ({
   default: {},
 }));
 
+vi.mock("./terminalWtermGhosttyCore", () => ({
+  preloadWtermGhosttyCore,
+}));
+
 describe("terminalPreload", () => {
   beforeEach(() => {
     ghosttyLoad.mockClear();
     fetchMock.mockClear();
+    preloadWtermGhosttyCore.mockClear();
     vi.stubGlobal("fetch", fetchMock);
     localStorage.clear();
     vi.resetModules();
@@ -52,13 +60,16 @@ describe("terminalPreload", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("warmTerminalAssets skips Ghostty when Surface V2 is on", async () => {
+  it("warmTerminalAssets preloads the wterm component chunk when Surface V2 is on", async () => {
     localStorage.setItem("ajax.terminal.surfaceV2", "true");
     const { warmTerminalAssets } = await import("./terminalPreload");
 
-    await warmTerminalAssets();
+    const results = await warmTerminalAssets();
 
     expect(ghosttyLoad).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledWith("/wterm-ghostty-vt.wasm");
+    expect(preloadWtermGhosttyCore).not.toHaveBeenCalled();
+    expect(results).toHaveLength(1);
+    expect(results[0]).toEqual({ default: {} });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

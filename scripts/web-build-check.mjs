@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Build-layout check. Runs the production build and asserts the
 // emitted shell is deterministic and serving-compatible:
-//   - shell, terminal chunk, stylesheet, and Ghostty WASM all exist
+//   - shell, terminal chunk, stylesheet, and both Ghostty WASM assets exist
+//   - terminal chunk includes ghostty-web but not the inactive wterm adapter path
 //   - the HTML keeps the __AJAX_APP_VERSION__ placeholder Rust replaces
 //   - exactly one local module script and one local stylesheet
 // Run via `npm run web:build:check`. Exits non-zero on any violation.
@@ -49,8 +50,8 @@ if (existsSync(join(distDir, "app.js")) && existsSync(join(distDir, "terminal.js
   check(app.includes('import("./terminal.js")'), "dist/app.js is missing the lazy terminal import");
   check(terminal.includes("/ghostty-vt.wasm"), "dist/terminal.js is missing the Ghostty WASM path");
   check(
-    terminal.includes("/wterm-ghostty-vt.wasm"),
-    "dist/terminal.js is missing the wterm Ghostty WASM path",
+    !terminal.includes("/wterm-ghostty-vt.wasm"),
+    "dist/terminal.js still references the inactive Wterm Ghostty runtime",
   );
   check(app.length < terminal.length, "dist/app.js should be smaller than the deferred terminal chunk");
 }
