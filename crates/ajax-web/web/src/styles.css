@@ -414,17 +414,35 @@ header .bar h1 {
     padding-bottom: 0;
   }
 
+  /* Pin the whole task page to the visual-viewport band so the terminal
+     hotkey bar lands on the band bottom (flush above the iOS keyboard),
+     matching fullscreen geometry while keeping back/status visible. */
   html.keyboard-open .task-detail {
+    position: fixed;
+    top: var(--app-band-top, 0px);
+    left: 0;
+    right: 0;
+    z-index: 40;
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
+    height: var(--app-band-height, 100dvh);
+    max-height: var(--app-band-height, 100dvh);
     min-height: 0;
-    height: 100%;
+    margin: 0;
+    box-sizing: border-box;
+    overflow: hidden;
+    background: var(--paper);
+  }
+
+  html.keyboard-open .task-detail .detail-header,
+  html.keyboard-open .task-detail .interact-panel {
+    flex: none;
   }
 
   html.keyboard-open .task-detail .terminal-panel:not(.is-expanded) {
     flex: 1 1 auto;
     min-height: 0;
+    margin-top: 0;
   }
 
   html.keyboard-open .task-detail .meta-details {

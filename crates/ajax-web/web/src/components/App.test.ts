@@ -135,12 +135,21 @@ describe("App shell", () => {
 
   it("keyboard-open keeps task header and interact panel visible", () => {
     const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
 
-    expect(stylesSource).not.toMatch(
-      /html\.keyboard-open\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
+    // Header/status stay visible under keyboard-open (flex:none), and must not
+    // share a display:none rule with meta-details the way a loose regex can misread.
+    expect(mobileBlock).toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.detail-header,\s*html\.keyboard-open\s+\.task-detail\s+\.interact-panel\s*\{[^}]*flex:\s*none/,
     );
-    expect(stylesSource).not.toMatch(
-      /html\.keyboard-open\s+\.task-detail\s+\.interact-panel[\s\S]*?display:\s*none/,
+    expect(mobileBlock).not.toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.detail-header[^{]*\{[^}]*display:\s*none/,
+    );
+    expect(mobileBlock).not.toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.interact-panel[^{]*\{[^}]*display:\s*none/,
     );
     expect(stylesSource).toMatch(
       /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
@@ -184,6 +193,21 @@ describe("App shell", () => {
     expect(mobileBlock).toMatch(
       /:global\(html\.keyboard-open\)[\s\S]*?\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
     );
+  });
+
+  it("keyboard-open pins task detail to the app band so hotkeys sit above the keyboard", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+
+    const taskDetailRule =
+      mobileBlock.match(/html\.keyboard-open\s+\.task-detail\s*\{([^}]*)\}/)?.[1] ?? "";
+
+    expect(taskDetailRule).toMatch(/position:\s*fixed/);
+    expect(taskDetailRule).toMatch(/top:\s*var\(--app-band-top/);
+    expect(taskDetailRule).toMatch(/height:\s*var\(--app-band-height/);
   });
 
   it("hides route-scroll scrollbar chrome so content keeps full width", () => {

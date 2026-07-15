@@ -1344,6 +1344,10 @@
       min-height: 0;
     }
 
+    :global(html.keyboard-open) .terminal-panel:not(.is-expanded) :global([data-testid="terminal-bottom-controls"]) {
+      flex: none;
+    }
+
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
       top: var(--app-band-top, 0px);

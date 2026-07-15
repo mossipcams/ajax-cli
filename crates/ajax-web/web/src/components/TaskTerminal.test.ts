@@ -48,4 +48,15 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     );
     expect(taskTerminalSource).toMatch(/requestAnimationFrame[\s\S]*?requestAnimationFrame/);
   });
+
+  it("pins bottom controls so hotkeys stay above the keyboard band", () => {
+    const mobileBlock =
+      taskTerminalSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).toMatch(
+      /:global\(html\.keyboard-open\)[\s\S]*?terminal-bottom-controls[\s\S]*?flex:\s*none/,
+    );
+  });
 });
