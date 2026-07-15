@@ -244,11 +244,12 @@ export async function restartServer(): Promise<OperationResponse> {
   return payload;
 }
 
-export function taskTerminalWebSocketUrl(handle: string): string {
+export function taskTerminalWebSocketUrl(handle: string, seedHistory = true): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/terminal`;
+  const base = `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(handle)}/terminal`;
+  return seedHistory ? base : `${base}?seed=0`;
 }
 
-export function openTaskTerminalSocket(handle: string): WebSocket {
-  return new WebSocket(taskTerminalWebSocketUrl(handle));
+export function openTaskTerminalSocket(handle: string, seedHistory = true): WebSocket {
+  return new WebSocket(taskTerminalWebSocketUrl(handle, seedHistory));
 }

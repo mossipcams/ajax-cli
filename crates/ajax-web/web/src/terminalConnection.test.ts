@@ -138,6 +138,102 @@ describe("connectTaskTerminal", () => {
     expect(serverErrors).toEqual(["tmux attach failed"]);
   });
 
+  it("first connect dials without a seed opt-out (seed)", () => {
+    createConnection();
+    expect(MockWebSocket.instances[0].url).not.toContain("seed=0");
+  });
+
+  it("automatic backoff reconnect dials with seed=0 (seed)", () => {
+    const openCalls: Array<{ isReconnect: boolean; seeded: boolean }> = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: () => {},
+      onServerError: () => {},
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+      onOpen: (isReconnect, seeded) => {
+        openCalls.push({ isReconnect, seeded });
+      },
+    });
+
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire("close");
+    vi.advanceTimersByTime(1000);
+
+    expect(MockWebSocket.instances[1].url).toContain("seed=0");
+    const second = MockWebSocket.instances[1];
+    second.readyState = MockWebSocket.OPEN;
+    second.fire("open");
+
+    expect(openCalls).toHaveLength(2);
+    expect(openCalls[1]).toEqual({ isReconnect: true, seeded: false });
+  });
+
+  it("foreground visibility reconnect dials with seed=0 (seed)", () => {
+    const openCalls: Array<{ isReconnect: boolean; seeded: boolean }> = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: () => {},
+      onServerError: () => {},
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+      onOpen: (isReconnect, seeded) => {
+        openCalls.push({ isReconnect, seeded });
+      },
+    });
+
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+
+    socket.fire("close");
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(2);
+    expect(MockWebSocket.instances[1].url).toContain("seed=0");
+
+    const second = MockWebSocket.instances[1];
+    second.readyState = MockWebSocket.OPEN;
+    second.fire("open");
+
+    expect(openCalls[1]).toEqual({ isReconnect: true, seeded: false });
+  });
+
+  it("manual reconnectNow dials a full seed (seed)", () => {
+    const openCalls: Array<{ isReconnect: boolean; seeded: boolean }> = [];
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: () => {},
+      onServerError: () => {},
+      onStatus: (status) => {
+        statuses.push(status);
+      },
+      onOpen: (isReconnect, seeded) => {
+        openCalls.push({ isReconnect, seeded });
+      },
+    });
+
+    for (let i = 0; i < IMMEDIATE_FAILURE_LIMIT; i += 1) {
+      fireCloseWithoutOpen();
+    }
+    latestSocket().fire("close");
+    expect(statuses.at(-1)).toBe("unavailable");
+
+    connection.reconnectNow();
+
+    const newSocket = latestSocket();
+    expect(newSocket.url).not.toContain("seed=0");
+
+    newSocket.readyState = MockWebSocket.OPEN;
+    newSocket.fire("open");
+
+    expect(openCalls.at(-1)?.seeded).toBe(true);
+  });
+
   it("manual reconnectNow retries from unavailable", () => {
     createConnection();
 

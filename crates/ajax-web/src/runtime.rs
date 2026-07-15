@@ -715,6 +715,7 @@ where
         }
     };
 
+    let seed_history = crate::adapters::terminal_pty::seed_history_from_query(req.uri().query());
     let (mut parts, body) = req.into_parts();
     let upgrade = match WebSocketUpgrade::from_request_parts(&mut parts, &state).await {
         Ok(upgrade) => upgrade,
@@ -722,7 +723,8 @@ where
     };
     let _ = body;
     upgrade.on_upgrade(move |socket| async move {
-        crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan).await;
+        crate::adapters::terminal_pty::bridge_task_terminal_socket(socket, plan, seed_history)
+            .await;
     })
 }
 

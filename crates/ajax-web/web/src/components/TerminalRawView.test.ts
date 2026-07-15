@@ -1238,7 +1238,7 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("resets the terminal buffer and snaps to bottom on reconnect", async () => {
+  it("keeps the local buffer on an unseeded auto-reconnect (seed)", async () => {
     const { socket: first } = await mountOpenTerminal();
     await settleFrames();
 
@@ -1255,12 +1255,32 @@ describe("TerminalRawView", () => {
     await vi.advanceTimersByTimeAsync(1000);
 
     const second = MockWebSocket.instances[1];
+    expect(second.url).toContain("seed=0");
     second?.emit("open");
     await vi.advanceTimersByTimeAsync(1000);
 
-    expect(reset).toHaveBeenCalled();
-    expect(scrollToBottom).toHaveBeenCalled();
+    expect(reset).not.toHaveBeenCalled();
+    expect(resizeFramesOf(second).length).toBeGreaterThan(0);
     vi.useRealTimers();
+  });
+
+  it("resets and reseeds on manual Reconnect (seed)", async () => {
+    const { findByRole } = render(TerminalRawView, { props: { handle: "web/fix-login" } });
+    const first = MockWebSocket.instances[0];
+    first?.emit("open");
+    first!.readyState = MockWebSocket.CLOSED;
+    first?.emit("close");
+
+    reset.mockClear();
+    const button = await findByRole("button", { name: "Reconnect" });
+    button.click();
+
+    const second = MockWebSocket.instances[1];
+    expect(second.url).not.toContain("seed=0");
+    second?.emit("open");
+    await settleFrames();
+
+    expect(reset).toHaveBeenCalled();
   });
 
   it("refits and focuses ghostty on the first connect", async () => {

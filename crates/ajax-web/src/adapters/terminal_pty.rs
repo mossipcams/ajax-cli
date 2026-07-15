@@ -10,11 +10,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 
 const TERMINAL_CHILD_CLEANUP_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
+const RESIZE_WAIT_TIMEOUT: Duration = Duration::from_millis(500);
 
 pub const MAX_INPUT_FRAME_BYTES: usize = 4096;
 const PTY_READ_BUFFER_BYTES: usize = 8192;
@@ -199,7 +200,6 @@ fn build_isolated_attach_plan_with_token(
             "capture-pane",
             "-p",
             "-e",
-            "-J",
             "-t",
             &history_target,
             "-S",
@@ -333,6 +333,25 @@ fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
+/// `seed=0` in a WS URL query opts out of the history seed; anything else
+/// (absent query, other params, seed=1) keeps the default seed.
+pub fn seed_history_from_query(query: Option<&str>) -> bool {
+    query
+        .map(|query| query.split('&').all(|pair| pair != "seed=0"))
+        .unwrap_or(true)
+}
+
+/// How long the bridge may keep waiting for the client's first resize frame
+/// before seeding anyway. Returns None when the deadline passed.
+fn remaining_resize_wait(started: Instant, now: Instant) -> Option<Duration> {
+    let elapsed = now.saturating_duration_since(started);
+    if elapsed >= RESIZE_WAIT_TIMEOUT {
+        None
+    } else {
+        Some(RESIZE_WAIT_TIMEOUT - elapsed)
+    }
+}
+
 /// Report a bridge setup failure to the browser and close the socket.
 async fn send_error_and_close(socket: &mut WebSocket, error: String) {
     let _ = socket
@@ -345,7 +364,11 @@ async fn send_error_and_close(socket: &mut WebSocket, error: String) {
     let _ = socket.send(Message::Close(None)).await;
 }
 
-pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAttachPlan) {
+pub async fn bridge_task_terminal_socket(
+    mut socket: WebSocket,
+    plan: TerminalAttachPlan,
+    seed_history: bool,
+) {
     let isolated = build_isolated_attach_plan(&plan);
 
     // Stand up the isolated grouped session before attaching so the phone's
@@ -392,22 +415,6 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
         }
     };
 
-    // Seed history after attach starts so output produced during capture is
-    // already queued in the PTY, then forward that live stream afterward.
-    if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
-        if output.status.success() {
-            if let Some(payload) = output_frame_bytes(output.stdout) {
-                if socket.send(Message::Binary(payload.into())).await.is_err() {
-                    cleanup_spawned_child_async(child).await;
-                    for command in &isolated.teardown {
-                        let _ = run_tmux_command_blocking(command);
-                    }
-                    return;
-                }
-            }
-        }
-    }
-
     let mut reader = match pty_pair.master.try_clone_reader() {
         Ok(reader) => reader,
         Err(error) => {
@@ -424,6 +431,94 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
             return;
         }
     };
+
+    let resize_wait_started = Instant::now();
+    let mut resize_applied = false;
+    let mut pre_loop_abort = false;
+    while let Some(remaining) = remaining_resize_wait(resize_wait_started, Instant::now()) {
+        match tokio::time::timeout(remaining, socket.recv()).await {
+            Err(_) => break,
+            Ok(None) => {
+                pre_loop_abort = true;
+                break;
+            }
+            Ok(Some(Err(_))) => {
+                pre_loop_abort = true;
+                break;
+            }
+            Ok(Some(Ok(Message::Close(_)))) => {
+                pre_loop_abort = true;
+                break;
+            }
+            Ok(Some(Ok(Message::Text(text)))) => match handle_input_frame(&text, &mut writer) {
+                Ok(Some(size)) => {
+                    let _ = pty_pair.master.resize(size);
+                    resize_applied = true;
+                    break;
+                }
+                Err(_) => {
+                    pre_loop_abort = true;
+                    break;
+                }
+                Ok(None) => {}
+            },
+            Ok(Some(Ok(Message::Binary(bytes)))) => {
+                if bytes.len() > MAX_INPUT_FRAME_BYTES {
+                    pre_loop_abort = true;
+                    break;
+                }
+                if writer.write_all(&bytes).is_err() {
+                    pre_loop_abort = true;
+                    break;
+                }
+                let _ = writer.flush();
+            }
+            Ok(Some(Ok(Message::Ping(payload)))) => {
+                if socket.send(Message::Pong(payload)).await.is_err() {
+                    pre_loop_abort = true;
+                    break;
+                }
+            }
+            Ok(Some(Ok(Message::Pong(_)))) => {}
+        }
+    }
+
+    if pre_loop_abort {
+        cleanup_spawned_child_async(child).await;
+        let teardown = isolated.teardown.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            for command in &teardown {
+                let _ = run_tmux_command_blocking(command);
+            }
+        })
+        .await;
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    }
+
+    if resize_applied {
+        // Fixed beat so tmux processes the WINCH and reflows history before capture.
+        // ponytail: replace with an event-driven readiness check if this ever proves flaky.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    // Seed history after attach starts so output produced during capture is
+    // already queued in the PTY, then forward that live stream afterward.
+    if seed_history {
+        if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
+            if output.status.success() {
+                if let Some(payload) = output_frame_bytes(output.stdout) {
+                    if socket.send(Message::Binary(payload.into())).await.is_err() {
+                        cleanup_spawned_child_async(child).await;
+                        for command in &isolated.teardown {
+                            let _ = run_tmux_command_blocking(command);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
     let (output_tx, mut output_rx) = mpsc::channel::<Vec<u8>>(32);
     let running = Arc::new(AtomicBool::new(true));
@@ -783,6 +878,37 @@ mod tests {
     }
 
     #[test]
+    fn seed_history_query_parsing() {
+        assert!(seed_history_from_query(None));
+        assert!(seed_history_from_query(Some("")));
+        assert!(!seed_history_from_query(Some("seed=0")));
+        assert!(!seed_history_from_query(Some("a=b&seed=0")));
+        assert!(seed_history_from_query(Some("seed=1")));
+        assert!(seed_history_from_query(Some("seed=00")));
+    }
+
+    #[test]
+    fn remaining_resize_wait_deadline() {
+        let started = Instant::now();
+        assert_eq!(
+            remaining_resize_wait(started, started),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(
+            remaining_resize_wait(started, started + Duration::from_millis(499)),
+            Some(Duration::from_millis(1))
+        );
+        assert_eq!(
+            remaining_resize_wait(started, started + Duration::from_millis(500)),
+            None
+        );
+        assert_eq!(
+            remaining_resize_wait(started, started + Duration::from_millis(501)),
+            None
+        );
+    }
+
+    #[test]
     fn isolated_attach_plan_seeds_browser_scrollback_from_task_window() {
         let plan = attach_plan("web/fix-login");
 
@@ -795,7 +921,6 @@ mod tests {
                 "capture-pane",
                 "-p",
                 "-e",
-                "-J",
                 "-t",
                 "ajax-web-fix-login-m1a2b3c:task",
                 "-S",
@@ -809,6 +934,15 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("web/fix-login")));
+    }
+
+    #[test]
+    fn history_capture_preserves_display_wrapping() {
+        let plan = attach_plan("web/fix-login");
+        let isolated = build_isolated_attach_plan_with_token(&plan, "1a2b3c");
+        // Display-row capture must match the browser's wrap width; -J joins
+        // logical lines and re-wraps badly after seed.
+        assert!(!isolated.history.args.contains(&"-J".to_string()));
     }
 
     #[test]
