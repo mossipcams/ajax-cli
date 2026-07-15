@@ -972,12 +972,12 @@
       onStatus: (next) => {
         status = next;
       },
-      onOpen: (isReconnect) => {
+      onOpen: (isReconnect, seeded) => {
         setScrollOffsetPxImpl(0);
         statusDetail = "";
         zeroLag.reset();
         resizeDedupe.reset();
-        if (isReconnect) {
+        if (isReconnect && seeded) {
           pendingOutput.length = 0;
           term?.reset();
           scrollFollow.resetOnReconnect();

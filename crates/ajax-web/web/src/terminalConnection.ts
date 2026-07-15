@@ -22,8 +22,9 @@ export interface TerminalConnectionEvents {
   /** A structured `error` frame from the bridge (e.g. failed tmux attach). */
   onServerError(message: string): void;
   onStatus(status: TerminalConnectionStatus): void;
-  /** Every successful open; `isReconnect` when a previous socket died first. */
-  onOpen(isReconnect: boolean): void;
+  /** Every successful open; `isReconnect` when a previous socket had opened.
+   * `seeded` = this dial asked the bridge for the history seed; unseeded reconnects must keep the local buffer. */
+  onOpen(isReconnect: boolean, seeded: boolean): void;
 }
 
 export interface TerminalConnection {
@@ -49,6 +50,7 @@ export function connectTaskTerminal(
   let attachFailed = false;
   let disposed = false;
   let status: TerminalConnectionStatus = "connecting";
+  let lastDialSeeded = true;
   // Streaming decoder: a multi-byte UTF-8 sequence may split across frames.
   const outputDecoder = new TextDecoder();
   const inputEncoder = new TextEncoder();
@@ -145,11 +147,11 @@ export function connectTaskTerminal(
     reconnectAttempts += 1;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     reconnectTimer = setTimeout(() => {
-      if (!disposed) connect();
+      if (!disposed) connect(false);
     }, delay);
   };
 
-  const reconnectNow = () => {
+  const redialNow = (seedHistory: boolean) => {
     if (disposed) return;
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
@@ -158,21 +160,24 @@ export function connectTaskTerminal(
     reconnectAttempts = 0;
     attachFailed = false;
     setStatus("connecting");
-    connect();
+    connect(seedHistory);
   };
 
-  function connect() {
-    socket = openTaskTerminalSocket(handle);
+  const reconnectNow = () => redialNow(true);
+
+  function connect(seedHistory: boolean) {
+    lastDialSeeded = seedHistory;
+    socket = openTaskTerminalSocket(handle, seedHistory);
     socket.addEventListener("open", () => {
       // A successful open resets the backoff. A fresh tmux attach repaints the
       // pane and the resize-on-open makes tmux redraw at the real size, so no
       // explicit refresh frame is needed on reconnect.
-      const isReconnect = reconnectAttempts > 0;
+      const isReconnect = everOpened;
       everOpened = true;
       reconnectAttempts = 0;
       attachFailed = false;
       setStatus("connected");
-      events.onOpen(isReconnect);
+      events.onOpen(isReconnect, lastDialSeeded);
     });
     socket.addEventListener("message", onSocketMessage);
     // An error is followed by close; let the close handler own reconnect so we
@@ -192,12 +197,12 @@ export function connectTaskTerminal(
   // waiting out the backoff (mobile Safari kills the socket on background).
   const onVisibility = () => {
     if (document.visibilityState === "visible" && status === "reconnecting") {
-      reconnectNow();
+      redialNow(false);
     }
   };
   document.addEventListener("visibilitychange", onVisibility);
 
-  connect();
+  connect(true);
 
   return {
     isOpen: () => socket.readyState === WebSocket.OPEN,
