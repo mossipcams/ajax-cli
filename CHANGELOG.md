@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.45.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.44.1...ajax-cli-v0.45.0) (2026-07-15)
+
+
+### Features
+
+* **web:** replace wterm Surface V2 with xterm.js spike ([#499](https://github.com/mossipcams/ajax-cli/issues/499)) ([a765c36](https://github.com/mossipcams/ajax-cli/commit/a765c368555b1ab4cba67eb746192790812d6ce4))
+
 ## [0.44.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.44.0...ajax-cli-v0.44.1) (2026-07-15)
 
 
