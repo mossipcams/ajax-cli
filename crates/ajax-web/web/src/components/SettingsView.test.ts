@@ -3,7 +3,6 @@ import { render, fireEvent } from "@testing-library/svelte";
 import SettingsView from "./SettingsView.svelte";
 import * as api from "../api";
 import * as diagnostics from "../diagnostics";
-import * as setting from "../terminalSurfaceSetting";
 
 afterEach(() => {
   localStorage.clear();
@@ -64,12 +63,10 @@ describe("SettingsView", () => {
     );
   });
 
-  it("renders Dev settings with Surface V2 toggle", () => {
+  it("renders Dev settings debug info", () => {
     const { getByText, getByTestId } = render(SettingsView);
     expect(getByTestId("dev-settings")).toBeInTheDocument();
     expect(getByText("Dev settings")).toBeInTheDocument();
-    expect(getByText("Terminal Surface V2")).toBeInTheDocument();
-    expect(getByTestId("setting-terminal-surface-v2")).toBeInTheDocument();
   });
 
   it("shows live debug info with origin and app version", () => {
@@ -84,14 +81,6 @@ describe("SettingsView", () => {
     expect(debug.textContent).toContain("0.42.0-test");
 
     meta.remove();
-  });
-
-  it("shows last Surface V2 error from sessionStorage", () => {
-    sessionStorage.setItem("ajax.terminal.surfaceV2.lastError", "wasm init failed");
-
-    const { getByTestId } = render(SettingsView);
-    const debug = getByTestId("dev-settings-debug");
-    expect(debug.textContent).toContain("wasm init failed");
   });
 
   it("reload app restarts the server then reloads the page", async () => {
@@ -123,16 +112,5 @@ describe("SettingsView", () => {
     expect(reload).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();
-  });
-
-  it("toggle calls setter and reflects storage", async () => {
-    const setter = vi.spyOn(setting, "setTerminalSurfaceV2Enabled");
-    const { getByTestId } = render(SettingsView);
-    const toggle = getByTestId("setting-terminal-surface-v2") as HTMLInputElement;
-    expect(toggle.checked).toBe(false);
-    await fireEvent.click(toggle);
-    expect(setter).toHaveBeenCalledWith(true);
-    expect(localStorage.getItem("ajax.terminal.surfaceV2")).toBe("true");
-    expect(toggle.checked).toBe(true);
   });
 });

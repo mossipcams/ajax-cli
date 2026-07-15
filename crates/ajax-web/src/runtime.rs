@@ -315,8 +315,6 @@ where
         .route("/index.html", get(axum_browser_shell::<C, B>))
         .route("/app.css", get(axum_app_css))
         .route("/app.js", get(axum_app_js))
-        .route("/terminal.js", get(axum_terminal_js))
-        .route("/ghostty-vt.wasm", get(axum_ghostty_wasm))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
@@ -535,14 +533,6 @@ async fn axum_app_css() -> AxumResponse {
 
 async fn axum_app_js() -> AxumResponse {
     static_asset_response("/app.js")
-}
-
-async fn axum_terminal_js() -> AxumResponse {
-    static_asset_response("/terminal.js")
-}
-
-async fn axum_ghostty_wasm() -> AxumResponse {
-    static_asset_response("/ghostty-vt.wasm")
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1404,8 +1394,6 @@ mod tests {
             ("GET", "/"),
             ("GET", "/index.html"),
             ("GET", "/app.js"),
-            ("GET", "/terminal.js"),
-            ("GET", "/ghostty-vt.wasm"),
             ("GET", "/api/health"),
             ("POST", "/api/session"),
         ] {
@@ -1463,27 +1451,6 @@ mod tests {
         );
         assert_eq!(cockpit.headers()["cache-control"], "no-store");
         assert_eq!(json_of(cockpit).await["cards"], serde_json::json!([]));
-
-        let ghostty_wasm = get_public(&app, "/ghostty-vt.wasm").await;
-        assert_eq!(ghostty_wasm.status(), StatusCode::OK);
-        assert_eq!(ghostty_wasm.headers()["content-type"], "application/wasm");
-        assert_eq!(ghostty_wasm.headers()["cache-control"], "no-store");
-        let ghostty_wasm_body = to_bytes(ghostty_wasm.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        assert!(!ghostty_wasm_body.is_empty());
-
-        let terminal_js = get_public(&app, "/terminal.js").await;
-        assert_eq!(terminal_js.status(), StatusCode::OK);
-        assert_eq!(
-            terminal_js.headers()["content-type"],
-            "text/javascript; charset=utf-8"
-        );
-        assert_eq!(terminal_js.headers()["cache-control"], "no-store");
-        assert!(!to_bytes(terminal_js.into_body(), usize::MAX)
-            .await
-            .unwrap()
-            .is_empty());
 
         let missing_api = get(&app, &session_cookie, "/api/missing").await;
         assert_eq!(missing_api.status(), StatusCode::NOT_FOUND);

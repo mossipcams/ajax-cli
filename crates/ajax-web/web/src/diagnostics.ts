@@ -44,23 +44,12 @@ export async function buildDiagnosticsReport(
   const loadedAppVersion =
     document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ?? null;
 
-  let terminalSurfaceV2 = false;
-  let surfaceV2LastError: string | null = null;
-  try {
-    terminalSurfaceV2 = localStorage.getItem("ajax.terminal.surfaceV2") === "true";
-    surfaceV2LastError = sessionStorage.getItem("ajax.terminal.surfaceV2.lastError");
-  } catch {
-    // Safari private mode may throw.
-  }
-
   return {
     browser_mode: "Safari/browser",
     backend_url: window.location.origin,
     navigator_onLine: navigator.onLine,
     app_version: loadedAppVersion,
     location: window.location.href,
-    terminal_surface_v2: terminalSurfaceV2,
-    surface_v2_last_error: surfaceV2LastError,
     checks,
   };
 }

@@ -133,12 +133,6 @@ function cockpitWithManyTasks(count: number) {
   return { ...COCKPIT_FIXTURE, cards, inbox: { items: [] } };
 }
 
-async function enableTerminalPlaceholder(page: Page) {
-  await page.addInitScript(() => {
-    localStorage.setItem("ajax.debug.terminalPlaceholder", "true");
-  });
-}
-
 // ---- layout probes (computed styles, not screenshots) --------------------
 
 type ShellLock = { name: string; overflowY: string; canScroll: boolean };
@@ -183,13 +177,10 @@ async function probeNormalRouteScrollOwners(page: Page): Promise<{
 
     const isExcluded = (el: Element): boolean =>
       !!(
-        el.closest('[data-testid="task-terminal-panel"]') ||
-        el.closest('[data-testid="terminal-placeholder"]') ||
         el.closest('[data-testid="new-task-sheet"]') ||
         el.closest("#new-task-sheet") ||
         el.closest(".sheet-card") ||
-        el.closest(".result-output") ||
-        el.closest(".terminal-keys")
+        el.closest(".result-output")
       );
 
     const routeScrollCount = document.querySelectorAll('[data-testid="route-scroll"]').length;
@@ -294,136 +285,4 @@ test("new task sheet stays inside the simulated keyboard viewport band", async (
   expect(sheetBox!.y + sheetBox!.height).toBeLessThanOrEqual(band.bottom);
   expect(inputBox!.y).toBeGreaterThanOrEqual(band.top);
   expect(inputBox!.y + inputBox!.height).toBeLessThanOrEqual(band.bottom);
-});
-
-test("terminal placeholder proves layout without Ghostty", async ({ page }) => {
-  await enableTerminalPlaceholder(page);
-  await mockFetch(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-
-  const placeholder = page.locator('[data-testid="terminal-placeholder"]');
-  await expect(placeholder).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator("[data-testid='task-terminal-panel'] canvas:not([aria-hidden='true'])")).toHaveCount(0);
-
-  const panel = page.locator("[data-testid='task-terminal-panel']");
-  const panelStyle = await panel.evaluate((el) => {
-    const style = getComputedStyle(el);
-    return {
-      overflow: style.overflow,
-      minHeight: style.minHeight,
-      maxHeight: style.maxHeight,
-    };
-  });
-  expect(panelStyle.overflow).toBe("hidden");
-  expect(panelStyle.minHeight).not.toBe("0px");
-});
-
-test("desktop short viewport keeps terminal min-height within max-height", async ({
-  page,
-}, testInfo) => {
-  test.skip(
-    testInfo.project.name === "mobile-webkit",
-    "desktop min/max-height contract does not apply on mobile",
-  );
-  await page.setViewportSize({ width: 900, height: 420 });
-  await enableTerminalPlaceholder(page);
-  await mockFetch(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-
-  const panel = page.locator("[data-testid='task-terminal-panel']");
-  await expect(panel).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator('[data-testid="terminal-placeholder"]')).toBeVisible();
-
-  const layout = await page.evaluate(() => {
-    const panelEl = document.querySelector(
-      '[data-testid="task-terminal-panel"]',
-    ) as HTMLElement | null;
-    const routeScroll = document.querySelector(
-      '[data-testid="route-scroll"]',
-    ) as HTMLElement | null;
-    if (!panelEl || !routeScroll) return null;
-    const style = getComputedStyle(panelEl);
-    panelEl.scrollIntoView({ block: "nearest", inline: "nearest" });
-    const panelBox = panelEl.getBoundingClientRect();
-    const routeBox = routeScroll.getBoundingClientRect();
-    return {
-      minHeight: style.minHeight,
-      maxHeight: style.maxHeight,
-      minHeightPx: Number.parseFloat(style.minHeight),
-      maxHeightPx: Number.parseFloat(style.maxHeight),
-      panelBottom: panelBox.bottom,
-      routeBottom: routeBox.bottom,
-      panelHeight: panelBox.height,
-      routeHeight: routeBox.height,
-    };
-  });
-  expect(layout).not.toBeNull();
-  expect(layout!.maxHeight).not.toBe("none");
-  expect(layout!.minHeightPx).toBeLessThanOrEqual(layout!.maxHeightPx);
-  // Panel height is capped by max-height; once scrolled into the route band,
-  // its bottom must not extend past the visible route-scroll bottom.
-  expect(layout!.panelHeight).toBeLessThanOrEqual(layout!.maxHeightPx + 1);
-  expect(layout!.panelBottom).toBeLessThanOrEqual(layout!.routeBottom + 1);
-});
-
-test("task detail route scroll survives expanded terminal close", async ({ page }, testInfo) => {
-  await enableTerminalPlaceholder(page);
-  await mockFetch(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(page.locator('[data-testid="terminal-placeholder"]')).toBeVisible({
-    timeout: 10_000,
-  });
-
-  const routeScroll = page.locator('[data-testid="route-scroll"]');
-  await expect(routeScroll).toBeVisible();
-  await expect(page.locator("[data-testid='task-terminal-panel']")).toBeVisible();
-
-  const isMobileWebkit = testInfo.project.name === "mobile-webkit";
-
-  if (isMobileWebkit) {
-    // Mobile task route locks route-scroll (:has([data-outlet="task"])); only
-    // the terminal scrolls. Setting scrollTop must leave it at 0.
-    const beforeExpand = await routeScroll.evaluate((el) => {
-      const maxScroll = el.scrollHeight - el.clientHeight;
-      el.scrollTop = Math.max(0, maxScroll);
-      return { scrollTop: el.scrollTop, maxScroll };
-    });
-    expect(beforeExpand.maxScroll, "mobile task route must not overflow").toBeLessThanOrEqual(0);
-    expect(beforeExpand.scrollTop, "mobile task route scrollTop stays locked").toBe(0);
-
-    await page.getByRole("button", { name: "Expand terminal" }).click();
-    await expect(page.locator("html")).toHaveClass(/terminal-expanded/);
-
-    await page.getByRole("button", { name: "Expand terminal" }).click();
-    await expect(page.locator("html")).not.toHaveClass(/terminal-expanded/);
-
-    const afterClose = await routeScroll.evaluate((el) => {
-      const maxScroll = el.scrollHeight - el.clientHeight;
-      el.scrollTop = Math.max(0, maxScroll);
-      return { scrollTop: el.scrollTop, maxScroll };
-    });
-    expect(afterClose.maxScroll, "route must stay non-scrollable after expand close").toBeLessThanOrEqual(0);
-    expect(afterClose.scrollTop, "route scrollTop after expand close").toBe(0);
-    return;
-  }
-
-  const beforeExpand = await routeScroll.evaluate((el) => {
-    el.scrollTop = Math.min(120, el.scrollHeight - el.clientHeight);
-    return el.scrollTop;
-  });
-  expect(beforeExpand).toBeGreaterThan(0);
-
-  await page.getByRole("button", { name: "Expand terminal" }).click();
-  await expect(page.locator("html")).toHaveClass(/terminal-expanded/);
-
-  await page.getByRole("button", { name: "Expand terminal" }).click();
-  await expect(page.locator("html")).not.toHaveClass(/terminal-expanded/);
-
-  const afterClose = await routeScroll.evaluate((el) => {
-    const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
-    el.scrollTop = maxScroll;
-    return { scrollTop: el.scrollTop, maxScroll, canScroll: maxScroll > 0 };
-  });
-  expect(afterClose.canScroll, "route should remain scrollable").toBe(true);
-  expect(afterClose.scrollTop, "route scrollTop after expand close").toBeGreaterThan(0);
 });

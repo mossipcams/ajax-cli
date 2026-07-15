@@ -6,44 +6,13 @@ import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
+import cockpit from "../fixtures/cockpit.json";
+import taskDetail from "../fixtures/task-detail.json";
 
 function loadStylesSource(): string {
   const testDir = (import.meta as ImportMeta & { dirname: string }).dirname;
   return readFileSync(join(testDir, "../styles.css"), "utf8");
 }
-import cockpit from "../fixtures/cockpit.json";
-import taskDetail from "../fixtures/task-detail.json";
-
-vi.mock("ghostty-web", () => ({
-  Ghostty: {
-    load: vi.fn(() => Promise.resolve({ runtime: "ghostty" })),
-  },
-  Terminal: class MockTerminal {
-    cols = 80;
-    rows = 24;
-    textarea = document.createElement("textarea");
-    buffer = { active: { viewportY: 0, baseY: 0 } };
-    loadAddon = vi.fn();
-    open = vi.fn();
-    write = vi.fn();
-    dispose = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    focus = vi.fn();
-    blur = vi.fn();
-    paste = vi.fn();
-    resize = vi.fn();
-    getViewportY = vi.fn(() => 0);
-    options = { fontSize: 13 };
-  },
-  FitAddon: class MockFitAddon {
-    fit = vi.fn();
-    dispose = vi.fn();
-    proposeDimensions = vi.fn(() => ({ cols: 80, rows: 24 }));
-  },
-}));
 
 // Hard file-scope stub: late microtasks (detail loads settling between a
 // test's unstubAllGlobals and DOM cleanup) must never reach jsdom's real
@@ -146,41 +115,6 @@ describe("App shell", () => {
     expect(appViewportSource).toMatch(
       /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*height:\s*var\(--app-band-height/,
     );
-  });
-
-  it("hides chrome and clears task route-scroll padding when keyboard-open", () => {
-    const stylesSource = loadStylesSource();
-    const mobileBlocks = [...stylesSource.matchAll(
-      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
-    )];
-    const mobileCss = mobileBlocks.map((match) => match[1]).join("\n");
-
-    expect(mobileCss).toMatch(
-      /html\.keyboard-open \.bottom-nav[\s\S]*?\{[^}]*display:\s*none/,
-    );
-    expect(mobileCss).toMatch(
-      /html\.keyboard-open \.cockpit-chrome[\s\S]*?\{[^}]*display:\s*none/,
-    );
-    expect(mobileCss).toMatch(
-      /html\.keyboard-open \[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*padding-bottom:\s*0/,
-    );
-  });
-
-  it("zeros horizontal padding on the mobile task route-scroll", () => {
-    const stylesSource = loadStylesSource();
-    const mobileBlocks = [...stylesSource.matchAll(
-      /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\) \{([\s\S]*?)\n\}/g,
-    )];
-    const mobileCss = mobileBlocks.map((match) => match[1]).join("\n");
-    const taskRouteScrollRule =
-      mobileCss.match(
-        /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{([^}]*)\}/,
-      )?.[1] ?? "";
-
-    expect(taskRouteScrollRule).toMatch(/padding-top:\s*0/);
-    expect(taskRouteScrollRule).toMatch(/padding-left:\s*0/);
-    expect(taskRouteScrollRule).toMatch(/padding-right:\s*0/);
-    expect(taskRouteScrollRule).not.toMatch(/padding-bottom:\s*0/);
   });
 
   it("hides route-scroll scrollbar chrome so content keeps full width", () => {
@@ -288,7 +222,7 @@ describe("App shell", () => {
 
     const { findByTestId } = render(App);
     setHash("#/t/web%2Ffix-login");
-    await findByTestId("task-terminal-panel");
+    await findByTestId("outlet-task");
 
     releaseResume(jsonResponse({ ok: true }));
     await tick();
@@ -329,10 +263,7 @@ describe("App shell", () => {
     await vi.waitFor(() => expect(operations).toHaveLength(2));
     expect(operations[1]).toMatchObject({ task_handle: "web/other", action: "resume" });
 
-    // Let the in-flight detail load land while WebSocket is still stubbed —
-    // a late mount after unstubAllGlobals hits jsdom's real WebSocket and
-    // rejects asynchronously outside any test.
-    await findByTestId("task-terminal-panel");
+    await findByTestId("outlet-task");
   });
 
   it("ignores a stale detail response after switching tasks", async () => {
@@ -367,37 +298,6 @@ describe("App shell", () => {
     await tick();
     expect(queryByText("STALE fix-login")).not.toBeInTheDocument();
     expect(queryByText("Other task")).toBeInTheDocument();
-  });
-
-  it("mounts the task terminal panel after detail loads", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const path = String(input);
-        if (path === "/api/cockpit") return Promise.resolve(jsonResponse(cockpit));
-        if (path === "/api/version") return Promise.resolve(jsonResponse({ version: "test" }));
-        if (path === "/api/tasks/web%2Ffix-login") return Promise.resolve(jsonResponse(taskDetail));
-        if (path === "/api/operations") return Promise.resolve(jsonResponse({ ok: true }));
-        return Promise.reject(new Error(`unexpected fetch: ${path}`));
-      }),
-    );
-    vi.stubGlobal("WebSocket", class {
-      readyState = 1;
-      close() {}
-      addEventListener() {}
-      send() {}
-    });
-
-    const { findByTestId } = render(App);
-    setHash("#/t/web%2Ffix-login");
-
-    expect(await findByTestId("task-terminal-panel")).toBeInTheDocument();
-  });
-
-  it("idle-warms terminal assets when a task route or new-task sheet is open", () => {
-    expect(appSource).toMatch(/import\(["']\.\.\/terminalPreload["']\)/);
-    expect(appSource).toMatch(/warmTerminalAssets/);
-    expect(appSource).not.toMatch(/import\s*\{[^}]*warmTerminalAssets[^}]*\}\s*from\s*["']\.\.\/terminalPreload["']/);
   });
 
   it("defers the version check until the browser is idle", async () => {

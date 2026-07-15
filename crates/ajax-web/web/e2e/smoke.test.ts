@@ -9,11 +9,6 @@ import {
   VERSION_A,
   VERSION_B,
   mockFetch,
-  mockTerminalWebSocket,
-  terminalFrames,
-  terminalPanel,
-  terminalToolbar,
-  waitForTerminalSocket,
 } from "./fixtures";
 
 // ---- tests ---------------------------------------------------------------
@@ -54,80 +49,6 @@ test("task detail renders server status and actions", async ({ page }, testInfo)
     await expect(page.getByText("Waiting for review")).toBeVisible({ timeout: 10_000 });
   }
   await expect(page.locator("[data-action='review']")).toBeVisible();
-});
-
-test("mobile task terminal opens ghostty and sends toolbar input", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-
-  await expect(terminalPanel(page)).toBeVisible({ timeout: 10_000 });
-  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
-
-  const toolbar = terminalToolbar(page);
-  await toolbar.getByRole("button", { name: "Esc" }).click();
-  await toolbar.getByRole("button", { name: "Tab" }).click();
-  await toolbar.getByRole("button", { name: "⌃C" }).click();
-  await toolbar.getByRole("button", { name: "Ctrl" }).click();
-  await toolbar.getByRole("button", { name: "←" }).click();
-
-  await expect
-    .poll(() => terminalFrames(page))
-    .toEqual(
-      expect.arrayContaining([
-        { type: "input", data: "\x1b" },
-        { type: "input", data: "\t" },
-        { type: "input", data: "\x03" },
-        { type: "input", data: "\x1b[1;5D" },
-      ]),
-    );
-});
-
-test("mobile task terminal paste, resize, and reconnect flows stay wired", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
-
-  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
-  await expect
-    .poll(() => terminalFrames(page))
-    .toContainEqual({ type: "input", data: "echo pasted" });
-
-  await page.setViewportSize({ width: 844, height: 390 });
-  await expect
-    .poll(async () => {
-      const frames = await terminalFrames(page);
-      return frames.filter(
-        (frame) => (frame as { type?: string }).type === "resize",
-      ).length;
-    })
-    .toBeGreaterThan(0);
-
-  const closeDebug = await page.evaluate(async () => {
-    const socket = (window as unknown as { __terminalSockets: Array<{
-      emitClose(): void;
-      listeners?: Record<string, Array<unknown>>;
-      readyState: number;
-    }> }).__terminalSockets.at(-1)!;
-    const listenerCounts = Object.fromEntries(
-      Object.entries(socket.listeners ?? {}).map(([name, handlers]) => [name, handlers.length]),
-    );
-    socket.emitClose();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    return {
-      listenerCounts,
-      readyState: socket.readyState,
-      socketCount: (window as unknown as { __terminalSockets: unknown[] }).__terminalSockets.length,
-      status:
-        document.querySelector("[data-testid='terminal-status']")?.textContent?.trim() ?? "",
-    };
-  });
-  expect(closeDebug.status, JSON.stringify(closeDebug)).toContain("Reconnecting");
 });
 
 test("new task sheet stays inside the visible band when the keyboard opens", async ({ page }) => {

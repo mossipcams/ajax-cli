@@ -687,24 +687,16 @@ desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
 without explicit approval. Legacy snapshot, keys, and answer routes are not
 supported browser task-control APIs.
 
-The browser terminal frontend lives in `crates/ajax-web/web`. `TaskDetail.svelte`
-mounts `TerminalSurfaceSelector.svelte`, which defaults to Ghostty via
-`TerminalRawView.svelte` when Surface V2 is off; when Surface V2 is enabled in
-Dev settings, the selector mounts experimental `XtermTerminalView.svelte`
-(`@xterm/xterm` behind the same flag). `TerminalRawView.svelte` uses `ghostty-web`
-from `github:rcarmo/ghostty-web#v0.9.4` (fork of coder's unmaintained npm
-0.4.0) with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
-task-terminal WebSocket lifecycle and reconnect behavior, and
-`terminalGestures.ts`, `terminalGeometry.ts`, and `terminalRefit.ts` keep mobile
-scrolling, panning, fit-to-width font sizing, keyboard-safe fitting, and refit
-scheduling local to the browser shell. The default fit geometry keeps the PTY at least 80 columns and CSS-scales the
-terminal element to the host width on phone viewports, so live and scrollback
-share an agent-sized layout without mid-token soft wrap. Pinch-zoom adjusts
-font size within readable bounds. These frontend modules do not own task truth
-or tmux target selection.
-Frontend ownership rules for these modules are in `crates/ajax-web/web/TERMINAL.md`.
-Layout fit/resize permission (keyboard freeze, pinch/expand exemptions) lives in
-`terminalLayoutPolicy.ts`; refit scheduling remains in `terminalRefit.ts`.
+The browser terminal **frontend surface was removed in Task 12**. `TaskDetail.svelte`
+no longer mounts a terminal component. The retained browser modules are
+`terminalConnection.ts` (WebSocket lifecycle contract) and general viewport
+helpers in `viewport.ts`. `crates/ajax-web/web/TERMINAL.md` records ownership
+for the absent frontend and the ground-up rebuild. No shared old/new adapter
+exists. Permanent acceptance coverage lives in
+`crates/ajax-web/web/e2e/terminal-behavior.test.ts` and is intentionally red
+until a new controller/adapter is rebuilt. The Rust PTY/WebSocket backend
+(`terminalConnection.ts` client, `/api/tasks/{handle}/terminal` route,
+`ajax-web::slices::terminal`, `ajax-web::adapters::terminal_pty`) is unchanged.
 
 ### `ajax-web::adapters::terminal_pty`
 

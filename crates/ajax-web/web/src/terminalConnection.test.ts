@@ -353,4 +353,92 @@ describe("connectTaskTerminal", () => {
     expect(typeof sent[0]).toBe("string");
     expect(JSON.parse(String(sent[0]))).toEqual({ type: "resize", cols: 120, rows: 40 });
   });
+
+  function connectForOutput(outputs: string[]) {
+    connection = connectTaskTerminal("test-handle", {
+      onOutput: (text) => outputs.push(text),
+      onServerError: () => {},
+      onStatus: () => {},
+      onOpen: () => {},
+    });
+    const socket = latestSocket();
+    socket.readyState = MockWebSocket.OPEN;
+    socket.fire("open");
+    return socket;
+  }
+
+  function fireBinaryFrame(socket: MockWebSocket, bytes: Uint8Array) {
+    socket.fire(
+      "message",
+      new MessageEvent("message", {
+        data: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      }),
+    );
+  }
+
+  it("reassembles split UTF-8 emoji bytes across consecutive binary frames", async () => {
+    const outputs: string[] = [];
+    const socket = connectForOutput(outputs);
+    const emoji = "👋";
+    const bytes = new TextEncoder().encode(emoji);
+    fireBinaryFrame(socket, bytes.subarray(0, 2));
+    fireBinaryFrame(socket, bytes.subarray(2));
+
+    await vi.waitFor(() => {
+      expect(outputs.join("")).toBe(emoji);
+    });
+    expect(outputs.join("")).toBe(emoji);
+  });
+
+  it("preserves unicode and control corpus order through binary frames", async () => {
+    const outputs: string[] = [];
+    const socket = connectForOutput(outputs);
+    const corpus =
+      "ASCII" +
+      "😀" +
+      "e\u0301" +
+      "漢" +
+      "\x1b[31mRED\x1b[0m" +
+      "\x1b[2K" +
+      "carriage\rreturn" +
+      "line\nbreak" +
+      "crlf\r\nend";
+
+    for (const segment of [
+      "ASCII",
+      "😀",
+      "e\u0301",
+      "漢",
+      "\x1b[31mRED\x1b[0m\x1b[2K",
+      "carriage\rreturn",
+      "line\nbreak",
+      "crlf\r\nend",
+    ]) {
+      fireBinaryFrame(socket, new TextEncoder().encode(segment));
+    }
+
+    await vi.waitFor(() => {
+      expect(outputs.join("")).toBe(corpus);
+    });
+    expect(outputs.join("")).toBe(corpus);
+  });
+
+  it("preserves rapid burst and large payload order without loss or duplication", async () => {
+    const outputs: string[] = [];
+    const socket = connectForOutput(outputs);
+    const burst = Array.from({ length: 100 }, (_, index) => `chunk-${String(index).padStart(3, "0")}`);
+    const large = "L".repeat(128 * 1024);
+    const expected = burst.join("") + large;
+
+    for (const chunk of burst) {
+      fireBinaryFrame(socket, new TextEncoder().encode(chunk));
+    }
+    fireBinaryFrame(socket, new TextEncoder().encode(large));
+
+    await vi.waitFor(() => {
+      expect(outputs.join("")).toBe(expected);
+    });
+    expect(outputs.join("")).toBe(expected);
+    expect(outputs.join("").length).toBe(expected.length);
+  });
 });
