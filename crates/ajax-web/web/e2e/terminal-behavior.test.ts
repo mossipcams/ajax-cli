@@ -23,8 +23,6 @@ import {
   type ViewportEventKind,
 } from "./fixtures";
 
-test.fail(true, "replacement xterm surface lands in the stacked implementation PR");
-
 const OPEN = 1;
 
 async function activeTaskSocketCount(page: import("@playwright/test").Page) {
@@ -439,6 +437,47 @@ test("initial open eventually sends at least one valid positive-integer PTY size
     expect(Number.isInteger(frame.cols)).toBe(true);
     expect(Number.isInteger(frame.rows)).toBe(true);
   }
+});
+
+async function readLogicalXtermGeometry(page: import("@playwright/test").Page) {
+  return page.locator("[data-testid='task-terminal-panel'] .terminal-host .xterm").evaluate((xtermEl) => {
+    const host = xtermEl.parentElement as HTMLElement | null;
+    const screen = xtermEl.querySelector(".xterm-screen") as HTMLElement | null;
+    if (!host || !screen) throw new Error("terminal host or xterm screen missing");
+    const rendered = xtermEl.getBoundingClientRect();
+    return {
+      hostWidth: host.clientWidth,
+      hostHeight: host.clientHeight,
+      logicalWidth: xtermEl.offsetWidth,
+      logicalHeight: xtermEl.offsetHeight,
+      screenWidth: screen.offsetWidth,
+      screenHeight: screen.offsetHeight,
+      renderedWidth: rendered.width,
+      renderedHeight: rendered.height,
+    };
+  });
+}
+
+test("logical xterm grid is at least 80 columns and scales to fill the phone host", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await expect.poll(async () => (await terminalResizeFrames(page)).length).toBeGreaterThan(0);
+
+  const geometry = await readLogicalXtermGeometry(page);
+
+  expect(geometry.screenWidth).toBeGreaterThan(geometry.hostWidth);
+  expect(geometry.screenHeight).toBeGreaterThan(geometry.hostHeight);
+  expect(geometry.logicalWidth).toBeGreaterThan(geometry.hostWidth);
+  expect(geometry.logicalHeight).toBeGreaterThan(geometry.hostHeight);
+
+  expect(geometry.renderedWidth).toBeGreaterThanOrEqual(geometry.hostWidth - 2);
+  expect(geometry.renderedWidth).toBeLessThanOrEqual(geometry.hostWidth + 2);
+  expect(geometry.renderedHeight).toBeGreaterThanOrEqual(geometry.hostHeight - 2);
+  expect(geometry.renderedHeight).toBeLessThanOrEqual(geometry.hostHeight + 2);
+
+  const lastResize = (await terminalResizeFrames(page)).at(-1)!;
+  expect(lastResize.cols).toBeGreaterThanOrEqual(80);
 });
 
 test("portrait-to-landscape eventually produces a fresh valid resize without adjacent duplicate sizes", async ({

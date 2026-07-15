@@ -4,6 +4,7 @@
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
+  import TaskTerminal from "./TaskTerminal.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -63,6 +64,8 @@
       />
     {/if}
   </section>
+
+  <TaskTerminal handle={detail.qualified_handle} />
 
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>

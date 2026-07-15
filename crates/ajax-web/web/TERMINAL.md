@@ -1,32 +1,30 @@
 # Web Cockpit terminal ownership
 
-## Status (Task 12 complete)
+## Status
 
-The old Ghostty default surface and experimental xterm frontend are
-**removed**. `TaskDetail.svelte` does not mount a browser terminal. There is
-**no** shared old/new adapter, placeholder renderer, or deferred terminal chunk.
+Web Cockpit mounts one xterm.js task terminal from `TaskDetail.svelte` via
+`TaskTerminal.svelte`. The permanent mobile-WebKit behavior suite (27 cases) is
+green.
 
-## Retained boundaries
+## Ownership
 
 | Concern | Owner |
 | --- | --- |
+| Task route terminal UI (xterm.js) | `TaskTerminal.svelte` |
 | Task-terminal WebSocket lifecycle / reconnect | `terminalConnection.ts` |
 | Keyboard / visualViewport / `--app-*` | `viewport.ts` |
 | PTY attach + frame bridge | `ajax-web::adapters::terminal_pty` |
 | Task-handle attach planning | `ajax-web::slices::terminal` |
 | Protected route `/api/tasks/{handle}/terminal` | `ajax-web::runtime` |
 
-## Permanent acceptance (intentionally red)
+## Permanent acceptance
 
-- `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — engine-neutral behavior contract
-- `TERMINAL_BEHAVIOR_CONTRACT.md` — pre-removal inventory (evidence)
+- `e2e/terminal-behavior.test.ts` (`mobile-webkit`, 27 cases) — green
+- `TERMINAL_BEHAVIOR_CONTRACT.md` — behavior inventory (evidence)
 - `TERMINAL_REBUILD_ACCEPTANCE.md` — acceptance matrix (evidence)
-- `TERMINAL_LEGACY_SURFACE_TESTS.md` — removed-surface characterization index (evidence)
+- `TERMINAL_LEGACY_SURFACE_TESTS.md` — removal hygiene index (evidence)
 
-The permanent suite stays in the repo and fails until a ground-up controller and
-adapter are rebuilt against the retained connection/backend contract.
+## Rule
 
-## Rebuild rule
-
-New terminal UI must not reintroduce browser-owned task truth or tmux target
-selection. Behavior changes require a failing case in the permanent suite first.
+Browser terminal UI does not own task truth or tmux target selection. Behavior
+changes require a failing case in the permanent suite first.
