@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.45.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.2...ajax-cli-v0.45.3) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** seed terminal history at client width and keep scrollback on auto-reconnect ([#506](https://github.com/mossipcams/ajax-cli/issues/506)) ([e4c6bc3](https://github.com/mossipcams/ajax-cli/commit/e4c6bc33149cf61a8ea25a7083d4d24b2fa316ac))
+
 ## [0.45.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.1...ajax-cli-v0.45.2) (2026-07-15)
 
 
