@@ -8,6 +8,8 @@ import {
   pinchFontSize,
   pinchActivated,
   fitCapFontSize,
+  fitFontSize,
+  MIN_FONT_SIZE,
   MOBILE_SCROLLBACK_LINES,
   DESKTOP_SCROLLBACK_LINES,
   terminalScrollbackLines,
@@ -179,6 +181,28 @@ describe("fitCapFontSize", () => {
   it("honors custom clamp bounds", () => {
     expect(fitCapFontSize(13, 100, 80, 8, 14)).toBe(14);
     expect(fitCapFontSize(13, 30, 80, 8, 14)).toBe(8);
+  });
+});
+
+describe("fitFontSize", () => {
+  it("returns the font at which the column floor exactly fills the host (fit-font)", () => {
+    expect(fitFontSize(384, 80, 8, 13)).toBe(7.75);
+  });
+
+  it("quantizes to 0.25px steps (fit-font)", () => {
+    expect(fitFontSize(640, 80, 8, 13)).toBe(13);
+  });
+
+  it("may return sizes below the pinch minimum (fit-font)", () => {
+    expect(fitFontSize(160, 80, 8, 13)).toBeLessThan(MIN_FONT_SIZE);
+  });
+
+  it("returns undefined for invalid measurements (fit-font)", () => {
+    expect(fitFontSize(0, 80, 8, 13)).toBeUndefined();
+    expect(fitFontSize(384, 0, 8, 13)).toBeUndefined();
+    expect(fitFontSize(384, 80, 0, 13)).toBeUndefined();
+    expect(fitFontSize(384, 80, 8, 0)).toBeUndefined();
+    expect(fitFontSize(Number.NaN, 80, 8, 13)).toBeUndefined();
   });
 });
 

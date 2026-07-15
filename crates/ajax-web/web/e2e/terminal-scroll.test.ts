@@ -66,21 +66,11 @@ async function swipeIntoScrollback(page: Page) {
     targetPosition: { x: box.width / 2, y: box.height * 0.2 },
   });
 
-  // Ajax owns scroll via touch/wheel on `.terminal-host`, not mouse-drag on the
-  // canvas. Desktop Chromium's dragTo is mouse-only, so also wheel the host
-  // (works on both projects; avoids page.mouse.wheel which mobile-webkit rejects).
+  // Native scroll proxy: set scrollTop so the host fires a trusted scroll event
+  // (JS-dispatched wheel events are ignored by the native scroller).
   const host = terminalPanel(page).locator(".terminal-host");
   await host.evaluate((el) => {
-    for (let i = 0; i < 12; i += 1) {
-      el.dispatchEvent(
-        new WheelEvent("wheel", {
-          deltaY: -3,
-          deltaMode: WheelEvent.DOM_DELTA_LINE,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }
+    el.scrollTop = Math.max(0, el.scrollTop - 12 * 18);
   });
 }
 

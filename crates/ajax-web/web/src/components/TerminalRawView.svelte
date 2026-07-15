@@ -17,6 +17,7 @@
     fitScale,
     clampPan,
     fitCapFontSize,
+    fitFontSize,
     persistedFontSize,
     persistFontSize,
     terminalScrollbackLines,
@@ -84,6 +85,7 @@
   let container: HTMLDivElement | undefined = $state();
   /** Ghostty open() parent; CSS scale applies here, never on `.terminal-host`. */
   let scaleLayer: HTMLDivElement | undefined = $state();
+  let spacerEl: HTMLDivElement | undefined = $state();
   // A dead socket always auto-recovers (terminalConnection's backoff), so
   // there is no terminal "disconnected" state — only the reconnecting one.
   let status = $state<TerminalConnectionStatus>("connecting");
@@ -265,7 +267,13 @@
     // so mountGhosttyTerminal blinds the instance method and keeps the real
     // one here for Ajax's intentional bottom snaps.
     let libraryScrollToBottom: (() => void) | undefined;
-    const snapScrollbackToBottom = () => libraryScrollToBottom?.();
+    const snapScrollbackToBottom = () => {
+      libraryScrollToBottom?.();
+      syncSpacer();
+      if (container) {
+        container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      }
+    };
 
     const scrollbackLines = (): number =>
       terminalInternals(term).getScrollbackLength?.() ?? 0;
@@ -331,6 +339,10 @@
       return base * terminalFitScale;
     };
 
+    const syncSpacer = () => {
+      if (spacerEl) spacerEl.style.height = `${Math.max(0, scrollbackLines()) * cellHeightPx()}px`;
+    };
+
     // The operator's font size — persisted pinch choice or the default. The
     // live font may sit below it when the column floor would overflow the host
     // width, and climbs back toward this choice when the viewport widens again.
@@ -338,6 +350,7 @@
 
     // CSS scale applied to term.element after fit; 1 on wide hosts.
     let terminalFitScale = 1;
+    let lastFitKey: string | undefined;
     let subCellOffsetPx = 0;
     let subCellOffsetFrame: number | undefined;
 
@@ -555,20 +568,10 @@
     };
     clearTermSelection = () => term?.clearSelection();
 
-    // Touch/wheel scroll, horizontal pan, pinch-zoom, long-press copy, and
-    // momentum flings all live in terminalGestures; the component only
-    // supplies the terminal-side effects each gesture drives.
+    // Touch horizontal pan, pinch-zoom, long-press copy, and touch focus live
+    // in terminalGestures; vertical scroll is native on the host.
     const detachGestures = container
       ? attachTerminalGestures(container, {
-          scrollLines: (lines) => {
-            if (lines !== 0) {
-              scrollFollow.unpin();
-              syncScrollFollowUi();
-              cancelExpandedSnap();
-            }
-            term?.scrollLines(lines);
-          },
-          cellHeightPx,
           fontSize: () => term?.options.fontSize ?? DEFAULT_FONT_SIZE,
           maxFontSize: fitFontCap,
           setFontSize: (next) => {
@@ -611,11 +614,31 @@
             }
             term?.textarea?.focus({ preventScroll: true });
           },
-          setScrollOffsetPx: setScrollOffsetPxImpl,
-          atBottom: () => (term?.getViewportY() ?? 0) <= 0,
-          atTop: () => (term ? term.getViewportY() >= scrollbackLines() : true),
         })
       : () => {};
+
+    const onNativeScroll = () => {
+      if (!term || !container) return;
+      const cellH = cellHeightPx();
+      if (!(cellH > 0)) return;
+      const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+      const fromBottomPx = Math.max(0, maxTop - container.scrollTop);
+      const linePos = fromBottomPx / cellH;
+      const sb = scrollbackLines();
+      const targetY = Math.min(sb, Math.floor(linePos));
+      const delta = Math.floor(term.getViewportY()) - targetY;
+      if (delta !== 0) {
+        if (targetY > 0) cancelExpandedSnap();
+        term.scrollLines(delta);
+      }
+      setScrollOffsetPxImpl(targetY >= sb ? 0 : (linePos - targetY) * cellH);
+      scrollFollow.setPinnedFromViewport(targetY <= 0);
+      syncScrollFollowUi();
+    };
+    const nativeScrollOptions: AddEventListenerOptions = { passive: true };
+    if (container) {
+      container.addEventListener("scroll", onNativeScroll, nativeScrollOptions);
+    }
 
     // The iOS keyboard animates the visual viewport shorter over several frames.
     // A tmux-attached client SIGWINCHes the shared window on every resize, so
@@ -693,13 +716,13 @@
       container.scrollLeft = clampPan(container.scrollLeft, container.scrollWidth, container.clientWidth);
     };
     const fitNow = () => {
-      setScrollOffsetPxImpl(0);
       const decision = layoutPolicy.setKeyboardOpen(isKeyboardOpen());
       if (decision.pinToBottomOnKeyboardOpen) {
         scrollFollow.pin();
         syncScrollFollowUi();
       }
       if (!decision.allowLocalFit) {
+        setScrollOffsetPxImpl(0);
         if (decision.cropToBottom && container) {
           container.scrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
         }
@@ -707,8 +730,27 @@
         return;
       }
       if (!term || !fitAddon) return;
-      if (container) container.scrollTop = 0;
       const proposed = fitAddon.proposeDimensions();
+      const fitKey = [
+        proposed?.cols ?? -1,
+        proposed?.rows ?? -1,
+        hostFitCols() ?? -1,
+        container?.clientWidth ?? -1,
+        term.options.fontSize ?? DEFAULT_FONT_SIZE,
+      ].join(":");
+      if (fitKey === lastFitKey) {
+        if (proposed && Number.isFinite(proposed.rows) && proposed.rows > 0) {
+          return;
+        }
+        fitAddon.fit();
+        applyTerminalScale();
+        clampHorizontalPan();
+        if (scrollFollow.isPinned()) snapScrollbackToBottom();
+        return;
+      }
+      lastFitKey = fitKey;
+      setScrollOffsetPxImpl(0);
+      if (container) container.scrollTop = 0;
       const currentFont = term.options.fontSize ?? DEFAULT_FONT_SIZE;
       const fitProposal = hostFitCols() ?? proposed?.cols;
       const usingScale =
@@ -718,16 +760,24 @@
         const cap =
           hostWidthFitCap() ?? fitCapFontSize(currentFont, proposed?.cols, colsFloor());
         const growCeiling = cap >= MAX_FONT_SIZE ? cap : cap - 1;
-        const grownFont = Math.min(chosenFontSize, growCeiling, currentFont + 1);
-        const nextFont = currentFont > cap ? cap : Math.max(currentFont, grownFont);
+        const grownFont = Math.min(chosenFontSize, growCeiling);
+        // +1 tolerance: integer-floored cap must not claw back a fractional fit font.
+        const nextFont = currentFont > cap + 1 ? cap : Math.max(currentFont, grownFont);
         if (nextFont !== currentFont) {
           term.options.fontSize = nextFont;
           scheduleDebouncedRefit();
         }
       } else {
-        const grownFont = Math.min(chosenFontSize, currentFont + 1, MAX_FONT_SIZE);
-        const nextFont = Math.max(currentFont, grownFont);
-        if (nextFont !== currentFont) {
+        // Render at the size where the 80-col floor fills the host width: same
+        // visual size as the old CSS downscale, ~5x fewer pixels and crisp glyphs.
+        const cellWidth = (term as TerminalWithRendererMetrics).renderer?.getMetrics?.()?.width;
+        const fitFont =
+          container && container.clientWidth > 0 && cellWidth
+            ? fitFontSize(container.clientWidth, colsFloor(), cellWidth, currentFont)
+            : undefined;
+        const nextFont =
+          fitFont !== undefined ? Math.min(fitFont, MAX_FONT_SIZE) : currentFont;
+        if (Math.abs(nextFont - currentFont) >= 0.25) {
           term.options.fontSize = nextFont;
           scheduleDebouncedRefit();
         }
@@ -753,7 +803,14 @@
         applyTerminalScale();
       }
       clampHorizontalPan();
-      if (scrollFollow.isPinned()) snapScrollbackToBottom();
+      syncSpacer();
+      if (scrollFollow.isPinned()) {
+        snapScrollbackToBottom();
+      } else if (container) {
+        const cellH = cellHeightPx();
+        const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+        if (cellH > 0) container.scrollTop = Math.max(0, maxTop - term.getViewportY() * cellH);
+      }
     };
 
     // When to fit and when to tell the PTY (frame coalescing, the resize
@@ -850,7 +907,7 @@
       term.write(text);
     };
 
-    const zeroLagPainter = createZeroLagOverlayPainter(() => container);
+    const zeroLagPainter = createZeroLagOverlayPainter(() => scaleLayer ?? container);
     const zeroLag = createZeroLagEcho({
       onChange: (text, style) => zeroLagPainter.paint(text, style),
       measure: () => {
@@ -870,8 +927,19 @@
     const writeBatcher = createTerminalWriteBatcher({
       allowLeadingEdge: () => scrollFollow.isPinned(),
       onFlush: (combined) => {
+        // Scroll events arrive a frame after a scrollTop write, so a user (or
+        // e2e) scroll landing just before this flush leaves the pin state
+        // stale-pinned and the snap below would erase the scroll. Reconcile
+        // pin + viewportY from the real DOM position first; the pending
+        // browser event then re-runs the same math as a no-op. Only when the
+        // host is actually scrollable — pre-layout zeros would read as
+        // "at bottom" and force-pin a reader.
+        if (container && container.scrollHeight - container.clientHeight > 0) {
+          onNativeScroll();
+        }
         if (scrollFollow.isPinned()) {
           setScrollOffsetPxImpl(0);
+          syncSpacer();
           writeToTerminal(combined);
         } else {
           // viewportY is measured from the bottom, so when this write pushes
@@ -884,6 +952,7 @@
             scrollbackLines(),
           );
           if (compensation !== 0) term?.scrollLines(compensation);
+          syncSpacer();
         }
         zeroLag.clearIfEchoedIn(combined);
         const follow = scrollFollow.noteOutput();
@@ -1063,6 +1132,7 @@
         };
       }
       flushPendingOutput();
+      syncSpacer();
       schedulePostLayoutRefit();
       requestAnimationFrame(() => term?.focus());
     };
@@ -1099,6 +1169,7 @@
       window.removeEventListener("orientationchange", scheduleDebouncedRefit);
       viewport?.removeEventListener("resize", scheduleDebouncedRefit);
       viewport?.removeEventListener("scroll", scheduleDebouncedRefit);
+      container?.removeEventListener("scroll", onNativeScroll, nativeScrollOptions);
       detachGestures();
       fitAddon?.dispose();
       term?.dispose();
@@ -1126,15 +1197,16 @@
     {#if placeholderMode}
       <div data-testid="terminal-placeholder" class="terminal-placeholder">Terminal placeholder</div>
     {/if}
-    {#if hasUnseenOutput}
-      <button
-        type="button"
-        class="terminal-new-output"
-        onclick={() => {
-          jumpToBottom();
-        }}>New output ↓</button>
-    {/if}
+    <div class="terminal-scroll-spacer" bind:this={spacerEl} aria-hidden="true"></div>
   </div>
+  {#if hasUnseenOutput}
+    <button
+      type="button"
+      class="terminal-new-output"
+      onclick={() => {
+        jumpToBottom();
+      }}>New output ↓</button>
+  {/if}
   <button
     type="button"
     class="terminal-expand-corner"
@@ -1406,24 +1478,17 @@
     min-height: 0;
     min-width: 0;
     width: 100%;
-    /* Sub-cell drag offset can expose up to one cell of host; match the
+    /* Sub-cell scroll offset can expose up to one cell of host; match the
        terminal canvas background so the strip reads as padding, not a gap. */
     background: #1c1714;
-    /* The column floor can make the Ghostty canvas wider than the host.
-       The host clips it and the touch handler pans it via
-       scrollLeft (programmatic scrolling works on overflow:hidden boxes);
-       nothing else may scroll this element. */
-    overflow: hidden;
-    /* Ajax synthesizes 100% of scrolling from touch drags via
-       term.scrollLines() (see the touchmove handler). Without touch-action:none
-       iOS Safari latches a native pan in the first pixels of a vertical drag —
-       before the handler's threshold fires preventDefault() — then delivers the
-       rest of the gesture as non-cancelable touchmoves. That native pan (which
-       has nothing to move: every scroll container is overflow:hidden) races and
-       beats scrollLines(), so the terminal appears completely unscrollable on
-       touch. none keeps every touchmove cancelable and hands the whole gesture
-       to our handler. */
-    touch-action: none;
+    /* Vertical scrolling is native: the scroll spacer supplies range and a
+       scroll listener maps scrollTop to viewportY. Horizontal pan stays
+       synthetic via scrollLeft, so overflow-x remains hidden and touch-action
+       allows only vertical native pan. */
+    overflow-x: hidden;
+    overflow-y: auto;
+    touch-action: pan-y;
+    overscroll-behavior: contain;
     /* ghostty-web marks the host contenteditable for key handling; without
        these, an iOS long-press raises the text-magnifier loupe (a huge
        duplicated echo of the canvas) and the system edit callout, both of
@@ -1433,15 +1498,21 @@
     -webkit-touch-callout: none;
   }
 
-  /* Ghostty open() target. Scale-to-fit transforms this node only — never the
-     host — so the expand control and host hit box stay full-size. */
+  /* Ghostty open() target. Sticky so the canvas layer stays in view while the
+     host scrolls through scrollback; scale-to-fit transforms this node only. */
   .terminal-scale-layer {
-    position: absolute;
-    left: 0;
+    position: sticky;
     top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
     transform-origin: 0 0;
+  }
+
+  .terminal-scroll-spacer {
+    width: 1px;
+    flex: none;
+    pointer-events: none;
   }
 
   /* The hidden input must stay selectable or iOS refuses to paste into it.

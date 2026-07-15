@@ -122,16 +122,7 @@ async function swipeIntoScrollback(page: Page) {
 
   const host = terminalPanel(page).locator(".terminal-host");
   await host.evaluate((el) => {
-    for (let i = 0; i < 12; i += 1) {
-      el.dispatchEvent(
-        new WheelEvent("wheel", {
-          deltaY: -3,
-          deltaMode: WheelEvent.DOM_DELTA_LINE,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }
+    el.scrollTop = Math.max(0, el.scrollTop - 12 * 18);
   });
 }
 

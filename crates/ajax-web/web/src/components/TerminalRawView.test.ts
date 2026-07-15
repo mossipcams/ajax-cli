@@ -6,7 +6,6 @@ import { tick } from "svelte";
 import TerminalRawView from "./TerminalRawView.svelte";
 import terminalRawViewSource from "./TerminalRawView.svelte?raw";
 import terminalClipboardSource from "../terminalClipboard.ts?raw";
-import { fitScale, scaledLogicalRows } from "../terminalGeometry";
 
 const preloadGhosttyRuntime = vi.hoisted(() =>
   vi.fn(() => Promise.resolve({ runtime: "ghostty" })),
@@ -67,7 +66,10 @@ vi.mock("ghostty-web", () => ({
     textarea = document.createElement("textarea");
     element = document.createElement("div");
     renderer = {
-      getMetrics: () => terminalCellMetrics,
+      getMetrics: () => ({
+        width: terminalCellMetrics.width * ((this.options?.fontSize ?? 13) / 13),
+        height: terminalCellMetrics.height * ((this.options?.fontSize ?? 13) / 13),
+      }),
     };
     buffer = {
       active: {
@@ -815,7 +817,10 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*min-height:\s*0/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*min-width:\s*0/);
     expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*width:\s*100%/);
-    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*overflow:\s*hidden/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*overflow-x:\s*hidden/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*overflow-y:\s*auto/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-host\s*\{[^}]*touch-action:\s*pan-y/);
+    expect(terminalRawViewSource).toMatch(/\.terminal-scale-layer\s*\{[^}]*position:\s*sticky/);
     expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*flex:\s*none/);
     expect(terminalRawViewSource).toMatch(/\.terminal-bottom-controls\s*\{[^}]*padding-bottom:\s*max\([^;]*env\(safe-area-inset-bottom\)/);
   });
@@ -1114,9 +1119,9 @@ describe("TerminalRawView", () => {
       expect(cols).toBeGreaterThanOrEqual(80);
       expect(lastTerminal?.element.style.transform).toMatch(/scale\(/);
     });
-    const expectedRows = scaledLogicalRows(30, fitScale(390, 80, 8));
-    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: expectedRows });
-    expect(expectedRows).toBe(50);
+    // The font converges to the 390px fit (8px → 4.92px cells), leaving a
+    // 0.99 residual scale, so rows inflate by one instead of the old 50.
+    expect(resizeFramesOf(socket!)).toContainEqual({ type: "resize", cols: 80, rows: 31 });
   });
 
   it("keeps a wide fit proposal above the column floor untouched", async () => {
@@ -1722,6 +1727,101 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
+  it("skips fit side effects when fit inputs are unchanged (no-op refit)", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 48, rows: 30 };
+    const { socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle open-path refits
+    resize.mockClear();
+    scrollToBottom.mockClear();
+
+    window.dispatchEvent(new Event("resize")); // schedules refit; inputs unchanged
+    vi.advanceTimersByTime(200);
+
+    expect(resize).not.toHaveBeenCalled();
+    expect(scrollToBottom).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("still refits when the fit proposal changes", async () => {
+    vi.useFakeTimers();
+    proposedDimensions = { cols: 48, rows: 30 };
+    const { socket } = await mountOpenTerminal();
+    vi.advanceTimersByTime(400); // settle open-path refits
+    resize.mockClear();
+    scrollToBottom.mockClear();
+
+    proposedDimensions = { cols: 48, rows: 40 };
+    window.dispatchEvent(new Event("resize")); // schedules refit; rows changed
+    vi.advanceTimersByTime(200);
+
+    expect(resize).toHaveBeenCalledWith(80, 40);
+    vi.useRealTimers();
+  });
+
+  it("preserves the sub-cell drag offset across a no-op refit", async () => {
+    scrollbackLength = 40;
+    const { host, container } = await mountOpenTerminal();
+    viewportY = 3;
+    onScrollHandler?.(3);
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 54 - 10,
+    });
+    host.dispatchEvent(new Event("scroll"));
+    await settleFrames();
+    expect(scaleLayerTransform(container)).toMatch(/translateY\((9\.|10)/);
+    dispatchVisualViewport("scroll");
+    await settleFrames();
+    await settleFrames();
+    expect(scaleLayerTransform(container)).toMatch(/translateY\((9\.|10)/);
+  });
+
+  it("converges to the fit font on a narrow host (fit-font)", async () => {
+    vi.useFakeTimers();
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 48, rows: 30 };
+    await mountOpenTerminal();
+    vi.advanceTimersByTime(1000);
+
+    expect(liveOptions?.fontSize).toBe(7.75);
+    expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("sends real rows instead of scale-inflated rows on a narrow host (fit-font)", async () => {
+    vi.useFakeTimers();
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 48, rows: 30 };
+    await mountOpenTerminal();
+    vi.advanceTimersByTime(1000);
+
+    expect(resize).toHaveBeenLastCalledWith(80, 30);
+    vi.useRealTimers();
+  });
+
+  it("keeps the fit font stable across further refits (fit-font)", async () => {
+    vi.useFakeTimers();
+    terminalHostClientWidth = 384;
+    proposedDimensions = { cols: 48, rows: 30 };
+    await mountOpenTerminal();
+    vi.advanceTimersByTime(1000);
+    expect(liveOptions?.fontSize).toBe(7.75);
+
+    resize.mockClear();
+    window.dispatchEvent(new Event("resize"));
+    vi.advanceTimersByTime(300);
+
+    expect(liveOptions?.fontSize).toBe(7.75);
+    expect(resize).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("disables autocorrect/autocapitalize on the ghostty input", async () => {
     render(TerminalRawView, { props: { handle: "web/fix-login" } });
 
@@ -1777,6 +1877,19 @@ describe("TerminalRawView", () => {
     Object.defineProperty(host, "clientWidth", { value: clientWidth, configurable: true });
   }
 
+  function sizeHostForNativeScroll(
+    host: HTMLElement,
+    opts: { scrollHeight: number; clientHeight: number; scrollTop: number },
+  ) {
+    Object.defineProperty(host, "scrollHeight", { value: opts.scrollHeight, configurable: true });
+    Object.defineProperty(host, "clientHeight", { value: opts.clientHeight, configurable: true });
+    Object.defineProperty(host, "scrollTop", {
+      value: opts.scrollTop,
+      writable: true,
+      configurable: true,
+    });
+  }
+
   function appendTerminalLayer(host: HTMLElement): HTMLElement {
     const layer = document.createElement("div");
     layer.className = "ghostty-screen";
@@ -1798,60 +1911,135 @@ describe("TerminalRawView", () => {
     });
   }
 
-  it("applies a sub-cell translate on the scale layer during touch drag", async () => {
+  it("maps native scrollTop to whole-line scrollLines (native scroll)", async () => {
     scrollbackLength = 40;
-    const { host, container } = await mountOpenTerminal();
-    viewportY = 3;
-    onScrollHandler?.(3);
+    const { host } = await mountOpenTerminal();
     await waitFor(() => expect(lastTerminal).toBeDefined());
     stubCellHeight(host, 18);
     await settleFrames();
+    viewportY = 0;
 
-    host.dispatchEvent(makeTouch("touchstart", 200, 10));
-    const move = makeTouch("touchmove", 190, 10);
-    host.dispatchEvent(move);
-
-    expect(move.defaultPrevented).toBe(true);
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 36,
+    });
+    host.dispatchEvent(new Event("scroll"));
     await settleFrames();
-    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
+
+    expect(scrollLines).toHaveBeenCalledWith(-2);
+  });
+
+  it("applies the sub-line remainder as a translate (native scroll)", async () => {
+    scrollbackLength = 40;
+    const { host, container } = await mountOpenTerminal();
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
+    viewportY = 0;
+
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 9,
+    });
+    host.dispatchEvent(new Event("scroll"));
+    await settleFrames();
+    await settleFrames();
+
+    expect(scaleLayerTransform(container)).toContain("translateY(9px)");
     expect(scrollLines).not.toHaveBeenCalled();
   });
 
-  it("sub-cell drag offset applies on the next animation frame", async () => {
+  it("pins to bottom when native scroll reaches the newest line (native scroll)", async () => {
     scrollbackLength = 40;
-    const { host, container } = await mountOpenTerminal();
-    viewportY = 3;
-    onScrollHandler?.(3);
+    const { host, socket } = await mountOpenTerminal();
     await waitFor(() => expect(lastTerminal).toBeDefined());
     stubCellHeight(host, 18);
     await settleFrames();
 
-    host.dispatchEvent(makeTouch("touchstart", 200, 10));
-    host.dispatchEvent(makeTouch("touchmove", 190, 10));
-
-    expect(scaleLayerTransform(container)).not.toContain("translateY(-10px)");
+    viewportY = 3;
+    onScrollHandler?.(3);
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700,
+    });
+    host.dispatchEvent(new Event("scroll"));
     await settleFrames();
-    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
+
+    expect(scrollLines).toHaveBeenCalledWith(3);
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("fresh line") }),
+    } as MessageEvent);
+
+    await waitFor(() => {
+      expect(write).toHaveBeenCalledWith("fresh line");
+      expect(scrollToBottom).toHaveBeenCalled();
+    });
   });
 
-  it("clears the sub-cell translate on touchend before fling frames run", async () => {
+  it("grows the scroll spacer with scrollback without touching scrollTop (native scroll)", async () => {
+    writeScrollbackGrowth = 5;
     scrollbackLength = 40;
-    const { host, container } = await mountOpenTerminal();
+    const { host, container, socket } = await mountOpenTerminal();
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
     viewportY = 3;
     onScrollHandler?.(3);
+    await settleFrames();
+
+    const scrollTopAssignments: number[] = [];
+    Object.defineProperty(host, "scrollTop", {
+      get() {
+        return scrollTopAssignments.at(-1) ?? 636;
+      },
+      set(value: number) {
+        scrollTopAssignments.push(value);
+      },
+      configurable: true,
+    });
+    Object.defineProperty(host, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(host, "clientHeight", { value: 300, configurable: true });
+
+    const spacer = container.querySelector(".terminal-scroll-spacer") as HTMLElement;
+    expect(spacer).toBeTruthy();
+
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("more output") }),
+    } as MessageEvent);
+
+    await waitFor(() => expect(write).toHaveBeenCalledWith("more output"));
+    expect(spacer.style.height).toBe(`${45 * 18}px`);
+    expect(scrollTopAssignments).toHaveLength(0);
+  });
+
+  it("reconciles a pending native scroll before following output (native scroll)", async () => {
+    scrollbackLength = 40;
+    const { host, socket } = await mountOpenTerminal();
     await waitFor(() => expect(lastTerminal).toBeDefined());
     stubCellHeight(host, 18);
     await settleFrames();
 
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    host.dispatchEvent(makeTouch("touchmove", 190));
-    await settleFrames();
-    expect(scaleLayerTransform(container)).toContain("translateY(-10px)");
-    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
-    await settleFrames();
+    // A scrollTop write whose scroll event has NOT been delivered yet: the
+    // browser fires it a frame later, and an output flush can land inside
+    // that gap while the pin state is still stale-pinned. The flush must
+    // reconcile from the DOM instead of snapping the reader back down.
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 216, // 12 cells into scrollback, no scroll event yet
+    });
+    scrollToBottom.mockClear();
 
-    const transform = scaleLayerTransform(container);
-    expect(transform).not.toMatch(/translateY\([^0]/);
+    socket?.emit("message", {
+      data: JSON.stringify({ type: "output", data: btoa("streamed line") }),
+    } as MessageEvent);
+
+    await waitFor(() => expect(write).toHaveBeenCalledWith("streamed line"));
+    expect(scrollLines).toHaveBeenCalledWith(-12);
+    expect(scrollToBottom).not.toHaveBeenCalled();
   });
 
   it("clears a nonzero sub-cell offset when pinned output arrives", async () => {
@@ -1861,10 +2049,14 @@ describe("TerminalRawView", () => {
     stubCellHeight(host, 18);
     await settleFrames();
 
-    host.dispatchEvent(makeTouch("touchstart", 200, 10));
-    host.dispatchEvent(makeTouch("touchmove", 210, 10));
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 9,
+    });
+    host.dispatchEvent(new Event("scroll"));
     await settleFrames();
-    expect(scaleLayerTransform(container)).toContain("translateY(10px)");
+    expect(scaleLayerTransform(container)).toContain("translateY(9px)");
 
     socket?.emit("message", {
       data: JSON.stringify({ type: "output", data: btoa("fresh line") }),
@@ -1874,30 +2066,6 @@ describe("TerminalRawView", () => {
       expect(write).toHaveBeenCalledWith("fresh line");
       expect(scaleLayerTransform(container)).not.toMatch(/translateY\([^0]/);
     });
-  });
-
-  it("scrolls local terminal scrollback on touch drag", async () => {
-    const { host } = await mountTerminal();
-
-    // Drag the finger up ~60px. With no rendered viewport the cell height falls
-    // back to 18px, so that is 3 wheel notches toward the newest output.
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    const move = makeTouch("touchmove", 140);
-    host.dispatchEvent(move);
-
-    expect(linesScrolled()).toBe(3);
-    // A moved touch is a scroll, not a tap: default is prevented so iOS does
-    // not synthesize the click that would pop the keyboard.
-    expect(move.defaultPrevented).toBe(true);
-  });
-
-  it("scrolls back into history when the finger drags downward", async () => {
-    const { host } = await mountTerminal();
-
-    host.dispatchEvent(makeTouch("touchstart", 100));
-    host.dispatchEvent(makeTouch("touchmove", 160));
-
-    expect(linesScrolled()).toBe(-3);
   });
 
   it("pans the terminal horizontally on a sideways drag", async () => {
@@ -1937,7 +2105,7 @@ describe("TerminalRawView", () => {
     host.dispatchEvent(makeTouch("touchstart", 200));
     host.dispatchEvent(makeTouch("touchmove", 140));
 
-    expect(scrollLines).toHaveBeenCalled();
+    expect(scrollLines).not.toHaveBeenCalled();
     expect(host.scrollLeft).toBe(0);
   });
 
@@ -1981,14 +2149,14 @@ describe("TerminalRawView", () => {
   it("uses the clipped host width when Ghostty proposes the current grid", async () => {
     // Real ghostty-web measures the terminal host. After Ajax has resized that
     // host to the column floor, proposeDimensions can report the current
-    // floor instead of the phone-visible width. The cap must still use the
-    // clipped host width, where 384px holds 48 cells at the 13px font.
+    // floor instead of the phone-visible width. A narrow host still renders at
+    // the fit font that makes 80 columns fill the clipped width.
     terminalHostClientWidth = 384;
     proposedDimensions = { cols: 80, rows: 30 };
     await mountTerminal();
 
     await waitFor(() => {
-      expect(liveOptions?.fontSize).toBe(13);
+      expect(liveOptions?.fontSize).toBe(7.75);
     });
     expect(window.localStorage.getItem("ajax.terminal.fontSize")).toBeNull();
   });
@@ -2087,8 +2255,9 @@ describe("TerminalRawView", () => {
     socket?.emit("open");
 
     await waitFor(() => {
-      const expectedRows = scaledLogicalRows(30, fitScale(384, 80, 8));
-      expect(resize).toHaveBeenCalledWith(80, expectedRows);
+      // 384px converges to the 7.75px fit font: 80 cols fill the width at
+      // scale 1, so the PTY gets the real 30 rows, not scale-inflated ones.
+      expect(resize).toHaveBeenCalledWith(80, 30);
     });
   });
 
@@ -2263,16 +2432,19 @@ describe("TerminalRawView", () => {
   });
 
   it("cancels a long-press when the finger scrolls before the timeout", async () => {
-    const { host } = await mountTerminal();
+    const { host, queryByTestId } = await mountTerminal();
     stubTerminalCanvas(host);
 
     vi.useFakeTimers();
     host.dispatchEvent(makeTouch("touchstart", 200, 105));
-    host.dispatchEvent(makeTouch("touchmove", 140, 105));
+    const move = makeTouch("touchmove", 140, 105);
+    host.dispatchEvent(move);
+    expect(move.defaultPrevented).toBe(false);
     vi.advanceTimersByTime(500);
 
     expect(activeSelectionManager.selectionStart).toBeNull();
-    expect(scrollLines).toHaveBeenCalled();
+    expect(activeSelectionManager.selectionEnd).toBeNull();
+    expect(queryByTestId("terminal-copy-overlay")).not.toBeInTheDocument();
     vi.useRealTimers();
   });
 
@@ -2543,66 +2715,6 @@ describe("TerminalRawView", () => {
     vi.useRealTimers();
   });
 
-  it("keeps scrolling with momentum after a fast drag is released", async () => {
-    const { host } = await mountTerminal();
-
-    // A fast upward drag (~60px) then release: the drag itself scrolls 3
-    // notches (18px fallback cell), and the fling must keep going afterwards.
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    host.dispatchEvent(makeTouch("touchmove", 140));
-    const dragCalls = scrollLines.mock.calls.length;
-    expect(dragCalls).toBeGreaterThan(0);
-    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
-
-    await waitFor(() => {
-      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
-    });
-  });
-
-  it("cancels a running fling the moment a new touch lands", async () => {
-    const { host } = await mountTerminal();
-
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    host.dispatchEvent(makeTouch("touchmove", 140));
-    const dragCalls = scrollLines.mock.calls.length;
-    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
-    await waitFor(() => {
-      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
-    });
-
-    // Finger down again: the fling stops dead so the user regains control.
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    const atCancel = scrollLines.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(scrollLines.mock.calls.length).toBe(atCancel);
-  });
-
-  it("cancels a running fling the moment wheel input arrives", async () => {
-    const { host } = await mountTerminal();
-
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    host.dispatchEvent(makeTouch("touchmove", 140));
-    const dragCalls = scrollLines.mock.calls.length;
-    host.dispatchEvent(new Event("touchend", { bubbles: true, cancelable: true }));
-    await waitFor(() => {
-      expect(scrollLines.mock.calls.length).toBeGreaterThan(dragCalls);
-    });
-
-    // Wheel input wins over momentum: the fling stops after the wheel's own
-    // synchronous scroll and never adds another frame.
-    host.dispatchEvent(
-      new WheelEvent("wheel", {
-        deltaY: 1,
-        deltaMode: WheelEvent.DOM_DELTA_LINE,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    const atCancel = scrollLines.mock.calls.length;
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    expect(scrollLines.mock.calls.length).toBe(atCancel);
-  });
-
   it("leaves a stationary tap untouched so it can focus and open the keyboard", async () => {
     const { host } = await mountTerminal();
 
@@ -2690,84 +2802,54 @@ describe("TerminalRawView", () => {
     });
   });
 
-  it("captures touch drags from terminal child layers before they can be swallowed", async () => {
-    const { host } = await mountTerminal();
-    const layer = appendTerminalLayer(host);
-    layer.addEventListener("touchmove", (event) => event.stopPropagation());
-
-    layer.dispatchEvent(makeTouch("touchstart", 200));
-    const move = makeTouch("touchmove", 140);
-    layer.dispatchEvent(move);
-
-    expect(linesScrolled()).toBe(3);
-    expect(move.defaultPrevented).toBe(true);
-  });
-
-  it("intercepts iPhone touch drags from terminal child layers with scrollLines only", async () => {
-    vi.stubGlobal(
-      "matchMedia",
-      vi.fn((query: string) => ({
-        matches: query.includes("max-width: 767px"),
-        media: query,
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-      })),
-    );
-    const { host, socket } = await mountTerminal();
-    socket?.emit("open");
-
-    const layer = appendTerminalLayer(host);
-    layer.addEventListener("touchmove", (event) => event.stopPropagation());
-
-    layer.dispatchEvent(makeTouch("touchstart", 200));
-    const move = makeTouch("touchmove", 140);
-    layer.dispatchEvent(move);
-
-    expect(move.defaultPrevented).toBe(true);
-    expect(linesScrolled()).toBe(3);
-
-    const inputFrames = socket!.send.mock.calls
-      .map((call) => JSON.parse(call[0] as string))
-      .filter((frame) => frame.type === "input");
-    expect(inputFrames).toHaveLength(0);
-  });
-
   it("keeps terminal scrollback draggable while fullscreen is active", async () => {
+    scrollbackLength = 40;
     const { getByRole, host } = await mountOpenTerminal();
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
     scrollLines.mockClear();
 
     getByRole("button", { name: "Expand terminal" }).click();
     await tick();
 
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    const move = makeTouch("touchmove", 140);
-    host.dispatchEvent(move);
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 54,
+    });
+    host.dispatchEvent(new Event("scroll"));
+    await settleFrames();
 
     expect(document.documentElement.classList.contains("terminal-expanded")).toBe(true);
-    expect(linesScrolled()).toBe(3);
-    expect(move.defaultPrevented).toBe(true);
+    expect(scrollLines).toHaveBeenCalledWith(-3);
   });
 
   it("does not snap Ghostty back to bottom after a fullscreen scrollback drag", async () => {
-    vi.useFakeTimers();
+    scrollbackLength = 40;
     const { getByRole, host } = await mountOpenTerminal();
     await waitFor(() => expect(scrollToBottom).toHaveBeenCalled());
+    await waitFor(() => expect(lastTerminal).toBeDefined());
+    stubCellHeight(host, 18);
+    await settleFrames();
 
+    vi.useFakeTimers();
     getByRole("button", { name: "Expand terminal" }).click();
     await tick();
     scrollToBottom.mockClear();
     scrollLines.mockClear();
 
-    host.dispatchEvent(makeTouch("touchstart", 200));
-    const move = makeTouch("touchmove", 140);
-    host.dispatchEvent(move);
+    sizeHostForNativeScroll(host, {
+      scrollHeight: 1000,
+      clientHeight: 300,
+      scrollTop: 700 - 54,
+    });
+    host.dispatchEvent(new Event("scroll"));
 
-    expect(linesScrolled()).toBe(3);
     vi.advanceTimersByTime(300);
     await tick();
 
-    expect(move.defaultPrevented).toBe(true);
     expect(scrollToBottom).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
@@ -2819,22 +2901,5 @@ describe("TerminalRawView", () => {
     expect(terminalRawViewSource).toMatch(
       /\.terminal-keys::-webkit-scrollbar\s*\{[^}]*display:\s*none/,
     );
-  });
-
-  it("intercepts wheel scroll from terminal child layers into local scrollback", async () => {
-    const { host } = await mountTerminal();
-    const layer = appendTerminalLayer(host);
-    layer.addEventListener("wheel", (event) => event.stopPropagation());
-
-    const wheel = new WheelEvent("wheel", {
-      deltaY: 3,
-      deltaMode: WheelEvent.DOM_DELTA_LINE,
-      bubbles: true,
-      cancelable: true,
-    });
-    layer.dispatchEvent(wheel);
-
-    expect(linesScrolled()).toBe(3);
-    expect(wheel.defaultPrevented).toBe(true);
   });
 });

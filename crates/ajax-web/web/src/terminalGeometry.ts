@@ -193,6 +193,34 @@ export function fitCapFontSize(
 }
 
 /**
+ * The (possibly fractional) font size at which `cols` columns exactly fill
+ * `hostWidthPx`. Cell width scales linearly with font size, so
+ * `fitFont = currentFontSize * hostWidthPx / (cols * cellWidthPx)`.
+ * Quantized to 0.25px steps to keep refit convergence stable. May sit below
+ * MIN_FONT_SIZE: it is a derived render size (visually identical to the old
+ * CSS downscale), not an operator pinch choice. Invalid measurements return
+ * undefined so callers keep the current font.
+ */
+export function fitFontSize(
+  hostWidthPx: number,
+  cols: number,
+  cellWidthPx: number,
+  currentFontSize: number,
+): number | undefined {
+  if (
+    !Number.isFinite(hostWidthPx) || hostWidthPx <= 0 ||
+    !Number.isFinite(cols) || cols <= 0 ||
+    !Number.isFinite(cellWidthPx) || cellWidthPx <= 0 ||
+    !Number.isFinite(currentFontSize) || currentFontSize <= 0
+  ) {
+    return undefined;
+  }
+  const font = (currentFontSize * hostWidthPx) / (cols * cellWidthPx);
+  if (!Number.isFinite(font) || font <= 0) return undefined;
+  return Math.round(font * 4) / 4;
+}
+
+/**
  * True once a two-finger gesture has moved far enough to count as a deliberate
  * pinch-zoom. A small incidental change in finger distance (a graze, a resting
  * second finger) stays below the deadzone so it never rewraps the terminal.

@@ -1,22 +1,15 @@
 /**
- * Touch/wheel gesture state machine for the raw terminal host.
+ * Touch gesture state machine for the raw terminal host.
  *
- * Wheel/touch scrolling always uses Ajax-owned terminal scrollback: every
- * gesture is captured before renderer layers can handle it and translated into
- * whole-line scroll steps, horizontal pan of the 80-column canvas, a pinch
- * font-size change, or a long-press copy selection — never forwarded into
- * tmux or the foreground app.
- * The pure px→line and momentum math lives in terminalTouchScroll/
- * terminalGeometry; this module owns the event wiring and gesture state.
+ * Vertical scrolling is native (the host is overflow-y:auto with a scroll
+ * spacer); this module owns horizontal pan of the 80-column canvas, pinch
+ * font-size change, long-press copy selection, and early touch focus — never
+ * forwarded into tmux or the foreground app.
  */
 
 import { clampPan, pinchFontSize, pinchActivated, MIN_FONT_SIZE, MAX_FONT_SIZE } from "./terminalGeometry";
 
 export interface TerminalGestureHost {
-  /** Scroll the local scrollback; positive = toward newest output. */
-  scrollLines(lines: number): void;
-  /** Current cell height in px for px→line conversion. */
-  cellHeightPx(): number;
   /** Current terminal font size (pinch baseline). */
   fontSize(): number;
   /** Largest font a pinch may reach: the size at which the column floor
@@ -38,12 +31,6 @@ export interface TerminalGestureHost {
   /** A single finger just touched down. Hosts use this to focus the hidden
    * textarea early so iOS can attach native Paste before long-press fires. */
   touchBegan?(): void;
-  /** Visual sub-cell scroll offset in px; never reaches the PTY or buffer. */
-  setScrollOffsetPx?(px: number): void;
-  /** True when the viewport is at the oldest scrollback line. */
-  atTop?(): boolean;
-  /** True when the viewport is at the newest output (bottom). */
-  atBottom?(): boolean;
 }
 
 const TOUCH_SCROLL_THRESHOLD_PX = 6;
@@ -54,10 +41,7 @@ const PINCH_ACTIVATION_PX = 12;
 // synthesized selection feel native instead of laggy or hair-triggered.
 const LONG_PRESS_MS = 500;
 
-/**
- * Attach the gesture handlers to `target` (the overflow-hidden terminal
- * host). Returns a detach function that also cancels any running fling.
- */
+/** Attach gesture handlers to `target` (the terminal host). */
 export function attachTerminalGestures(
   target: HTMLElement,
   host: TerminalGestureHost,
@@ -93,40 +77,9 @@ export function attachTerminalGestures(
   const touchDistance = (touches: TouchList): number =>
     Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
 
-  // Momentum: a fast release keeps scrolling with decaying inertia (the
-  // synthetic scroll otherwise stops dead the instant the finger lifts).
-  // The frame sequence is precomputed by flingFrames; any new touch or
-  // wheel cancels it so the user always wins.
-  let flingHandle = 0;
-  let flingVelocity = 0; // px per ms, positive = toward newest output
-  let lastMoveTime = 0;
   let touchScrolled = false;
 
-  const cancelFling = () => {
-    if (flingHandle) {
-      cancelAnimationFrame(flingHandle);
-      flingHandle = 0;
-    }
-  };
-
-  const startFling = (frames: number[]) => {
-    cancelFling();
-    let index = 0;
-    const step = () => {
-      if (index >= frames.length) {
-        flingHandle = 0;
-        return;
-      }
-      const lines = frames[index];
-      index += 1;
-      if (lines !== 0) host.scrollLines(lines);
-      flingHandle = requestAnimationFrame(step);
-    };
-    flingHandle = requestAnimationFrame(step);
-  };
-
   const onTouchStart = (event: TouchEvent) => {
-    cancelFling();
     cancelLongPress();
     if (event.touches.length === 2) {
       // Own the pinch at touchdown — iOS latches page zoom at the second
@@ -156,8 +109,6 @@ export function attachTerminalGestures(
     touchAccumXPx = 0;
     touchLastY = event.touches[0].clientY;
     touchLastX = event.touches[0].clientX;
-    flingVelocity = 0;
-    lastMoveTime = performance.now();
     if (host.beginSelection) {
       longPressTimer = setTimeout(() => {
         longPressTimer = undefined;
@@ -214,13 +165,6 @@ export function attachTerminalGestures(
     touchLastY = touch.clientY;
     touchLastX = touch.clientX;
 
-    // Release-velocity estimate for the momentum fling; low-passed so one
-    // jittery event can't spike it.
-    const now = performance.now();
-    const dtMs = Math.max(1, now - lastMoveTime);
-    lastMoveTime = now;
-    flingVelocity = 0.8 * (dy / dtMs) + 0.2 * flingVelocity;
-
     if (
       Math.abs(touchAccumPx) < TOUCH_SCROLL_THRESHOLD_PX &&
       Math.abs(touchAccumXPx) < TOUCH_SCROLL_THRESHOLD_PX
@@ -232,17 +176,11 @@ export function attachTerminalGestures(
     // can no longer begin.
     cancelLongPress();
 
-    // Past the threshold this is a scroll, not a tap, so own the gesture NOW —
-    // before a full cell of movement accumulates. iOS Safari latches native
-    // momentum scrolling in the first pixels of a drag and can't be cancelled
-    // later; preventing default here (rather than only once a whole notch
-    // lands) stops that native scroll from racing our scrollLines() and stops
-    // iOS from synthesizing the click that would pop the keyboard.
-    if (event.cancelable) event.preventDefault();
+    const horizontalDominant = Math.abs(touchAccumXPx) > Math.abs(touchAccumPx);
+    // Own horizontal pans only; vertical drags fall through to native scroll.
+    if (horizontalDominant && event.cancelable) event.preventDefault();
 
-    // Horizontal component pans the 80-col canvas within the host; the host
-    // is overflow:hidden so only this handler ever moves it.
-    if (touchAccumXPx !== 0) {
+    if (horizontalDominant && touchAccumXPx !== 0) {
       target.scrollLeft = clampPan(
         target.scrollLeft + touchAccumXPx,
         target.scrollWidth,
@@ -250,22 +188,9 @@ export function attachTerminalGestures(
       );
       touchAccumXPx = 0;
     }
-
-    const { notches, remainderPx } = wheelNotchesFromDrag(touchAccumPx, host.cellHeightPx());
-    touchAccumPx = remainderPx;
-    host.setScrollOffsetPx?.(
-      dragScrollOffsetPx(
-        touchAccumPx,
-        host.atTop?.() ?? false,
-        host.atBottom?.() ?? false,
-      ),
-    );
-    if (notches === 0) return;
-    host.scrollLines(notches);
   };
 
   const resetTouchState = () => {
-    flingVelocity = 0;
     touchActive = false;
     touchAccumPx = 0;
     touchAccumXPx = 0;
@@ -285,13 +210,6 @@ export function attachTerminalGestures(
       return;
     }
     const pinchWasActive = pinchStartDistance > 0;
-    // Only a gesture that actually scrolled may fling; a tap with a few
-    // pixels of jitter must stay a tap.
-    host.setScrollOffsetPx?.(0);
-    if (touchActive && touchScrolled) {
-      const frames = flingFrames(flingVelocity, host.cellHeightPx());
-      if (frames.length) startFling(frames);
-    }
     if (pinchWasActive) host.pinchEnded?.();
     resetTouchState();
   };
@@ -307,45 +225,25 @@ export function attachTerminalGestures(
     }
     const pinchWasActive = pinchStartDistance > 0;
     if (pinchWasActive) host.pinchEnded?.();
-    host.setScrollOffsetPx?.(0);
     resetTouchState();
   };
 
-  const onWheel = (event: WheelEvent) => {
-    cancelFling();
-    cancelLongPress();
-    const lineDelta =
-      event.deltaMode === WheelEvent.DOM_DELTA_PIXEL
-        ? Math.trunc(event.deltaY / host.cellHeightPx())
-        : Math.trunc(event.deltaY);
-    if (lineDelta === 0) return;
-
-    if (event.cancelable) event.preventDefault();
-    host.scrollLines(lineDelta);
-  };
-
-  // Capture phase so renderer layers can never swallow the gesture;
-  // touchmove/wheel are non-passive because owning the gesture requires
-  // preventDefault (see the iOS notes above).
+  // Capture phase so renderer layers can never swallow horizontal pan or pinch.
   const touchStartOptions: AddEventListenerOptions = { passive: false, capture: true };
   const touchMoveOptions: AddEventListenerOptions = { passive: false, capture: true };
   const scrollEndOptions: AddEventListenerOptions = { passive: true, capture: true };
-  const wheelOptions: AddEventListenerOptions = { passive: false, capture: true };
 
   target.addEventListener("touchstart", onTouchStart, touchStartOptions);
   target.addEventListener("touchmove", onTouchMove, touchMoveOptions);
   target.addEventListener("touchend", onTouchEnd, scrollEndOptions);
   target.addEventListener("touchcancel", onTouchCancel, scrollEndOptions);
-  target.addEventListener("wheel", onWheel, wheelOptions);
 
   return () => {
-    cancelFling();
     cancelLongPress();
     target.removeEventListener("touchstart", onTouchStart, touchStartOptions);
     target.removeEventListener("touchmove", onTouchMove, touchMoveOptions);
     target.removeEventListener("touchend", onTouchEnd, scrollEndOptions);
     target.removeEventListener("touchcancel", onTouchCancel, scrollEndOptions);
-    target.removeEventListener("wheel", onWheel, wheelOptions);
   };
 }
 
@@ -409,109 +307,4 @@ export function orderedSelection(
 ): { start: CellPoint; end: CellPoint } {
   const backward = a.row > b.row || (a.row === b.row && a.col > b.col);
   return backward ? { start: b, end: a } : { start: a, end: b };
-}
-
-
-// --- touch scroll (folded from terminalTouchScroll.ts) ---
-/**
- * Touch-drag → scroll-line math for the terminal's synthetic scrolling.
- *
- * Browser terminal renderers expose their own layered DOM/canvas surfaces, so
- * native touch scrolling is not reliable. terminalGestures owns scrolling instead,
- * translating drags into local `term.scrollLines()` steps; this module holds
- * the pure math: accumulated drag pixels become whole line "notches" while
- * the leftover sub-cell pixels carry forward so slow drags scroll smoothly.
- */
-
-export interface WheelNotches {
-  /** Whole line steps to scroll; positive scrolls toward newest output. */
-  notches: number;
-  /** Leftover sub-cell pixels to carry into the next move. */
-  remainderPx: number;
-}
-
-/**
- * Map a sub-cell drag remainder to a visual translateY offset. Positive
- * remainder (finger moved up) shifts content up; clamped to 0 at edges where
- * the offset would expose empty space beyond scrollback.
- */
-export function dragScrollOffsetPx(
-  remainderPx: number,
-  atTop: boolean,
-  atBottom: boolean,
-): number {
-  if (!Number.isFinite(remainderPx)) return 0;
-  const offset = -remainderPx;
-  if (atBottom && offset < 0) return 0;
-  if (atTop && offset > 0) return 0;
-  return offset;
-}
-
-/**
- * Split `accumulatedPx` of vertical drag into whole line notches of
- * `cellPx` each, returning the sub-cell remainder to accumulate next time.
- * `maxNotches` bounds a single move's local scrollback jump. (Scroll never
- * reaches the PTY — gestures drive Ajax-owned scrollback only.)
- */
-export function wheelNotchesFromDrag(
-  accumulatedPx: number,
-  cellPx: number,
-  maxNotches = 24,
-): WheelNotches {
-  if (!Number.isFinite(cellPx) || cellPx <= 0) {
-    return { notches: 0, remainderPx: accumulatedPx };
-  }
-  const whole = Math.trunc(accumulatedPx / cellPx);
-  const remainderPx = accumulatedPx - whole * cellPx;
-  const notches = Math.max(-maxNotches, Math.min(maxNotches, whole));
-  return { notches, remainderPx };
-}
-
-/**
- * Convert a touch-release velocity into a momentum "fling": a finite,
- * pre-computed sequence of per-animation-frame line steps that decays to a
- * stop. Native momentum scrolling is disabled on the terminal (it desyncs
- * from `scrollLines`), so this provides the inertia a drag-only scroll lacks.
- *
- * `velocityPxPerMs` is positive when the finger moved up (scroll toward the
- * newest output). Sub-threshold or non-finite velocities yield no frames, and
- * the total distance is capped so one hard swipe cannot flood the terminal.
- */
-export function flingFrames(
-  velocityPxPerMs: number,
-  cellPx: number,
-  decayPerFrame = 0.96,
-  minVelocityPxPerMs = 0.03,
-  maxTotalLines = 200,
-): number[] {
-  if (
-    !Number.isFinite(velocityPxPerMs) ||
-    !Number.isFinite(cellPx) ||
-    cellPx <= 0 ||
-    Math.abs(velocityPxPerMs) < minVelocityPxPerMs
-  ) {
-    return [];
-  }
-
-  const FRAME_MS = 16;
-  const frames: number[] = [];
-  let velocity = velocityPxPerMs;
-  let carryPx = 0;
-  let total = 0;
-
-  while (Math.abs(velocity) >= minVelocityPxPerMs && total < maxTotalLines) {
-    carryPx += velocity * FRAME_MS;
-    let lines = Math.trunc(carryPx / cellPx);
-    if (lines !== 0) {
-      // Never exceed the cap even mid-frame.
-      const room = maxTotalLines - total;
-      lines = Math.max(-room, Math.min(room, lines));
-      carryPx -= lines * cellPx;
-      total += Math.abs(lines);
-    }
-    frames.push(lines);
-    velocity *= decayPerFrame;
-  }
-
-  return frames;
 }
