@@ -4,32 +4,10 @@ import { tick } from "svelte";
 import TerminalSurfaceSelector from "./TerminalSurfaceSelector.svelte";
 import * as setting from "../terminalSurfaceSetting";
 
-const termDestroy = vi.fn();
-const wasmBridgeLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({})));
 const ghosttyWebLoad = vi.hoisted(() => vi.fn(() => Promise.resolve({ runtime: "ghostty" })));
-
-vi.mock("@wterm/core", () => ({
-  WasmBridge: {
-    load: wasmBridgeLoad,
-  },
-}));
-
-vi.mock("@wterm/dom", () => ({
-  WTerm: class MockWTerm {
-    cols = 80;
-    rows = 24;
-    constructor(
-      _el: HTMLElement,
-      options?: { onData?: (data: string) => void; onResize?: (cols: number, rows: number) => void },
-    ) {
-      options?.onResize?.(80, 24);
-    }
-    init = vi.fn(() => Promise.resolve(this));
-    write = vi.fn();
-    focus = vi.fn();
-    destroy = termDestroy;
-  },
-}));
+const termOpen = vi.hoisted(() => vi.fn());
+const termDispose = vi.hoisted(() => vi.fn());
+let xtermCtorShouldThrow = false;
 
 vi.mock("ghostty-web", () => ({
   Ghostty: { load: ghosttyWebLoad },
@@ -68,6 +46,30 @@ vi.mock("ghostty-web", () => ({
   },
 }));
 
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class MockXtermTerminal {
+    cols = 80;
+    rows = 24;
+    constructor() {
+      if (xtermCtorShouldThrow) {
+        throw new Error("xterm init failed");
+      }
+    }
+    loadAddon = vi.fn();
+    open = termOpen;
+    write = vi.fn();
+    dispose = termDispose;
+    onData = vi.fn(() => ({ dispose: vi.fn() }));
+  },
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class MockXtermFitAddon {
+    fit = vi.fn();
+    dispose = vi.fn();
+  },
+}));
+
 vi.mock("../terminalPreload", () => ({
   preloadGhosttyRuntime: vi.fn(() => Promise.resolve({ runtime: "ghostty" })),
 }));
@@ -91,12 +93,12 @@ beforeEach(() => {
   localStorage.clear();
   v2Enabled = false;
   settingListener = undefined;
-  termDestroy.mockClear();
+  xtermCtorShouldThrow = false;
   connectionDispose.mockClear();
-  wasmBridgeLoad.mockReset();
-  wasmBridgeLoad.mockResolvedValue({});
   ghosttyWebLoad.mockReset();
   ghosttyWebLoad.mockResolvedValue({ runtime: "ghostty" });
+  termOpen.mockClear();
+  termDispose.mockClear();
 
   vi.spyOn(setting, "isTerminalSurfaceV2Enabled").mockImplementation(() => v2Enabled);
   vi.spyOn(setting, "subscribeTerminalSurfaceV2").mockImplementation((listener) => {
@@ -139,16 +141,21 @@ describe("TerminalSurfaceSelector", () => {
     const { container } = render(TerminalSurfaceSelector, { props: { handle: "web/fix" } });
     await waitFor(() => {
       expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeTruthy();
-      expect(container.querySelector('[data-terminal-engine="wterm"]')).toBeNull();
+      expect(container.querySelector("[data-terminal-engine]")?.getAttribute("data-terminal-engine")).toBe(
+        "ghostty",
+      );
     });
   });
 
-  it("renders wterm only when enabled", async () => {
+  it("mounts xterm when Surface V2 is enabled", async () => {
     v2Enabled = true;
-    const { container } = render(TerminalSurfaceSelector, { props: { handle: "web/fix" } });
+    const { container } = render(TerminalSurfaceSelector, {
+      props: { handle: "web/fix" },
+    });
     await waitFor(() => {
-      expect(container.querySelector('[data-terminal-engine="wterm"]')).toBeTruthy();
+      expect(container.querySelector('[data-terminal-engine="xterm"]')).toBeTruthy();
       expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeNull();
+      expect(ghosttyWebLoad).not.toHaveBeenCalled();
     });
   });
 
@@ -161,9 +168,10 @@ describe("TerminalSurfaceSelector", () => {
     v2Enabled = true;
     settingListener?.(true);
     await tick();
-    await waitFor(() =>
-      expect(connectionDispose.mock.calls.length).toBeGreaterThan(disposesBefore),
-    );
+    await waitFor(() => {
+      expect(connectionDispose.mock.calls.length).toBeGreaterThan(disposesBefore);
+      expect(document.querySelector('[data-terminal-engine="xterm"]')).toBeTruthy();
+    });
     unmount();
   });
 
@@ -173,21 +181,38 @@ describe("TerminalSurfaceSelector", () => {
     await waitFor(() => {
       const engines = container.querySelectorAll("[data-terminal-engine]");
       expect(engines.length).toBe(1);
+      expect(engines[0]?.getAttribute("data-terminal-engine")).toBe("xterm");
     });
   });
 
-  it("keeps Ghostty disabled and shows an error when wterm init fails", async () => {
-    wasmBridgeLoad.mockRejectedValueOnce(new Error("boom"));
+  it("shows error banner on xterm init failure without loading Ghostty", async () => {
+    xtermCtorShouldThrow = true;
     v2Enabled = true;
-    const { getByTestId, container } = render(TerminalSurfaceSelector, {
+    const { getByTestId } = render(TerminalSurfaceSelector, {
       props: { handle: "web/fix" },
     });
     await waitFor(() => {
       const errorEl = getByTestId("terminal-surface-v2-error");
-      expect(errorEl.textContent).toContain("boom");
-      expect(errorEl.classList.contains("surface-fallback-error")).toBe(true);
-      expect(errorEl.classList.contains("surface-fallback-error--full-viewport")).toBe(false);
-      expect(container.querySelector('[data-terminal-engine="ghostty"]')).toBeNull();
+      expect(errorEl.textContent).toMatch(/xterm init failed/i);
+      expect(document.querySelector('[data-terminal-engine="xterm"]')).toBeNull();
+      expect(ghosttyWebLoad).not.toHaveBeenCalled();
+    });
+  });
+
+  it("retry remounts xterm after init failure", async () => {
+    xtermCtorShouldThrow = true;
+    v2Enabled = true;
+    const { getByTestId, getByRole } = render(TerminalSurfaceSelector, {
+      props: { handle: "web/fix" },
+    });
+    await waitFor(() => {
+      expect(getByTestId("terminal-surface-v2-error").textContent).toMatch(/xterm init failed/i);
+    });
+    xtermCtorShouldThrow = false;
+    await getByRole("button", { name: "Retry" }).click();
+    await waitFor(() => {
+      expect(document.querySelector('[data-terminal-engine="xterm"]')).toBeTruthy();
+      expect(document.querySelector('[data-terminal-engine="ghostty"]')).toBeNull();
       expect(ghosttyWebLoad).not.toHaveBeenCalled();
     });
   });

@@ -317,7 +317,6 @@ where
         .route("/app.js", get(axum_app_js))
         .route("/terminal.js", get(axum_terminal_js))
         .route("/ghostty-vt.wasm", get(axum_ghostty_wasm))
-        .route("/wterm-ghostty-vt.wasm", get(axum_wterm_ghostty_wasm))
         .route("/api/health", get(axum_health))
         .route("/api/session", post(axum_browser_session::<C, B>))
         .route("/api/version", get(axum_version))
@@ -544,10 +543,6 @@ async fn axum_terminal_js() -> AxumResponse {
 
 async fn axum_ghostty_wasm() -> AxumResponse {
     static_asset_response("/ghostty-vt.wasm")
-}
-
-async fn axum_wterm_ghostty_wasm() -> AxumResponse {
-    static_asset_response("/wterm-ghostty-vt.wasm")
 }
 
 async fn axum_health() -> AxumResponse {
@@ -1409,7 +1404,6 @@ mod tests {
             ("GET", "/app.js"),
             ("GET", "/terminal.js"),
             ("GET", "/ghostty-vt.wasm"),
-            ("GET", "/wterm-ghostty-vt.wasm"),
             ("GET", "/api/health"),
             ("POST", "/api/session"),
         ] {
@@ -1476,17 +1470,6 @@ mod tests {
             .await
             .unwrap();
         assert!(!ghostty_wasm_body.is_empty());
-
-        let wterm_wasm = get_public(&app, "/wterm-ghostty-vt.wasm").await;
-        assert_eq!(wterm_wasm.status(), StatusCode::OK);
-        assert_eq!(wterm_wasm.headers()["content-type"], "application/wasm");
-        let wterm_wasm_body = to_bytes(wterm_wasm.into_body(), usize::MAX).await.unwrap();
-        assert!(!wterm_wasm_body.is_empty());
-        assert_ne!(
-            ghostty_wasm_body.as_ref(),
-            wterm_wasm_body.as_ref(),
-            "wterm and ghostty-web WASM must not share one binary"
-        );
 
         let terminal_js = get_public(&app, "/terminal.js").await;
         assert_eq!(terminal_js.status(), StatusCode::OK);

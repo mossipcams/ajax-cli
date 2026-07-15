@@ -110,7 +110,7 @@
       Terminal Surface V2
     </label>
     <p class="settings-note">
-      Use the experimental DOM-rendered terminal optimized for mobile browsers.
+      Experimental xterm.js terminal for mobile bake-off.
     </p>
 
     <h4 class="settings-subheading">Debug info</h4>

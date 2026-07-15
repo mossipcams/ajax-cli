@@ -26,11 +26,21 @@
 
   function handleInitFailure(message: string) {
     initError = message;
+    try {
+      sessionStorage.setItem("ajax.terminal.surfaceV2.lastError", message);
+    } catch {
+      // Best-effort for Dev settings debug panel.
+    }
   }
 
-  function retryWterm() {
+  function retrySurfaceV2() {
     initError = "";
     remountToken += 1;
+    try {
+      sessionStorage.removeItem("ajax.terminal.surfaceV2.lastError");
+    } catch {
+      // Best-effort.
+    }
   }
 </script>
 
@@ -38,13 +48,13 @@
 {#if v2Enabled}
   {#if initError}
     <p class="surface-fallback-error" data-testid="terminal-surface-v2-error">
-      Terminal Surface V2 failed: {initError}
-      <button type="button" class="surface-retry" onclick={retryWterm}>Retry</button>
+      Terminal Surface V2 unavailable: {initError}
+      <button type="button" class="surface-retry" onclick={retrySurfaceV2}>Retry</button>
     </p>
   {:else}
     {#key `${handle}:${remountToken}`}
-      {#await import("./WtermTerminalView.svelte") then { default: WtermTerminalView }}
-        <WtermTerminalView {handle} onInitFailure={handleInitFailure} />
+      {#await import("./XtermTerminalView.svelte") then { default: XtermTerminalView }}
+        <XtermTerminalView {handle} onInitFailure={handleInitFailure} />
       {/await}
     {/key}
   {/if}
@@ -58,9 +68,9 @@
 </div>
 
 <style>
-  /* Layout-transparent: Ghostty and wterm roots must flex directly under
-     .terminal-primary. A real flex wrapper here shrinks the Ghostty host so
-     the bottom input textarea covers swipe targets and e2e dragTo hangs. */
+  /* Layout-transparent: Ghostty roots must flex directly under .terminal-primary.
+     A real flex wrapper here shrinks the Ghostty host so the bottom input
+     textarea covers swipe targets and e2e dragTo hangs. */
   .surface-selector {
     display: contents;
   }

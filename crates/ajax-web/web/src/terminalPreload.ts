@@ -14,14 +14,14 @@ export function preloadTerminalView(): Promise<unknown> {
   return import("./components/TerminalRawView.svelte");
 }
 
-export function preloadWtermTerminalView(): Promise<unknown> {
-  return import("./components/WtermTerminalView.svelte");
+export function preloadXtermTerminalView(): Promise<unknown> {
+  return import("./components/XtermTerminalView.svelte");
 }
 
 /** Warm the active surface only — never Ghostty while Surface V2 is enabled. */
 export function warmTerminalAssets(): Promise<unknown[]> {
   if (isTerminalSurfaceV2Enabled()) {
-    return Promise.all([preloadWtermTerminalView()]);
+    return Promise.all([preloadXtermTerminalView()]);
   }
   return Promise.all([preloadGhosttyRuntime(), preloadTerminalView()]);
 }

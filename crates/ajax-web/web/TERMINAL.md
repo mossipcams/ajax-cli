@@ -17,44 +17,34 @@
 | Scroll-follow state + resize validity | terminalOutputPolicy.ts |
 | WS connect / backoff / status | terminalConnection.ts |
 | Ghostty mount + chrome UI | TerminalRawView.svelte |
-| Experimental wterm surface + selector + setting | WtermTerminalView.svelte, TerminalSurfaceSelector.svelte, terminalSurfaceSetting.ts |
+| Experimental xterm mount + chrome UI | XtermTerminalView.svelte |
+| Surface V2 selector + setting | TerminalSurfaceSelector.svelte, terminalSurfaceSetting.ts |
 | Zero-lag input echo + overlay paint | terminalZeroLag.ts |
 | Route scroll / chrome hide | styles.css + App layout |
 
 ## Experimental Terminal Surface V2
 
-- Packages pinned from npm: `@wterm/core@0.3.0`, `@wterm/dom@0.3.0`, `@wterm/ghostty@0.3.0`
 - Settings toggle: `ajax.terminal.surfaceV2` (default off)
-- Uses Ajax `connectTaskTerminal`; does **not** use wterm `WebSocketTransport`
+- `TerminalSurfaceSelector.svelte` chooses the active surface
 - Ghostty remains default when the experiment is off
-- While Surface V2 is enabled, Ghostty is not mounted or preloaded (failure shows
-  an error + Retry; it does not fall back to Ghostty until the flag is turned off)
-- Terminal core: Surface V2 imports built-in `WasmBridge` from `@wterm/core` and
-  passes it explicitly to `WTerm`; it does **not** load or preload `@wterm/ghostty`
-- Logical grid is fixed at **80x24** with `autoResize: false` so CSS viewport,
-  expand, or keyboard flex does not rebuild the VT grid or corrupt scrollback
-- WASM: normal ghostty-web stays at `/ghostty-vt.wasm` for the default path;
-  `@wterm/ghostty` and `/wterm-ghostty-vt.wasm` remain installed and served
-  (same upstream filename, incompatible exports) but are inactive in Surface V2
-- Intentionally smaller than Ghostty: no zero-lag overlay, no selection-manager casts, native wterm scroll/selection
-- Known gaps (document-only, not blocking the spike): readonly copy fallback when
-  clipboard write fails; physical iPhone bake-off still required (see checklist below)
+- While Surface V2 is enabled, Ghostty is not mounted or preloaded; the selector
+  mounts `XtermTerminalView.svelte` instead
+- Packages pinned: `@xterm/xterm@6.0.0`, `@xterm/addon-fit@0.11.0`
+- On xterm init failure: show error + Retry; do not auto-fallback to Ghostty
+  while the flag stays on
 
-## iPhone Safari bake-off checklist (wterm vs Ghostty)
+### iPhone bake-off checklist (Surface V2)
 
-Run on a physical iPhone (Safari / PWA) with Terminal Surface V2 on. Mark
-Pass/Fail. Do not replace Ghostty based on this spike alone.
-
-1. Open terminal
-2. Type and hold backspace
-3. Open and close keyboard repeatedly
-4. Paste text
-5. Select and copy output
-6. Scroll upward during active output
-7. Rotate the phone
-8. Run Codex or Claude inside tmux
-9. Enter and exit an alternate-screen program
-10. Toggle back to Ghostty
+- [ ] Open task terminal with Surface V2 on
+- [ ] Backspace hold
+- [ ] Keyboard open / close
+- [ ] Paste
+- [ ] Select + copy
+- [ ] Scroll during output
+- [ ] Rotate device
+- [ ] Codex / Claude in tmux
+- [ ] Alt-screen apps (e.g. less, vim)
+- [ ] Toggle back to Ghostty (Surface V2 off)
 
 ## Anti-patterns
 - Do not add new one-shot `*FlushPending` (or equivalent) booleans in

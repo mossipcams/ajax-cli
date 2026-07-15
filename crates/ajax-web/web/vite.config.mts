@@ -9,12 +9,6 @@ const root = fileURLToPath(new URL(".", import.meta.url));
 const ghosttyWasm = fileURLToPath(
   new URL("../../../node_modules/ghostty-web/ghostty-vt.wasm", import.meta.url),
 );
-const wtermGhosttyWasm = fileURLToPath(
-  new URL(
-    "../../../node_modules/@wterm/ghostty/wasm/ghostty-vt.wasm",
-    import.meta.url,
-  ),
-);
 
 // The Svelte entry lives in `app.html` so Vite uses a predictable output name.
 // We rename the built `dist/app.html` to `dist/index.html` so the Rust embed
@@ -37,8 +31,6 @@ function copyGhosttyWasm() {
   return {
     name: "ajax-copy-ghostty-wasm",
     configureServer(server: ViteDevServer) {
-      // ghostty-web and @wterm/ghostty both ship ghostty-vt.wasm with incompatible
-      // exports. Serve them under distinct public paths.
       server.middlewares.use("/ghostty-vt.wasm", (_req, res) => {
         if (!existsSync(ghosttyWasm)) {
           res.statusCode = 404;
@@ -48,15 +40,6 @@ function copyGhosttyWasm() {
         res.setHeader("Content-Type", "application/wasm");
         createReadStream(ghosttyWasm).pipe(res);
       });
-      server.middlewares.use("/wterm-ghostty-vt.wasm", (_req, res) => {
-        if (!existsSync(wtermGhosttyWasm)) {
-          res.statusCode = 404;
-          res.end("wterm-ghostty-vt.wasm not found");
-          return;
-        }
-        res.setHeader("Content-Type", "application/wasm");
-        createReadStream(wtermGhosttyWasm).pipe(res);
-      });
     },
     closeBundle() {
       if (!existsSync(ghosttyWasm)) {
@@ -64,13 +47,7 @@ function copyGhosttyWasm() {
           `ajax-copy-ghostty-wasm: expected ${ghosttyWasm} but it was not found`,
         );
       }
-      if (!existsSync(wtermGhosttyWasm)) {
-        throw new Error(
-          `ajax-copy-ghostty-wasm: expected ${wtermGhosttyWasm} but it was not found`,
-        );
-      }
       copyFileSync(ghosttyWasm, join(root, "dist", "ghostty-vt.wasm"));
-      copyFileSync(wtermGhosttyWasm, join(root, "dist", "wterm-ghostty-vt.wasm"));
     },
   };
 }
@@ -78,7 +55,7 @@ function copyGhosttyWasm() {
 // The Rust asset adapter embeds and fingerprints the built files by exact
 // name, so the build must emit deterministic, non-hashed output:
 //   dist/index.html, dist/app.js, dist/terminal.js, dist/app.css,
-//   dist/ghostty-vt.wasm, dist/wterm-ghostty-vt.wasm
+//   dist/ghostty-vt.wasm
 // Do not enable content hashing here without updating adapters/assets.rs.
 export default defineConfig({
   root,
@@ -105,9 +82,9 @@ export default defineConfig({
           if (id.includes("/web/src/terminalSurfaceSetting")) return;
           if (
             id.includes("/node_modules/ghostty-web/") ||
-            id.includes("/node_modules/@wterm/") ||
+            id.includes("/node_modules/@xterm/") ||
             id.includes("/components/TerminalRawView.svelte") ||
-            id.includes("/components/WtermTerminalView.svelte") ||
+            id.includes("/components/XtermTerminalView.svelte") ||
             id.includes("/web/src/terminal")
           ) return "terminal";
         },
