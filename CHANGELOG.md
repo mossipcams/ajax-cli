@@ -2,6 +2,18 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.3...ajax-cli-v0.46.0) (2026-07-15)
+
+
+### Features
+
+* **web:** implement xterm task terminal ([#512](https://github.com/mossipcams/ajax-cli/issues/512)) ([24b0ba1](https://github.com/mossipcams/ajax-cli/commit/24b0ba1f4594bd861b137a4cf1b65cfa4e0c6a9e))
+
+
+### Code Refactoring
+
+* **web:** capture terminal behavior and remove legacy surfaces ([#510](https://github.com/mossipcams/ajax-cli/issues/510)) ([6bbef9c](https://github.com/mossipcams/ajax-cli/commit/6bbef9c10715910a0c5aa7f8ab1b4dd806057632))
+
 ## [0.45.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.2...ajax-cli-v0.45.3) (2026-07-15)
 
 
