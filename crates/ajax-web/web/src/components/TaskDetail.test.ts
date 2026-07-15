@@ -201,4 +201,19 @@ describe("TaskDetail projection surface", () => {
     expect(body).toMatch(/text-overflow:\s*ellipsis/);
     expect(body).not.toMatch(/overflow-wrap:\s*anywhere/);
   });
+
+  it("keeps the mobile interact panel to a single row", () => {
+    const mobileBlock =
+      taskDetailSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    const interactPanelCss = [...mobileBlock.matchAll(/\.interact-panel\s*\{([^}]*)\}/g)]
+      .map((match) => match[1])
+      .join("\n");
+
+    expect(interactPanelCss).toMatch(/flex-direction:\s*row/);
+    expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?min-width:\s*0/);
+    expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
+  });
 });

@@ -380,6 +380,37 @@
       padding-right: calc(12px + env(safe-area-inset-right));
     }
 
+    .interact-panel {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+
+    .interact-summary {
+      flex: 1;
+      min-width: 0;
+      margin: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .interact-warning {
+      margin: 0;
+    }
+
+    .interact-activity {
+      display: none;
+    }
+
+    .interact-panel :global(.action-row) {
+      flex-wrap: nowrap;
+      overflow-x: auto;
+    }
+
     .detail-header { margin-bottom: 12px; }
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
     .detail-title { font-size: 18px; line-height: 1.15; }
