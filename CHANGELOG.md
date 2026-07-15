@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.44.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.44.0...ajax-cli-v0.44.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** normalize captured terminal history line endings ([#497](https://github.com/mossipcams/ajax-cli/issues/497)) ([a1d4cdd](https://github.com/mossipcams/ajax-cli/commit/a1d4cdda5899f1650cc685237f733c4b59739f29))
+
 ## [0.44.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.43.0...ajax-cli-v0.44.0) (2026-07-15)
 
 
