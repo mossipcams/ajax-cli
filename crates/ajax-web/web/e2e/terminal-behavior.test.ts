@@ -129,14 +129,120 @@ async function syntheticScrollGestureOnInteractionSurface(page: import("@playwri
   });
 }
 
-async function longPressInteractionSurface(page: import("@playwright/test").Page) {
+async function longPressInteractionSurface(
+  page: import("@playwright/test").Page,
+  position?: { x: number; y: number },
+) {
   const surface = terminalInteractionSurface(page);
-  const box = await surface.boundingBox();
-  if (!box) throw new Error("interaction surface box missing");
-  await surface.tap({
-    position: { x: box.width / 2, y: box.height / 2 },
-    delay: 550,
+  await surface.evaluate(
+    async (el, pos: { x: number; y: number } | null) => {
+      const rect = el.getBoundingClientRect();
+      const clientX = rect.left + (pos?.x ?? rect.width / 2);
+      const clientY = rect.top + (pos?.y ?? rect.height / 2);
+      const touch = { clientX, clientY, identifier: 0, target: el };
+      const makeTouch = (type: string, touches: typeof touch[]) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, "touches", { value: touches });
+        Object.defineProperty(event, "changedTouches", { value: touches });
+        return event;
+      };
+      el.dispatchEvent(makeTouch("touchstart", [touch]));
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      el.dispatchEvent(makeTouch("touchend", []));
+    },
+    position ?? null,
+  );
+}
+
+const COPY_SELECTION_TEXT = "selectable-copy-me";
+
+const terminalPanel = (page: import("@playwright/test").Page) =>
+  page.getByTestId("task-terminal-panel");
+
+async function installCopyClipboardSpy(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    const writes: string[] = [];
+    Object.defineProperty(window, "__clipboardWrites", { value: writes, configurable: true });
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          writes.push(text);
+        },
+        readText: async () => "echo pasted",
+      },
+    });
   });
+}
+
+async function openTaskTerminalWithCopySpy(page: import("@playwright/test").Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await installCopyClipboardSpy(page);
+  await gotoTaskRoute(page);
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+  return surface;
+}
+
+async function openTaskTerminalWithCopyFailure(page: import("@playwright/test").Page) {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+  await installCopyClipboardFailure(page);
+  await gotoTaskRoute(page);
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+  return surface;
+}
+
+async function installCopyClipboardFailure(page: import("@playwright/test").Page) {
+  await page.addInitScript(() => {
+    document.execCommand = () => false;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new Error("clipboard denied");
+        },
+        readText: async () => "echo pasted",
+      },
+    });
+  });
+}
+
+const clipboardWrites = (page: import("@playwright/test").Page) =>
+  page.evaluate(() => (window as unknown as { __clipboardWrites: string[] }).__clipboardWrites);
+
+async function programTerminalSelection(
+  page: import("@playwright/test").Page,
+  needle: string,
+) {
+  const selected = await page.evaluate((text) => {
+    const host = document.querySelector(
+      "[data-testid='task-terminal-panel'] .terminal-host",
+    ) as (HTMLElement & { __xterm?: { select: (c: number, r: number, l: number) => void; getSelection: () => string; buffer: { active: { length: number; getLine: (r: number) => { translateToString: (trim: boolean) => string } | undefined } } } }) | null;
+    const term = host?.__xterm;
+    if (!term || typeof term.select !== "function") {
+      throw new Error("task terminal xterm instance missing");
+    }
+    const buffer = term.buffer.active;
+    for (let row = 0; row < buffer.length; row += 1) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const str = line.translateToString(true);
+      const col = str.indexOf(text);
+      if (col >= 0) {
+        term.select(col, row, text.length);
+        return term.getSelection();
+      }
+    }
+    throw new Error(`terminal text not found: ${text}`);
+  }, needle);
+  return selected;
 }
 
 test("task route mounts one terminal surface and opens one socket", async ({ page }) => {
@@ -659,6 +765,155 @@ test("fullscreen exit blurs the terminal textarea without PTY input", async ({ p
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
 });
 
+async function simulateKeyboardBand(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty("--app-height", "460px");
+    document.documentElement.style.setProperty("--app-top", "40px");
+  });
+}
+
+async function visibleAppBand(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const top = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
+    );
+    const height = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
+    );
+    return { top, bottom: top + height };
+  });
+}
+
+function boxesIntersect(
+  box: { y: number; height: number },
+  band: { top: number; bottom: number },
+): boolean {
+  const boxBottom = box.y + box.height;
+  return box.y < band.bottom && boxBottom > band.top;
+}
+
+async function chromeDisplayState(page: import("@playwright/test").Page) {
+  return page.evaluate(() => {
+    const cockpit = document.querySelector(".cockpit-chrome");
+    const bottomNav = document.querySelector(".bottom-nav");
+    return {
+      cockpit: cockpit ? getComputedStyle(cockpit).display : null,
+      bottomNav: bottomNav ? getComputedStyle(bottomNav).display : null,
+    };
+  });
+}
+
+// Compact toolbar keys target 32px height; primary actions stay ≥ 44px.
+const COMPACT_KEY_MIN_PX = 32;
+const COMPACT_KEY_MAX_PX = 40;
+const PRIMARY_TOUCH_MIN_PX = 44;
+
+test("fullscreen band keeps expand tappable under keyboard-open offset band", async ({ page }) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page);
+
+  const expand = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+
+  const band = await visibleAppBand(page);
+  const box = await expand.boundingBox();
+  expect(box).not.toBeNull();
+  expect(boxesIntersect(box!, band)).toBe(true);
+
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+});
+
+test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const before = await chromeDisplayState(page);
+  expect(before.cockpit).not.toBe("none");
+  expect(before.bottomNav).not.toBe("none");
+
+  await simulateKeyboardBand(page);
+  const hidden = await chromeDisplayState(page);
+  expect(hidden.cockpit).toBe("none");
+  expect(hidden.bottomNav).toBe("none");
+
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("keyboard-open");
+    document.documentElement.style.removeProperty("--app-height");
+    document.documentElement.style.removeProperty("--app-top");
+  });
+  const restored = await chromeDisplayState(page);
+  expect(restored.cockpit).not.toBe("none");
+  expect(restored.bottomNav).not.toBe("none");
+});
+
+test("terminal-expanded hides cockpit chrome and bottom nav on task route", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const before = await chromeDisplayState(page);
+  expect(before.cockpit).not.toBe("none");
+  expect(before.bottomNav).not.toBe("none");
+
+  await page.evaluate(() => {
+    document.documentElement.classList.add("terminal-expanded");
+  });
+  const hidden = await chromeDisplayState(page);
+  expect(hidden.cockpit).toBe("none");
+  expect(hidden.bottomNav).toBe("none");
+
+  await page.evaluate(() => {
+    document.documentElement.classList.remove("terminal-expanded");
+  });
+  const restored = await chromeDisplayState(page);
+  expect(restored.cockpit).not.toBe("none");
+  expect(restored.bottomNav).not.toBe("none");
+});
+
+test("interaction wrap hides scrollbar chrome", async ({ page }) => {
+  await openTaskTerminal(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 120)]);
+
+  const wrap = terminalInteractionSurface(page);
+  await expect(wrap).toHaveCSS("scrollbar-width", "none");
+
+  const webkitHidden = await wrap.evaluate((el) => {
+    const rules = Array.from(document.styleSheets).flatMap((sheet) => {
+      try {
+        return Array.from(sheet.cssRules);
+      } catch {
+        return [];
+      }
+    });
+    const selectorMatches = rules.some(
+      (rule) =>
+        rule instanceof CSSStyleRule &&
+        rule.selectorText.includes(".terminal-interaction-wrap") &&
+        rule.selectorText.includes("::-webkit-scrollbar") &&
+        rule.style.display === "none",
+    );
+    return selectorMatches;
+  });
+  expect(webkitHidden).toBe(true);
+});
+
+test("compact terminal keys are smaller than primary touch targets on phone", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const keySizes = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(".terminal-keys .terminal-key")).map((el) => {
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      return { width: rect.width, height: rect.height };
+    }),
+  );
+  expect(keySizes.length).toBeGreaterThan(0);
+  for (const size of keySizes) {
+    expect(size.height).toBeGreaterThanOrEqual(COMPACT_KEY_MIN_PX);
+    expect(size.height).toBeLessThanOrEqual(COMPACT_KEY_MAX_PX);
+    expect(size.height).toBeLessThan(PRIMARY_TOUCH_MIN_PX);
+  }
+});
+
 test("terminal controls meet mobile touch target size on phone", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
@@ -695,14 +950,19 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
       return measured;
     });
 
-  const expectTouchTargets = (
+  const expectPrimaryTouchTargets = (
     sizes: Array<{ width: number; height: number; selector: string }>,
     requiredSelectors: string[],
   ) => {
     expect(sizes.length).toBeGreaterThan(0);
     for (const size of sizes) {
-      expect(size.width).toBeGreaterThanOrEqual(44);
-      expect(size.height).toBeGreaterThanOrEqual(44);
+      if (size.selector === ".terminal-keys .terminal-key") {
+        expect(size.height).toBeGreaterThanOrEqual(COMPACT_KEY_MIN_PX);
+        expect(size.height).toBeLessThanOrEqual(COMPACT_KEY_MAX_PX);
+        continue;
+      }
+      expect(size.width).toBeGreaterThanOrEqual(PRIMARY_TOUCH_MIN_PX);
+      expect(size.height).toBeGreaterThanOrEqual(PRIMARY_TOUCH_MIN_PX);
     }
     for (const selector of requiredSelectors) {
       expect(sizes.some((size) => size.selector === selector)).toBe(true);
@@ -710,7 +970,7 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
   };
 
   let sizes = await measureVisibleTerminalButtons();
-  expectTouchTargets(sizes, [".terminal-expand-corner", ".terminal-keys .terminal-key"]);
+  expectPrimaryTouchTargets(sizes, [".terminal-expand-corner", ".terminal-keys .terminal-key"]);
 
   await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
   await scrollInteractionSurfaceAway(page);
@@ -718,13 +978,13 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
   const newOutput = newOutputButton(page);
   await expect(newOutput).toBeVisible();
   sizes = await measureVisibleTerminalButtons();
-  expectTouchTargets(sizes, [".terminal-new-output"]);
+  expectPrimaryTouchTargets(sizes, [".terminal-new-output"]);
 
   await failLatestTerminalSocket(page, "tmux session missing");
   const reconnect = page.getByRole("button", { name: "Reconnect" });
   await expect(reconnect).toBeVisible();
   sizes = await measureVisibleTerminalButtons();
-  expectTouchTargets(sizes, [".terminal-status-reconnect"]);
+  expectPrimaryTouchTargets(sizes, [".terminal-status-reconnect"]);
 
   await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
   await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
@@ -733,7 +993,7 @@ test("terminal controls meet mobile touch target size on phone", async ({ page }
   expect(
     sizes.filter((size) => size.selector === ".terminal-paste-actions .terminal-key").length,
   ).toBe(2);
-  expectTouchTargets(sizes, [".terminal-paste-actions .terminal-key"]);
+  expectPrimaryTouchTargets(sizes, [".terminal-paste-actions .terminal-key"]);
 });
 
 test("paste fallback preserves prior terminal focus when another control owns focus", async ({
@@ -1421,6 +1681,58 @@ test("long press on the interaction surface sends no PTY input", async ({ page }
 
   await longPressInteractionSurface(page);
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+});
+
+test("long press on known output text selects word and shows Copy control", async ({ page }) => {
+  await openTaskTerminalWithCopySpy(page);
+
+  await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
+  const baseline = await inputFrameCount(page);
+
+  await longPressInteractionSurface(page, { x: 40, y: 8 });
+
+  await expect(terminalPanel(page).getByRole("button", { name: "Copy" })).toBeVisible();
+  await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+});
+
+test("non-empty xterm selection shows Copy control in terminal panel", async ({ page }) => {
+  await openTaskTerminalWithCopySpy(page);
+
+  await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
+  await programTerminalSelection(page, COPY_SELECTION_TEXT);
+
+  await expect(terminalPanel(page).getByRole("button", { name: "Copy" })).toBeVisible();
+});
+
+test("Copy writes selected text to clipboard and shows Copied notice", async ({ page }) => {
+  await openTaskTerminalWithCopySpy(page);
+
+  await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
+  await programTerminalSelection(page, COPY_SELECTION_TEXT);
+
+  const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
+  await expect(copy).toBeVisible();
+  await copy.click();
+
+  await expect.poll(() => clipboardWrites(page)).toContain(COPY_SELECTION_TEXT);
+  await expect(terminalPanel(page).getByRole("status")).toContainText("Copied");
+  await expect(copy).not.toBeVisible();
+});
+
+test("Copy opens read-only fallback when clipboard write fails", async ({ page }) => {
+  await openTaskTerminalWithCopyFailure(page);
+
+  await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
+  await programTerminalSelection(page, COPY_SELECTION_TEXT);
+
+  const copy = terminalPanel(page).getByRole("button", { name: "Copy" });
+  await expect(copy).toBeVisible();
+  await copy.click();
+
+  const fallback = page.getByRole("textbox", { name: "Copy text" });
+  await expect(fallback).toBeVisible();
+  await expect(fallback).toHaveAttribute("readonly", "");
+  await expect(fallback).toHaveValue(COPY_SELECTION_TEXT);
 });
 
 test("synthetic scroll gesture on the interaction surface sends no PTY input and does not move the document", async ({

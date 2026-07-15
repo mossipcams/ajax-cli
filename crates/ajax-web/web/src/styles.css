@@ -400,6 +400,22 @@ header .bar h1 {
   [data-testid="route-scroll"] {
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
+
+  html.keyboard-open .task-detail .detail-header,
+  html.keyboard-open .task-detail .interact-panel,
+  html.keyboard-open .task-detail .meta-details,
+  html.terminal-expanded .task-detail .detail-header,
+  html.terminal-expanded .task-detail .interact-panel,
+  html.terminal-expanded .task-detail .meta-details {
+    display: none;
+  }
+
+  html.keyboard-open .cockpit-chrome,
+  html.keyboard-open .bottom-nav,
+  html.terminal-expanded .cockpit-chrome,
+  html.terminal-expanded .bottom-nav {
+    display: none;
+  }
 }
 
 /* EMPTY STATE (App + TaskList) -------------------------------------------- */
