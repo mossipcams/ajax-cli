@@ -316,7 +316,7 @@
     let lastSentRows = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let fitFrame = 0;
-    let postLayoutFrame = 0;
+    let pendingPostKeyboardResync = false;
     let disposed = false;
     let followLive = true;
     let pinchStartDistance = 0;
@@ -333,10 +333,6 @@
       if (fitFrame) {
         cancelAnimationFrame(fitFrame);
         fitFrame = 0;
-      }
-      if (postLayoutFrame) {
-        cancelAnimationFrame(postLayoutFrame);
-        postLayoutFrame = 0;
       }
       if (resizeTimer) {
         clearTimeout(resizeTimer);
@@ -405,7 +401,9 @@
         screenEl && term.rows > 0 ? screenEl.offsetHeight / term.rows : hostHeight / proposed.rows;
       if (cellWidth <= 0 || cellHeight <= 0 || hostWidth <= 0 || hostHeight <= 0) return;
 
-      const logicalCols = MIN_TERMINAL_COLS;
+      const currentFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+      const logicalCols =
+        MIN_TERMINAL_COLS + Math.max(0, MAX_FONT_SIZE - currentFontSize);
       const scale = Math.min(1, hostWidth / (logicalCols * cellWidth));
       const logicalRows = Math.max(1, Math.ceil(hostHeight / (cellHeight * scale)));
 
@@ -419,7 +417,6 @@
     const scheduleFit = (resizeWithFit: boolean, discreteIntent = false) => {
       if (!isActive()) return;
       if (isKeyboardOpen() && !discreteIntent) {
-        cancelScheduledWork();
         return;
       }
       if (fitFrame) cancelAnimationFrame(fitFrame);
@@ -438,8 +435,12 @@
     const scheduleDebounced = () => {
       if (!isActive()) return;
       if (isKeyboardOpen()) {
-        cancelScheduledWork();
+        pendingPostKeyboardResync = true;
         return;
+      }
+      if (pendingPostKeyboardResync) {
+        pendingPostKeyboardResync = false;
+        resetDedupe();
       }
       scheduleFit(false, false);
       if (resizeTimer) clearTimeout(resizeTimer);
@@ -453,12 +454,6 @@
     const schedulePostLayout = (discreteIntent = false) => {
       if (!isActive()) return;
       scheduleImmediate(discreteIntent);
-      if (postLayoutFrame) cancelAnimationFrame(postLayoutFrame);
-      postLayoutFrame = requestAnimationFrame(() => {
-        postLayoutFrame = 0;
-        if (!isActive()) return;
-        scheduleImmediate(discreteIntent);
-      });
     };
     schedulePostLayoutRef = schedulePostLayout;
 
@@ -1029,7 +1024,7 @@
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: 38vh;
+      height: min(38vh, 300px);
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
@@ -1060,6 +1055,10 @@
     .terminal-panel.is-expanded .terminal-interaction-wrap,
     .terminal-panel.is-expanded .terminal-host {
       min-height: 0;
+    }
+
+    .terminal-panel.is-expanded .terminal-host {
+      height: 100%;
     }
   }
 </style>
