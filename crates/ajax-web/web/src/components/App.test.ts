@@ -6,6 +6,7 @@ import { tick } from "svelte";
 import App from "./App.svelte";
 import appSource from "./App.svelte?raw";
 import appViewportSource from "./AppViewport.svelte?raw";
+import taskTerminalSource from "./TaskTerminal.svelte?raw";
 import cockpit from "../fixtures/cockpit.json";
 import taskDetail from "../fixtures/task-detail.json";
 
@@ -114,6 +115,74 @@ describe("App shell", () => {
     );
     expect(appViewportSource).toMatch(
       /:global\(html\.keyboard-open\)\s+\.app-viewport\s*\{[^}]*height:\s*var\(--app-band-height/,
+    );
+  });
+
+  it("zeros horizontal padding on the mobile task route-scroll", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).toMatch(
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*padding-left:\s*0/,
+    );
+    expect(mobileBlock).toMatch(
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s*\{[^}]*padding-right:\s*0/,
+    );
+  });
+
+  it("keyboard-open keeps task header and interact panel visible", () => {
+    const stylesSource = loadStylesSource();
+
+    expect(stylesSource).not.toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
+    );
+    expect(stylesSource).not.toMatch(
+      /html\.keyboard-open\s+\.task-detail\s+\.interact-panel[\s\S]*?display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.terminal-expanded\s+\.task-detail\s+\.interact-panel[\s\S]*?display:\s*none/,
+    );
+  });
+
+  it("keyboard-open still hides bottom nav and cockpit chrome", () => {
+    const stylesSource = loadStylesSource();
+
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.cockpit-chrome[\s\S]*?display:\s*none/,
+    );
+    expect(stylesSource).toMatch(
+      /html\.keyboard-open\s+\.bottom-nav[\s\S]*?display:\s*none/,
+    );
+  });
+
+  it("expanded terminal panel matches fullscreen band without safe-area top padding", () => {
+    const expandedRule =
+      taskTerminalSource.match(
+        /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
+
+    expect(expandedRule).toMatch(/top:\s*var\(--app-band-top/);
+    expect(expandedRule).toMatch(/height:\s*var\(--app-band-height/);
+    expect(expandedRule).not.toMatch(/padding:\s*env\(safe-area-inset-top\)/);
+  });
+
+  it("keyboard-open non-expanded terminal fills remaining band", () => {
+    const mobileBlock =
+      taskTerminalSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).toMatch(
+      /:global\(html\.keyboard-open\)[\s\S]*?\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?height:\s*auto/,
+    );
+    expect(mobileBlock).toMatch(
+      /:global\(html\.keyboard-open\)[\s\S]*?\.terminal-panel:not\(\.is-expanded\)\s+\.terminal-interaction-wrap[\s\S]*?flex:\s*1\s+1\s+auto/,
     );
   });
 

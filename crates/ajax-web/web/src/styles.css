@@ -397,13 +397,40 @@ header .bar h1 {
 }
 
 @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
   [data-testid="route-scroll"] {
     padding-bottom: calc(72px + env(safe-area-inset-bottom));
   }
 
-  html.keyboard-open .task-detail .detail-header,
-  html.keyboard-open .task-detail .interact-panel,
-  html.keyboard-open .task-detail .meta-details,
+  html.keyboard-open [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+
+  html.keyboard-open .task-detail {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    height: 100%;
+  }
+
+  html.keyboard-open .task-detail .terminal-panel:not(.is-expanded) {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  html.keyboard-open .task-detail .meta-details {
+    display: none;
+  }
+
   html.terminal-expanded .task-detail .detail-header,
   html.terminal-expanded .task-detail .interact-panel,
   html.terminal-expanded .task-detail .meta-details {

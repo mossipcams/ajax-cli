@@ -1257,6 +1257,12 @@
       height: 100%;
     }
 
+    :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+      height: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
       top: var(--app-band-top, 0px);
@@ -1269,7 +1275,6 @@
       min-height: 0;
       max-height: none;
       margin-top: 0;
-      padding: env(safe-area-inset-top) 0 0;
       box-sizing: border-box;
       background: var(--paper);
       border-left: none;
@@ -1278,13 +1283,15 @@
       border-radius: 0;
     }
 
-    .terminal-panel.is-expanded .terminal-interaction-wrap,
-    .terminal-panel.is-expanded .terminal-host {
+    .terminal-panel.is-expanded .terminal-interaction-wrap {
+      flex: 1 1 auto;
       min-height: 0;
+      height: auto;
     }
 
     .terminal-panel.is-expanded .terminal-host {
       height: 100%;
+      min-height: 0;
     }
   }
 </style>

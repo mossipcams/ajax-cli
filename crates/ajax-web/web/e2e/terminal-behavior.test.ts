@@ -885,9 +885,13 @@ async function chromeDisplayState(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
     const cockpit = document.querySelector(".cockpit-chrome");
     const bottomNav = document.querySelector(".bottom-nav");
+    const detailHeader = document.querySelector(".task-detail .detail-header");
+    const interactPanel = document.querySelector(".task-detail .interact-panel");
     return {
       cockpit: cockpit ? getComputedStyle(cockpit).display : null,
       bottomNav: bottomNav ? getComputedStyle(bottomNav).display : null,
+      detailHeader: detailHeader ? getComputedStyle(detailHeader).display : null,
+      interactPanel: interactPanel ? getComputedStyle(interactPanel).display : null,
     };
   });
 }
@@ -925,6 +929,8 @@ test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({
   const hidden = await chromeDisplayState(page);
   expect(hidden.cockpit).toBe("none");
   expect(hidden.bottomNav).toBe("none");
+  expect(hidden.detailHeader).not.toBe("none");
+  expect(hidden.interactPanel).not.toBe("none");
 
   await page.evaluate(() => {
     document.documentElement.classList.remove("keyboard-open");
@@ -949,6 +955,8 @@ test("terminal-expanded hides cockpit chrome and bottom nav on task route", asyn
   const hidden = await chromeDisplayState(page);
   expect(hidden.cockpit).toBe("none");
   expect(hidden.bottomNav).toBe("none");
+  expect(hidden.detailHeader).toBe("none");
+  expect(hidden.interactPanel).toBe("none");
 
   await page.evaluate(() => {
     document.documentElement.classList.remove("terminal-expanded");
