@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.2...ajax-cli-v0.46.3) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** port xterm iOS keyboard textarea anchor and expand settle ([#518](https://github.com/mossipcams/ajax-cli/issues/518)) ([a5d2715](https://github.com/mossipcams/ajax-cli/commit/a5d2715f9b84c328f2220d37991934e80c1b4d2b))
+
 ## [0.46.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.1...ajax-cli-v0.46.2) (2026-07-15)
 
 
