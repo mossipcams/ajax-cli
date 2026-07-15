@@ -21,21 +21,13 @@ pub fn shell_version_from_assets(
     terminal_js: &[u8],
     app_css: &[u8],
     ghostty_wasm: &[u8],
-    wterm_ghostty_wasm: &[u8],
 ) -> String {
     // FNV-1a: stable across toolchain versions (DefaultHasher is not).
     // Process all asset bytes sequentially for a single combined fingerprint.
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
     let mut hash: u64 = FNV_OFFSET;
-    for asset in [
-        index_html,
-        app_js,
-        terminal_js,
-        app_css,
-        ghostty_wasm,
-        wterm_ghostty_wasm,
-    ] {
+    for asset in [index_html, app_js, terminal_js, app_css, ghostty_wasm] {
         for &byte in asset {
             hash ^= byte as u64;
             hash = hash.wrapping_mul(FNV_PRIME);
@@ -59,7 +51,6 @@ pub fn app_version() -> &'static str {
             include_bytes!("../../web/dist/terminal.js"),
             include_bytes!("../../web/dist/app.css"),
             include_bytes!("../../web/dist/ghostty-vt.wasm"),
-            include_bytes!("../../web/dist/wterm-ghostty-vt.wasm"),
         )
     })
 }
@@ -81,10 +72,6 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
         "/ghostty-vt.wasm" => Some(StaticAsset {
             content_type: "application/wasm",
             body: include_bytes!("../../web/dist/ghostty-vt.wasm"),
-        }),
-        "/wterm-ghostty-vt.wasm" => Some(StaticAsset {
-            content_type: "application/wasm",
-            body: include_bytes!("../../web/dist/wterm-ghostty-vt.wasm"),
         }),
         _ => None,
     }
@@ -115,7 +102,6 @@ mod tests {
             b"terminal-a",
             b"body { color: black; }",
             b"wasm-a",
-            b"wterm-a",
         );
         let changed = shell_version_from_assets(
             b"<!doctype html>",
@@ -123,7 +109,6 @@ mod tests {
             b"terminal-b",
             b"body { color: black; }",
             b"wasm-a",
-            b"wterm-a",
         );
 
         assert_ne!(baseline, changed);
@@ -137,7 +122,6 @@ mod tests {
             b"terminal-a",
             b"body { color: black; }",
             b"wasm-a",
-            b"wterm-a",
         );
         let changed = shell_version_from_assets(
             b"<!doctype html>",
@@ -145,29 +129,6 @@ mod tests {
             b"terminal-a",
             b"body { color: black; }",
             b"wasm-b",
-            b"wterm-a",
-        );
-
-        assert_ne!(baseline, changed);
-    }
-
-    #[test]
-    fn app_version_changes_when_wterm_wasm_asset_changes() {
-        let baseline = shell_version_from_assets(
-            b"<!doctype html>",
-            b"console.log('a');",
-            b"terminal-a",
-            b"body { color: black; }",
-            b"wasm-a",
-            b"wterm-a",
-        );
-        let changed = shell_version_from_assets(
-            b"<!doctype html>",
-            b"console.log('a');",
-            b"terminal-a",
-            b"body { color: black; }",
-            b"wasm-a",
-            b"wterm-b",
         );
 
         assert_ne!(baseline, changed);
@@ -192,17 +153,5 @@ mod tests {
         let asset = static_asset("/ghostty-vt.wasm").unwrap();
         assert_eq!(asset.content_type, "application/wasm");
         assert!(!asset.body.is_empty());
-    }
-
-    #[test]
-    fn assets_adapter_serves_wterm_ghostty_wasm_asset() {
-        let asset = static_asset("/wterm-ghostty-vt.wasm").unwrap();
-        assert_eq!(asset.content_type, "application/wasm");
-        assert!(!asset.body.is_empty());
-        let ghostty = static_asset("/ghostty-vt.wasm").unwrap();
-        assert_ne!(
-            asset.body, ghostty.body,
-            "wterm and ghostty-web WASM binaries must stay distinct"
-        );
     }
 }

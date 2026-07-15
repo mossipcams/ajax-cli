@@ -688,7 +688,10 @@ without explicit approval. Legacy snapshot, keys, and answer routes are not
 supported browser task-control APIs.
 
 The browser terminal frontend lives in `crates/ajax-web/web`. `TaskDetail.svelte`
-mounts `TerminalRawView.svelte`; `TerminalRawView.svelte` uses `ghostty-web`
+mounts `TerminalSurfaceSelector.svelte`, which defaults to Ghostty via
+`TerminalRawView.svelte` when Surface V2 is off; when Surface V2 is enabled in
+Dev settings, the selector mounts experimental `XtermTerminalView.svelte`
+(`@xterm/xterm` behind the same flag). `TerminalRawView.svelte` uses `ghostty-web`
 from `github:rcarmo/ghostty-web#v0.9.4` (fork of coder's unmaintained npm
 0.4.0) with the served `/ghostty-vt.wasm` asset, `terminalConnection.ts` owns the
 task-terminal WebSocket lifecycle and reconnect behavior, and

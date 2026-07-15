@@ -333,23 +333,6 @@ fn output_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     }
 }
 
-/// Convert `tmux capture-pane -p` stdout so every line starts at column zero for
-/// Wterm: bare LF becomes CRLF, and existing CRLF is left untouched rather than
-/// doubled. All other bytes are preserved verbatim. Empty input returns `None`
-/// through `output_frame_bytes`, reusing the live-path empty-frame behavior.
-fn captured_history_frame_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
-    let mut converted = Vec::with_capacity(bytes.len());
-    let mut prev: Option<u8> = None;
-    for byte in bytes {
-        if byte == b'\n' && prev != Some(b'\r') {
-            converted.push(b'\r');
-        }
-        converted.push(byte);
-        prev = Some(byte);
-    }
-    output_frame_bytes(converted)
-}
-
 /// Report a bridge setup failure to the browser and close the socket.
 async fn send_error_and_close(socket: &mut WebSocket, error: String) {
     let _ = socket
@@ -413,7 +396,7 @@ pub async fn bridge_task_terminal_socket(mut socket: WebSocket, plan: TerminalAt
     // already queued in the PTY, then forward that live stream afterward.
     if let Ok(output) = run_tmux_command_blocking(&isolated.history) {
         if output.status.success() {
-            if let Some(payload) = captured_history_frame_bytes(output.stdout) {
+            if let Some(payload) = output_frame_bytes(output.stdout) {
                 if socket.send(Message::Binary(payload.into())).await.is_err() {
                     cleanup_spawned_child_async(child).await;
                     for command in &isolated.teardown {
@@ -889,32 +872,6 @@ mod tests {
         assert!(!String::from_utf8_lossy(&bytes).contains("\"type\""));
         assert!(!String::from_utf8_lossy(&bytes).contains("output"));
         assert!(output_frame_bytes(Vec::new()).is_none());
-    }
-
-    #[test]
-    fn captured_history_frame_bytes_converts_lf_to_crlf_without_doubling_crlf() {
-        // Mixed input: ANSI color, bare LF, and an existing CRLF must all
-        // become CRLF-delimited without doubling the existing CRLF, and every
-        // non-newline byte must survive unchanged.
-        let input: Vec<u8> = b"\x1b[31mrow1\nrow2\r\nrow3\x1b[0m\n".to_vec();
-        let output =
-            captured_history_frame_bytes(input.clone()).expect("non-empty history yields a frame");
-        assert_eq!(output, b"\x1b[31mrow1\r\nrow2\r\nrow3\x1b[0m\r\n");
-
-        // Empty captured history reuses output_frame_bytes' None behavior.
-        assert!(captured_history_frame_bytes(Vec::new()).is_none());
-
-        // A trailing LF after CR must not insert a second CR.
-        let crlf_then_lf = b"a\r\nb\nc\r\n".to_vec();
-        assert_eq!(
-            captured_history_frame_bytes(crlf_then_lf).unwrap(),
-            b"a\r\nb\r\nc\r\n"
-        );
-
-        // Every non-newline byte, including a lone CR not followed by LF, is
-        // preserved verbatim.
-        let lone_cr = b"x\ry\n".to_vec();
-        assert_eq!(captured_history_frame_bytes(lone_cr).unwrap(), b"x\ry\r\n");
     }
 
     #[test]
