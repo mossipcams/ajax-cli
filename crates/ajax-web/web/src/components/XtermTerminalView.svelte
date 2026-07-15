@@ -37,6 +37,14 @@
   const CTRL_ARM_TIMEOUT_MS = 4000;
   let ctrlTimer: ReturnType<typeof setTimeout> | undefined;
 
+  const GHOSTTY_THEME = {
+    background: "#1c1714",
+    foreground: "#f4eee0",
+    cursor: "#52a095",
+  } as const;
+
+  const RESIZE_DEBOUNCE_MS = 50;
+
   const STATUS_LABELS: Record<TerminalConnectionStatus, string> = {
     connecting: "Connecting…",
     connected: "Connected",
@@ -103,11 +111,27 @@
   onMount(() => {
     let fitAddon: FitAddon | undefined;
     let resizeObserver: ResizeObserver | undefined;
+    let lastSentCols = 0;
+    let lastSentRows = 0;
+    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 
     const reportResize = () => {
       fitAddon?.fit();
       if (!term) return;
-      connection?.sendResize(Math.max(term.cols, MIN_TERMINAL_COLS), term.rows);
+      const cols = Math.max(term.cols, MIN_TERMINAL_COLS);
+      const rows = term.rows;
+      if (cols === lastSentCols && rows === lastSentRows) return;
+      lastSentCols = cols;
+      lastSentRows = rows;
+      connection?.sendResize(cols, rows);
+    };
+
+    const scheduleReportResize = () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        resizeTimer = undefined;
+        reportResize();
+      }, RESIZE_DEBOUNCE_MS);
     };
 
     try {
@@ -119,6 +143,7 @@
         fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
         cursorBlink: true,
         scrollback: 2000,
+        theme: GHOSTTY_THEME,
       });
       fitAddon = new FitAddon();
       liveTerm.loadAddon(fitAddon);
@@ -152,12 +177,13 @@
 
     reportResize();
 
-    const onWindowResize = () => reportResize();
-    resizeObserver = new ResizeObserver(() => reportResize());
+    const onWindowResize = () => scheduleReportResize();
+    resizeObserver = new ResizeObserver(() => scheduleReportResize());
     resizeObserver.observe(hostEl);
     window.addEventListener("resize", onWindowResize);
 
     return () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", onWindowResize);
       if (ctrlTimer) clearTimeout(ctrlTimer);
@@ -248,6 +274,14 @@
     flex: 1 1 auto;
     min-height: 120px;
     overflow: hidden;
+    background: #1c1714;
+  }
+
+  .xterm-host :global(.xterm),
+  .xterm-host :global(.xterm-viewport),
+  .xterm-host :global(.xterm-screen) {
+    height: 100%;
+    background: #1c1714;
   }
 
   .terminal-keys {
