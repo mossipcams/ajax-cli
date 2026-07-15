@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.0...ajax-cli-v0.46.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** restore iOS xterm fullscreen, keyboard chrome, and copy ([#513](https://github.com/mossipcams/ajax-cli/issues/513)) ([645b498](https://github.com/mossipcams/ajax-cli/commit/645b49837d7c162e13ff5073e90bebfdb91e1a20))
+
 ## [0.46.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.3...ajax-cli-v0.46.0) (2026-07-15)
 
 
