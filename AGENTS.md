@@ -385,3 +385,116 @@ For each failed command, include:
 - Whether it was fixed or remains unresolved
 
 Do not describe CI, tests, formatting, Clippy, docs, security checks, or any validation as passing unless the relevant commands were actually run and passed.
+
+## Code search and structural refactoring
+
+Use `rg` as the default text search tool and `rg --files` as the default file discovery tool. Use ast-grep when the task depends on Rust/TypeScript syntax or code shape rather than exact text.
+
+Prefer:
+
+```bash
+rg "search text"
+rg "TODO|FIXME"
+rg "Result<|anyhow|thiserror"
+rg --files
+rg --files | rg '(^|/)(Cargo.toml|package.json|AGENTS.md|CLAUDE.md)$'
+rg --files | rg '(^|/)(crates|scripts|tests)/'
+```
+
+Do not use `grep`, `find`, `ls -R`, or broad shell commands for repo search unless `rg` is unavailable or the task specifically requires another tool. Use raw `rg` when exact search results matter, especially for debugging, security-sensitive work, or migration planning.
+
+Use ast-grep for syntax-aware structural searches, migration inventories, and safer refactor planning. ast-grep uses `--globs` for include/exclude patterns, not ripgrep-style `-g`.
+
+Useful Ajax searches:
+
+```bash
+rg 'unwrap\(|expect\(|panic!' crates
+rg 'Command::new|std::process|tmux|git ' crates
+rg 'ports|adapters|domain|analysis|use_case|registry' crates
+rg 'cargo check|cargo clippy|nextest|cargo test' AGENTS.md README.md .github scripts
+rg 'fetch\(|WebSocket|EventSource|serviceWorker|manifest' crates/ajax-web web scripts
+```
+
+Useful ast-grep searches:
+
+```bash
+ast-grep -p '$EXPR.unwrap()' --lang rust crates
+ast-grep -p '$EXPR.expect($MSG)' --lang rust crates
+ast-grep -p 'panic!($$$ARGS)' --lang rust crates
+ast-grep -p 'Command::new($CMD)' --lang rust crates
+ast-grep -p 'fn $NAME($$$ARGS) -> Result<$OK, $ERR> { $$$BODY }' --lang rust crates
+```
+
+Before broad refactors:
+
+1. Use `rg` to inventory text references.
+2. Use ast-grep to inventory structural matches.
+3. Inspect representative matches manually.
+4. Make the smallest safe change.
+5. Run the required focused and repo-level checks.
+
+Agents must read the actual source before editing and must not rely only on semantic search, generated summaries, or memory.
+
+## Delegation Routing
+
+Start with the `model-router` skill for any single bounded code behavior change
+in this worktree that you would otherwise implement yourself. It decides whether
+to create a `tdd-implementation-packet` (the source-of-truth handoff), delegate
+implementation, delegate review, or stop. Skip it for trivial one-liners,
+non-code work, or pure Q&A/exploration.
+
+Lanes it routes to (reach for one directly only when the user names it):
+
+- `cursor-delegate` (Composer 2.5) — default implementer: frontend, TypeScript,
+  Svelte, PWA, repo-aware Rust, normal bounded bug fixes.
+- `opencode-delegate` — MiniMax-M3 for cheap mechanical/boilerplate/docs work,
+  GLM 5.2 for reasoning-heavy backend, architecture, bug isolation, refactors.
+- `codex-delegate` (GPT-5.5) — default reviewer and packet critique; delegator
+  mode when Codex should itself dispatch to a sub-lane and review the result;
+  implementation only when the user explicitly asks.
+
+The parent always reviews the git diff before accepting. Delegates never commit,
+push, merge, rebase, or change branches.
+
+## Pull Request Expectations
+
+A completed change should be easy to review.
+
+### Local verify gate (blocking)
+
+Do not create a pull request until local tests have passed in this worktree.
+
+Required before `gh pr create` / opening a PR:
+
+1. Husky must be installed (`npm prepare` / `npx husky` so `.husky/pre-commit` runs).
+2. The commits on the PR branch must have gone through the husky pre-commit hook
+   successfully, **or** you must run the same local suite yourself and it must
+   pass: `npm run verify` (what husky runs), plus the rest of `.husky/pre-commit`
+   (`cargo build --release -p ajax-cli` and
+   `cargo install --path crates/ajax-cli --locked --force`) when those steps did
+   not already run via the hook.
+3. If `prek` is available and configured for this repo, it may satisfy the same
+   gate when it runs the equivalent local verify suite to success.
+
+Hard stops:
+
+- Do not use `--no-verify`, `--no-gpg-sign` to skip hooks, or otherwise bypass
+  husky/prek just to open a PR.
+- Do not open a PR after a failed verify. Fix failures first, then re-run until
+  green.
+- Focused crate tests alone are not enough for PR creation; the full local
+  verify gate above is required.
+
+Record the verify command(s) and exit status in the persistent plan and in the
+final response.
+
+Final response must include:
+
+- what changed
+- persistent plan file path and whether all checklist items are complete
+- tests added or updated
+- validation commands run
+- commands that failed or were skipped
+- remaining risks or follow-up work
+
+Do not claim the repo is clean unless you checked it.
