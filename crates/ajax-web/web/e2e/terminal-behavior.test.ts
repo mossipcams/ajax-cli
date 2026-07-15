@@ -147,11 +147,99 @@ async function longPressInteractionSurface(
         return event;
       };
       el.dispatchEvent(makeTouch("touchstart", [touch]));
-      await new Promise((resolve) => setTimeout(resolve, 550));
+      // Hold past LONG_PRESS_MS with headroom for CI timer delay.
+      await new Promise((resolve) => setTimeout(resolve, 750));
       el.dispatchEvent(makeTouch("touchend", []));
     },
     position ?? null,
   );
+}
+
+/** Press the center of the first cell of `needle` using live xterm screen metrics. */
+async function longPressTerminalText(
+  page: import("@playwright/test").Page,
+  needle: string,
+) {
+  const surface = terminalInteractionSurface(page);
+  await expect
+    .poll(async () =>
+      page.evaluate((text) => {
+        const host = document.querySelector(
+          "[data-testid='task-terminal-panel'] .terminal-host",
+        ) as (HTMLElement & {
+          __xterm?: {
+            buffer: {
+              active: {
+                length: number;
+                getLine: (r: number) => { translateToString: (trim: boolean) => string } | undefined;
+              };
+            };
+          };
+        }) | null;
+        const term = host?.__xterm;
+        if (!term) return false;
+        for (let row = 0; row < term.buffer.active.length; row += 1) {
+          const line = term.buffer.active.getLine(row);
+          if (line?.translateToString(true).includes(text)) return true;
+        }
+        return false;
+      }, needle),
+    )
+    .toBe(true);
+
+  const pos = await page.evaluate((text) => {
+    const host = document.querySelector(
+      "[data-testid='task-terminal-panel'] .terminal-host",
+    ) as (HTMLElement & {
+      __xterm?: {
+        cols: number;
+        rows: number;
+        element: HTMLElement | undefined;
+        buffer: {
+          active: {
+            viewportY: number;
+            length: number;
+            getLine: (r: number) => { translateToString: (trim: boolean) => string } | undefined;
+          };
+        };
+      };
+    }) | null;
+    const term = host?.__xterm;
+    const surfaceEl = document.querySelector(
+      "[data-testid='terminal-interaction-surface']",
+    ) as HTMLElement | null;
+    if (!term?.element || !surfaceEl || term.cols <= 0 || term.rows <= 0) {
+      throw new Error("terminal metrics missing for long-press");
+    }
+    let bufferRow = -1;
+    let col = -1;
+    for (let row = 0; row < term.buffer.active.length; row += 1) {
+      const line = term.buffer.active.getLine(row);
+      if (!line) continue;
+      const idx = line.translateToString(true).indexOf(text);
+      if (idx >= 0) {
+        bufferRow = row;
+        col = idx;
+        break;
+      }
+    }
+    if (bufferRow < 0 || col < 0) throw new Error(`text not in buffer: ${text}`);
+
+    const screenEl = term.element.querySelector(".xterm-screen") as HTMLElement | null;
+    const bounds = (screenEl ?? host!).getBoundingClientRect();
+    const surfaceRect = surfaceEl.getBoundingClientRect();
+    const cellWidth = bounds.width / term.cols;
+    const cellHeight = bounds.height / term.rows;
+    const rowInView = bufferRow - term.buffer.active.viewportY;
+    const clientX = bounds.left + (col + 0.5) * cellWidth;
+    const clientY = bounds.top + (rowInView + 0.5) * cellHeight;
+    return {
+      x: clientX - surfaceRect.left,
+      y: clientY - surfaceRect.top,
+    };
+  }, needle);
+
+  await longPressInteractionSurface(page, pos);
 }
 
 const COPY_SELECTION_TEXT = "selectable-copy-me";
@@ -1689,9 +1777,11 @@ test("long press on known output text selects word and shows Copy control", asyn
   await emitLatestTerminalOutput(page, [`${COPY_SELECTION_TEXT}\r\n`]);
   const baseline = await inputFrameCount(page);
 
-  await longPressInteractionSurface(page, { x: 40, y: 8 });
+  await longPressTerminalText(page, COPY_SELECTION_TEXT);
 
-  await expect(terminalPanel(page).getByRole("button", { name: "Copy" })).toBeVisible();
+  await expect(terminalPanel(page).getByRole("button", { name: "Copy" })).toBeVisible({
+    timeout: 10_000,
+  });
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
 });
 

@@ -363,7 +363,9 @@
     let longPressTimer: ReturnType<typeof setTimeout> | undefined;
     let longPressStartX = 0;
     let longPressStartY = 0;
+    let longPressStartedAt = 0;
     let longPressActive = false;
+    let longPressSelected = false;
     let syncingScroll = false;
     let wrapperDroveScroll = false;
 
@@ -618,10 +620,17 @@
 
     const cancelLongPress = () => {
       longPressActive = false;
+      longPressStartedAt = 0;
       if (longPressTimer) {
         clearTimeout(longPressTimer);
         longPressTimer = undefined;
       }
+    };
+
+    const fireLongPressSelect = (clientX: number, clientY: number) => {
+      if (longPressSelected) return;
+      selectWordAtClient(clientX, clientY);
+      longPressSelected = true;
     };
 
     const isWordChar = (ch: string) => {
@@ -677,12 +686,14 @@
         const touch = event.touches[0];
         longPressStartX = touch.clientX;
         longPressStartY = touch.clientY;
+        longPressStartedAt = performance.now();
         longPressActive = true;
+        longPressSelected = false;
         if (longPressTimer) clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
           longPressTimer = undefined;
           if (!longPressActive || !term) return;
-          selectWordAtClient(longPressStartX, longPressStartY);
+          fireLongPressSelect(longPressStartX, longPressStartY);
           longPressActive = false;
         }, LONG_PRESS_MS);
       } else {
@@ -730,6 +741,16 @@
     };
 
     const onTouchEnd = () => {
+      // CI WebKit can delay the 500ms timer past a short hold; still select when
+      // the finger lifted after a qualifying hold without movement cancel.
+      if (
+        longPressActive &&
+        !longPressSelected &&
+        longPressStartedAt > 0 &&
+        performance.now() - longPressStartedAt >= LONG_PRESS_MS
+      ) {
+        fireLongPressSelect(longPressStartX, longPressStartY);
+      }
       cancelLongPress();
       if (pinchStartDistance > 0 && pinchEngaged && term) {
         persistFontSize(term.options.fontSize ?? DEFAULT_FONT_SIZE);
