@@ -121,11 +121,16 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
 
 export async function mockTerminalWebSocket(
   page: Page,
-  options: { autoOpen?: boolean; clipboardText?: string } = {},
+  options: {
+    autoOpen?: boolean;
+    clipboardText?: string;
+    clipboardUnavailable?: boolean;
+  } = {},
 ) {
   const autoOpen = options.autoOpen ?? true;
   const clipboardText = options.clipboardText ?? "echo pasted";
-  await page.addInitScript(({ shouldAutoOpen, clipboard }) => {
+  const clipboardUnavailable = options.clipboardUnavailable ?? false;
+  await page.addInitScript(({ shouldAutoOpen, clipboard, noClipboard }) => {
     const sockets: unknown[] = [];
     const frames: unknown[] = [];
 
@@ -210,11 +215,11 @@ export async function mockTerminalWebSocket(
       configurable: true,
     });
     Object.defineProperty(navigator, "clipboard", {
-      value: { readText: async () => clipboard },
+      value: noClipboard ? undefined : { readText: async () => clipboard },
       configurable: true,
     });
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockTerminalWebSocket;
-  }, { shouldAutoOpen: autoOpen, clipboard: clipboardText });
+  }, { shouldAutoOpen: autoOpen, clipboard: clipboardText, noClipboard: clipboardUnavailable });
 }
 
 type TerminalMessagePayload = string | number[];

@@ -23,8 +23,6 @@ import {
   type ViewportEventKind,
 } from "./fixtures";
 
-test.fail(true, "replacement xterm surface lands in the stacked implementation PR");
-
 const OPEN = 1;
 
 async function activeTaskSocketCount(page: import("@playwright/test").Page) {
@@ -378,6 +376,510 @@ test("multiline Unicode paste preserves content in one input frame", async ({ pa
   expect(frames.at(-1)?.data).toBe(MULTILINE_UNICODE_CLIPBOARD);
 });
 
+test("bracketed paste wraps toolbar paste in DEC bracket mode", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardText: MULTILINE_UNICODE_CLIPBOARD });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await emitLatestTerminalOutput(page, ["\x1b[?2004h"]);
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+  );
+
+  const baseline = await inputFrameCount(page);
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+
+  const bracketedText = MULTILINE_UNICODE_CLIPBOARD;
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  const frames = await terminalInputFrames(page);
+  expect(frames.at(-1)?.data).toBe(`\x1b[200~${bracketedText}\x1b[201~`);
+});
+
+test("clipboard fallback opens accessible paste controls when readText is unavailable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+
+  await expect(page.getByRole("textbox", { name: "Paste text" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText(/clipboard/i);
+});
+
+test("paste fallback retains unsent multiline Unicode text when socket closes before Send", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+
+  const input = page.getByRole("textbox", { name: "Paste text" });
+  await expect(input).toBeVisible();
+  await input.fill(MULTILINE_UNICODE_CLIPBOARD);
+
+  const baseline = await inputFrameCount(page);
+  await closeLatestTerminalSocket(page);
+
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue(MULTILINE_UNICODE_CLIPBOARD);
+  await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+  await expect(page.getByRole("status")).toContainText(/disconnect|unavailable|reconnect/i);
+  await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+});
+
+test("clipboard paste retains exact text in fallback when socket is disconnected", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardText: MULTILINE_UNICODE_CLIPBOARD });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await closeLatestTerminalSocket(page);
+  await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+
+  const baseline = await inputFrameCount(page);
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+
+  const input = page.getByRole("textbox", { name: "Paste text" });
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue(MULTILINE_UNICODE_CLIPBOARD);
+  await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+  await expect(page.getByRole("status")).toContainText(/disconnect|unavailable|reconnect/i);
+});
+
+test("toolbar preserves prior terminal focus for control keys", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  await page.getByRole("button", { name: "← Back" }).focus();
+
+  await terminalToolbar(page).getByRole("button", { name: "Tab" }).click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+
+  await clickTerminalSurfaceInterior(page);
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+
+  await terminalToolbar(page).getByRole("button", { name: "Tab" }).click();
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+});
+
+test("phone fullscreen keeps background controls inert until exit", async ({ page }) => {
+  await openTaskTerminal(page);
+  const expandProbe = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
+
+  const backProbe = page.locator(".task-detail .back");
+  const dashboardProbe = page.locator('.bottom-nav [data-bottom-route="#/"]');
+  const summaryProbe = page.locator(".meta-details summary");
+  const dismissProbe = page.locator(".result-panel button.pill");
+
+  await page.locator("[data-action='review']").click();
+  await expect(page.locator(".result-panel")).toBeVisible({ timeout: 10_000 });
+
+  await expandProbe.evaluate((el) => (el as HTMLButtonElement).click());
+  await expect(expandProbe).toHaveAttribute("aria-pressed", "true");
+
+  expect(
+    await page.evaluate(() => {
+      const header = document.querySelector(".task-detail .detail-header");
+      const chrome = document.querySelector(".cockpit-chrome");
+      const nav = document.querySelector(".bottom-nav");
+      const meta = document.querySelector(".meta-details");
+      const result = document.querySelector(".result-panel");
+      return (
+        header instanceof HTMLElement &&
+        header.inert &&
+        chrome instanceof HTMLElement &&
+        chrome.inert &&
+        nav instanceof HTMLElement &&
+        nav.inert &&
+        meta instanceof HTMLElement &&
+        meta.inert &&
+        result instanceof HTMLElement &&
+        result.inert
+      );
+    }),
+  ).toBe(true);
+
+  await backProbe.evaluate((el) => (el as HTMLElement).focus());
+  expect(
+    await page.evaluate(
+      () => document.querySelector(".task-detail .back") === document.activeElement,
+    ),
+  ).toBe(false);
+
+  await dismissProbe.evaluate((el) => (el as HTMLElement).focus());
+  expect(
+    await page.evaluate(
+      () => document.querySelector(".result-panel button.pill") === document.activeElement,
+    ),
+  ).toBe(false);
+
+  await expandProbe.evaluate((el) => (el as HTMLButtonElement).click());
+  await expect(expandProbe).toHaveAttribute("aria-pressed", "false");
+
+  expect(
+    await page.evaluate(() => {
+      const header = document.querySelector(".task-detail .detail-header");
+      const chrome = document.querySelector(".cockpit-chrome");
+      const nav = document.querySelector(".bottom-nav");
+      const meta = document.querySelector(".meta-details");
+      const result = document.querySelector(".result-panel");
+      return (
+        header instanceof HTMLElement &&
+        !header.inert &&
+        chrome instanceof HTMLElement &&
+        !chrome.inert &&
+        nav instanceof HTMLElement &&
+        !nav.inert &&
+        meta instanceof HTMLElement &&
+        !meta.inert &&
+        result instanceof HTMLElement &&
+        !result.inert
+      );
+    }),
+  ).toBe(true);
+
+  await backProbe.evaluate((el) => (el as HTMLElement).focus());
+  expect(
+    await page.evaluate(
+      () => document.querySelector(".task-detail .back") === document.activeElement,
+    ),
+  ).toBe(true);
+
+  await dismissProbe.evaluate((el) => (el as HTMLElement).focus());
+  expect(
+    await page.evaluate(
+      () => document.querySelector(".result-panel button.pill") === document.activeElement,
+    ),
+  ).toBe(true);
+
+  await summaryProbe.evaluate((el) => (el as HTMLElement).click());
+  expect(
+    await page.evaluate(() => document.querySelector(".meta-details")?.hasAttribute("open")),
+  ).toBe(true);
+
+  await dashboardProbe.evaluate((el) => (el as HTMLButtonElement).click());
+  await expect(page.locator("[data-outlet='dashboard']")).toBeVisible({ timeout: 10_000 });
+});
+
+test("fullscreen exit blurs the terminal textarea without PTY input", async ({ page }) => {
+  await openTaskTerminal(page);
+  const expand = expandTerminalButton(page);
+
+  await clickTerminalSurfaceInterior(page);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+
+  const baseline = await inputFrameCount(page);
+
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "false");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+
+  await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+});
+
+test("terminal controls meet mobile touch target size on phone", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  const measureVisibleTerminalButtons = () =>
+    page.evaluate(() => {
+      const panel = document.querySelector("[data-testid='task-terminal-panel']");
+      if (!panel) throw new Error("terminal panel missing");
+      const measured: Array<{ width: number; height: number; selector: string }> = [];
+      const selectors = [
+        ".terminal-expand-corner",
+        ".terminal-keys .terminal-key",
+        ".terminal-new-output",
+        ".terminal-status-reconnect",
+        ".terminal-paste-actions .terminal-key",
+      ];
+      for (const selector of selectors) {
+        for (const el of panel.querySelectorAll(selector)) {
+          const rect = (el as HTMLElement).getBoundingClientRect();
+          measured.push({
+            selector,
+            width: rect.width,
+            height: rect.height,
+          });
+        }
+      }
+      return measured;
+    });
+
+  const expectTouchTargets = (
+    sizes: Array<{ width: number; height: number; selector: string }>,
+    requiredSelectors: string[],
+  ) => {
+    expect(sizes.length).toBeGreaterThan(0);
+    for (const size of sizes) {
+      expect(size.width).toBeGreaterThanOrEqual(44);
+      expect(size.height).toBeGreaterThanOrEqual(44);
+    }
+    for (const selector of requiredSelectors) {
+      expect(sizes.some((size) => size.selector === selector)).toBe(true);
+    }
+  };
+
+  let sizes = await measureVisibleTerminalButtons();
+  expectTouchTargets(sizes, [".terminal-expand-corner", ".terminal-keys .terminal-key"]);
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await scrollInteractionSurfaceAway(page);
+  await emitLatestTerminalOutput(page, ["more output\r\n"]);
+  const newOutput = newOutputButton(page);
+  await expect(newOutput).toBeVisible();
+  sizes = await measureVisibleTerminalButtons();
+  expectTouchTargets(sizes, [".terminal-new-output"]);
+
+  await failLatestTerminalSocket(page, "tmux session missing");
+  const reconnect = page.getByRole("button", { name: "Reconnect" });
+  await expect(reconnect).toBeVisible();
+  sizes = await measureVisibleTerminalButtons();
+  expectTouchTargets(sizes, [".terminal-status-reconnect"]);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await expect(page.getByRole("button", { name: "Send" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+  sizes = await measureVisibleTerminalButtons();
+  expect(
+    sizes.filter((size) => size.selector === ".terminal-paste-actions .terminal-key").length,
+  ).toBe(2);
+  expectTouchTargets(sizes, [".terminal-paste-actions .terminal-key"]);
+});
+
+test("paste fallback preserves prior terminal focus when another control owns focus", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await page.getByRole("button", { name: "← Back" }).focus();
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+
+  await page.getByRole("button", { name: "← Back" }).focus();
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await page.getByRole("textbox", { name: "Paste text" }).fill("fallback-text");
+
+  const baseline = await inputFrameCount(page);
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+});
+
+test("paste fallback restores terminal focus when terminal owned focus", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardUnavailable: true });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  await clickTerminalSurfaceInterior(page);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+  await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(true);
+});
+
+test("keyboard activation does not reuse pointer focus ownership", async ({ page }) => {
+  await openTaskTerminal(page);
+  const toolbar = terminalToolbar(page);
+  const tab = toolbar.getByRole("button", { name: "Tab" });
+  const esc = toolbar.getByRole("button", { name: "Esc" });
+
+  await clickTerminalSurfaceInterior(page);
+  await tab.click();
+
+  await page.getByRole("button", { name: "← Back" }).focus();
+
+  await tab.focus();
+  await page.keyboard.press("Enter");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+
+  await esc.focus();
+  await page.keyboard.press("Space");
+
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+});
+
+test("Paste preserves prior terminal focus when another control owns focus", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page, { clipboardText: "paste-me" });
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  const baseline = await inputFrameCount(page);
+  await page.getByRole("button", { name: "← Back" }).focus();
+
+  await terminalToolbar(page).getByRole("button", { name: "Paste" }).click();
+
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const textarea = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+        return textarea === document.activeElement;
+      }),
+    )
+    .toBe(false);
+});
+
 test("Hide keyboard focus blur adds no PTY input", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockFetch(page);
@@ -428,6 +930,40 @@ test("typing after manual reconnect sends exactly one input frame", async ({ pag
   expect(frames.at(-1)?.data).toBe("!");
 });
 
+test("seeded reconnect restores live follow at the interaction surface bottom", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await expect(newOutputButton(page)).not.toBeVisible();
+
+  await scrollInteractionSurfaceAway(page);
+
+  await failLatestTerminalSocket(page, "tmux session missing");
+
+  const reconnect = page.getByRole("button", { name: "Reconnect" });
+  await expect(reconnect).toBeVisible();
+  await reconnect.click();
+
+  await expect.poll(async () => (await terminalSocketSummaries(page)).length).toBe(2);
+  await openLatestTerminalSocket(page);
+  await waitForTerminalSocket(page);
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 50), "seeded live tail\r\n"]);
+
+  await expect(newOutputButton(page)).not.toBeVisible();
+  await expect
+    .poll(async () =>
+      terminalInteractionSurface(page).evaluate(
+        (el) =>
+          el.scrollHeight <= el.clientHeight + 1 ||
+          el.scrollTop + el.clientHeight >= el.scrollHeight - 1,
+      ),
+    )
+    .toBe(true);
+});
+
 test("initial open eventually sends at least one valid positive-integer PTY size", async ({ page }) => {
   await openTaskTerminal(page);
 
@@ -439,6 +975,47 @@ test("initial open eventually sends at least one valid positive-integer PTY size
     expect(Number.isInteger(frame.cols)).toBe(true);
     expect(Number.isInteger(frame.rows)).toBe(true);
   }
+});
+
+async function readLogicalXtermGeometry(page: import("@playwright/test").Page) {
+  return page.locator("[data-testid='task-terminal-panel'] .terminal-host .xterm").evaluate((xtermEl) => {
+    const host = xtermEl.parentElement as HTMLElement | null;
+    const screen = xtermEl.querySelector(".xterm-screen") as HTMLElement | null;
+    if (!host || !screen) throw new Error("terminal host or xterm screen missing");
+    const rendered = xtermEl.getBoundingClientRect();
+    return {
+      hostWidth: host.clientWidth,
+      hostHeight: host.clientHeight,
+      logicalWidth: xtermEl.offsetWidth,
+      logicalHeight: xtermEl.offsetHeight,
+      screenWidth: screen.offsetWidth,
+      screenHeight: screen.offsetHeight,
+      renderedWidth: rendered.width,
+      renderedHeight: rendered.height,
+    };
+  });
+}
+
+test("logical xterm grid is at least 80 columns and scales to fill the phone host", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await expect.poll(async () => (await terminalResizeFrames(page)).length).toBeGreaterThan(0);
+
+  const geometry = await readLogicalXtermGeometry(page);
+
+  expect(geometry.screenWidth).toBeGreaterThan(geometry.hostWidth);
+  expect(geometry.screenHeight).toBeGreaterThan(geometry.hostHeight);
+  expect(geometry.logicalWidth).toBeGreaterThan(geometry.hostWidth);
+  expect(geometry.logicalHeight).toBeGreaterThan(geometry.hostHeight);
+
+  expect(geometry.renderedWidth).toBeGreaterThanOrEqual(geometry.hostWidth - 2);
+  expect(geometry.renderedWidth).toBeLessThanOrEqual(geometry.hostWidth + 2);
+  expect(geometry.renderedHeight).toBeGreaterThanOrEqual(geometry.hostHeight - 2);
+  expect(geometry.renderedHeight).toBeLessThanOrEqual(geometry.hostHeight + 2);
+
+  const lastResize = (await terminalResizeFrames(page)).at(-1)!;
+  expect(lastResize.cols).toBeGreaterThanOrEqual(80);
 });
 
 test("portrait-to-landscape eventually produces a fresh valid resize without adjacent duplicate sizes", async ({
@@ -538,6 +1115,131 @@ test("keyboard-open resize burst does not storm PTY resize; closing eventually s
   expect(hasAdjacentDuplicateSizes(afterCloseFrames)).toBe(false);
 });
 
+test("keyboard-open expand enters fullscreen with one fresh PTY resize while keyboard stays open", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await expect.poll(async () => (await terminalResizeFrames(page)).length).toBeGreaterThan(0);
+
+  const settledBefore = (await terminalResizeFrames(page)).at(-1);
+  const countBeforeKeyboard = (await terminalResizeFrames(page)).length;
+
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty(
+      "--app-height",
+      `${Math.max(0, window.innerHeight - 336)}px`,
+    );
+  });
+  await page.setViewportSize({ width: 390, height: 508 });
+  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+
+  expect((await terminalResizeFrames(page)).length).toBe(countBeforeKeyboard);
+
+  const countBeforeExpand = (await terminalResizeFrames(page)).length;
+  const expand = expandTerminalButton(page);
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+
+  await expect
+    .poll(async () => {
+      const frames = await terminalResizeFrames(page);
+      const slice = frames.slice(countBeforeExpand);
+      const last = frames.at(-1);
+      return slice.length === 1 && !!last && !sizesEqual(last, settledBefore);
+    })
+    .toBe(true);
+
+  const expandFrames = (await terminalResizeFrames(page)).slice(countBeforeExpand);
+  expect(expandFrames.length).toBe(1);
+  expect(hasAdjacentDuplicateSizes(expandFrames)).toBe(false);
+  const expandFrame = expandFrames[0]!;
+  expect(expandFrame.cols).toBeGreaterThan(0);
+  expect(expandFrame.rows).toBeGreaterThan(0);
+  expect(Number.isInteger(expandFrame.cols)).toBe(true);
+  expect(Number.isInteger(expandFrame.rows)).toBe(true);
+  expect(
+    await page.evaluate(() => document.documentElement.classList.contains("keyboard-open")),
+  ).toBe(true);
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
+});
+
+test("keyboard-open pinch-end produces exactly one fresh PTY resize while keyboard stays open", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await expect.poll(async () => (await terminalResizeFrames(page)).length).toBeGreaterThan(0);
+
+  const settledBefore = (await terminalResizeFrames(page)).at(-1);
+  const countBeforeKeyboard = (await terminalResizeFrames(page)).length;
+
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty(
+      "--app-height",
+      `${Math.max(0, window.innerHeight - 336)}px`,
+    );
+  });
+  await page.setViewportSize({ width: 390, height: 508 });
+  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+
+  expect((await terminalResizeFrames(page)).length).toBe(countBeforeKeyboard);
+
+  const countBeforePinch = (await terminalResizeFrames(page)).length;
+
+  await syntheticOutwardPinchOnInteractionSurface(page);
+
+  await expect
+    .poll(async () => {
+      const frames = await terminalResizeFrames(page);
+      const slice = frames.slice(countBeforePinch);
+      const last = frames.at(-1);
+      return slice.length === 1 && !!last && !sizesEqual(last, settledBefore);
+    })
+    .toBe(true);
+
+  const pinchFrames = (await terminalResizeFrames(page)).slice(countBeforePinch);
+  expect(pinchFrames.length).toBe(1);
+  expect(hasAdjacentDuplicateSizes(pinchFrames)).toBe(false);
+  const pinchFrame = pinchFrames[0]!;
+  expect(pinchFrame.cols).toBeGreaterThan(0);
+  expect(pinchFrame.rows).toBeGreaterThan(0);
+  expect(Number.isInteger(pinchFrame.cols)).toBe(true);
+  expect(Number.isInteger(pinchFrame.rows)).toBe(true);
+  expect(
+    await page.evaluate(() => document.documentElement.classList.contains("keyboard-open")),
+  ).toBe(true);
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
+});
+
+test("scheduled terminal work does not survive disposal after immediate navigation away", async ({
+  page,
+}) => {
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.message);
+  });
+
+  await openTaskTerminal(page);
+  await expect.poll(async () => (await terminalResizeFrames(page)).length).toBeGreaterThan(0);
+
+  await expandTerminalButton(page).click();
+  await page.goto("/app.html#/");
+
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => resolve());
+        });
+      }),
+  );
+
+  expect(pageErrors).toEqual([]);
+  await expect(terminalSurface(page)).not.toBeVisible();
+  await expect.poll(async () => activeTaskSocketCount(page)).toBe(0);
+});
+
 test("fullscreen enter and exit each produce a fresh valid resize and retain one active socket", async ({
   page,
 }) => {
@@ -615,6 +1317,36 @@ test("reopen with meaningful viewport change yields one surface and deduplicated
   await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
 });
 
+test("desktop expanded mode keeps terminal bounded and task details summary reachable", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockFetch(page);
+  await mockTerminalWebSocket(page);
+
+  await gotoTaskRoute(page);
+
+  const surface = terminalSurface(page);
+  await expect(surface).toBeVisible({ timeout: 10_000 });
+  await waitForTerminalSocket(page);
+
+  const expand = expandTerminalButton(page);
+  const maxInteractionHeight = Math.min(800 * 0.58, 560);
+
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+
+  await expect
+    .poll(async () =>
+      terminalInteractionSurface(page).evaluate((el) => el.getBoundingClientRect().height),
+    )
+    .toBeLessThanOrEqual(maxInteractionHeight + 2);
+
+  const summary = page.locator(".meta-details summary");
+  await summary.scrollIntoViewIfNeeded();
+  await expect(summary).toBeInViewport();
+});
+
 test("task route exposes a stable terminal interaction surface locator", async ({ page }) => {
   await openTaskTerminal(page);
   await expect(terminalInteractionSurface(page)).toBeVisible();
@@ -638,6 +1370,47 @@ test("reading scrollback shows New output and restoring live output sends no PTY
   await newOutput.click();
   await expect(newOutput).not.toBeVisible();
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
+});
+
+test("New output click does not refocus xterm or reopen keyboard, and direct surface click focuses without scrolling", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+
+  const isTermFocused = () =>
+    page.evaluate(() => {
+      const textarea = document.querySelector(
+        ".terminal-host textarea.xterm-helper-textarea",
+      );
+      return textarea === document.activeElement;
+    });
+  const isKeyboardOpen = () =>
+    page.evaluate(() => document.documentElement.classList.contains("keyboard-open"));
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await scrollInteractionSurfaceAway(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
+
+  const newOutput = newOutputButton(page);
+  await expect(newOutput).toBeVisible();
+
+  expect(await isTermFocused()).toBe(false);
+  expect(await isKeyboardOpen()).toBe(false);
+
+  await newOutput.click();
+
+  expect(await isTermFocused()).toBe(false);
+  expect(await isKeyboardOpen()).toBe(false);
+  await expect(newOutput).not.toBeVisible();
+
+  const scrollBefore = await documentScrollPosition(page);
+  await clickInteractionSurfaceCenter(page);
+  const scrollAfter = await documentScrollPosition(page);
+
+  expect(scrollAfter).toEqual(scrollBefore);
+  await expect
+    .poll(async () => isTermFocused())
+    .toBe(true);
 });
 
 test("long press on the interaction surface sends no PTY input", async ({ page }) => {

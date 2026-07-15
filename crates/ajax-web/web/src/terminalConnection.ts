@@ -208,7 +208,12 @@ export function connectTaskTerminal(
     isOpen: () => socket.readyState === WebSocket.OPEN,
     sendInput(data: string) {
       if (socket.readyState !== WebSocket.OPEN) return;
-      socket.send(inputEncoder.encode(data));
+      const MAX_INPUT_FRAME_BYTES = 4096;
+      const bytes = inputEncoder.encode(data);
+      for (let offset = 0; offset < bytes.byteLength; offset += MAX_INPUT_FRAME_BYTES) {
+        const end = Math.min(offset + MAX_INPUT_FRAME_BYTES, bytes.byteLength);
+        socket.send(bytes.subarray(offset, end));
+      }
     },
     sendResize(cols: number, rows: number) {
       if (socket.readyState !== WebSocket.OPEN) return;

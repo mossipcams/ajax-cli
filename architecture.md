@@ -672,8 +672,8 @@ best-effort and never derives task truth in JavaScript.
 
 ### `ajax-web::slices::install`
 
-Owns the browser shell. It serves the HTML shell, client JavaScript,
-stylesheet, and Ghostty terminal WASM asset. It must not serve a web manifest,
+Owns the browser shell. It serves the HTML shell, client JavaScript, and
+stylesheet. It must not serve a web manifest,
 service worker, install icon, or offline cache surface.
 
 ### `ajax-web::slices::terminal`
@@ -682,21 +682,19 @@ Owns task-handle-to-terminal attach planning for the browser raw terminal bridge
 The slice resolves a qualified Ajax task handle to the registered
 `tmux_session` and fixed ` task window` window target. It does not accept raw
 tmux session names from the browser and does not own task lifecycle or registry
-truth. The browser task terminal is raw Ghostty/tmux-first on mobile and
+truth. The browser task terminal is raw xterm.js/tmux-first on mobile and
 desktop; do not reintroduce Live/snapshot/composer as the default terminal mode
 without explicit approval. Legacy snapshot, keys, and answer routes are not
 supported browser task-control APIs.
 
-The browser terminal **frontend surface was removed in Task 12**. `TaskDetail.svelte`
-no longer mounts a terminal component. The retained browser modules are
-`terminalConnection.ts` (WebSocket lifecycle contract) and general viewport
-helpers in `viewport.ts`. `crates/ajax-web/web/TERMINAL.md` records ownership
-for the absent frontend and the ground-up rebuild. No shared old/new adapter
-exists. Permanent acceptance coverage lives in
-`crates/ajax-web/web/e2e/terminal-behavior.test.ts` and is intentionally red
-until a new controller/adapter is rebuilt. The Rust PTY/WebSocket backend
-(`terminalConnection.ts` client, `/api/tasks/{handle}/terminal` route,
-`ajax-web::slices::terminal`, `ajax-web::adapters::terminal_pty`) is unchanged.
+`TaskDetail.svelte` mounts one `TaskTerminal.svelte` surface per task route.
+The component uses xterm.js for rendering and `terminalConnection.ts` for the
+WebSocket lifecycle contract; general viewport helpers remain in `viewport.ts`.
+`crates/ajax-web/web/TERMINAL.md` records frontend ownership. Permanent
+acceptance coverage in `crates/ajax-web/web/e2e/terminal-behavior.test.ts`
+(`mobile-webkit`) is green. The Rust PTY/WebSocket backend
+(`/api/tasks/{handle}/terminal` route, `ajax-web::slices::terminal`,
+`ajax-web::adapters::terminal_pty`) is unchanged.
 
 ### `ajax-web::adapters::terminal_pty`
 
