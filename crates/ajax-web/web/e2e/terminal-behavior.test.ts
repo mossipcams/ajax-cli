@@ -23,6 +23,8 @@ import {
   type ViewportEventKind,
 } from "./fixtures";
 
+test.fail(true, "replacement xterm surface lands in the stacked implementation PR");
+
 const OPEN = 1;
 
 async function activeTaskSocketCount(page: import("@playwright/test").Page) {
