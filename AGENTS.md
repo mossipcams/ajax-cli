@@ -373,3 +373,46 @@ For each failed command, include:
 - Whether it was fixed or remains unresolved
 
 Do not describe CI, tests, formatting, Clippy, docs, security checks, or any validation as passing unless the relevant commands were actually run and passed.
+
+## Pull Request Expectations
+
+A completed change should be easy to review.
+
+### Local verify gate (blocking)
+
+Do not create a pull request until local tests have passed in this worktree.
+
+Required before `gh pr create` / opening a PR:
+
+1. Husky must be installed (`npm prepare` / `npx husky` so `.husky/pre-commit` runs).
+2. The commits on the PR branch must have gone through the husky pre-commit hook
+   successfully, **or** you must run the same local suite yourself and it must
+   pass: `npm run verify` (what husky runs), plus the rest of `.husky/pre-commit`
+   (`cargo build --release -p ajax-cli` and
+   `cargo install --path crates/ajax-cli --locked --force`) when those steps did
+   not already run via the hook.
+3. If `prek` is available and configured for this repo, it may satisfy the same
+   gate when it runs the equivalent local verify suite to success.
+
+Hard stops:
+
+- Do not use `--no-verify`, `--no-gpg-sign` to skip hooks, or otherwise bypass
+  husky/prek just to open a PR.
+- Do not open a PR after a failed verify. Fix failures first, then re-run until
+  green.
+- Focused crate tests alone are not enough for PR creation; the full local
+  verify gate above is required.
+
+Record the verify command(s) and exit status in the persistent plan and in the
+final response.
+
+Final response must include:
+
+- what changed
+- persistent plan file path and whether all checklist items are complete
+- tests added or updated
+- validation commands run
+- commands that failed or were skipped
+- remaining risks or follow-up work
+
+Do not claim the repo is clean unless you checked it.
