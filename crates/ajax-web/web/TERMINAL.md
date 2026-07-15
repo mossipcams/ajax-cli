@@ -3,8 +3,7 @@
 ## Status
 
 Web Cockpit mounts one xterm.js task terminal from `TaskDetail.svelte` via
-`TaskTerminal.svelte`. The permanent mobile-WebKit behavior suite (27 cases) is
-green.
+`TaskTerminal.svelte`. The permanent mobile-WebKit behavior suite is green.
 
 ## Ownership
 
@@ -19,7 +18,7 @@ green.
 
 ## Permanent acceptance
 
-- `e2e/terminal-behavior.test.ts` (`mobile-webkit`, 27 cases) — green
+- `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — green
 - `TERMINAL_BEHAVIOR_CONTRACT.md` — behavior inventory (evidence)
 - `TERMINAL_REBUILD_ACCEPTANCE.md` — acceptance matrix (evidence)
 - `TERMINAL_LEGACY_SURFACE_TESTS.md` — removal hygiene index (evidence)

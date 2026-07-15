@@ -692,7 +692,7 @@ The component uses xterm.js for rendering and `terminalConnection.ts` for the
 WebSocket lifecycle contract; general viewport helpers remain in `viewport.ts`.
 `crates/ajax-web/web/TERMINAL.md` records frontend ownership. Permanent
 acceptance coverage in `crates/ajax-web/web/e2e/terminal-behavior.test.ts`
-(`mobile-webkit`, 27 cases) is green. The Rust PTY/WebSocket backend
+(`mobile-webkit`) is green. The Rust PTY/WebSocket backend
 (`/api/tasks/{handle}/terminal` route, `ajax-web::slices::terminal`,
 `ajax-web::adapters::terminal_pty`) is unchanged.
 

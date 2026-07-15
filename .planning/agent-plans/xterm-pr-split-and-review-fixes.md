@@ -67,7 +67,7 @@
   - Verify: focused component test, resize-related Playwright cases, and
     `npm run web:check`.
 
-- [ ] **Task 4 — Correct keyboard-open fit policy and cleanup (5-15 min)**
+- [x] **Task 4 — Correct keyboard-open fit policy and cleanup (5-15 min)**
   - Test/write: add black-box coverage proving fullscreen enter while
     `keyboard-open` produces one fresh discrete resize, plus focused component
     coverage proving ordinary keyboard viewport bursts do not fit locally and
@@ -78,7 +78,7 @@
   - Verify: new tests, existing keyboard/fullscreen/viewport cases, and
     `npm run web:check`.
 
-- [ ] **Task 5 — Restore seeded reconnect semantics (5-15 min)**
+- [x] **Task 5 — Restore seeded reconnect semantics (5-15 min)**
   - Test/write: add the black-box case that scrolls away, performs a manual
     seeded reconnect, and proves the surface restores live follow at the bottom;
     show it fails first.
@@ -87,7 +87,7 @@
     reconnects.
   - Verify: new case, existing reconnect/input cases, and connection unit tests.
 
-- [ ] **Task 6 — Restore terminal paste semantics (5-15 min)**
+- [x] **Task 6 — Restore terminal paste semantics (5-15 min)**
   - Test/write: add a black-box bracketed-paste case and a clipboard-unavailable
     fallback case; show raw paste/no fallback failures first.
   - Implementation: route successful paste through `term.paste` and expose the
@@ -96,7 +96,7 @@
   - Verify: new cases, existing Unicode/Paste transition cases, and
     `npm run web:check`.
 
-- [ ] **Task 7 — Fix focus behavior and visual token (5-15 min)**
+- [x] **Task 7 — Fix focus behavior and visual token (5-15 min)**
   - Test/write: add focused interaction coverage proving a toolbar click
     preserves terminal focus only when already owned and fullscreen exit blurs;
     show current unconditional refocus as RED. The token replacement is
@@ -117,6 +117,55 @@
     `npm run web:build:check`; `npm run verify`; Husky installation/hook gate;
     `cargo build --release -p ajax-cli`; and
     `cargo install --path crates/ajax-cli --locked --force`.
+
+- [x] **Task 8a — Keep desktop task details reachable (5-15 min)**
+  - Test/write: use the existing Copy-buttons action case as RED; it consistently
+    times out because the xterm mount leaves `.meta-details summary` outside the
+    viewport and route-scroll cannot expose it. Do not edit that test.
+  - Implementation: diagnose terminal and route-scroll dimensions, then make
+    the smallest terminal-local layout correction so normal desktop terminal
+    height is bounded and following task metadata remains reachable. Preserve
+    the phone 38vh rule, fullscreen, and the single route-scroll owner.
+  - Verify: focused action case, full terminal behavior file, layout-scroll
+    file, `npm run web:check`, and `git diff --check`.
+
+- [x] **Task 8b — Preserve PR 510 paste assertions (5-15 min)**
+  - Test/write: restore the two merged LF/Unicode payload assertions exactly and
+    show xterm's default CR normalization as RED; do not modify other existing
+    assertions.
+  - Implementation: preserve the original text byte-for-byte and use public
+    `term.modes.bracketedPasteMode` to add DEC wrappers when active, retaining
+    the accepted focus-ownership behavior and native fallback.
+  - Verify: original/new paste cases, full terminal file, `npm run web:check`,
+    and `git diff --check`.
+
+- [x] **Task 8c — Retain paste text across disconnect failure (5-15 min)**
+  - Test/write: disconnect after typing fallback text and before a primary
+    clipboard paste; prove exact text remains visible, no PTY frame is added,
+    and a reconnect/unavailable notice is shown.
+  - Implementation: return send success, clear fallback only on success, and
+    retain/prefill exact unsent content on failure without hidden queuing.
+  - Verify: new and existing paste/focus cases, full terminal file, web check,
+    and diff check.
+
+- [x] **Task 8d — Isolate expanded terminal from background controls (5-15 min)**
+  - Test/write: expand on phone and prove representative cockpit/task/nav
+    controls cannot receive focus or act; exit and prove restoration.
+  - Implementation: apply native `inert` only to terminal siblings/shell chrome
+    owned by the expanded state, restoring it on exit/unmount.
+  - Verify: new/fullscreen/focus cases, full terminal file, web/diff checks.
+
+- [ ] **Task 8e — Prove exact keyboard-open discrete resizes (5-15 min)**
+  - Test/write: require exactly one settled resize for expand-enter and add the
+    mirrored keyboard-open pinch-end case before any production edit.
+  - Implementation: only if RED, minimally dedupe discrete scheduling.
+  - Verify: resize/pinch/keyboard group, full terminal file, web/diff checks.
+
+- [x] **Task 8f — Make clipboard-unavailable fixtures deterministic (5-15 min)**
+  - Test/write: no new test; this is mechanical test reliability. Replace
+    competing init scripts with one mock option and retain all assertions.
+  - Implementation: test helper/call sites only; no production change.
+  - Verify: clipboard/paste cases three times, full terminal file, checks.
 
 - [ ] **Task 9 — Commit, push, open, and monitor the implementation PR (5-15 min plus CI runtime)**
   - Test/write: no new test; this is PR lifecycle work after the blocking local
@@ -145,6 +194,75 @@
   Cursor rounds left one existing resize failure, the parent used public xterm
   DOM cell measurements to remove proposal-rounding loss; no private API or new
   helper remains.
+- Keyboard/cleanup review fix: the two new cases failed before implementation
+  (keyboard-open expand emitted no resize; nested post-layout work survived
+  navigation), then passed. The five-case keyboard/fullscreen/pinch group and
+  `npm run web:check` passed.
+- Seeded reconnect review fix: the new case failed with stale `New output` UI,
+  then passed after consuming the connection metadata. The four-case reconnect,
+  input, and scroll-follow group plus `npm run web:check` passed.
+- Paste review fix: bracketed and fallback cases failed on raw direct send and
+  missing UI, then passed through public `term.paste` and a native textarea.
+  The four-case paste group plus `npm run web:check` passed.
+- Focus/style final revision: seven focused cases and a nine-case broader group
+  passed; conditional New output/Reconnect/Send/Cancel controls render at
+  44x44, fallback focus ownership is preserved, and independent review approved.
+- Desktop layout final revision: the normal and expanded terminal are bounded;
+  focused Copy-buttons and desktop-expand cases, 41 terminal cases, four
+  layout-scroll cases, and web check passed. The observed RED expanded height
+  was 784,322px versus a 466px cap.
+- Paste contract/disconnect final revision: original LF/Unicode assertions are
+  restored unchanged; nine paste/fallback/focus cases and 43 terminal cases
+  passed, with exact unsent text retained on socket failure.
+- Fullscreen isolation: native owned `inert` state now covers task-detail
+  siblings, cockpit chrome, bottom nav, and any existing Result panel. The
+  focused case and six-case fullscreen/focus group passed; exit/unmount restore
+  only state owned by the terminal.
+- Exact resize intent: strengthened expand and new keyboard-open pinch cases
+  passed without production changes; six resize cases and 45 terminal cases
+  passed.
+- Deterministic clipboard fixture: nine clipboard/paste/fallback cases passed
+  in three consecutive runs; all 45 terminal cases and web check passed.
+- Focus/style review fix, first delegated pass: rejected after independent
+  review because its touch-target assertion covered only height, captured focus
+  ownership could leak into keyboard activation, fullscreen-entry focus was not
+  proven, and Paste still refocused unconditionally. A focused revision packet
+  is active; Task 7 remains incomplete.
+- Focus/style second review: stale keyboard ownership and fullscreen entry/exit
+  proof are resolved. Task 7 remains open because fallback Send/Cancel still
+  refocus unconditionally and the 44×44 test does not render/measure conditional
+  New output, Reconnect, Send, or Cancel controls.
+- Full Mobile WebKit integration run after that first pass: 62 passed, one
+  existing visual skip, and the desktop Copy-buttons action failed because
+  Task details could not be scrolled into view. A focused rerun reproduced the
+  same timeout; Task 8a tracks the implementation-owned layout regression.
+- Task 8a first pass made normal desktop Task details reachable (focused action,
+  38 terminal cases, four layout-scroll cases, and web check green) but review
+  rejected its `.not(.is-expanded)` gap: desktop expand dropped the only height
+  cap. A desktop-expand RED/GREEN revision is required before acceptance.
+- Acceptance diff review found two original PR 510 paste expectations had been
+  rewritten from LF to CR to match xterm's default normalization. Task 8b
+  restores those merged assertions before changing implementation; the new PR
+  must pass the behavior contract rather than edit around it.
+- Task 8b restored the two merged assertions and passed seven focused paste
+  cases plus all 41 terminal cases. Paste review then found a closed-socket
+  loss path: fallback state was cleared before the no-op send. Task 8c tracks
+  explicit retention/notice behavior for both primary and fallback paste.
+- Final test-gap review confirmed all 27 merged PR 510 cases/assertions remain
+  active and unchanged, then found expanded background controls remained
+  interactive, clipboard-unavailable setup used unordered init scripts, the
+  “one resize” test did not count its slice, and keyboard-open pinch-end lacked
+  coverage. Tasks 8d–8f track the actionable findings. Existing xterm DOM
+  geometry/focus assertions are retained because the repo rules forbid weakening
+  assertions; their upgrade-coupling is a documented follow-up risk.
+- Task 8d's first focused inert case passed after removing orphaned Playwright
+  workers and using direct native-inert assertions. Review found one remaining
+  background sibling: a pre-existing Result panel/Dismiss button. The fullscreen
+  packet now requires that state before Task 8d can close.
+- Task 8e reopened after the full mobile-WebKit run exposed the new
+  keyboard-open pinch-end exact-one-resize case as nondeterministic. The
+  original 27 PR 510 cases still passed in that run; the focused production
+  fix must be green before the PR gate can be rerun.
 - PR 510 merged as `6bbef9c` on 2026-07-15. Post-merge cleanup twice removed an
   uncommitted branch that was fully reachable from `main`; the pre-delegation
   archive restored every implementation file byte-for-byte. The working branch

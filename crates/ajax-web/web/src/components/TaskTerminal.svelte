@@ -25,6 +25,55 @@
   let ctrlArmed = $state(false);
   let expanded = $state(false);
   let hasUnseenOutput = $state(false);
+  let pasteFallbackOpen = $state(false);
+  let pasteFallbackText = $state("");
+  let pasteNotice = $state("");
+  let pasteFallbackOwnedFocus = false;
+  let inertedElements: HTMLElement[] = [];
+
+  const isPhoneTerminalLayout = () =>
+    window.matchMedia("(max-width: 767px), (pointer: coarse) and (max-height: 500px)").matches;
+
+  const clearExpandedInert = () => {
+    for (const el of inertedElements) {
+      el.inert = false;
+    }
+    inertedElements = [];
+  };
+
+  const applyExpandedInert = () => {
+    clearExpandedInert();
+    if (!isPhoneTerminalLayout()) return;
+
+    const panel = hostEl?.closest<HTMLElement>('[data-testid="task-terminal-panel"]');
+    const taskDetail = panel?.parentElement;
+    const next: HTMLElement[] = [];
+
+    if (taskDetail) {
+      for (const child of taskDetail.children) {
+        if (child instanceof HTMLElement && child !== panel) {
+          next.push(child);
+        }
+      }
+    }
+
+    for (const el of document.querySelectorAll<HTMLElement>(
+      ".cockpit-chrome, .bottom-nav, .result-panel",
+    )) {
+      next.push(el);
+    }
+
+    for (const el of next) {
+      if (el.inert) continue;
+      el.inert = true;
+      inertedElements.push(el);
+    }
+  };
+
+  const syncExpandedInert = (active: boolean) => {
+    if (active) applyExpandedInert();
+    else clearExpandedInert();
+  };
 
   const MIN_TERMINAL_COLS = 80;
   const RESIZE_DEBOUNCE_MS = 100;
@@ -59,7 +108,7 @@
   let showReconnect = $derived(status === "reconnecting" || status === "unavailable");
 
   let resetResizeDedupe: (() => void) | undefined;
-  let schedulePostLayoutRef: (() => void) | undefined;
+  let schedulePostLayoutRef: ((discreteIntent?: boolean) => void) | undefined;
   let jumpToBottomRef: (() => void) | undefined;
 
   function loadPersistedFontSize(): number {
@@ -123,17 +172,123 @@
     connection.sendInput(data);
   };
 
-  const refocusTerm = () => {
+  const PASTE_DISCONNECTED_NOTICE = "Terminal disconnected — paste kept below.";
+
+  const pasteToPty = (text: string): boolean => {
+    if (!text || !connection?.isOpen()) return false;
+    const payload = term?.modes.bracketedPasteMode
+      ? `\x1b[200~${text}\x1b[201~`
+      : text;
+    connection.sendInput(payload);
+    return true;
+  };
+
+  const termTextarea = (): HTMLTextAreaElement | null => {
+    const el = term?.element?.querySelector("textarea.xterm-helper-textarea");
+    return el instanceof HTMLTextAreaElement ? el : null;
+  };
+
+  const termOwnedFocus = (): boolean => {
+    const textarea = termTextarea();
+    return textarea !== null && document.activeElement === textarea;
+  };
+
+  const refocusTermIfOwned = (ownedFocus: boolean) => {
+    if (!ownedFocus) return;
+    const textarea = termTextarea();
+    if (textarea) {
+      textarea.focus({ preventScroll: true });
+      return;
+    }
     term?.focus();
   };
 
-  const requestPaste = async () => {
-    try {
-      const text = await navigator.clipboard?.readText?.();
-      if (text) sendKey(text);
-    } catch {
-      // Clipboard denied — use native long-press paste in the terminal host.
+  const blurTerm = () => {
+    termTextarea()?.blur();
+  };
+
+  let toolbarPointerOwnedFocus = false;
+
+  const onToolbarPointerDown = (event: PointerEvent) => {
+    event.preventDefault();
+    toolbarPointerOwnedFocus = termOwnedFocus();
+  };
+
+  const consumeToolbarPointerOwnedFocus = (event: MouseEvent): boolean => {
+    const owned = toolbarPointerOwnedFocus && event.detail !== 0;
+    toolbarPointerOwnedFocus = false;
+    return owned;
+  };
+
+  const openPasteFallback = (ownedFocus: boolean, notice: string, text = "") => {
+    pasteFallbackOwnedFocus = ownedFocus;
+    pasteNotice = notice;
+    pasteFallbackText = text;
+    pasteFallbackOpen = true;
+  };
+
+  const retainUnsentPaste = (text: string, ownedFocus: boolean) => {
+    openPasteFallback(ownedFocus, PASTE_DISCONNECTED_NOTICE, text);
+  };
+
+  const dismissPasteFallback = (): boolean => {
+    const ownedFocus = pasteFallbackOwnedFocus;
+    pasteFallbackOpen = false;
+    pasteFallbackText = "";
+    pasteNotice = "";
+    pasteFallbackOwnedFocus = false;
+    return ownedFocus;
+  };
+
+  const closePasteFallback = () => {
+    refocusTermIfOwned(dismissPasteFallback());
+  };
+
+  const pasteThroughTerm = (text: string, ownedFocus = true): boolean => {
+    if (!text || !term) return false;
+    if (!pasteToPty(text)) {
+      retainUnsentPaste(text, ownedFocus);
+      return false;
     }
+    refocusTermIfOwned(ownedFocus);
+    return true;
+  };
+
+  const requestPaste = async (ownedFocus: boolean) => {
+    try {
+      const readText = navigator.clipboard?.readText;
+      if (!readText) {
+        openPasteFallback(ownedFocus, "Clipboard unavailable — paste below.");
+        return;
+      }
+      const text = await readText.call(navigator.clipboard);
+      if (!text) {
+        refocusTermIfOwned(ownedFocus);
+        return;
+      }
+      pasteThroughTerm(text, ownedFocus);
+    } catch {
+      openPasteFallback(ownedFocus, "Clipboard denied — paste below.");
+    }
+  };
+
+  const sendPasteFallback = () => {
+    const text = pasteFallbackText;
+    const ownedFocus = pasteFallbackOwnedFocus;
+    if (!text) {
+      closePasteFallback();
+      return;
+    }
+    if (!pasteToPty(text)) {
+      pasteNotice = PASTE_DISCONNECTED_NOTICE;
+      return;
+    }
+    dismissPasteFallback();
+    refocusTermIfOwned(ownedFocus);
+  };
+
+  const cancelPasteFallback = () => {
+    closePasteFallback();
   };
 
   const requestReconnect = () => {
@@ -141,10 +296,15 @@
   };
 
   const toggleExpanded = () => {
-    expanded = !expanded;
+    const entering = !expanded;
+    expanded = entering;
     document.documentElement.classList.toggle(EXPANDED_CLASS, expanded);
+    syncExpandedInert(entering);
     resetResizeDedupe?.();
-    schedulePostLayoutRef?.();
+    if (!entering) {
+      blurTerm();
+    }
+    schedulePostLayoutRef?.(entering);
   };
 
   onMount(() => {
@@ -156,6 +316,8 @@
     let lastSentRows = 0;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let fitFrame = 0;
+    let postLayoutFrame = 0;
+    let disposed = false;
     let followLive = true;
     let pinchStartDistance = 0;
     let pinchBaseFontSize = DEFAULT_FONT_SIZE;
@@ -165,15 +327,32 @@
 
     const isKeyboardOpen = () => document.documentElement.classList.contains("keyboard-open");
 
+    const isActive = () => !disposed;
+
+    const cancelScheduledWork = () => {
+      if (fitFrame) {
+        cancelAnimationFrame(fitFrame);
+        fitFrame = 0;
+      }
+      if (postLayoutFrame) {
+        cancelAnimationFrame(postLayoutFrame);
+        postLayoutFrame = 0;
+      }
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = undefined;
+      }
+    };
+
     const resetDedupe = () => {
       lastSentCols = 0;
       lastSentRows = 0;
     };
     resetResizeDedupe = resetDedupe;
 
-    const sendResizeNow = () => {
-      if (!connection?.isOpen() || !term) return;
-      if (isKeyboardOpen()) return;
+    const sendResizeNow = (discreteIntent = false) => {
+      if (!isActive() || !connection?.isOpen() || !term) return;
+      if (isKeyboardOpen() && !discreteIntent) return;
       const cols = term.cols;
       const rows = term.rows;
       if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols <= 0 || rows <= 0) return;
@@ -191,7 +370,7 @@
     };
 
     const fitLocal = () => {
-      if (!fitAddon || !term || !hostEl) return;
+      if (!isActive() || !fitAddon || !term || !hostEl) return;
       const proposed = fitAddon.proposeDimensions();
       if (!proposed) return;
       if (
@@ -237,32 +416,48 @@
       termEl.style.transform = `scale(${scale})`;
     };
 
-    const scheduleFit = (resizeWithFit: boolean) => {
+    const scheduleFit = (resizeWithFit: boolean, discreteIntent = false) => {
+      if (!isActive()) return;
+      if (isKeyboardOpen() && !discreteIntent) {
+        cancelScheduledWork();
+        return;
+      }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
+        if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
         fitLocal();
-        if (resizeWithFit) sendResizeNow();
+        if (resizeWithFit) sendResizeNow(discreteIntent);
       });
     };
 
-    const scheduleImmediate = () => {
-      scheduleFit(true);
+    const scheduleImmediate = (discreteIntent = false) => {
+      scheduleFit(true, discreteIntent);
     };
 
     const scheduleDebounced = () => {
-      scheduleFit(false);
+      if (!isActive()) return;
+      if (isKeyboardOpen()) {
+        cancelScheduledWork();
+        return;
+      }
+      scheduleFit(false, false);
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         resizeTimer = undefined;
-        sendResizeNow();
+        if (!isActive() || isKeyboardOpen()) return;
+        sendResizeNow(false);
       }, RESIZE_DEBOUNCE_MS);
     };
 
-    const schedulePostLayout = () => {
-      scheduleImmediate();
-      requestAnimationFrame(() => {
-        scheduleImmediate();
+    const schedulePostLayout = (discreteIntent = false) => {
+      if (!isActive()) return;
+      scheduleImmediate(discreteIntent);
+      if (postLayoutFrame) cancelAnimationFrame(postLayoutFrame);
+      postLayoutFrame = requestAnimationFrame(() => {
+        postLayoutFrame = 0;
+        if (!isActive()) return;
+        scheduleImmediate(discreteIntent);
       });
     };
     schedulePostLayoutRef = schedulePostLayout;
@@ -403,7 +598,7 @@
       );
       if (next !== term.options.fontSize) {
         term.options.fontSize = next;
-        fitLocal();
+        if (!isKeyboardOpen()) fitLocal();
       }
     };
 
@@ -411,7 +606,7 @@
       if (pinchStartDistance > 0 && pinchEngaged && term) {
         persistFontSize(term.options.fontSize ?? DEFAULT_FONT_SIZE);
         resetDedupe();
-        schedulePostLayout();
+        schedulePostLayout(true);
       }
       pinchStartDistance = 0;
       pinchEngaged = false;
@@ -469,9 +664,20 @@
           statusDetail = "";
         }
       },
-      onOpen: () => {
+      onOpen: (isReconnect, seeded) => {
         statusDetail = "";
         resetDedupe();
+        if (isReconnect && seeded && term) {
+          followLive = true;
+          hasUnseenOutput = false;
+          syncingScroll = true;
+          term.reset();
+          syncSpacer();
+          term.scrollToBottom();
+          scrollInteractionToBottom();
+          syncingScroll = false;
+          refreshFollow();
+        }
         scheduleImmediate();
       },
     });
@@ -486,6 +692,8 @@
     viewport?.addEventListener("resize", onViewportChange);
 
     return () => {
+      disposed = true;
+      cancelScheduledWork();
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
       if (interactionEl) {
@@ -497,12 +705,11 @@
         interactionEl.removeEventListener("touchcancel", onTouchEnd);
       }
       if (ctrlTimer) clearTimeout(ctrlTimer);
-      if (resizeTimer) clearTimeout(resizeTimer);
-      if (fitFrame) cancelAnimationFrame(fitFrame);
       resizeObserver?.disconnect();
       window.removeEventListener("resize", onViewportChange);
       window.removeEventListener("orientationchange", onViewportChange);
       viewport?.removeEventListener("resize", onViewportChange);
+      clearExpandedInert();
       document.documentElement.classList.remove(EXPANDED_CLASS);
       connection?.dispose();
       fitAddon?.dispose();
@@ -540,7 +747,7 @@
     class:is-armed={expanded}
     aria-label="Expand terminal"
     aria-pressed={expanded}
-    onmousedown={(event) => event.preventDefault()}
+    onpointerdown={(event) => event.preventDefault()}
     onclick={() => toggleExpanded()}>⛶</button>
   <div
     class="terminal-status"
@@ -560,16 +767,30 @@
       {/if}
     {/if}
   </div>
+  {#if pasteFallbackOpen}
+    <div class="terminal-paste-fallback">
+      <p class="terminal-paste-notice" role="status">{pasteNotice}</p>
+      <textarea
+        class="terminal-paste-input"
+        aria-label="Paste text"
+        bind:value={pasteFallbackText}></textarea>
+      <div class="terminal-paste-actions">
+        <button type="button" class="terminal-key" onclick={() => sendPasteFallback()}>Send</button>
+        <button type="button" class="terminal-key" onclick={() => cancelPasteFallback()}>Cancel</button>
+      </div>
+    </div>
+  {/if}
   <div data-testid="terminal-bottom-controls">
     <div class="terminal-keys" role="toolbar" aria-label="Terminal keys">
       {#each CONTROL_KEYS as key (key.label)}
         <button
           type="button"
           class="terminal-key"
-          onmousedown={(event) => event.preventDefault()}
-          onclick={() => {
+          onpointerdown={onToolbarPointerDown}
+          onclick={(event) => {
+            const ownedFocus = consumeToolbarPointerOwnedFocus(event);
             sendKey(consumeCtrl(key.data));
-            refocusTerm();
+            refocusTermIfOwned(ownedFocus);
           }}>{key.label}</button>
       {/each}
       <button
@@ -577,16 +798,20 @@
         class="terminal-key"
         class:is-armed={ctrlArmed}
         aria-pressed={ctrlArmed}
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => {
+        onpointerdown={onToolbarPointerDown}
+        onclick={(event) => {
+          const ownedFocus = consumeToolbarPointerOwnedFocus(event);
           toggleCtrl();
-          refocusTerm();
+          refocusTermIfOwned(ownedFocus);
         }}>Ctrl{#if ctrlArmed}<span class="terminal-key-armed-dot" aria-hidden="true"></span>{/if}</button>
       <button
         type="button"
         class="terminal-key"
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => void requestPaste()}>Paste</button>
+        onpointerdown={onToolbarPointerDown}
+        onclick={(event) => {
+          const ownedFocus = consumeToolbarPointerOwnedFocus(event);
+          void requestPaste(ownedFocus);
+        }}>Paste</button>
       <button
         type="button"
         class="terminal-key"
@@ -646,17 +871,50 @@
     overflow: hidden !important;
   }
 
+  .terminal-paste-fallback {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 8px;
+    border-top: 1px solid var(--rule);
+    background: var(--paper-raised);
+  }
+
+  .terminal-paste-notice {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .terminal-paste-input {
+    width: 100%;
+    min-height: 72px;
+    padding: 6px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 12px;
+    resize: vertical;
+  }
+
+  .terminal-paste-actions {
+    display: flex;
+    gap: 6px;
+  }
+
   .terminal-new-output {
     position: absolute;
     left: 50%;
     bottom: 8px;
     transform: translateX(-50%);
     z-index: 6;
-    min-height: 32px;
+    min-height: 44px;
     padding: 6px 12px;
     border: 1px solid var(--rule-strong);
     border-radius: 999px;
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
     font-size: 12px;
     font-weight: 600;
@@ -667,8 +925,8 @@
     top: 6px;
     right: 6px;
     z-index: 5;
-    min-width: 36px;
-    min-height: 36px;
+    min-width: 44px;
+    min-height: 44px;
     padding: 4px;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
@@ -704,11 +962,12 @@
   }
 
   .terminal-status-reconnect {
+    min-height: 44px;
     font-size: 11px;
     padding: 2px 8px;
     border-radius: 6px;
     border: 1px solid var(--rule);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
   }
 
@@ -727,12 +986,13 @@
 
   .terminal-key {
     flex: none;
-    min-height: 28px;
+    min-width: 44px;
+    min-height: 44px;
     padding: 1px 7px;
     font-size: 11px;
     border-radius: 6px;
     border: 1px solid var(--rule);
-    background: var(--surface-raised);
+    background: var(--paper-raised);
     color: var(--ink);
   }
 
@@ -748,6 +1008,16 @@
     border-radius: 50%;
     background: var(--mustard-bright);
     vertical-align: middle;
+  }
+
+  @media (min-width: 768px) and (not ((pointer: coarse) and (max-height: 500px))) {
+    .terminal-panel .terminal-interaction-wrap {
+      height: min(58vh, 560px);
+    }
+
+    .terminal-panel .terminal-host {
+      height: 100%;
+    }
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {

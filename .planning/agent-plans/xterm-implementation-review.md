@@ -2,9 +2,9 @@
 
 ## Verdict
 
-**Changes requested.** The delegated implementation passes PR 510's 27
-mobile-WebKit cases, but the implementation and PTY can disagree about geometry
-and several documented product behaviors are not actually preserved.
+**Automated findings resolved.** The delegated implementation passes all 27
+original PR 510 mobile-WebKit cases unchanged plus focused review regressions.
+Physical-device acceptance remains a documented manual-validation risk.
 
 ## Findings
 
@@ -22,6 +22,10 @@ column count sent to the PTY and scale that grid to the host width.
 
 ### P1 — keyboard resize handling violates the discrete-intent exceptions
 
+**Resolved in implementation branch.** Ordinary keyboard-open work cancels
+pending fit/resize, while expand-enter and pinch-end use an explicit discrete
+intent. New behavior coverage is green.
+
 `TaskTerminal.svelte:203-216` still performs local fits during ordinary
 keyboard-open viewport bursts, while `:174-177` blocks every PTY resize,
 including the required pinch-end and expand-enter exceptions. Ordinary
@@ -30,6 +34,10 @@ must fit and resize once.
 
 ### P1 — seeded reconnect state is ignored
 
+**Resolved in implementation branch.** Manual seeded reconnect resets xterm,
+unseen state, and live follow; unseeded reconnect leaves local state intact.
+Black-box reconnect/scroll coverage is green.
+
 `TaskTerminal.svelte:422-426` ignores `onOpen(isReconnect, seeded)`. A manual
 seeded reconnect can append fresh history to stale xterm contents and retain an
 old unpinned scroll-follow state. Seeded reconnects must reset the local buffer,
@@ -37,6 +45,11 @@ follow/unseen state, and live position; automatic unseeded reconnects must keep
 the buffer.
 
 ### P1 — Paste bypasses xterm paste semantics and fails silently
+
+**Resolved in implementation branch.** Successful reads preserve the merged
+LF/Unicode contract and use public `term.modes.bracketedPasteMode` for DEC 2004
+wrapping; unavailable or denied clipboard access opens an accessible textarea
+fallback. Closed-socket sends retain exact unsent text with a visible notice.
 
 `TaskTerminal.svelte:130-136` sends clipboard text directly to the socket.
 That bypasses xterm's bracketed-paste handling, and unavailable/denied clipboard
@@ -53,11 +66,20 @@ must not be reported as proven by automated CI.
 
 ### P2 — a post-layout frame survives disposal
 
+**Resolved in implementation branch.** The nested frame is tracked, all
+scheduled work is canceled, and callbacks are disposal-guarded. Immediate
+navigation coverage is green.
+
 `TaskTerminal.svelte:212-217` schedules an untracked nested animation frame,
 but cleanup at `:438-465` cancels only `fitFrame`. Navigation during a
 fullscreen/pinch settle can run fit work after xterm and FitAddon are disposed.
 
 ### P2 — toolbar focus semantics are mouse-only and unconditional
+
+**Resolved in implementation branch.** Pointer ownership is captured and
+consumed without leaking into keyboard activation, refocus is conditional,
+fullscreen exit blurs, native fallback preserves ownership, and background
+controls are inert while phone fullscreen is active. Focus coverage is green.
 
 Toolbar controls use `mousedown` rather than `pointerdown` and always refocus
 xterm (`TaskTerminal.svelte:493-539`). A touch can reopen a keyboard the user
@@ -65,6 +87,10 @@ intentionally hid. Preserve prior terminal focus and refocus only when the
 terminal owned it; fullscreen exit should blur.
 
 ### P3 — undefined design token
+
+**Resolved in implementation branch.** Terminal controls use the existing
+`--paper-raised` token and all rendered mobile controls are proven at least
+44x44 in baseline and conditional states.
 
 `TaskTerminal.svelte:609`, `:661`, and `:685` use `--surface-raised`, while Ajax
 defines `--paper-raised`. The affected controls lose their intended background.
