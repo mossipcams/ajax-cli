@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.1...ajax-cli-v0.46.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** keep task chrome above keyboard and full-bleed terminal ([#515](https://github.com/mossipcams/ajax-cli/issues/515)) ([8452c2a](https://github.com/mossipcams/ajax-cli/commit/8452c2aa7e6704114967cf87600fa0c89b9c8037))
+
 ## [0.46.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.0...ajax-cli-v0.46.1) (2026-07-15)
 
 
