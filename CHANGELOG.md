@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.45.2](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.1...ajax-cli-v0.45.2) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** smooth Ghostty terminal scrolling via native scroll proxy ([#504](https://github.com/mossipcams/ajax-cli/issues/504)) ([046ef5b](https://github.com/mossipcams/ajax-cli/commit/046ef5bb829e01368b6a7cbbd0cf2c01ba3e2ac0))
+
 ## [0.45.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.0...ajax-cli-v0.45.1) (2026-07-15)
 
 
