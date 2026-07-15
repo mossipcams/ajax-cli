@@ -72,8 +72,21 @@
     onResult?.(copied ? "Diagnostics copied" : "Diagnostics ready to copy", null, false);
   }
 
-  function reloadApp() {
-    window.location.reload();
+  async function reloadApp() {
+    restartStatus = "Restarting…";
+    try {
+      await restartServer();
+    } catch {
+      // A connection drop during restart is expected.
+    }
+    const online = await waitForServerOnline();
+    if (online) {
+      restartStatus = null;
+      window.location.reload();
+      return;
+    }
+    restartStatus = null;
+    onResult?.("Server did not come back in time", null, true);
   }
 
   const appVersion =

@@ -94,13 +94,33 @@ describe("SettingsView", () => {
     expect(debug.textContent).toContain("wasm init failed");
   });
 
-  it("reload app calls location.reload", async () => {
+  it("reload app restarts the server then reloads the page", async () => {
+    const restartSpy = vi.spyOn(api, "restartServer").mockResolvedValue({});
+    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(true);
     const reload = vi.fn();
     vi.stubGlobal("location", { ...window.location, reload });
 
     const { getByText } = render(SettingsView);
     await fireEvent.click(getByText("Reload app"));
+    await vi.waitFor(() => expect(restartSpy).toHaveBeenCalledOnce());
     expect(reload).toHaveBeenCalledOnce();
+
+    vi.unstubAllGlobals();
+  });
+
+  it("reload app reports timeout when the server does not return", async () => {
+    vi.spyOn(api, "restartServer").mockResolvedValue({});
+    vi.spyOn(api, "waitForServerOnline").mockResolvedValue(false);
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    const onResult = vi.fn();
+
+    const { getByText } = render(SettingsView, { props: { onResult } });
+    await fireEvent.click(getByText("Reload app"));
+    await vi.waitFor(() =>
+      expect(onResult).toHaveBeenCalledWith("Server did not come back in time", null, true),
+    );
+    expect(reload).not.toHaveBeenCalled();
 
     vi.unstubAllGlobals();
   });

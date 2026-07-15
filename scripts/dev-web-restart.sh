@@ -166,6 +166,10 @@ if ! command -v ajax-cli >/dev/null 2>&1; then
 fi
 
 CMD=(ajax-cli --profile "$PROFILE" web --host "$HOST" --port "$PORT")
+RESTART_SCRIPT="$REPO_ROOT/scripts/dev-web-restart.sh"
+export AJAX_WEB_RESTART_SCRIPT="$RESTART_SCRIPT"
+export AJAX_WEB_RESTART_PROFILE="$PROFILE"
+export AJAX_WEB_RESTART_PORT="$PORT"
 
 if [[ "$FOREGROUND" -eq 1 ]]; then
   echo "Starting ${CMD[*]} (foreground) ..."
@@ -182,7 +186,7 @@ echo "Starting ${CMD[*]} (tmux session $TMUX_SESSION) ..."
 # ponytail: tmux keeps the server alive; nohup from agent/CI shells still dies.
 # Ceiling: requires tmux. Upgrade: launchd plist if we need login-boot without tmux.
 tmux new-session -d -s "$TMUX_SESSION" -c "$ROOT" \
-  "ajax-cli --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"
+  "AJAX_WEB_RESTART_SCRIPT=$(printf %q "$RESTART_SCRIPT") AJAX_WEB_RESTART_PROFILE=$(printf %q "$PROFILE") AJAX_WEB_RESTART_PORT=$(printf %q "$PORT") ajax-cli --profile $(printf %q "$PROFILE") web --host $(printf %q "$HOST") --port $(printf %q "$PORT") 2>&1 | tee -a $(printf %q "$LOG_FILE"); echo EXIT:\$? >> $(printf %q "$LOG_FILE")"
 
 sleep 1
 NEW_PID="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
