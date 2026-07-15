@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.45.1](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.45.0...ajax-cli-v0.45.1) (2026-07-15)
+
+
+### Bug Fixes
+
+* **web:** run dev-web-restart script from Reload app ([#501](https://github.com/mossipcams/ajax-cli/issues/501)) ([7c4d25c](https://github.com/mossipcams/ajax-cli/commit/7c4d25ce99e88244eff051da10e82f0959e3bef4))
+* **web:** stop xterm Surface V2 dual background and resize spam ([#502](https://github.com/mossipcams/ajax-cli/issues/502)) ([73fc9b1](https://github.com/mossipcams/ajax-cli/commit/73fc9b1d3ff67f7e86b18104ca007aad795ffb11))
+
 ## [0.45.0](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.44.1...ajax-cli-v0.45.0) (2026-07-15)
 
 
