@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import { copyText } from "../diagnostics";
+  import { resetDocumentScroll } from "../viewport";
   import {
     connectTaskTerminal,
     type TerminalConnection,
@@ -83,6 +84,7 @@
 
   const MIN_TERMINAL_COLS = 80;
   const RESIZE_DEBOUNCE_MS = 100;
+  const EXPAND_REWRAP_MS = 280;
   const EXPANDED_CLASS = "terminal-expanded";
   const FONT_STORAGE_KEY = "ajax.terminal.fontSize";
   const DEFAULT_FONT_SIZE = 13;
@@ -118,6 +120,42 @@
   let resetResizeDedupe: (() => void) | undefined;
   let schedulePostLayoutRef: ((discreteIntent?: boolean) => void) | undefined;
   let jumpToBottomRef: (() => void) | undefined;
+
+  let expandSettleFrame1 = 0;
+  let expandSettleFrame2 = 0;
+  let expandSettleTimer: ReturnType<typeof setTimeout> | undefined;
+
+  const cancelExpandSettle = () => {
+    if (expandSettleFrame1) {
+      cancelAnimationFrame(expandSettleFrame1);
+      expandSettleFrame1 = 0;
+    }
+    if (expandSettleFrame2) {
+      cancelAnimationFrame(expandSettleFrame2);
+      expandSettleFrame2 = 0;
+    }
+    if (expandSettleTimer) {
+      clearTimeout(expandSettleTimer);
+      expandSettleTimer = undefined;
+    }
+  };
+
+  const scheduleExpandSettle = () => {
+    cancelExpandSettle();
+    schedulePostLayoutRef?.(true);
+    expandSettleFrame1 = requestAnimationFrame(() => {
+      expandSettleFrame1 = 0;
+      schedulePostLayoutRef?.(true);
+      expandSettleFrame2 = requestAnimationFrame(() => {
+        expandSettleFrame2 = 0;
+        schedulePostLayoutRef?.(true);
+      });
+    });
+    expandSettleTimer = setTimeout(() => {
+      expandSettleTimer = undefined;
+      schedulePostLayoutRef?.(true);
+    }, EXPAND_REWRAP_MS);
+  };
 
   function loadPersistedFontSize(): number {
     try {
@@ -194,6 +232,27 @@
   const termTextarea = (): HTMLTextAreaElement | null => {
     const el = term?.element?.querySelector("textarea.xterm-helper-textarea");
     return el instanceof HTMLTextAreaElement ? el : null;
+  };
+
+  const hardenMobileTextarea = () => {
+    const input = termTextarea();
+    if (!input) return;
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("spellcheck", "false");
+    input.style.fontSize = "16px";
+    input.style.position = "absolute";
+    input.style.bottom = "0";
+    input.style.height = "44px";
+    input.style.width = "100%";
+    input.style.opacity = "0.01";
+    input.style.setProperty("clip-path", "none");
+    input.style.setProperty("-webkit-clip-path", "none");
+    input.style.setProperty("clip", "auto");
+    input.style.color = "transparent";
+    input.style.setProperty("-webkit-text-fill-color", "transparent");
+    input.style.caretColor = "transparent";
   };
 
   const termOwnedFocus = (): boolean => {
@@ -340,8 +399,11 @@
     resetResizeDedupe?.();
     if (!entering) {
       blurTerm();
+      cancelExpandSettle();
+      schedulePostLayoutRef?.(false);
+      return;
     }
-    schedulePostLayoutRef?.(entering);
+    scheduleExpandSettle();
   };
 
   onMount(() => {
@@ -602,6 +664,7 @@
       if (target instanceof Element && target.closest("button")) return;
       const textarea = termTextarea();
       if (textarea) {
+        resetDocumentScroll();
         textarea.focus({ preventScroll: true });
         return;
       }
@@ -784,6 +847,7 @@
     fitAddon = new FitAddon();
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
+    hardenMobileTextarea();
     const viteDev =
       (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
     if (viteDev) {
@@ -848,6 +912,7 @@
 
     return () => {
       disposed = true;
+      cancelExpandSettle();
       cancelLongPress();
       cancelScheduledWork();
       dataDisposable?.dispose();
@@ -1060,6 +1125,22 @@
     overflow: hidden !important;
   }
 
+  .terminal-host :global(textarea.xterm-helper-textarea) {
+    position: absolute !important;
+    left: 0 !important;
+    top: auto !important;
+    bottom: 0 !important;
+    height: 44px !important;
+    width: 100% !important;
+    opacity: 0.01 !important;
+    clip-path: none !important;
+    -webkit-clip-path: none !important;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: transparent;
+    z-index: 1;
+  }
+
   .terminal-paste-fallback {
     display: flex;
     flex-direction: column;
@@ -1261,6 +1342,10 @@
       height: auto;
       flex: 1 1 auto;
       min-height: 0;
+    }
+
+    :global(html.keyboard-open) .terminal-panel:not(.is-expanded) :global([data-testid="terminal-bottom-controls"]) {
+      flex: none;
     }
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
