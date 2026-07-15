@@ -8,7 +8,7 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
-  import { MIN_TERMINAL_COLS } from "../terminalGeometry";
+  import { MIN_TERMINAL_COLS, fitCapFontSize } from "../terminalGeometry";
 
   interface Props {
     handle: string;
@@ -116,8 +116,33 @@
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
 
     const reportResize = () => {
-      fitAddon?.fit();
-      if (!term) return;
+      if (!term || !fitAddon) return;
+      fitAddon.fit();
+      const proposed = fitAddon.proposeDimensions?.();
+      if (
+        proposed &&
+        Number.isFinite(proposed.cols) &&
+        proposed.cols > 0 &&
+        proposed.cols < MIN_TERMINAL_COLS
+      ) {
+        // Narrow host: render at the fit-to-width font and floor the local
+        // grid to the PTY's 80-col floor so both sides wrap identically.
+        const currentFont = (term.options.fontSize as number | undefined) ?? 13;
+        const fitFont = fitCapFontSize(
+          currentFont,
+          proposed.cols,
+          MIN_TERMINAL_COLS,
+          1,
+          currentFont,
+        );
+        if (fitFont !== currentFont) {
+          term.options.fontSize = fitFont;
+          fitAddon.fit();
+        }
+        if (term.cols < MIN_TERMINAL_COLS) {
+          term.resize(MIN_TERMINAL_COLS, term.rows);
+        }
+      }
       const cols = Math.max(term.cols, MIN_TERMINAL_COLS);
       const rows = term.rows;
       if (cols === lastSentCols && rows === lastSentRows) return;
@@ -168,8 +193,13 @@
       onStatus: (next) => {
         status = next;
       },
-      onOpen: () => {
+      onOpen: (isReconnect, seeded) => {
         statusDetail = "";
+        // New bridge PTY on every open: it must learn the size even if ours
+        // did not change.
+        lastSentCols = 0;
+        lastSentRows = 0;
+        if (isReconnect && seeded) term?.reset();
         reportResize();
         requestAnimationFrame(() => term?.focus());
       },
