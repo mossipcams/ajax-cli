@@ -155,7 +155,7 @@
     owned by the expanded state, restoring it on exit/unmount.
   - Verify: new/fullscreen/focus cases, full terminal file, web/diff checks.
 
-- [ ] **Task 8e — Prove exact keyboard-open discrete resizes (5-15 min)**
+- [x] **Task 8e — Prove exact keyboard-open discrete resizes (5-15 min)**
   - Test/write: require exactly one settled resize for expand-enter and add the
     mirrored keyboard-open pinch-end case before any production edit.
   - Implementation: only if RED, minimally dedupe discrete scheduling.
@@ -166,6 +166,24 @@
     competing init scripts with one mock option and retain all assertions.
   - Implementation: test helper/call sites only; no production change.
   - Verify: clipboard/paste cases three times, full terminal file, checks.
+
+- [x] **Task 8g — Keep large UTF-8 paste frames within the PTY limit (5-15 min)**
+  - Test/write: add connection coverage proving a payload larger than 4 KiB is
+    split into binary frames no larger than the backend limit and reconstructs
+    byte-for-byte across a multibyte boundary; show the current one-frame send
+    as RED.
+  - Implementation: chunk the already encoded input at the connection boundary;
+    keep small input as one frame and do not change the Rust PTY contract.
+  - Verify: focused connection tests, full connection unit file, web check, and
+    diff check.
+
+- [x] **Task 8h — Do not reopen the keyboard from terminal action clicks (5-15 min)**
+  - Test/write: prove a bubbled click from `New output` does not refocus the
+    terminal or reopen keyboard ownership, while a direct surface click still
+    focuses without scrolling; show RED first.
+  - Implementation: ignore button-originated wrapper clicks and reuse the
+    existing focus path with `preventScroll`; no new focus abstraction.
+  - Verify: focused focus/scroll cases, full terminal file, web/diff checks.
 
 - [ ] **Task 9 — Commit, push, open, and monitor the implementation PR (5-15 min plus CI runtime)**
   - Test/write: no new test; this is PR lifecycle work after the blocking local
@@ -268,6 +286,29 @@
   archive restored every implementation file byte-for-byte. The working branch
   is temporarily anchored at unsquashed PR head `04cd1e8` so cleanup cannot
   delete it, and only later implementation commits will be replayed onto main.
+- Draft implementation PR 512 opened from `feat/web-xterm-terminal` after the
+  normal commit hook passed `npm run verify`, release build, and locked local
+  install. The user explicitly approved opening before the failed mobile-WebKit
+  pinch case was rerun; the PR remains draft while Tasks 8e, 8g, and 8h close.
+- Task 8g RED sent one oversized input frame. GREEN chunks encoded input into
+  at most 4096-byte binary frames; the parent reran all 18 connection tests
+  successfully, and delegate web/diff checks passed.
+- Task 8h RED proved a bubbled New-output click refocused xterm. GREEN ignores
+  button-originated wrapper clicks and uses `preventScroll` for direct-surface
+  focus; the delegate ran all 46 terminal cases and the parent reran the new
+  case successfully. One out-of-scope delegate plan was rejected and removed
+  in the allowed revision round.
+- PR 512's first Web run failed only the original `reopen with meaningful
+  viewport change` case on all three CI attempts; the other 71 cases passed
+  with one existing visual skip. The exact case then passed 10/10 locally with
+  `CI=1`; focused read-only root-cause review remains in progress before any
+  production change.
+- After deferring keyboard-open pinch fitting to pinch end, the complete local
+  mobile-WebKit run passed 73 tests with one existing visual skip. All 46
+  terminal behavior cases passed, including all 27 original PR 510 cases and
+  the previously failing CI reopen case. The reopened case also passed 10/10
+  under `CI=1`. Web build, deterministic build check, type/Svelte check, and
+  diff check passed.
 
 ## Risks and stop conditions
 

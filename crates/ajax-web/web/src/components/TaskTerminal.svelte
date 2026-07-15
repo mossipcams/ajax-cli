@@ -558,7 +558,14 @@
       syncWrapperFromTerm();
     };
 
-    const onInteractionClick = () => {
+    const onInteractionClick = (event: MouseEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("button")) return;
+      const textarea = termTextarea();
+      if (textarea) {
+        textarea.focus({ preventScroll: true });
+        return;
+      }
       term?.focus();
     };
 

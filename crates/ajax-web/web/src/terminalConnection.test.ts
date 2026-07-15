@@ -423,6 +423,65 @@ describe("connectTaskTerminal", () => {
     expect(outputs.join("")).toBe(corpus);
   });
 
+  it("chunks large input into frames <=4096 bytes with multibyte char across chunk boundary", () => {
+    const sent: Uint8Array[] = [];
+    const socket = connectForOutput([]);
+    socket.send = (data: unknown) => {
+      expect(ArrayBuffer.isView(data) || data instanceof ArrayBuffer).toBe(true);
+      const view = data as Uint8Array;
+      const copy = new Uint8Array(view.byteLength);
+      copy.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+      sent.push(copy);
+    };
+
+    // Build a payload exceeding 4096 encoded bytes with a multibyte character
+    // whose encoded bytes straddle the 4096 chunk boundary.
+    const filler = "x".repeat(4095);
+    const boundary = "λ"; // U+03BB, 2 encoded bytes → bytes [4095, 4097) cross 4096
+    const tail = "y".repeat(100);
+    const payload = filler + boundary + tail;
+    const expected = new TextEncoder().encode(payload);
+
+    connection.sendInput(payload);
+
+    expect(sent.length).toBeGreaterThan(1);
+
+    // Every frame must be within the bridge limit.
+    for (const frame of sent) {
+      expect(frame.byteLength).toBeLessThanOrEqual(4096);
+    }
+
+    // Concatenated bytes must exactly equal the original encoding.
+    const total = sent.reduce((sum, f) => sum + f.byteLength, 0);
+    expect(total).toBe(expected.byteLength);
+    const reassembled = new Uint8Array(total);
+    let offset = 0;
+    for (const frame of sent) {
+      reassembled.set(frame, offset);
+      offset += frame.byteLength;
+    }
+    expect(Array.from(reassembled)).toEqual(Array.from(expected));
+
+    // Round-trip through a stream decoder must reproduce the original string.
+    expect(new TextDecoder().decode(reassembled)).toBe(payload);
+  });
+
+  it("ordinary small input remains a single frame", () => {
+    const sent: Uint8Array[] = [];
+    const socket = connectForOutput([]);
+    socket.send = (data: unknown) => {
+      const view = data as Uint8Array;
+      const copy = new Uint8Array(view.byteLength);
+      copy.set(new Uint8Array(view.buffer, view.byteOffset, view.byteLength));
+      sent.push(copy);
+    };
+
+    connection.sendInput("small");
+
+    expect(sent).toHaveLength(1);
+    expect(new TextDecoder().decode(sent[0])).toBe("small");
+  });
+
   it("preserves rapid burst and large payload order without loss or duplication", async () => {
     const outputs: string[] = [];
     const socket = connectForOutput(outputs);

@@ -1372,6 +1372,47 @@ test("reading scrollback shows New output and restoring live output sends no PTY
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
 });
 
+test("New output click does not refocus xterm or reopen keyboard, and direct surface click focuses without scrolling", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+
+  const isTermFocused = () =>
+    page.evaluate(() => {
+      const textarea = document.querySelector(
+        ".terminal-host textarea.xterm-helper-textarea",
+      );
+      return textarea === document.activeElement;
+    });
+  const isKeyboardOpen = () =>
+    page.evaluate(() => document.documentElement.classList.contains("keyboard-open"));
+
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await scrollInteractionSurfaceAway(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(200, 40)]);
+
+  const newOutput = newOutputButton(page);
+  await expect(newOutput).toBeVisible();
+
+  expect(await isTermFocused()).toBe(false);
+  expect(await isKeyboardOpen()).toBe(false);
+
+  await newOutput.click();
+
+  expect(await isTermFocused()).toBe(false);
+  expect(await isKeyboardOpen()).toBe(false);
+  await expect(newOutput).not.toBeVisible();
+
+  const scrollBefore = await documentScrollPosition(page);
+  await clickInteractionSurfaceCenter(page);
+  const scrollAfter = await documentScrollPosition(page);
+
+  expect(scrollAfter).toEqual(scrollBefore);
+  await expect
+    .poll(async () => isTermFocused())
+    .toBe(true);
+});
+
 test("long press on the interaction surface sends no PTY input", async ({ page }) => {
   await openTaskTerminal(page);
 
