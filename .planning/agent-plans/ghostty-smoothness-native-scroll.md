@@ -198,3 +198,18 @@ errors · mobile-webkit Playwright 46/46 · desktop-chromium green modulo the
 pre-existing garble parallel-load screenshot flake (passes serially and on
 every solo run; also fails on clean HEAD) · cargo nextest ajax-web 133/133,
 ajax-cli 335/335 (dist rebuilt).
+
+## Post-PR CI fix (2026-07-15, commit 45c07b3)
+
+PR #504's first CI run failed the Web job: terminal-zero-lag e2e on Linux
+WebKit (overlay not found / only last char). Root cause: the fractional fit
+font oscillated on renderers that round glyph advances per font size —
+7.75px fit >80 cols, 8px overflowed, flipping the fit branch every pass into
+an endless refit/resize/render loop that pegged the runner; the zero-lag
+300ms idle backstop then cleared the overlay before stalled polls observed
+it. Fix: fitFontSize returns whole pixels (round; undefined <1px) — integer
+targets cannot exceed the current font while the floor overflows, so
+convergence strictly decreases with no cycles; residual stays with the
+shrink-only fitScale (0.97-1.0). Expectations: 7.75→8px, rows 30→31 at
+384px. Verified: local suite 556/556, zero-lag e2e 3/3, mobile-webkit 46/46,
+CI fully green (Web job 2m55s, down from 3m55s).
