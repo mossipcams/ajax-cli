@@ -3,6 +3,7 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
+  import { copyText } from "../diagnostics";
   import {
     connectTaskTerminal,
     type TerminalConnection,
@@ -28,7 +29,12 @@
   let pasteFallbackOpen = $state(false);
   let pasteFallbackText = $state("");
   let pasteNotice = $state("");
+  let copyOverlayText = $state("");
+  let copyNotice = $state("");
+  let copyFallbackOpen = $state(false);
+  let copyFallbackText = $state("");
   let pasteFallbackOwnedFocus = false;
+  let copyNoticeTimer: ReturnType<typeof setTimeout> | undefined;
   let inertedElements: HTMLElement[] = [];
 
   const isPhoneTerminalLayout = () =>
@@ -83,6 +89,8 @@
   const MIN_FONT_SIZE = 7;
   const MAX_FONT_SIZE = 20;
   const PINCH_ACTIVATION_PX = 12;
+  const LONG_PRESS_MS = 500;
+  const LONG_PRESS_MOVE_CANCEL_PX = 8;
 
   const CONTROL_KEYS = [
     { label: "Esc", data: "\x1b" },
@@ -291,6 +299,35 @@
     closePasteFallback();
   };
 
+  const syncCopyOverlay = () => {
+    copyOverlayText = term?.getSelection() ?? "";
+    if (!copyOverlayText && !copyNoticeTimer) copyNotice = "";
+  };
+
+  const dismissCopyFallback = () => {
+    copyFallbackOpen = false;
+    copyFallbackText = "";
+  };
+
+  const copySelection = async () => {
+    const text = copyOverlayText || term?.getSelection() || "";
+    if (!text) return;
+    const copied = await copyText(text);
+    if (copied) {
+      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
+      copyNotice = "Copied";
+      copyNoticeTimer = setTimeout(() => {
+        copyNotice = "";
+        copyNoticeTimer = undefined;
+      }, 1500);
+      term?.clearSelection();
+      copyOverlayText = "";
+      return;
+    }
+    copyFallbackText = text;
+    copyFallbackOpen = true;
+  };
+
   const requestReconnect = () => {
     connection?.reconnectNow();
   };
@@ -311,6 +348,7 @@
     let fitAddon: FitAddon | undefined;
     let dataDisposable: { dispose(): void } | undefined;
     let scrollDisposable: { dispose(): void } | undefined;
+    let selectionDisposable: { dispose(): void } | undefined;
     let resizeObserver: ResizeObserver | undefined;
     let lastSentCols = 0;
     let lastSentRows = 0;
@@ -322,6 +360,12 @@
     let pinchStartDistance = 0;
     let pinchBaseFontSize = DEFAULT_FONT_SIZE;
     let pinchEngaged = false;
+    let longPressTimer: ReturnType<typeof setTimeout> | undefined;
+    let longPressStartX = 0;
+    let longPressStartY = 0;
+    let longPressStartedAt = 0;
+    let longPressActive = false;
+    let longPressSelected = false;
     let syncingScroll = false;
     let wrapperDroveScroll = false;
 
@@ -574,7 +618,88 @@
       refreshFollow();
     };
 
+    const cancelLongPress = () => {
+      longPressActive = false;
+      longPressStartedAt = 0;
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = undefined;
+      }
+    };
+
+    const fireLongPressSelect = (clientX: number, clientY: number) => {
+      if (longPressSelected) return;
+      selectWordAtClient(clientX, clientY);
+      longPressSelected = true;
+    };
+
+    const isWordChar = (ch: string) => {
+      if (!ch) return false;
+      const code = ch.charCodeAt(0);
+      return (
+        (code >= 48 && code <= 57) ||
+        (code >= 65 && code <= 90) ||
+        (code >= 97 && code <= 122) ||
+        code === 45 ||
+        code === 95 ||
+        code > 127
+      );
+    };
+
+    const selectWordAtClient = (clientX: number, clientY: number) => {
+      if (!term || !hostEl) return;
+      const termEl = term.element;
+      if (!termEl || term.cols <= 0 || term.rows <= 0) return;
+
+      const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
+      const bounds = screenEl?.getBoundingClientRect() ?? hostEl.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+
+      const relX = clientX - bounds.left;
+      const relY = clientY - bounds.top;
+      if (relX < 0 || relY < 0 || relX > bounds.width || relY > bounds.height) return;
+
+      const cellWidth = bounds.width / term.cols;
+      const cellHeight = bounds.height / term.rows;
+      const col = Math.min(term.cols - 1, Math.max(0, Math.floor(relX / cellWidth)));
+      const rowInView = Math.min(term.rows - 1, Math.max(0, Math.floor(relY / cellHeight)));
+      const bufferRow = term.buffer.active.viewportY + rowInView;
+      const line = term.buffer.active.getLine(bufferRow);
+      if (!line) return;
+
+      const lineStr = line.translateToString(false);
+      const trimmed = lineStr.trimEnd();
+      if (!trimmed || col >= trimmed.length) return;
+
+      let start = col;
+      while (start > 0 && isWordChar(trimmed[start - 1] ?? "")) start -= 1;
+      let end = col;
+      while (end < trimmed.length && isWordChar(trimmed[end] ?? "")) end += 1;
+
+      const length = end - start;
+      if (length <= 0) return;
+      term.select(start, bufferRow, length);
+    };
+
     const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length === 1) {
+        const touch = event.touches[0];
+        longPressStartX = touch.clientX;
+        longPressStartY = touch.clientY;
+        longPressStartedAt = performance.now();
+        longPressActive = true;
+        longPressSelected = false;
+        if (longPressTimer) clearTimeout(longPressTimer);
+        longPressTimer = setTimeout(() => {
+          longPressTimer = undefined;
+          if (!longPressActive || !term) return;
+          fireLongPressSelect(longPressStartX, longPressStartY);
+          longPressActive = false;
+        }, LONG_PRESS_MS);
+      } else {
+        cancelLongPress();
+      }
+
       if (event.touches.length !== 2) {
         pinchStartDistance = 0;
         pinchEngaged = false;
@@ -587,6 +712,17 @@
     };
 
     const onTouchMove = (event: TouchEvent) => {
+      if (longPressActive) {
+        if (event.touches.length !== 1) {
+          cancelLongPress();
+        } else {
+          const touch = event.touches[0];
+          const dx = touch.clientX - longPressStartX;
+          const dy = touch.clientY - longPressStartY;
+          if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_CANCEL_PX) cancelLongPress();
+        }
+      }
+
       if (event.touches.length !== 2 || pinchStartDistance <= 0 || !term) return;
       if (event.cancelable) event.preventDefault();
       const distance = touchDistance(event.touches);
@@ -605,6 +741,17 @@
     };
 
     const onTouchEnd = () => {
+      // CI WebKit can delay the 500ms timer past a short hold; still select when
+      // the finger lifted after a qualifying hold without movement cancel.
+      if (
+        longPressActive &&
+        !longPressSelected &&
+        longPressStartedAt > 0 &&
+        performance.now() - longPressStartedAt >= LONG_PRESS_MS
+      ) {
+        fireLongPressSelect(longPressStartX, longPressStartY);
+      }
+      cancelLongPress();
       if (pinchStartDistance > 0 && pinchEngaged && term) {
         persistFontSize(term.options.fontSize ?? DEFAULT_FONT_SIZE);
         resetDedupe();
@@ -637,7 +784,13 @@
     fitAddon = new FitAddon();
     liveTerm.loadAddon(fitAddon);
     liveTerm.open(hostEl);
+    const viteDev =
+      (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+    if (viteDev) {
+      (hostEl as unknown as { __xterm?: Terminal }).__xterm = liveTerm;
+    }
     term = liveTerm;
+    selectionDisposable = liveTerm.onSelectionChange(syncCopyOverlay);
     fitLocal();
     syncSpacer();
     refreshFollow();
@@ -695,9 +848,12 @@
 
     return () => {
       disposed = true;
+      cancelLongPress();
       cancelScheduledWork();
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
+      selectionDisposable?.dispose();
+      if (copyNoticeTimer) clearTimeout(copyNoticeTimer);
       if (interactionEl) {
         interactionEl.removeEventListener("scroll", onInteractionScroll);
         interactionEl.removeEventListener("click", onInteractionClick);
@@ -716,6 +872,9 @@
       connection?.dispose();
       fitAddon?.dispose();
       term?.dispose();
+      if (viteDev && hostEl) {
+        delete (hostEl as unknown as { __xterm?: Terminal }).__xterm;
+      }
       connection = undefined;
       term = undefined;
       resetResizeDedupe = undefined;
@@ -741,6 +900,13 @@
         type="button"
         class="terminal-new-output"
         onclick={() => jumpToBottomRef?.()}>New output ↓</button>
+    {/if}
+    {#if copyNotice}
+      <p class="terminal-copy-notice" role="status">{copyNotice}</p>
+    {/if}
+    {#if copyOverlayText}
+      <button type="button" class="terminal-copy-overlay" onclick={() => void copySelection()}
+        >Copy</button>
     {/if}
   </div>
   <button
@@ -769,6 +935,19 @@
       {/if}
     {/if}
   </div>
+  {#if copyFallbackOpen}
+    <div class="terminal-paste-fallback">
+      <p class="terminal-paste-notice" role="status">Clipboard unavailable — copy below.</p>
+      <textarea
+        class="terminal-paste-input"
+        readonly
+        aria-label="Copy text"
+        value={copyFallbackText}></textarea>
+      <div class="terminal-paste-actions">
+        <button type="button" class="terminal-key" onclick={() => dismissCopyFallback()}>Done</button>
+      </div>
+    </div>
+  {/if}
   {#if pasteFallbackOpen}
     <div class="terminal-paste-fallback">
       <p class="terminal-paste-notice" role="status">{pasteNotice}</p>
@@ -845,6 +1024,14 @@
     touch-action: pan-y;
     width: 100%;
     background: #1c1714;
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .terminal-interaction-wrap::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   .terminal-host {
@@ -906,6 +1093,39 @@
     gap: 6px;
   }
 
+  .terminal-copy-notice {
+    position: absolute;
+    left: 50%;
+    top: 8px;
+    transform: translateX(-50%);
+    z-index: 7;
+    margin: 0;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--paper-raised);
+    border: 1px solid var(--rule-strong);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+
+  .terminal-copy-overlay {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 7;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 6px 14px;
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    background: var(--paper-raised);
+    color: var(--ink);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
   .terminal-new-output {
     position: absolute;
     left: 50%;
@@ -926,7 +1146,7 @@
     position: absolute;
     top: 6px;
     right: 6px;
-    z-index: 5;
+    z-index: 8;
     min-width: 44px;
     min-height: 44px;
     padding: 4px;
@@ -998,6 +1218,12 @@
     color: var(--ink);
   }
 
+  .terminal-keys .terminal-key {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 1px 5px;
+  }
+
   .terminal-key.is-armed {
     border-color: var(--mustard-bright);
   }
@@ -1033,7 +1259,7 @@
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
-      top: 0;
+      top: var(--app-band-top, 0px);
       right: 0;
       left: 0;
       z-index: 45;
