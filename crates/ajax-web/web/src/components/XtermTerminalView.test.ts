@@ -11,12 +11,17 @@ const fitAddonDispose = vi.hoisted(() => vi.fn());
 let onDataCallback: ((data: string) => void) | undefined;
 let terminalCtorShouldThrow = false;
 let terminalOpenShouldThrow = false;
+let terminalCtorOptions: Record<string, unknown> | undefined;
+let resizeObserverCallback: (() => void) | undefined;
+let mockTerminalInstance: { cols: number; rows: number } | undefined;
 
 vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
-    constructor() {
+    constructor(options?: Record<string, unknown>) {
+      terminalCtorOptions = options;
+      mockTerminalInstance = this;
       if (terminalCtorShouldThrow) {
         throw new Error("xterm constructor failed");
       }
@@ -84,9 +89,15 @@ beforeEach(() => {
   terminalCtorShouldThrow = false;
   terminalOpenShouldThrow = false;
 
+  resizeObserverCallback = undefined;
+  terminalCtorOptions = undefined;
+  mockTerminalInstance = undefined;
   vi.stubGlobal(
     "ResizeObserver",
     class MockResizeObserver {
+      constructor(cb: () => void) {
+        resizeObserverCallback = cb;
+      }
       observe = vi.fn();
       disconnect = vi.fn();
     },
@@ -123,6 +134,38 @@ describe("XtermTerminalView", () => {
     await waitFor(() => expect(onDataCallback).toBeDefined());
     onDataCallback?.("ls\r");
     expect(sendInput).toHaveBeenCalledWith("ls\r");
+  });
+
+  it("constructs Terminal with Ghostty-matching theme", async () => {
+    render(XtermTerminalView, { props: { handle: "web/fix" } });
+    await waitFor(() => expect(terminalCtorOptions).toBeDefined());
+    expect(terminalCtorOptions?.theme).toEqual(
+      expect.objectContaining({
+        background: "#1c1714",
+        foreground: "#f4eee0",
+      }),
+    );
+  });
+
+  it("does not spam sendResize when ResizeObserver fires twice with unchanged cols/rows", async () => {
+    vi.useFakeTimers();
+    render(XtermTerminalView, { props: { handle: "web/fix" } });
+    await waitFor(() => expect(resizeObserverCallback).toBeDefined());
+    await waitFor(() => expect(sendResize).toHaveBeenCalled());
+
+    mockTerminalInstance!.cols = 100;
+    sendResize.mockClear();
+
+    resizeObserverCallback?.();
+    resizeObserverCallback?.();
+    vi.advanceTimersByTime(50);
+
+    expect(sendResize).toHaveBeenCalledTimes(1);
+    expect(sendResize).toHaveBeenCalledWith(
+      Math.max(100, MIN_TERMINAL_COLS),
+      24,
+    );
+    vi.useRealTimers();
   });
 
   it("reports fit resize with cols at least MIN_TERMINAL_COLS", async () => {
