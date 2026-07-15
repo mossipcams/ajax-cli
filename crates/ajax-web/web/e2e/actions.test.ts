@@ -6,9 +6,6 @@ import { test, expect, type Page } from "@playwright/test";
 import {
   COCKPIT_FIXTURE,
   mockFetch,
-  mockTerminalWebSocket,
-  terminalPanel,
-  waitForTerminalSocket,
 } from "./fixtures";
 
 // Record clipboard writes so Copy buttons can be asserted.
@@ -87,9 +84,6 @@ test("task detail Copy buttons copy branch and worktree path", async ({ page }) 
   await mockFetch(page);
   await page.goto("/app.html#/t/web%2Ffix-login");
   await expect(page.locator("[data-outlet='task']")).toBeVisible({ timeout: 10_000 });
-  await expect(page.locator("[data-testid='task-terminal-panel']")).toBeVisible({
-    timeout: 10_000,
-  });
 
   await page.locator(".meta-details summary").click();
   const copyButtons = page.locator(".meta-copy");
@@ -198,25 +192,4 @@ test("connection Reload calls location.reload", async ({ page }) => {
   await expect(reload).toBeVisible();
   await expect(reload).toBeEnabled();
   await Promise.all([page.waitForEvent("load"), reload.click()]);
-});
-
-// ---- Terminal hide-keyboard -----------------------------------------------
-
-test("terminal Hide keyboard blurs the terminal input", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await mockFetch(page);
-  await mockTerminalWebSocket(page);
-  await page.goto("/app.html#/t/web%2Ffix-login");
-  await expect(terminalPanel(page).locator("canvas:not([aria-hidden='true'])")).toBeVisible({ timeout: 10_000 });
-  await waitForTerminalSocket(page);
-
-  // Focus the ghostty textarea, then hide the keyboard.
-  const terminalInput = page.locator("[data-testid='task-terminal-panel'] .terminal-host textarea");
-  await terminalInput.focus();
-  await page
-    .locator("[data-testid='terminal-bottom-controls']")
-    .getByRole("button", { name: "Hide keyboard" })
-    .click();
-
-  await expect(terminalInput).not.toBeFocused();
 });

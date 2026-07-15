@@ -4,7 +4,6 @@
   import { copyText } from "../diagnostics";
   import { visibleTaskActions } from "../taskActions";
   import ActionBar from "./ActionBar.svelte";
-  import TerminalSurfaceSelector from "./TerminalSurfaceSelector.svelte";
 
   interface Props {
     detail: BrowserTaskDetail;
@@ -34,7 +33,7 @@
   }
 </script>
 
-<div class="task-detail is-terminal-first">
+<div class="task-detail">
   <div class="detail-header" data-mobile-chrome="header">
     <button type="button" class="back" onclick={() => onBack?.()}>← Back</button>
     <h1 class="detail-title">{detail.title || detail.qualified_handle}</h1>
@@ -64,10 +63,6 @@
       />
     {/if}
   </section>
-
-  <div class="terminal-primary" data-mobile-primary="terminal">
-    <TerminalSurfaceSelector handle={detail.qualified_handle} />
-  </div>
 
   <details class="meta-details" bind:open={metaOpen}>
     <summary>Task details</summary>
@@ -373,39 +368,16 @@
     color: var(--ink-muted);
   }
 
-  /* Mobile: tighten chrome for terminal-first layout inside route-scroll.
-     Includes landscape phones (coarse pointer, short viewport). */
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Fill the locked route-scroll band (no page scroll); terminal owns overflow. */
-    .task-detail {
-      display: flex;
-      flex-direction: column;
-      flex: 1 1 auto;
-      min-height: 0;
-      height: 100%;
-      padding: env(safe-area-inset-top) 0 0;
-      background: var(--paper);
-      overflow: hidden;
-    }
-
     .detail-header,
     .interact-panel {
       padding-left: calc(12px + env(safe-area-inset-left));
       padding-right: calc(12px + env(safe-area-inset-right));
     }
 
-    .detail-header { margin-bottom: 4px; }
+    .detail-header { margin-bottom: 12px; }
     .detail-header .back { min-height: 32px; padding: 4px 12px; }
-    .detail-title { font-size: 18px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .interact-summary { display: none; }
-    /* Meta details stay on desktop; on mobile they sit below the terminal in
-       route-scroll and are hidden so the terminal gets more height. */
-    .meta-details { display: none; }
-    .terminal-primary {
-      display: flex;
-      flex: 1 1 auto;
-      min-height: 0;
-    }
+    .detail-title { font-size: 18px; line-height: 1.15; }
   }
 
   @media (max-width: 380px) {

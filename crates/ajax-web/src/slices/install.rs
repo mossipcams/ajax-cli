@@ -134,16 +134,9 @@ mod tests {
         assert!(compact.contains("env(safe-area-inset-bottom)"));
         assert!(compact.contains("scrollbar-width:none"));
         assert!(compact.contains("::-webkit-scrollbar"));
-        assert!(compact.contains("html.keyboard-open.task-detail.detail-header"));
-        assert!(compact.contains("html.terminal-expanded.task-detail.detail-header"));
-        assert!(compact.contains("html.terminal-expanded.task-detail.terminal-primary"));
-        // The expanded terminal takeover targets the panel by test id since the
-        // viewport-ownership refactor (053a104).
-        assert!(
-            compact.contains("html.terminal-expanded[data-testid=task-terminal-panel].is-expanded")
-        );
+        assert!(compact.contains("html.keyboard-open.app-viewport"));
         assert!(compact.contains("position:fixed"));
-        assert!(compact.contains("height:var(--app-height,100dvh)"));
+        assert!(compact.contains("height:var(--app-band-height"));
         // Inputs stay >= 16px so iOS Safari does not zoom on focus.
         assert!(compact.contains("font-size:16px"));
         // Mid-century-modern walnut palette tokens.

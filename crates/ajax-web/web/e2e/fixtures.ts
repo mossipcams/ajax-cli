@@ -119,8 +119,13 @@ export async function mockFetch(page: Page, extra: Record<string, unknown> = {})
   }, routes);
 }
 
-export async function mockTerminalWebSocket(page: Page) {
-  await page.addInitScript(() => {
+export async function mockTerminalWebSocket(
+  page: Page,
+  options: { autoOpen?: boolean; clipboardText?: string } = {},
+) {
+  const autoOpen = options.autoOpen ?? true;
+  const clipboardText = options.clipboardText ?? "echo pasted";
+  await page.addInitScript(({ shouldAutoOpen, clipboard }) => {
     const sockets: unknown[] = [];
     const frames: unknown[] = [];
 
@@ -136,11 +141,12 @@ export async function mockTerminalWebSocket(page: Page) {
       constructor(url: string) {
         this.url = url;
         sockets.push(this);
-        setTimeout(() => {
-          if (this.readyState !== MockTerminalWebSocket.CONNECTING) return;
-          this.readyState = MockTerminalWebSocket.OPEN;
-          this.dispatch("open", new Event("open"));
-        }, 0);
+        if (shouldAutoOpen) {
+          setTimeout(() => {
+            if (this.readyState !== MockTerminalWebSocket.CONNECTING) return;
+            this.emitOpen();
+          }, 0);
+        }
       }
 
       addEventListener(type: string, handler: (event: Event) => void) {
@@ -166,11 +172,26 @@ export async function mockTerminalWebSocket(page: Page) {
         this.emitClose();
       }
 
-      emitMessage(data: string) {
-        this.dispatch("message", new MessageEvent("message", { data }));
+      emitOpen() {
+        if (this.readyState === MockTerminalWebSocket.OPEN) return;
+        this.readyState = MockTerminalWebSocket.OPEN;
+        this.dispatch("open", new Event("open"));
+      }
+
+      emitMessage(data: string | ArrayBuffer | ArrayBufferView | number[]) {
+        const payload =
+          typeof data === "string"
+            ? data
+            : Array.isArray(data)
+              ? new Uint8Array(data)
+              : ArrayBuffer.isView(data)
+                ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+                : new Uint8Array(data);
+        this.dispatch("message", new MessageEvent("message", { data: payload }));
       }
 
       emitClose() {
+        if (this.readyState === MockTerminalWebSocket.CLOSED) return;
         this.readyState = MockTerminalWebSocket.CLOSED;
         this.dispatch("close", new CloseEvent("close"));
       }
@@ -189,18 +210,110 @@ export async function mockTerminalWebSocket(page: Page) {
       configurable: true,
     });
     Object.defineProperty(navigator, "clipboard", {
-      value: { readText: async () => "echo pasted" },
+      value: { readText: async () => clipboard },
       configurable: true,
     });
     (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockTerminalWebSocket;
+  }, { shouldAutoOpen: autoOpen, clipboard: clipboardText });
+}
+
+type TerminalMessagePayload = string | number[];
+
+type TerminalSocketHandle = {
+  url: string;
+  readyState: number;
+  emitOpen(): void;
+  emitClose(): void;
+  emitMessage(data: string | ArrayBuffer | ArrayBufferView | number[]): void;
+};
+
+export async function terminalSocketSummaries(
+  page: Page,
+): Promise<Array<{ url: string; readyState: number }>> {
+  return page.evaluate(() => {
+    const sockets =
+      (window as unknown as { __terminalSockets: TerminalSocketHandle[] }).__terminalSockets ??
+      [];
+    return sockets
+      .filter((socket) => socket.url.includes("/terminal"))
+      .map((socket) => ({ url: socket.url, readyState: socket.readyState }));
   });
+}
+
+export async function openLatestTerminalSocket(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const sockets =
+      (window as unknown as { __terminalSockets: TerminalSocketHandle[] }).__terminalSockets ??
+      [];
+    const socket = sockets.filter((item) => item.url.includes("/terminal")).at(-1);
+    if (!socket) throw new Error("no terminal socket");
+    socket.emitOpen();
+  });
+}
+
+export async function closeLatestTerminalSocket(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const sockets =
+      (window as unknown as { __terminalSockets: TerminalSocketHandle[] }).__terminalSockets ??
+      [];
+    const socket = sockets.filter((item) => item.url.includes("/terminal")).at(-1);
+    if (!socket) throw new Error("no terminal socket");
+    socket.emitClose();
+  });
+}
+
+export async function emitLatestTerminalOutput(
+  page: Page,
+  chunks: Array<TerminalMessagePayload>,
+): Promise<void> {
+  await page.evaluate((messageChunks) => {
+    const sockets =
+      (window as unknown as { __terminalSockets: TerminalSocketHandle[] }).__terminalSockets ??
+      [];
+    const socket = sockets.filter((item) => item.url.includes("/terminal")).at(-1);
+    if (!socket) throw new Error("no terminal socket");
+    for (const chunk of messageChunks) {
+      socket.emitMessage(chunk);
+    }
+  }, chunks);
+}
+
+export async function failLatestTerminalSocket(
+  page: Page,
+  message: string,
+): Promise<void> {
+  await page.evaluate((errorMessage) => {
+    const sockets =
+      (window as unknown as { __terminalSockets: TerminalSocketHandle[] }).__terminalSockets ??
+      [];
+    const socket = sockets.filter((item) => item.url.includes("/terminal")).at(-1);
+    if (!socket) throw new Error("no terminal socket");
+    socket.emitMessage(JSON.stringify({ type: "error", error: errorMessage }));
+    socket.emitClose();
+  }, message);
 }
 
 export const terminalFrames = (page: Page) =>
   page.evaluate(() => (window as unknown as { __terminalFrames: unknown[] }).__terminalFrames);
 
-export const terminalPanel = (page: Page) =>
-  page.locator("[data-testid='task-terminal-panel'][data-terminal-engine='ghostty']");
+type TerminalInputFrame = { type: "input"; data: string };
+
+export async function terminalInputFrames(page: Page): Promise<TerminalInputFrame[]> {
+  const frames = await terminalFrames(page);
+  return frames.filter(
+    (frame): frame is TerminalInputFrame =>
+      typeof frame === "object" &&
+      frame !== null &&
+      (frame as { type?: string }).type === "input" &&
+      typeof (frame as { data?: unknown }).data === "string",
+  );
+}
+
+export const terminalSurface = (page: Page) =>
+  page.locator("[data-testid='task-terminal-panel']");
+
+export const terminalInteractionSurface = (page: Page) =>
+  page.locator("[data-testid='terminal-interaction-surface']");
 
 export const terminalToolbar = (page: Page) =>
   page.locator("[data-testid='terminal-bottom-controls']").getByRole("toolbar", {
@@ -217,4 +330,72 @@ export async function waitForTerminalSocket(page: Page) {
       ),
     )
     .toBe(1);
+}
+
+type TerminalResizeFrame = { type: "resize"; cols: number; rows: number };
+
+function isValidPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 && Number.isInteger(value);
+}
+
+export async function terminalResizeFrames(page: Page): Promise<TerminalResizeFrame[]> {
+  const frames = await terminalFrames(page);
+  return frames.filter(
+    (frame): frame is TerminalResizeFrame =>
+      typeof frame === "object" &&
+      frame !== null &&
+      (frame as { type?: string }).type === "resize" &&
+      isValidPositiveInteger((frame as { cols?: unknown }).cols) &&
+      isValidPositiveInteger((frame as { rows?: unknown }).rows),
+  );
+}
+
+export type ViewportEventKind = "resize" | "orientationchange" | "visualViewport.resize";
+
+export async function dispatchViewportEvents(
+  page: Page,
+  events: ViewportEventKind[],
+): Promise<void> {
+  await page.evaluate((eventKinds) => {
+    for (const kind of eventKinds) {
+      if (kind === "resize") {
+        window.dispatchEvent(new Event("resize"));
+      } else if (kind === "orientationchange") {
+        window.dispatchEvent(new Event("orientationchange"));
+      } else {
+        window.visualViewport?.dispatchEvent(new Event("resize"));
+      }
+    }
+  }, events);
+}
+
+/** Two-finger outward pinch on the stable interaction surface (renderer-neutral). */
+export async function syntheticOutwardPinchOnInteractionSurface(page: Page): Promise<void> {
+  const surface = terminalInteractionSurface(page);
+  await surface.evaluate((el) => {
+    const makePinch = (type: string, points: Array<{ x: number; y: number }>) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "touches", {
+        value: points.map((point) => ({ clientX: point.x, clientY: point.y })),
+      });
+      return event;
+    };
+    const rect = el.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    // 100px start distance, spread past the 12px activation threshold.
+    el.dispatchEvent(
+      makePinch("touchstart", [
+        { x: centerX - 50, y: centerY },
+        { x: centerX + 50, y: centerY },
+      ]),
+    );
+    el.dispatchEvent(
+      makePinch("touchmove", [
+        { x: centerX - 100, y: centerY },
+        { x: centerX + 100, y: centerY },
+      ]),
+    );
+    el.dispatchEvent(makePinch("touchend", []));
+  });
 }

@@ -2,11 +2,6 @@
   import { restartServer, waitForServerOnline } from "../api";
   import { buildDiagnosticsReport, copyText } from "../diagnostics";
   import { CONFIRM_TIMEOUT_MS } from "../polling";
-  import {
-    isTerminalSurfaceV2Enabled,
-    setTerminalSurfaceV2Enabled,
-    subscribeTerminalSurfaceV2,
-  } from "../terminalSurfaceSetting";
 
   interface Props {
     detailHandle?: string | null;
@@ -22,14 +17,6 @@
   let restarting = $state(false);
   let diagnosticsOutput = $state<string | null>(null);
   let confirmTimer: ReturnType<typeof setTimeout> | null = null;
-  let terminalSurfaceV2 = $state(isTerminalSurfaceV2Enabled());
-
-  $effect(() => {
-    const unsubscribe = subscribeTerminalSurfaceV2((enabled) => {
-      terminalSurfaceV2 = enabled;
-    });
-    return unsubscribe;
-  });
 
   async function restart() {
     if (!confirmingRestart) {
@@ -93,7 +80,6 @@
     document.querySelector<HTMLMetaElement>('meta[name="ajax-app-version"]')?.content ?? "—";
   const origin = window.location.origin;
   const online = navigator.onLine;
-  const surfaceV2LastError = sessionStorage.getItem("ajax.terminal.surfaceV2.lastError");
   const truncatedUa =
     navigator.userAgent.length > 80
       ? `${navigator.userAgent.slice(0, 80)}…`
@@ -109,30 +95,11 @@
   <div class="settings-section" data-testid="dev-settings">
     <h3>Dev settings</h3>
 
-    <h4 class="settings-subheading">Experiments</h4>
-    <label class="settings-toggle">
-      <input
-        type="checkbox"
-        data-testid="setting-terminal-surface-v2"
-        checked={terminalSurfaceV2}
-        onchange={(event) => {
-          const enabled = (event.currentTarget as HTMLInputElement).checked;
-          setTerminalSurfaceV2Enabled(enabled);
-          terminalSurfaceV2 = enabled;
-        }} />
-      Terminal Surface V2
-    </label>
-    <p class="settings-note">
-      Experimental xterm.js terminal for mobile bake-off.
-    </p>
-
     <h4 class="settings-subheading">Debug info</h4>
     <dl class="settings-debug" data-testid="dev-settings-debug">
       <div><dt>App version</dt><dd>{appVersion}</dd></div>
       <div><dt>Origin</dt><dd>{origin}</dd></div>
       <div><dt>Online</dt><dd>{online ? "yes" : "no"}</dd></div>
-      <div><dt>Surface V2</dt><dd>{terminalSurfaceV2 ? "on" : "off"}</dd></div>
-      <div><dt>Last error</dt><dd>{surfaceV2LastError ?? "—"}</dd></div>
       <div><dt>User agent</dt><dd>{truncatedUa}</dd></div>
     </dl>
 
@@ -268,21 +235,5 @@
     font-family: var(--mono);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-
-  .settings-toggle {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 14px;
-    color: var(--ink);
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .settings-toggle input {
-    width: 18px;
-    height: 18px;
-    accent-color: var(--mustard-bright);
   }
 </style>

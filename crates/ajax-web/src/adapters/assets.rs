@@ -15,19 +15,13 @@ pub fn browser_shell_html() -> String {
 ///
 /// This keeps the runtime version stable within a build while still changing
 /// whenever any shipped shell asset changes.
-pub fn shell_version_from_assets(
-    index_html: &[u8],
-    app_js: &[u8],
-    terminal_js: &[u8],
-    app_css: &[u8],
-    ghostty_wasm: &[u8],
-) -> String {
+pub fn shell_version_from_assets(index_html: &[u8], app_js: &[u8], app_css: &[u8]) -> String {
     // FNV-1a: stable across toolchain versions (DefaultHasher is not).
     // Process all asset bytes sequentially for a single combined fingerprint.
     const FNV_OFFSET: u64 = 14695981039346656037;
     const FNV_PRIME: u64 = 1099511628211;
     let mut hash: u64 = FNV_OFFSET;
-    for asset in [index_html, app_js, terminal_js, app_css, ghostty_wasm] {
+    for asset in [index_html, app_js, app_css] {
         for &byte in asset {
             hash ^= byte as u64;
             hash = hash.wrapping_mul(FNV_PRIME);
@@ -48,9 +42,7 @@ pub fn app_version() -> &'static str {
         shell_version_from_assets(
             include_bytes!("../../web/dist/index.html"),
             include_bytes!("../../web/dist/app.js"),
-            include_bytes!("../../web/dist/terminal.js"),
             include_bytes!("../../web/dist/app.css"),
-            include_bytes!("../../web/dist/ghostty-vt.wasm"),
         )
     })
 }
@@ -64,14 +56,6 @@ pub fn static_asset(path: &str) -> Option<StaticAsset> {
         "/app.js" => Some(StaticAsset {
             content_type: "text/javascript; charset=utf-8",
             body: include_bytes!("../../web/dist/app.js"),
-        }),
-        "/terminal.js" => Some(StaticAsset {
-            content_type: "text/javascript; charset=utf-8",
-            body: include_bytes!("../../web/dist/terminal.js"),
-        }),
-        "/ghostty-vt.wasm" => Some(StaticAsset {
-            content_type: "application/wasm",
-            body: include_bytes!("../../web/dist/ghostty-vt.wasm"),
         }),
         _ => None,
     }
@@ -99,36 +83,12 @@ mod tests {
         let baseline = shell_version_from_assets(
             b"<!doctype html>",
             b"console.log('a');",
-            b"terminal-a",
             b"body { color: black; }",
-            b"wasm-a",
         );
         let changed = shell_version_from_assets(
             b"<!doctype html>",
-            b"console.log('a');",
-            b"terminal-b",
+            b"console.log('b');",
             b"body { color: black; }",
-            b"wasm-a",
-        );
-
-        assert_ne!(baseline, changed);
-    }
-
-    #[test]
-    fn app_version_changes_when_wasm_asset_changes() {
-        let baseline = shell_version_from_assets(
-            b"<!doctype html>",
-            b"console.log('a');",
-            b"terminal-a",
-            b"body { color: black; }",
-            b"wasm-a",
-        );
-        let changed = shell_version_from_assets(
-            b"<!doctype html>",
-            b"console.log('a');",
-            b"terminal-a",
-            b"body { color: black; }",
-            b"wasm-b",
         );
 
         assert_ne!(baseline, changed);
@@ -142,16 +102,9 @@ mod tests {
     }
 
     #[test]
-    fn assets_adapter_serves_terminal_script_asset() {
-        let asset = static_asset("/terminal.js").unwrap();
+    fn assets_adapter_serves_app_script_asset() {
+        let asset = static_asset("/app.js").unwrap();
         assert_eq!(asset.content_type, "text/javascript; charset=utf-8");
-        assert!(!asset.body.is_empty());
-    }
-
-    #[test]
-    fn assets_adapter_serves_ghostty_wasm_asset() {
-        let asset = static_asset("/ghostty-vt.wasm").unwrap();
-        assert_eq!(asset.content_type, "application/wasm");
         assert!(!asset.body.is_empty());
     }
 }

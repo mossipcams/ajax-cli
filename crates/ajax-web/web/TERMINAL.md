@@ -1,59 +1,32 @@
 # Web Cockpit terminal ownership
 
-## Product contract
-- Raw Ghostty/tmux-first on mobile and desktop
-- Do not reintroduce Live/snapshot/composer as default
-- Browser modules do not own task truth or tmux target selection
+## Status (Task 12 complete)
 
-## Ownership table
+The old Ghostty default surface and experimental xterm frontend are
+**removed**. `TaskDetail.svelte` does not mount a browser terminal. There is
+**no** shared old/new adapter, placeholder renderer, or deferred terminal chunk.
+
+## Retained boundaries
+
 | Concern | Owner |
 | --- | --- |
-| Keyboard / visualViewport / --app-* | viewport.ts |
-| Fit / font / pan / scale math | terminalGeometry.ts |
-| Refit scheduling | terminalRefit.ts (when to fit/send; not permission) |
-| Layout fit/resize permission | terminalLayoutPolicy.ts |
-| Paste/copy UI state (fallback/overlay/notice) | terminalClipboard.ts |
-| Gestures (horizontal pan / pinch / long-press / touch focus) | terminalGestures.ts |
-| Native vertical scroll (spacer + scrollTop ↔ viewportY mapping) | TerminalRawView.svelte |
-| Scroll-follow state + resize validity | terminalOutputPolicy.ts |
-| WS connect / backoff / status | terminalConnection.ts |
-| Ghostty mount + chrome UI | TerminalRawView.svelte |
-| Experimental xterm mount + chrome UI | XtermTerminalView.svelte |
-| Surface V2 selector + setting | TerminalSurfaceSelector.svelte, terminalSurfaceSetting.ts |
-| Zero-lag input echo + overlay paint | terminalZeroLag.ts |
-| Route scroll / chrome hide | styles.css + App layout |
+| Task-terminal WebSocket lifecycle / reconnect | `terminalConnection.ts` |
+| Keyboard / visualViewport / `--app-*` | `viewport.ts` |
+| PTY attach + frame bridge | `ajax-web::adapters::terminal_pty` |
+| Task-handle attach planning | `ajax-web::slices::terminal` |
+| Protected route `/api/tasks/{handle}/terminal` | `ajax-web::runtime` |
 
-## Experimental Terminal Surface V2
+## Permanent acceptance (intentionally red)
 
-- Settings toggle: `ajax.terminal.surfaceV2` (default off)
-- `TerminalSurfaceSelector.svelte` chooses the active surface
-- Ghostty remains default when the experiment is off
-- While Surface V2 is enabled, Ghostty is not mounted or preloaded; the selector
-  mounts `XtermTerminalView.svelte` instead
-- Packages pinned: `@xterm/xterm@6.0.0`, `@xterm/addon-fit@0.11.0`
-- On xterm init failure: show error + Retry; do not auto-fallback to Ghostty
-  while the flag stays on
+- `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — engine-neutral behavior contract
+- `TERMINAL_BEHAVIOR_CONTRACT.md` — pre-removal inventory (evidence)
+- `TERMINAL_REBUILD_ACCEPTANCE.md` — acceptance matrix (evidence)
+- `TERMINAL_LEGACY_SURFACE_TESTS.md` — removed-surface characterization index (evidence)
 
-### iPhone bake-off checklist (Surface V2)
+The permanent suite stays in the repo and fails until a ground-up controller and
+adapter are rebuilt against the retained connection/backend contract.
 
-- [ ] Open task terminal with Surface V2 on
-- [ ] Backspace hold
-- [ ] Keyboard open / close
-- [ ] Paste
-- [ ] Select + copy
-- [ ] Scroll during output
-- [ ] Rotate device
-- [ ] Codex / Claude in tmux
-- [ ] Alt-screen apps (e.g. less, vim)
-- [ ] Toggle back to Ghostty (Surface V2 off)
+## Rebuild rule
 
-## Anti-patterns
-- Do not add new one-shot `*FlushPending` (or equivalent) booleans in
-  TerminalRawView.svelte — put fit/resize permission in terminalLayoutPolicy.ts
-  and refit scheduling in terminalRefit.ts
-- Do not fix iOS bugs only in CSS/component without a failing Vitest or
-  mobile-webkit Playwright case first
-- Do not scatter Ghostty private API casts; isolate in one adapter when extracting
-
-## Review rule
-Terminal behavior PRs: failing test first; policy change in the owning module.
+New terminal UI must not reintroduce browser-owned task truth or tmux target
+selection. Behavior changes require a failing case in the permanent suite first.
