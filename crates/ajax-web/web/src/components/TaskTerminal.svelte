@@ -1403,10 +1403,16 @@
       width: 100%;
     }
 
+    /* Inline hotbar sits mid-page (details line + nav below), no safe-area
+       pad; the fullscreen hotbar touches the screen edge and needs it. */
     .terminal-keys {
       display: flex;
       width: 100%;
       box-sizing: border-box;
+      padding-bottom: 2px;
+    }
+
+    .terminal-panel.is-expanded .terminal-keys {
       padding-bottom: max(2px, env(safe-area-inset-bottom));
     }
 

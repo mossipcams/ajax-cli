@@ -21,6 +21,7 @@ function start(): () => void {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers();
   for (const key of Object.keys(vvListeners)) delete vvListeners[key];
   vvHeight = 800;
   vvOffsetTop = 0;
@@ -44,9 +45,15 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const dispose of disposers) dispose();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+
+/** Expansion must persist for the close-settle window before the class drops. */
+function settleClose() {
+  vi.advanceTimersByTime(400);
+}
 
 describe("initViewport", () => {
   it("sets --app-height from visualViewport height on init", () => {
@@ -82,14 +89,49 @@ describe("initViewport", () => {
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
-  it("clears keyboard-open when the viewport returns toward baseline", () => {
+  it("clears keyboard-open when the viewport returns toward baseline and settles", () => {
     start();
     vvHeight = 480;
     dispatchVV("resize");
     vvHeight = 800;
     dispatchVV("resize");
+    settleClose();
     expect(document.documentElement.classList.contains("keyboard-open")).toBe(false);
     expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("800px");
+  });
+
+  it("absorbs a transient viewport expansion while typing (no teardown)", () => {
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+
+    // iOS momentarily reports an expanded viewport mid-typing (keyboard morph,
+    // autocorrect popover). The pinned layout must not tear down for it.
+    vvHeight = 800;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    // Geometry holds too: a band snap to full height is the same visual jump.
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
+
+    vi.advanceTimersByTime(100);
+    vvHeight = 480; // bounced back before the settle window elapsed
+    dispatchVV("resize");
+    settleClose();
+
+    expect(isKeyboardOpen()).toBe(true);
+    expect(document.documentElement.style.getPropertyValue("--app-height")).toBe("480px");
+  });
+
+  it("closes after the expansion persists for the settle window", () => {
+    start();
+    vvHeight = 480;
+    dispatchVV("resize");
+    vvHeight = 800;
+    dispatchVV("resize");
+    expect(isKeyboardOpen()).toBe(true);
+    settleClose();
+    expect(isKeyboardOpen()).toBe(false);
   });
 
   it("does not snap document scroll while the keyboard is open", () => {
@@ -115,6 +157,7 @@ describe("initViewport", () => {
 
     vvHeight = 800;
     dispatchVV("resize");
+    settleClose();
     expect(window.scrollTo).toHaveBeenCalledWith(0, 0);
   });
 
@@ -242,6 +285,7 @@ describe("isKeyboardOpen", () => {
 
     vvHeight = 800;
     dispatchVV("resize");
+    settleClose();
     expect(isKeyboardOpen()).toBe(false);
   });
 
@@ -255,10 +299,12 @@ describe("isKeyboardOpen", () => {
     // open thresholds: the keyboard must stay open, not flap.
     vvHeight = 680;
     dispatchVV("resize");
+    settleClose();
     expect(isKeyboardOpen()).toBe(true);
 
     vvHeight = 790; // delta 10px: settled closed
     dispatchVV("resize");
+    settleClose();
     expect(isKeyboardOpen()).toBe(false);
   });
 

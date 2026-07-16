@@ -202,6 +202,15 @@ describe("TaskDetail projection surface", () => {
     expect(body).not.toMatch(/overflow-wrap:\s*anywhere/);
   });
 
+  it("keeps the details line flush against the terminal on mobile", () => {
+    const mobileBlock =
+      taskDetailSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    expect(mobileBlock).toMatch(/\.meta-details\s*\{[^}]*margin-top:\s*0/);
+  });
+
   it("keeps the mobile interact panel to a single row", () => {
     const mobileBlock =
       taskDetailSource.match(

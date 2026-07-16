@@ -13,6 +13,11 @@
 // address-bar drift and the iOS 26 ~24px visual/layout discrepancy.
 const KEYBOARD_OPEN_DELTA_PX = 150;
 const KEYBOARD_CLOSE_DELTA_PX = 100;
+// iOS momentarily reports an expanded visualViewport mid-typing (keyboard
+// morphs, autocorrect popovers). Tearing down the pinned band instantly for
+// those transients is the "terminal jumps while typing" defect — the close
+// edge only fires after the expansion persists for this window.
+const KEYBOARD_CLOSE_SETTLE_MS = 250;
 const KEYBOARD_OPEN_CLASS = "keyboard-open";
 const APP_HEIGHT_VAR = "--app-height";
 const APP_TOP_VAR = "--app-top";
@@ -73,10 +78,20 @@ export function initViewport(): () => void {
   };
   syncViewportGeometry();
 
+  let closeSettleTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelCloseSettle = () => {
+    if (closeSettleTimer !== undefined) {
+      clearTimeout(closeSettleTimer);
+      closeSettleTimer = undefined;
+    }
+  };
+
   const onViewportResize = () => {
     const current = vv.height;
     const currentWidth = window.innerWidth;
     if (currentWidth !== baselineWidth) {
+      // Rotation: a real geometry change, close immediately.
+      cancelCloseSettle();
       keyboardOpen = false;
       root.classList.remove(KEYBOARD_OPEN_CLASS);
       syncViewportGeometry();
@@ -86,13 +101,32 @@ export function initViewport(): () => void {
     }
     const delta = baselineHeight - current;
     if (delta > KEYBOARD_OPEN_DELTA_PX && !keyboardOpen) {
+      cancelCloseSettle();
       keyboardOpen = true;
       root.classList.add(KEYBOARD_OPEN_CLASS);
       resetDocumentScroll();
     } else if (delta < KEYBOARD_CLOSE_DELTA_PX && keyboardOpen) {
-      keyboardOpen = false;
-      root.classList.remove(KEYBOARD_OPEN_CLASS);
-      resetDocumentScroll();
+      // Hold the pinned band (class AND geometry) until the expansion proves
+      // it is a real keyboard dismissal, not a mid-typing transient.
+      if (closeSettleTimer === undefined) {
+        closeSettleTimer = setTimeout(() => {
+          closeSettleTimer = undefined;
+          if (!keyboardOpen) return;
+          const settledDelta = baselineHeight - vv.height;
+          if (settledDelta < KEYBOARD_CLOSE_DELTA_PX) {
+            keyboardOpen = false;
+            root.classList.remove(KEYBOARD_OPEN_CLASS);
+            resetDocumentScroll();
+            syncViewportGeometry();
+            baselineHeight = vv.height;
+            baselineWidth = window.innerWidth;
+          }
+        }, KEYBOARD_CLOSE_SETTLE_MS);
+      }
+      return;
+    } else if (keyboardOpen && closeSettleTimer !== undefined) {
+      // Shrank back under the close threshold: the expansion was a transient.
+      cancelCloseSettle();
     }
     // Keep --app-height pinned to the visible band. While the keyboard is closed
     // this also tracks address-bar / orientation changes and re-bases the
@@ -134,6 +168,7 @@ export function initViewport(): () => void {
   document.addEventListener("touchmove", onTouchMovePinchGuard, { passive: false });
 
   return () => {
+    cancelCloseSettle();
     vv.removeEventListener("resize", onViewportResize);
     vv.removeEventListener("scroll", onViewportResize);
     document.removeEventListener("gesturestart", onGesture);
