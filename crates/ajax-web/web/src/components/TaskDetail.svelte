@@ -426,6 +426,14 @@
     .detail-header { margin-bottom: 8px; }
     .detail-header .back { min-height: 32px; padding: 4px 10px 4px 0; }
     .detail-title { font-size: 14px; line-height: 1.2; }
+
+    /* The details hairline sits flush under the terminal hotbar. */
+    .meta-details {
+      margin-top: 0;
+      padding-top: 10px;
+      padding-left: calc(12px + env(safe-area-inset-left));
+      padding-right: calc(12px + env(safe-area-inset-right));
+    }
   }
 
   @media (max-width: 380px) {

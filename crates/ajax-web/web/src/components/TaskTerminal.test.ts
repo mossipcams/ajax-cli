@@ -148,8 +148,14 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(mobileBlock).toMatch(
       /\.terminal-keys\s+\.terminal-key[\s\S]*?width:\s*0/,
     );
+    // Inline hotbar sits mid-page (details line + nav below it), so it gets no
+    // safe-area pad; only the fullscreen hotbar touches the screen edge.
+    expect(mobileBlock).toMatch(/\.terminal-keys\s*\{[^}]*padding-bottom:\s*2px/);
+    expect(mobileBlock).not.toMatch(
+      /\n    \.terminal-keys\s*\{[^}]*env\(safe-area-inset-bottom\)/,
+    );
     expect(mobileBlock).toMatch(
-      /\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
+      /\.terminal-panel\.is-expanded\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*max\(2px,\s*env\(safe-area-inset-bottom\)\)/,
     );
     expect(mobileBlock).toMatch(
       /:global\(html\.keyboard-open\)\s+\.terminal-keys\s*\{[^}]*padding-bottom:\s*6px/,
