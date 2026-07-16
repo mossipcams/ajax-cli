@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.46.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.6...ajax-cli-v0.46.7) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** flex-fill mobile terminal and proportion hotbar keys ([#527](https://github.com/mossipcams/ajax-cli/issues/527)) ([2c14753](https://github.com/mossipcams/ajax-cli/commit/2c14753dacbcca988128505105223e78cca09d79))
+
 ## [0.46.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.46.5...ajax-cli-v0.46.6) (2026-07-16)
 
 
