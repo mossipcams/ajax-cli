@@ -52,7 +52,7 @@ const MAX_COMPLETED_OPERATIONS: usize = 128;
 pub struct WebAppState<C, B> {
     shared: Arc<Mutex<WebSharedState<C, B>>>,
     operations: Arc<Mutex<OperationCoordinator>>,
-    cockpit_refresh_lock: Arc<tokio::sync::Mutex<()>>,
+    control_lane: Arc<tokio::sync::Mutex<()>>,
     state_dir: Arc<PathBuf>,
     browser_session: Arc<BrowserSession>,
     cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
@@ -79,7 +79,7 @@ impl<C, B> Clone for WebAppState<C, B> {
         Self {
             shared: Arc::clone(&self.shared),
             operations: Arc::clone(&self.operations),
-            cockpit_refresh_lock: Arc::clone(&self.cockpit_refresh_lock),
+            control_lane: Arc::clone(&self.control_lane),
             state_dir: Arc::clone(&self.state_dir),
             browser_session: Arc::clone(&self.browser_session),
             cloudflare_access: Arc::clone(&self.cloudflare_access),
@@ -162,7 +162,7 @@ impl<C, B> WebAppState<C, B> {
                 cockpit_cache: None,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
-            cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            control_lane: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(BrowserSession::test_default()),
             cloudflare_access: Arc::new(None),
@@ -209,7 +209,7 @@ impl<C, B> WebAppState<C, B> {
                 cockpit_cache: None,
             })),
             operations: Arc::new(Mutex::new(OperationCoordinator::default())),
-            cockpit_refresh_lock: Arc::new(tokio::sync::Mutex::new(())),
+            control_lane: Arc::new(tokio::sync::Mutex::new(())),
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(browser_session),
             cloudflare_access: Arc::new(cloudflare_access),
@@ -602,10 +602,10 @@ where
 }
 
 /// Refresh the cockpit projection and cache the response, firing attention
-/// notifications through the bridge as a side effect. Shared by the
-/// `/api/cockpit` handler and the background notify tick, so both serialize on
-/// the same lock, honor the same cache TTL, and commit under the same revision
-/// check.
+/// notifications through the bridge as a side effect. The cockpit handler,
+/// the background notify tick, and task mutations/task starts all serialize on
+/// the same control lane, so a mutation cannot race an in-flight refresh and
+/// discard its committed state.
 async fn refresh_cockpit_and_cache<C, B>(
     state: &WebAppState<C, B>,
     deliver_notifications: bool,
@@ -614,7 +614,7 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
-    let _refresh_guard = state.cockpit_refresh_lock.lock().await;
+    let _refresh_guard = state.control_lane.lock().await;
     if let Some(response) = state.cached_cockpit_response() {
         return response.into_axum_response();
     }
@@ -830,6 +830,7 @@ where
     if let Err(rejection) = state.operations().try_begin(Some(&request_id), &task_key) {
         return gate_rejection_response(rejection, Some(&request_id), "task start");
     }
+    let _lane = state.control_lane.lock().await;
     let response = state.run_optimistic(
         Some(&request_id),
         "cockpit state changed while task start was running",
@@ -896,6 +897,7 @@ where
         return gate_rejection_response(rejection, request_id.as_deref(), "operation");
     }
 
+    let _lane = state.control_lane.lock().await;
     let response = state.run_optimistic(
         request_id.as_deref(),
         "cockpit state changed while operation was running",
@@ -1096,6 +1098,9 @@ mod tests {
         start_calls: Arc<AtomicUsize>,
         start_entered: Option<Arc<Notify>>,
         start_release: Option<Arc<(Mutex<bool>, Condvar)>>,
+        refresh_calls: Arc<AtomicUsize>,
+        refresh_entered: Option<Arc<Notify>>,
+        refresh_release: Option<Arc<(Mutex<bool>, Condvar)>>,
     }
 
     impl Default for TestBridge {
@@ -1125,6 +1130,9 @@ mod tests {
                 start_calls: Arc::new(AtomicUsize::new(0)),
                 start_entered: None,
                 start_release: None,
+                refresh_calls: Arc::new(AtomicUsize::new(0)),
+                refresh_entered: None,
+                refresh_release: None,
             }
         }
     }
@@ -1168,6 +1176,11 @@ mod tests {
             if self.refresh_delay > Duration::ZERO {
                 std::thread::sleep(self.refresh_delay);
             }
+            let call_index = self.refresh_calls.fetch_add(1, Ordering::SeqCst);
+            if let Some(entered) = self.refresh_entered.as_ref() {
+                entered.notify_one();
+            }
+            wait_for_release(&self.refresh_release, call_index);
             self.refreshed = true;
             self.refresh_tier = Some(tier);
             self.deliver_notifications_flags.push(deliver_notifications);
@@ -2955,5 +2968,130 @@ mod tests {
         );
 
         cleanup.await.expect("terminal cleanup should finish");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn axum_operation_waits_for_slow_cockpit_refresh_and_preserves_refresh_state() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge {
+                refresh_entered: Some(Arc::clone(&entered)),
+                refresh_release: Some(Arc::clone(&release)),
+                ..TestBridge::default()
+            },
+            "axum-op-waits-refresh",
+        );
+
+        let refresh_app = app.clone();
+        let refresh_cookie = cookie.clone();
+        let cockpit =
+            tokio::spawn(async move { get(&refresh_app, &refresh_cookie, "/api/cockpit").await });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("cockpit refresh never entered the bridge");
+
+        let mutate_app = app.clone();
+        let mutate_cookie = cookie.clone();
+        let mutation = tokio::spawn(async move {
+            post_json(
+                &mutate_app,
+                &mutate_cookie,
+                "/api/operations",
+                r#"{"request_id":"op-wait-1","task_handle":"web/fix-login","action":"review"}"#,
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let operate_calls_during_refresh =
+            state.shared().bridge.operate_calls.load(Ordering::SeqCst);
+
+        release_gate(&release);
+
+        let cockpit = tokio::time::timeout(Duration::from_secs(5), cockpit)
+            .await
+            .expect("cockpit refresh response timed out")
+            .unwrap();
+        let mutation = tokio::time::timeout(Duration::from_secs(5), mutation)
+            .await
+            .expect("operation response timed out")
+            .unwrap();
+
+        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(mutation.status(), StatusCode::OK);
+        assert_eq!(
+            operate_calls_during_refresh, 0,
+            "operation must wait for the in-flight cockpit refresh (control lane)"
+        );
+        assert_eq!(
+            state.shared().bridge.refresh_count,
+            1,
+            "refresh state must be committed, not discarded by the racing mutation"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn axum_task_start_waits_for_slow_cockpit_refresh_and_preserves_refresh_state() {
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let (state, cookie, app) = app_with(
+            context_with_web_repo(),
+            TestBridge {
+                refresh_entered: Some(Arc::clone(&entered)),
+                refresh_release: Some(Arc::clone(&release)),
+                ..TestBridge::default()
+            },
+            "axum-start-waits-refresh",
+        );
+
+        let refresh_app = app.clone();
+        let refresh_cookie = cookie.clone();
+        let cockpit =
+            tokio::spawn(async move { get(&refresh_app, &refresh_cookie, "/api/cockpit").await });
+
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .expect("cockpit refresh never entered the bridge");
+
+        let mutate_app = app.clone();
+        let mutate_cookie = cookie.clone();
+        let mutation = tokio::spawn(async move {
+            post_json(
+                &mutate_app,
+                &mutate_cookie,
+                "/api/tasks",
+                r#"{"request_id":"start-wait-1","repo":"web","title":"Fix login","agent":"codex"}"#,
+            )
+            .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let start_calls_during_refresh = state.shared().bridge.start_calls.load(Ordering::SeqCst);
+
+        release_gate(&release);
+
+        let cockpit = tokio::time::timeout(Duration::from_secs(5), cockpit)
+            .await
+            .expect("cockpit refresh response timed out")
+            .unwrap();
+        let mutation = tokio::time::timeout(Duration::from_secs(5), mutation)
+            .await
+            .expect("start task response timed out")
+            .unwrap();
+
+        assert_eq!(cockpit.status(), StatusCode::OK);
+        assert_eq!(mutation.status(), StatusCode::OK);
+        assert_eq!(
+            start_calls_during_refresh, 0,
+            "task start must wait for the in-flight cockpit refresh (control lane)"
+        );
+        assert_eq!(
+            state.shared().bridge.refresh_count,
+            1,
+            "refresh state must be committed, not discarded by the racing mutation"
+        );
     }
 }

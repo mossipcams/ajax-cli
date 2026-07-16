@@ -18,11 +18,10 @@ const OLD_PATHS = [
   "crates/ajax-web/web/src/terminalSurfaceSetting.ts",
   "crates/ajax-web/web/src/terminalSurfaceSetting.test.ts",
   "crates/ajax-web/web/src/terminalGestures.ts",
-  "crates/ajax-web/web/src/terminalGeometry.ts",
-  "crates/ajax-web/web/src/terminalGeometry.test.ts",
+  // terminalGeometry.ts/terminalRefit.ts (+tests) were legacy Ghostty-era
+  // names, but the 2026-07 web-architecture-alignment plan reintroduced those
+  // paths as the current geometry/refit owners, so they are no longer legacy.
   "crates/ajax-web/web/src/terminalGeometry.fuzz.test.ts",
-  "crates/ajax-web/web/src/terminalRefit.ts",
-  "crates/ajax-web/web/src/terminalRefit.test.ts",
   "crates/ajax-web/web/src/terminalOutputPolicy.ts",
   "crates/ajax-web/web/src/terminalOutputPolicy.test.ts",
   "crates/ajax-web/web/src/terminalLayoutPolicy.ts",

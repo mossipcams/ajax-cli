@@ -3,7 +3,16 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     const SLICES: [&str; 4] = ["cockpit", "install", "operate", "terminal"];
-    const ADAPTERS: [&str; 3] = ["assets", "http", "tls"];
+    const ADAPTERS: [&str; 8] = [
+        "assets",
+        "browser_session",
+        "cloudflare_access",
+        "http",
+        "server",
+        "skills",
+        "terminal_pty",
+        "tls",
+    ];
 
     const FORBIDDEN_RUNTIME_DEPENDENCIES: [&str; 2] = ["ajax-web::runtime", "crate::runtime"];
 
@@ -166,5 +175,62 @@ mod tests {
             return false;
         };
         source.contains(&format!("{parent}::{{")) && source.contains(child)
+    }
+
+    fn declared_modules(mod_rs: &str) -> std::collections::BTreeSet<String> {
+        let source = std::fs::read_to_string(mod_rs).unwrap();
+        source
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                let name = line
+                    .strip_prefix("pub mod ")
+                    .or_else(|| line.strip_prefix("pub(crate) mod "))
+                    .or_else(|| line.strip_prefix("mod "))?
+                    .strip_suffix(';')?
+                    .trim();
+                (!name.is_empty()).then(|| name.to_string())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn guarded_modules_match_declared_modules() {
+        let declared_adapters = declared_modules("src/adapters/mod.rs");
+        let guarded_adapters: std::collections::BTreeSet<String> =
+            ADAPTERS.iter().map(|name| (*name).to_string()).collect();
+
+        let missing_adapters = declared_adapters
+            .difference(&guarded_adapters)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale_adapters = guarded_adapters
+            .difference(&declared_adapters)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing_adapters.is_empty() && stale_adapters.is_empty(),
+            "declared web adapters missing an architecture guard: {missing_adapters:?}; stale guards: {stale_adapters:?}"
+        );
+
+        let declared_slices = declared_modules("src/slices/mod.rs");
+        let mut guarded_slices: std::collections::BTreeSet<String> =
+            SLICES.iter().map(|name| (*name).to_string()).collect();
+        guarded_slices.insert("actions".to_string());
+
+        let missing_slices = declared_slices
+            .difference(&guarded_slices)
+            .cloned()
+            .collect::<Vec<_>>();
+        let stale_slices = guarded_slices
+            .difference(&declared_slices)
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing_slices.is_empty() && stale_slices.is_empty(),
+            "declared web slices missing an architecture guard: {missing_slices:?}; stale guards: {stale_slices:?}"
+        );
     }
 }

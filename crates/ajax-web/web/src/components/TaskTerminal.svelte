@@ -10,6 +10,16 @@
     type TerminalConnection,
     type TerminalConnectionStatus,
   } from "../terminalConnection";
+  import {
+    MIN_TERMINAL_COLS,
+    DEFAULT_FONT_SIZE,
+    MIN_FONT_SIZE,
+    MAX_FONT_SIZE,
+    FONT_STORAGE_KEY,
+    parsePersistedFontSize,
+    computeTerminalGeometry,
+  } from "../terminalGeometry";
+  import { createRefitController } from "../terminalRefit";
 
   interface Props {
     handle: string;
@@ -82,14 +92,8 @@
     else clearExpandedInert();
   };
 
-  const MIN_TERMINAL_COLS = 80;
-  const RESIZE_DEBOUNCE_MS = 100;
   const EXPAND_REWRAP_MS = 280;
   const EXPANDED_CLASS = "terminal-expanded";
-  const FONT_STORAGE_KEY = "ajax.terminal.fontSize";
-  const DEFAULT_FONT_SIZE = 13;
-  const MIN_FONT_SIZE = 7;
-  const MAX_FONT_SIZE = 20;
   const PINCH_ACTIVATION_PX = 12;
   const LONG_PRESS_MS = 500;
   const LONG_PRESS_MOVE_CANCEL_PX = 8;
@@ -161,13 +165,7 @@
 
   function loadPersistedFontSize(): number {
     try {
-      const raw = localStorage.getItem(FONT_STORAGE_KEY);
-      if (!raw) return DEFAULT_FONT_SIZE;
-      const size = Number(raw);
-      if (!Number.isFinite(size) || size < MIN_FONT_SIZE || size > MAX_FONT_SIZE) {
-        return DEFAULT_FONT_SIZE;
-      }
-      return size;
+      return parsePersistedFontSize(localStorage.getItem(FONT_STORAGE_KEY));
     } catch {
       return DEFAULT_FONT_SIZE;
     }
@@ -417,7 +415,6 @@
     let resizeObserver: ResizeObserver | undefined;
     let lastSentCols = 0;
     let lastSentRows = 0;
-    let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     let fitFrame = 0;
     let pendingPostKeyboardResync = false;
     let disposed = false;
@@ -447,15 +444,14 @@
         cancelAnimationFrame(fitFrame);
         fitFrame = 0;
       }
-      if (resizeTimer) {
-        clearTimeout(resizeTimer);
-        resizeTimer = undefined;
-      }
     };
+
+    let refitController: ReturnType<typeof createRefitController> | undefined;
 
     const resetDedupe = () => {
       lastSentCols = 0;
       lastSentRows = 0;
+      refitController?.noteReconnect();
     };
     resetResizeDedupe = resetDedupe;
 
@@ -498,22 +494,38 @@
       syncHostToWrap();
       const proposed = fitAddon.proposeDimensions();
       if (!proposed) return;
-      if (
-        !Number.isFinite(proposed.cols) ||
-        !Number.isFinite(proposed.rows) ||
-        !Number.isInteger(proposed.cols) ||
-        !Number.isInteger(proposed.rows) ||
-        proposed.cols <= 0 ||
-        proposed.rows <= 0
-      ) {
-        return;
-      }
 
       const termEl = term.element;
       if (!termEl) return;
 
       const hostWidth = hostEl.clientWidth;
       const hostHeight = hostEl.clientHeight;
+      const currentFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
+
+      let cellWidth = 1;
+      let cellHeight = 1;
+      if (proposed.cols < MIN_TERMINAL_COLS) {
+        const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
+        cellWidth =
+          screenEl && term.cols > 0
+            ? screenEl.offsetWidth / term.cols
+            : hostWidth / proposed.cols;
+        cellHeight =
+          screenEl && term.rows > 0
+            ? screenEl.offsetHeight / term.rows
+            : hostHeight / proposed.rows;
+      }
+
+      const result = computeTerminalGeometry({
+        proposedCols: proposed.cols,
+        proposedRows: proposed.rows,
+        hostWidth,
+        hostHeight,
+        cellWidth,
+        cellHeight,
+        fontSize: currentFontSize,
+      });
+      if (!result) return;
 
       if (proposed.cols >= MIN_TERMINAL_COLS) {
         clearTermScale(termEl);
@@ -523,25 +535,36 @@
         return;
       }
 
-      const screenEl = termEl.querySelector<HTMLElement>(".xterm-screen");
-      const cellWidth =
-        screenEl && term.cols > 0 ? screenEl.offsetWidth / term.cols : hostWidth / proposed.cols;
-      const cellHeight =
-        screenEl && term.rows > 0 ? screenEl.offsetHeight / term.rows : hostHeight / proposed.rows;
-      if (cellWidth <= 0 || cellHeight <= 0 || hostWidth <= 0 || hostHeight <= 0) return;
-
-      const currentFontSize = term.options.fontSize ?? DEFAULT_FONT_SIZE;
-      const logicalCols =
-        MIN_TERMINAL_COLS + Math.max(0, MAX_FONT_SIZE - currentFontSize);
-      const scale = Math.min(1, hostWidth / (logicalCols * cellWidth));
-      const logicalRows = Math.max(1, Math.ceil(hostHeight / (cellHeight * scale)));
-
-      term.resize(logicalCols, logicalRows);
-      termEl.style.width = `${hostWidth / scale}px`;
-      termEl.style.height = `${hostHeight / scale}px`;
+      term.resize(result.cols, result.rows);
+      termEl.style.width = `${result.logicalWidth}px`;
+      termEl.style.height = `${result.logicalHeight}px`;
       termEl.style.transformOrigin = "0 0";
-      termEl.style.transform = `scale(${scale})`;
+      termEl.style.transform = `scale(${result.scale})`;
     };
+
+    refitController = createRefitController({
+      // Re-check the ambient guards at frame time, not just when the refit
+      // was requested: a fit that lands mid-selection resizes the grid,
+      // clears the selection, and unmounts the Copy overlay under the tap.
+      fit: () => {
+        if (isKeyboardOpen()) return;
+        if ((term?.getSelection() ?? "").length > 0) return;
+        fitLocal();
+      },
+      readSize: () => {
+        if (!term) return null;
+        return { cols: term.cols, rows: term.rows };
+      },
+      // Ambient sends share the discrete path's dedupe memory and fire-time
+      // keyboard check, so the two paths can never double-send one grid.
+      sendResize: (cols, rows) => {
+        if (!isActive() || !connection?.isOpen() || isKeyboardOpen()) return;
+        if (cols === lastSentCols && rows === lastSentRows) return;
+        lastSentCols = cols;
+        lastSentRows = rows;
+        connection.sendResize(cols, rows);
+      },
+    });
 
     const scheduleFit = (resizeWithFit: boolean, discreteIntent = false) => {
       if (!isActive()) return;
@@ -576,13 +599,8 @@
         pendingPostKeyboardResync = false;
         resetDedupe();
       }
-      scheduleFit(false, false);
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        resizeTimer = undefined;
-        if (!isActive() || isKeyboardOpen()) return;
-        sendResizeNow(false);
-      }, RESIZE_DEBOUNCE_MS);
+      if ((term?.getSelection() ?? "").length > 0) return;
+      refitController?.requestRefit();
     };
 
     const schedulePostLayout = (discreteIntent = false) => {
@@ -1049,6 +1067,7 @@
       cancelLongPress();
       clearDirectionalGesture();
       cancelScheduledWork();
+      refitController?.dispose();
       dataDisposable?.dispose();
       scrollDisposable?.dispose();
       selectionDisposable?.dispose();

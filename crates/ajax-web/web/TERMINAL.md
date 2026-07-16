@@ -3,22 +3,29 @@
 ## Status
 
 Web Cockpit mounts one xterm.js task terminal from `TaskDetail.svelte` via
-`TaskTerminal.svelte`. The permanent mobile-WebKit behavior suite is green.
+`TaskTerminal.svelte`. Geometry math lives in `terminalGeometry.ts`, refit
+scheduling in `terminalRefit.ts`, both wired into `TaskTerminal.svelte`; the
+mobile-WebKit behavior suite including the viewport-burst case passes as of
+2026-07-16.
 
 ## Ownership
 
 | Concern | Owner |
 | --- | --- |
-| Task route terminal UI (xterm.js) | `TaskTerminal.svelte` |
-| Task-terminal WebSocket lifecycle / reconnect | `terminalConnection.ts` |
-| Keyboard / visualViewport / `--app-*` | `viewport.ts` |
+| Lifecycle, DOM, accessibility, composition | `TaskTerminal.svelte` |
+| WebSocket lifecycle / transport | `terminalConnection.ts` |
+| Document viewport + keyboard truth | `viewport.ts` |
+| Pure grid/scale/row/font persistence math | `terminalGeometry.ts` |
+| Frame coalescing, two-frame settling, 100 ms PTY debounce, dimension dedupe, disposal | `terminalRefit.ts` |
 | PTY attach + frame bridge | `ajax-web::adapters::terminal_pty` |
 | Task-handle attach planning | `ajax-web::slices::terminal` |
 | Protected route `/api/tasks/{handle}/terminal` | `ajax-web::runtime` |
 
+The PTY adapter ownership is unchanged from today.
+
 ## Permanent acceptance
 
-- `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — green
+- `e2e/terminal-behavior.test.ts` (`mobile-webkit`) — passing as of 2026-07-16.
 - `TERMINAL_BEHAVIOR_CONTRACT.md` — behavior inventory (evidence)
 - `TERMINAL_REBUILD_ACCEPTANCE.md` — acceptance matrix (evidence)
 - `TERMINAL_LEGACY_SURFACE_TESTS.md` — removal hygiene index (evidence)

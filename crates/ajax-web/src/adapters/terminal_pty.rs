@@ -1,6 +1,14 @@
 //! PTY-backed tmux attach for the browser task terminal bridge.
 
-use crate::slices::terminal::TerminalAttachPlan;
+/// Transport input for a browser task terminal attach: the task handle, its
+/// tmux session, and its task window. Owned by the PTY adapter that consumes it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TerminalAttachPlan {
+    pub qualified_handle: String,
+    pub tmux_session: String,
+    pub task_window: String,
+}
+
 use axum::extract::ws::{Message, WebSocket};
 use portable_pty::{native_pty_system, Child, CommandBuilder, PtySize};
 use serde::Deserialize;
