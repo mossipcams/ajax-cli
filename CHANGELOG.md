@@ -2,6 +2,14 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.8](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.7...ajax-cli-v0.47.8) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** revert terminal back hold repeat ([#554](https://github.com/mossipcams/ajax-cli/issues/554)) ([bc1bb4a](https://github.com/mossipcams/ajax-cli/commit/bc1bb4a572da1589de0171e70dc0a4cab8c88f79))
+* **web:** serialize cockpit mutations on a control lane and extract terminal geometry/refit ([#555](https://github.com/mossipcams/ajax-cli/issues/555)) ([1885e4b](https://github.com/mossipcams/ajax-cli/commit/1885e4b171168454d59722b6f61b4dcce52bff54))
+
 ## [0.47.7](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.6...ajax-cli-v0.47.7) (2026-07-16)
 
 
