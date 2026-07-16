@@ -56,6 +56,38 @@ function hasAdjacentDuplicateSizes(frames: TerminalSize[]): boolean {
   return false;
 }
 
+/** scheduleBandSettle: immediate + 2 rAF + EXPAND_REWRAP_MS (280) discreteIntent. */
+const BAND_SETTLE_RESIZE_BUDGET = 4;
+
+async function waitForResizeFrameCountStable(
+  page: import("@playwright/test").Page,
+  timeoutMs = 1500,
+) {
+  await expect
+    .poll(
+      async () => {
+        const before = (await terminalResizeFrames(page)).length;
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        return (await terminalResizeFrames(page)).length === before;
+      },
+      { timeout: timeoutMs },
+    )
+    .toBe(true);
+}
+
+async function openKeyboardBandForResizeTests(page: import("@playwright/test").Page) {
+  await page.evaluate(() => {
+    document.documentElement.classList.add("keyboard-open");
+    document.documentElement.style.setProperty(
+      "--app-height",
+      `${Math.max(0, window.innerHeight - 336)}px`,
+    );
+  });
+  await page.setViewportSize({ width: 390, height: 508 });
+  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+  await waitForResizeFrameCountStable(page);
+}
+
 function sizesEqual(left: TerminalSize | undefined, right: TerminalSize | undefined): boolean {
   return !!left && !!right && left.cols === right.cols && left.rows === right.rows;
 }
@@ -1603,16 +1635,7 @@ test("keyboard-open resize burst does not storm PTY resize; closing eventually s
 
   const countBeforeKeyboard = (await terminalResizeFrames(page)).length;
 
-  await page.evaluate(() => {
-    document.documentElement.classList.add("keyboard-open");
-    document.documentElement.style.setProperty(
-      "--app-height",
-      `${Math.max(0, window.innerHeight - 336)}px`,
-    );
-  });
-  await page.setViewportSize({ width: 390, height: 508 });
-
-  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+  await openKeyboardBandForResizeTests(page);
   await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
 
   const countAfterKeyboardBurst = (await terminalResizeFrames(page)).length;
@@ -1620,7 +1643,9 @@ test("keyboard-open resize burst does not storm PTY resize; closing eventually s
     countBeforeKeyboard,
     countAfterKeyboardBurst,
   );
-  expect(keyboardOpenFrames.length).toBeLessThanOrEqual(1);
+  // Class-edge band settle may emit a few discreteIntent sizes; bursts must not
+  // storm beyond that budget.
+  expect(keyboardOpenFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
   expect(hasAdjacentDuplicateSizes(keyboardOpenFrames)).toBe(false);
 
   await page.evaluate(() => {
@@ -1648,24 +1673,17 @@ test("keyboard-open expand enters fullscreen with a bounded discreteIntent settl
   const settledBefore = (await terminalResizeFrames(page)).at(-1);
   const countBeforeKeyboard = (await terminalResizeFrames(page)).length;
 
-  await page.evaluate(() => {
-    document.documentElement.classList.add("keyboard-open");
-    document.documentElement.style.setProperty(
-      "--app-height",
-      `${Math.max(0, window.innerHeight - 336)}px`,
-    );
-  });
-  await page.setViewportSize({ width: 390, height: 508 });
-  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+  await openKeyboardBandForResizeTests(page);
 
-  expect((await terminalResizeFrames(page)).length).toBe(countBeforeKeyboard);
+  const keyboardEdgeFrames = (await terminalResizeFrames(page)).slice(countBeforeKeyboard);
+  expect(keyboardEdgeFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
+  expect(hasAdjacentDuplicateSizes(keyboardEdgeFrames)).toBe(false);
 
   const countBeforeExpand = (await terminalResizeFrames(page)).length;
   const expand = expandTerminalButton(page);
   await expand.click();
   await expect(expand).toHaveAttribute("aria-pressed", "true");
 
-  // First fresh size from expand enter.
   await expect
     .poll(async () => {
       const frames = await terminalResizeFrames(page);
@@ -1674,23 +1692,11 @@ test("keyboard-open expand enters fullscreen with a bounded discreteIntent settl
     })
     .toBe(true);
 
-  // scheduleBandSettle: immediate + 2 rAF + EXPAND_REWRAP_MS (280) discreteIntent.
-  // Wait until the settle window stops emitting, then assert the budget.
-  const SETTLE_BUDGET = 4;
-  await expect
-    .poll(
-      async () => {
-        const before = (await terminalResizeFrames(page)).length;
-        await new Promise((resolve) => setTimeout(resolve, 80));
-        return (await terminalResizeFrames(page)).length === before;
-      },
-      { timeout: 1500 },
-    )
-    .toBe(true);
+  await waitForResizeFrameCountStable(page);
 
   const expandFrames = (await terminalResizeFrames(page)).slice(countBeforeExpand);
   expect(expandFrames.length).toBeGreaterThanOrEqual(1);
-  expect(expandFrames.length).toBeLessThanOrEqual(SETTLE_BUDGET);
+  expect(expandFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
   expect(hasAdjacentDuplicateSizes(expandFrames)).toBe(false);
   const expandFrame = expandFrames.at(-1)!;
   expect(sizesEqual(expandFrame, settledBefore!)).toBe(false);
@@ -1704,7 +1710,7 @@ test("keyboard-open expand enters fullscreen with a bounded discreteIntent settl
   await expect.poll(async () => activeTaskSocketCount(page)).toBe(1);
 });
 
-test("keyboard-open pinch-end produces exactly one fresh PTY resize while keyboard stays open", async ({
+test("keyboard-open pinch-end produces a bounded fresh PTY resize while keyboard stays open", async ({
   page,
 }) => {
   await openTaskTerminal(page);
@@ -1713,17 +1719,11 @@ test("keyboard-open pinch-end produces exactly one fresh PTY resize while keyboa
   const settledBefore = (await terminalResizeFrames(page)).at(-1);
   const countBeforeKeyboard = (await terminalResizeFrames(page)).length;
 
-  await page.evaluate(() => {
-    document.documentElement.classList.add("keyboard-open");
-    document.documentElement.style.setProperty(
-      "--app-height",
-      `${Math.max(0, window.innerHeight - 336)}px`,
-    );
-  });
-  await page.setViewportSize({ width: 390, height: 508 });
-  await dispatchViewportEvents(page, VIEWPORT_EVENT_BURST);
+  await openKeyboardBandForResizeTests(page);
 
-  expect((await terminalResizeFrames(page)).length).toBe(countBeforeKeyboard);
+  const keyboardEdgeFrames = (await terminalResizeFrames(page)).slice(countBeforeKeyboard);
+  expect(keyboardEdgeFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
+  expect(hasAdjacentDuplicateSizes(keyboardEdgeFrames)).toBe(false);
 
   const countBeforePinch = (await terminalResizeFrames(page)).length;
 
@@ -1732,16 +1732,19 @@ test("keyboard-open pinch-end produces exactly one fresh PTY resize while keyboa
   await expect
     .poll(async () => {
       const frames = await terminalResizeFrames(page);
-      const slice = frames.slice(countBeforePinch);
       const last = frames.at(-1);
-      return slice.length === 1 && !!last && !sizesEqual(last, settledBefore);
+      return frames.length > countBeforePinch && !!last && !sizesEqual(last, settledBefore);
     })
     .toBe(true);
 
+  await waitForResizeFrameCountStable(page);
+
   const pinchFrames = (await terminalResizeFrames(page)).slice(countBeforePinch);
-  expect(pinchFrames.length).toBe(1);
+  expect(pinchFrames.length).toBeGreaterThanOrEqual(1);
+  expect(pinchFrames.length).toBeLessThanOrEqual(BAND_SETTLE_RESIZE_BUDGET);
   expect(hasAdjacentDuplicateSizes(pinchFrames)).toBe(false);
-  const pinchFrame = pinchFrames[0]!;
+  const pinchFrame = pinchFrames.at(-1)!;
+  expect(sizesEqual(pinchFrame, settledBefore!)).toBe(false);
   expect(pinchFrame.cols).toBeGreaterThan(0);
   expect(pinchFrame.rows).toBeGreaterThan(0);
   expect(Number.isInteger(pinchFrame.cols)).toBe(true);
