@@ -203,7 +203,8 @@ episode so further pings wait for new evidence.
 
 Notifications fire from CLI/cockpit refreshes and from a background poll inside
 `ajax web`, so a running web server delivers them even when no browser tab is
-open. `poll_seconds` defaults to 30 when `[notify]` is present.
+open. Webhooks stay quiet while a browser is actively polling Web Cockpit.
+`poll_seconds` defaults to 30 when `[notify]` is present.
 
 `ajax start` fast-forwards the managed repo's `default_branch` from `origin`
 before creating the task worktree so new branches base on current remote `main`

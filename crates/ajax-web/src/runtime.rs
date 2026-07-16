@@ -45,6 +45,7 @@ use crate::adapters::http::{
 
 const COCKPIT_REFRESH_CACHE_TTL: Duration = Duration::from_millis(750);
 const DEFAULT_NOTIFY_POLL_SECONDS: u64 = 30;
+const BROWSER_CONNECTED_TTL: Duration = Duration::from_secs(90);
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_COMPLETED_OPERATIONS: usize = 128;
 
@@ -55,6 +56,7 @@ pub struct WebAppState<C, B> {
     state_dir: Arc<PathBuf>,
     browser_session: Arc<BrowserSession>,
     cloudflare_access: Arc<Option<CloudflareAccessConfig>>,
+    last_browser_cockpit_at: Arc<Mutex<Option<Instant>>>,
 }
 
 struct WebSharedState<C, B> {
@@ -81,6 +83,7 @@ impl<C, B> Clone for WebAppState<C, B> {
             state_dir: Arc::clone(&self.state_dir),
             browser_session: Arc::clone(&self.browser_session),
             cloudflare_access: Arc::clone(&self.cloudflare_access),
+            last_browser_cockpit_at: Arc::clone(&self.last_browser_cockpit_at),
         }
     }
 }
@@ -163,7 +166,30 @@ impl<C, B> WebAppState<C, B> {
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(BrowserSession::test_default()),
             cloudflare_access: Arc::new(None),
+            last_browser_cockpit_at: Arc::new(Mutex::new(None)),
         }
+    }
+
+    pub fn mark_browser_cockpit_seen(&self) {
+        *self
+            .last_browser_cockpit_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Instant::now());
+    }
+
+    pub fn browser_connected(&self) -> bool {
+        self.last_browser_cockpit_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some_and(|at| at.elapsed() < BROWSER_CONNECTED_TTL)
+    }
+
+    #[cfg(test)]
+    fn set_browser_cockpit_seen_at_for_test(&self, at: Instant) {
+        *self
+            .last_browser_cockpit_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(at);
     }
 
     pub fn load_or_create(
@@ -187,6 +213,7 @@ impl<C, B> WebAppState<C, B> {
             state_dir: Arc::new(state_dir),
             browser_session: Arc::new(browser_session),
             cloudflare_access: Arc::new(cloudflare_access),
+            last_browser_cockpit_at: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -380,7 +407,8 @@ fn notify_poll_interval(notify: Option<&NotifyConfig>) -> Option<Duration> {
 }
 
 /// Background attention poll: keeps webhook notifications firing while no
-/// browser is polling `/api/cockpit`.
+/// browser is polling `/api/cockpit`. Webhooks stay quiet while a browser is
+/// connected.
 fn spawn_notify_tick<C, B>(state: &WebAppState<C, B>)
 where
     C: CommandRunner + Clone + Send + 'static,
@@ -399,9 +427,10 @@ where
         interval.tick().await; // consume the immediate first tick
         loop {
             interval.tick().await;
-            // ponytail: refreshes even while a browser polls — one redundant
-            // refresh per period, cheap; gate on cache age if it ever matters.
-            let _ = refresh_cockpit_and_cache(&tick_state).await;
+            if tick_state.browser_connected() {
+                continue;
+            }
+            let _ = refresh_cockpit_and_cache(&tick_state, true).await;
         }
     });
 }
@@ -564,11 +593,12 @@ where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
 {
+    state.mark_browser_cockpit_seen();
     if let Some(response) = state.cached_cockpit_response() {
         return response.into_axum_response();
     }
 
-    refresh_cockpit_and_cache(&state).await
+    refresh_cockpit_and_cache(&state, false).await
 }
 
 /// Refresh the cockpit projection and cache the response, firing attention
@@ -576,7 +606,10 @@ where
 /// `/api/cockpit` handler and the background notify tick, so both serialize on
 /// the same lock, honor the same cache TTL, and commit under the same revision
 /// check.
-async fn refresh_cockpit_and_cache<C, B>(state: &WebAppState<C, B>) -> AxumResponse
+async fn refresh_cockpit_and_cache<C, B>(
+    state: &WebAppState<C, B>,
+    deliver_notifications: bool,
+) -> AxumResponse
 where
     C: CommandRunner + Clone + Send + 'static,
     B: RuntimeBridge<C> + Clone + Send + 'static,
@@ -595,7 +628,12 @@ where
             guard.revision,
         )
     };
-    let result = handle_refreshed_cockpit_request(&mut context, &mut runner, &mut bridge);
+    let result = handle_refreshed_cockpit_request(
+        &mut context,
+        &mut runner,
+        &mut bridge,
+        deliver_notifications,
+    );
     let cached_response = match &result {
         Ok(response) => Some(response.clone()),
         Err(_) => None,
@@ -903,6 +941,7 @@ pub trait RuntimeBridge<C: CommandRunner> {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
         tier: RefreshTier,
+        deliver_notifications: bool,
     ) -> Result<bool, WebError>;
 
     fn execute_operate(
@@ -932,8 +971,10 @@ fn handle_refreshed_cockpit_request<C: CommandRunner>(
     context: &mut CommandContext<InMemoryRegistry>,
     runner: &mut C,
     bridge: &mut impl RuntimeBridge<C>,
+    deliver_notifications: bool,
 ) -> Result<Response, WebError> {
-    let _state_changed = bridge.refresh_cockpit(context, runner, RefreshTier::Live)?;
+    let _state_changed =
+        bridge.refresh_cockpit(context, runner, RefreshTier::Live, deliver_notifications)?;
     json_response(
         200,
         serde_json::to_value(cockpit::browser_cockpit_view(context))
@@ -1030,7 +1071,7 @@ mod tests {
         io::{Read, Write},
         sync::atomic::{AtomicUsize, Ordering},
         sync::{Arc, Condvar, Mutex},
-        time::{Duration, SystemTime, UNIX_EPOCH},
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::Notify;
     use tower::ServiceExt;
@@ -1039,6 +1080,7 @@ mod tests {
     struct TestBridge {
         refreshed: bool,
         refresh_tier: Option<RefreshTier>,
+        deliver_notifications_flags: Vec<bool>,
         refresh_count: usize,
         operate: Option<OperateRequest>,
         operate_count: usize,
@@ -1061,6 +1103,7 @@ mod tests {
             Self {
                 refreshed: false,
                 refresh_tier: None,
+                deliver_notifications_flags: Vec::new(),
                 refresh_count: 0,
                 operate: None,
                 operate_count: 0,
@@ -1120,12 +1163,14 @@ mod tests {
             _context: &mut CommandContext<InMemoryRegistry>,
             _runner: &mut R,
             tier: RefreshTier,
+            deliver_notifications: bool,
         ) -> Result<bool, crate::WebError> {
             if self.refresh_delay > Duration::ZERO {
                 std::thread::sleep(self.refresh_delay);
             }
             self.refreshed = true;
             self.refresh_tier = Some(tier);
+            self.deliver_notifications_flags.push(deliver_notifications);
             self.refresh_count += 1;
             Ok(false)
         }
@@ -1769,6 +1814,65 @@ mod tests {
     }
 
     #[test]
+    fn browser_connected_is_false_until_marked_and_expires_after_ttl() {
+        let state = super::WebAppState::new(
+            CommandContext::new(Config::default(), InMemoryRegistry::default()),
+            OkRunner,
+            TestBridge::default(),
+            scratch_dir("browser-connected-ttl"),
+        );
+
+        assert!(!state.browser_connected());
+        state.mark_browser_cockpit_seen();
+        assert!(state.browser_connected());
+
+        let aged = Instant::now() - super::BROWSER_CONNECTED_TTL - Duration::from_secs(1);
+        state.set_browser_cockpit_seen_at_for_test(aged);
+        assert!(!state.browser_connected());
+    }
+
+    #[tokio::test]
+    async fn axum_cockpit_marks_browser_connected_even_on_cache_hit() {
+        let (state, cookie, app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "axum-cockpit-browser-connected",
+        );
+
+        for _ in 0..2 {
+            assert_eq!(
+                get(&app, &cookie, "/api/cockpit").await.status(),
+                StatusCode::OK
+            );
+        }
+
+        assert!(state.browser_connected());
+    }
+
+    #[tokio::test]
+    async fn refresh_cockpit_and_cache_passes_deliver_notifications_flag() {
+        let (state, _cookie, _app) = app_with(
+            context_with_task(),
+            TestBridge::default(),
+            "deliver-notifications-flag",
+        );
+
+        super::refresh_cockpit_and_cache(&state, false).await;
+        assert_eq!(
+            state.shared().bridge.deliver_notifications_flags,
+            vec![false]
+        );
+
+        tokio::time::sleep(super::COCKPIT_REFRESH_CACHE_TTL + Duration::from_millis(50)).await;
+
+        super::refresh_cockpit_and_cache(&state, true).await;
+        assert_eq!(
+            state.shared().bridge.deliver_notifications_flags,
+            vec![false, true]
+        );
+    }
+
+    #[test]
     fn notify_poll_interval_maps_config() {
         use ajax_core::config::NotifyConfig;
 
@@ -1807,11 +1911,11 @@ mod tests {
             "tick-refresh-cache",
         );
 
-        super::refresh_cockpit_and_cache(&state).await;
+        super::refresh_cockpit_and_cache(&state, true).await;
         assert_eq!(state.shared().bridge.refresh_count, 1);
 
         // Within the cache TTL the tick shares the handler's cached response.
-        super::refresh_cockpit_and_cache(&state).await;
+        super::refresh_cockpit_and_cache(&state, true).await;
         assert_eq!(state.shared().bridge.refresh_count, 1);
     }
 

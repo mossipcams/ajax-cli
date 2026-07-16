@@ -224,12 +224,17 @@ impl<C: CommandRunner> RuntimeBridge<C> for CliRuntimeBridge {
         context: &mut CommandContext<InMemoryRegistry>,
         runner: &mut C,
         tier: RefreshTier,
+        deliver_notifications: bool,
     ) -> Result<bool, WebError> {
         let reloaded = self.reload_context_if_stale(context)?;
         let state_changed = refresh_runtime_context_for_web(context, runner, tier)
             .map_err(command_error)
             .map_err(web_error_from_cli)?;
-        let notified = crate::notify::notify_attention_transitions(context, runner);
+        let notified = if deliver_notifications {
+            crate::notify::notify_attention_transitions(context, runner)
+        } else {
+            false
+        };
         if reloaded || state_changed || notified {
             self.persist_changed_state(context)
                 .map_err(web_error_from_cli)?;
@@ -659,6 +664,90 @@ mod tests {
     }
 
     #[test]
+    fn web_refresh_cockpit_notify_respects_deliver_flag() {
+        use ajax_core::config::NotifyConfig;
+        use ajax_core::lifecycle::mark_active;
+        use ajax_core::models::{AgentClient, SideFlag, Task, TaskId};
+        use ajax_core::registry::Registry;
+
+        #[derive(Clone)]
+        struct RecordingRunner {
+            specs: std::sync::Arc<std::sync::Mutex<Vec<CommandSpec>>>,
+        }
+
+        impl CommandRunner for RecordingRunner {
+            fn run(&mut self, command: &CommandSpec) -> Result<CommandOutput, CommandRunError> {
+                self.specs.lock().unwrap().push(command.clone());
+                Ok(CommandOutput {
+                    status_code: 0,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                })
+            }
+        }
+
+        let mut task = Task::new(
+            TaskId::new("web/notify"),
+            "web",
+            "notify",
+            "Notify",
+            "ajax/notify",
+            "main",
+            "/tmp/worktrees/web-notify",
+            "ajax-web-notify",
+            "task",
+            AgentClient::Codex,
+        );
+        mark_active(&mut task).unwrap();
+        task.add_side_flag(SideFlag::NeedsInput);
+        let mut registry = InMemoryRegistry::default();
+        registry.create_task(task).unwrap();
+        let mut context = CommandContext::new(
+            Config {
+                notify: Some(NotifyConfig {
+                    webhook_url: "https://ntfy.sh/topic".to_string(),
+                    poll_seconds: None,
+                }),
+                ..Config::default()
+            },
+            registry,
+        );
+        let mut runner = RecordingRunner {
+            specs: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+        let specs = runner.specs.clone();
+        let mut bridge = super::CliRuntimeBridge::for_context(None, &context).unwrap();
+        let curl_count = || {
+            specs
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|spec| spec.program == "curl")
+                .count()
+        };
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, false)
+            .expect("refresh without notify");
+        assert_eq!(curl_count(), 0);
+
+        bridge
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
+            .expect("refresh with notify");
+        assert_eq!(curl_count(), 1);
+        assert_eq!(
+            specs
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|spec| spec.program == "curl")
+                .unwrap()
+                .program,
+            "curl"
+        );
+    }
+
+    #[test]
     fn web_refresh_cockpit_does_not_reload_sqlite_when_state_unchanged() {
         let root = std::env::temp_dir().join(format!("ajax-web-no-reload-{}", std::process::id()));
         let paths = super::CliContextPaths::new(root.join("config.toml"), root.join("state.db"));
@@ -671,12 +760,12 @@ mod tests {
         let mut bridge = super::CliRuntimeBridge::for_context(Some(&paths), &context).unwrap();
 
         bridge
-            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
             .expect("first refresh");
         let tasks_after_first = context.registry.list_tasks().len();
 
         bridge
-            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
             .expect("second refresh");
 
         assert_eq!(context.registry.list_tasks().len(), tasks_after_first);
@@ -713,7 +802,7 @@ mod tests {
 
         let mut runner = LiveRefreshRunner;
         bridge
-            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
             .expect("refresh should reload the newer SQLite revision");
 
         context
@@ -765,7 +854,7 @@ mod tests {
 
         let mut runner = LiveRefreshRunner;
         let state_changed = bridge
-            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full)
+            .refresh_cockpit(&mut context, &mut runner, RefreshTier::Full, true)
             .expect("refresh accepts the disk-side deletion instead of failing every poll");
 
         assert!(state_changed);
