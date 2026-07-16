@@ -1,42 +1,46 @@
 # Fullscreen hotbar–keyboard gap
 
 **Date:** 2026-07-16
-**Mode:** Small Fix (behavior test first)
-**Reported:** in terminal fullscreen mode there is a space between the hotbar
-and the keyboard; there should not be.
+**Mode:** Small Fix
+**Reported:** gap still present on device after #557 / 0.47.9
 
-## Root cause
+## Root cause (updated)
 
-`.terminal-panel.is-expanded .terminal-keys` keeps
-`padding-bottom: max(2px, env(safe-area-inset-bottom))` (home-indicator pad,
-~34 px on iPhone). Its specificity (0,3,0) beats the generic keyboard-open
-override `html.keyboard-open .terminal-keys { padding-bottom: 6px }` (0,2,1),
-so with the keyboard up in fullscreen the band ends flush at the keyboard top
-(`--app-height` pin is correct) but the keys carry 34 px of internal bottom
-padding → visible dead gap. Not caught by e2e because
-`env(safe-area-inset-bottom)` is 0 in Playwright and the flush assertions
-measure the `.terminal-keys` element box, which includes the padding.
+#557 correctly added the source CSS override in `TaskTerminal.svelte`, but
+never rebuilt/committed `crates/ajax-web/web/dist/app.css`. Ajax embeds the
+dist assets via `include_bytes!` in `adapters/assets.rs`, so the shipped binary
+kept the old rule and the ~34px safe-area pad still won on iPhone.
+
+Source contract test passed against `.svelte`; Playwright cannot see
+`env(safe-area-inset-bottom)` either — so CI stayed green while devices did
+not get the fix.
 
 ## Fix
 
-Add one higher-specificity override in `TaskTerminal.svelte` styles:
-`:global(html.keyboard-open) .terminal-panel.is-expanded .terminal-keys
-{ padding-bottom: 6px; }` (matches the inline keyboard-open value; keyboard
-covers the home indicator, so the safe-area pad is dead space while open).
-Keep the existing safe-area rule for keyboard-closed fullscreen — it is
-pinned by `TaskTerminal.test.ts:158`.
+Rebuild and commit `web/dist/app.css` so the embedded shell includes:
+`html.keyboard-open .terminal-panel.is-expanded … .terminal-keys { padding-bottom: 6px }`.
+
+Add a dist-level source contract so this class of miss fails unit tests next
+time.
+
+## Non-goals
+
+- No CSS logic change beyond shipping the already-merged source rule
+- No Playwright geometry assertions for safe-area (still 0 there)
 
 ## Checklist
 
-- [ ] Test: additive source-contract case in
-  `src/components/keyboardBandPin.test.ts` asserting the keyboard-open
-  expanded keys override exists with a fixed (non-env) padding-bottom; RED
-  first.
-- [ ] Implementation: the one CSS rule above.
-- [ ] Verification: new test GREEN; `TaskTerminal.test.ts` unchanged and
-  green; `npm run web:test -- --run`; regenerate `dist/app.js` via
-  `npm run web:build:check`; focused mobile-webkit keyboard/fullscreen e2e
-  cases green.
+- [x] Confirm main `dist/app.css` lacks the expanded keyboard-open override
+- [x] `npm run web:build:check` regenerates dist with the override present
+- [x] Assert override string in rebuilt `dist/app.css` (unit test; RED on
+  main dist, GREEN locally)
+- [x] Focused web unit tests for the source + dist contract green (7/7)
 
-Delegation decision: delegated via model-router (MiniMax lane, bounded
-two-file change with exact anchors).
+Delegation decision: not delegated because one-file generated-asset rebuild
+plus a tiny contract test (model-router LOCAL exception).
+
+## Validation
+
+- `npm run web:build:check` — passed
+- `npm run web:test -- --run src/components/keyboardBandPin.test.ts` — 7/7
+- main dist regex check — `false`; local — `true`

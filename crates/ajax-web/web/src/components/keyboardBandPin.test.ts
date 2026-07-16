@@ -94,4 +94,12 @@ describe("keyboard band height pin contract", () => {
     expect(body).toMatch(/padding-bottom:\s*6px/);
     expect(body).not.toMatch(/env\(safe-area-inset-bottom\)/);
   });
+
+  // Embedded shell is dist/app.css (include_bytes!), not the .svelte source.
+  it("ships the expanded keyboard-open hotbar pad override in dist/app.css", () => {
+    const distCss = readFileSync(join(here, "../../dist/app.css"), "utf8");
+    expect(distCss).toMatch(
+      /html\.keyboard-open\s+\.terminal-panel\.is-expanded[^{]*\.terminal-keys[^{]*\{[^}]*padding-bottom:6px/,
+    );
+  });
 });
