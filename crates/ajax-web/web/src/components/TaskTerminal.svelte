@@ -1388,7 +1388,7 @@
     /* Compact inline height so new tasks do not get a tall empty PTY band
        between client output and the tmux status line. Keyboard-open flex-fills. */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: min(38vh, 300px);
+      height: min(24vh, 180px);
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
