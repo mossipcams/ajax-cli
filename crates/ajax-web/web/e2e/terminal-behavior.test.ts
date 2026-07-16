@@ -853,11 +853,27 @@ test("fullscreen exit blurs the terminal textarea without PTY input", async ({ p
   await expect.poll(async () => inputFrameCount(page)).toBe(baseline);
 });
 
-async function simulateKeyboardBand(page: import("@playwright/test").Page) {
+async function simulateKeyboardBand(
+  page: import("@playwright/test").Page,
+  band: { top?: number; height?: number } = {},
+) {
+  const top = band.top ?? 40;
+  const height = band.height ?? 460;
+  await page.evaluate(
+    ({ top: appTop, height: appHeight }) => {
+      document.documentElement.classList.add("keyboard-open");
+      document.documentElement.style.setProperty("--app-height", `${appHeight}px`);
+      document.documentElement.style.setProperty("--app-top", `${appTop}px`);
+    },
+    { top, height },
+  );
+}
+
+async function clearKeyboardBand(page: import("@playwright/test").Page) {
   await page.evaluate(() => {
-    document.documentElement.classList.add("keyboard-open");
-    document.documentElement.style.setProperty("--app-height", "460px");
-    document.documentElement.style.setProperty("--app-top", "40px");
+    document.documentElement.classList.remove("keyboard-open");
+    document.documentElement.style.removeProperty("--app-height");
+    document.documentElement.style.removeProperty("--app-top");
   });
 }
 
@@ -869,8 +885,75 @@ async function visibleAppBand(page: import("@playwright/test").Page) {
     const height = Number.parseFloat(
       getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
     );
-    return { top, bottom: top + height };
+    return { top, height, bottom: top + height };
   });
+}
+
+type BandFlushGeometry = {
+  bandTop: number;
+  bandBottom: number;
+  bandHeight: number;
+  pinnedTop: number;
+  pinnedBottom: number;
+  pinnedHeight: number;
+  pinnedPosition: string;
+  keysTop: number;
+  keysBottom: number;
+  keysHeight: number;
+  keyboardOpen: boolean;
+  expanded: boolean;
+};
+
+async function readBandFlushGeometry(
+  page: import("@playwright/test").Page,
+  pinnedSelector: string,
+): Promise<BandFlushGeometry | null> {
+  return page.evaluate((selector) => {
+    const pinned = document.querySelector<HTMLElement>(selector);
+    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
+    if (!pinned || !keys) return null;
+    const top = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
+    );
+    const height = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
+    );
+    const pinnedBox = pinned.getBoundingClientRect();
+    const keysBox = keys.getBoundingClientRect();
+    return {
+      bandTop: top,
+      bandBottom: top + height,
+      bandHeight: height,
+      pinnedTop: pinnedBox.top,
+      pinnedBottom: pinnedBox.bottom,
+      pinnedHeight: pinnedBox.height,
+      pinnedPosition: getComputedStyle(pinned).position,
+      keysTop: keysBox.top,
+      keysBottom: keysBox.bottom,
+      keysHeight: keysBox.height,
+      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+      expanded: document.documentElement.classList.contains("terminal-expanded"),
+    };
+  }, pinnedSelector);
+}
+
+function expectFlushToBand(
+  geometry: BandFlushGeometry | null,
+  options: { expanded: boolean; position?: string } = { expanded: false },
+) {
+  expect(geometry).not.toBeNull();
+  const g = geometry!;
+  expect(g.keyboardOpen).toBe(true);
+  expect(g.expanded).toBe(options.expanded);
+  expect(g.pinnedPosition).toBe(options.position ?? "fixed");
+  expect(g.pinnedTop).toBeCloseTo(g.bandTop, 0);
+  expect(g.pinnedBottom).toBeCloseTo(g.bandBottom, 0);
+  expect(g.pinnedHeight).toBeCloseTo(g.bandHeight, 0);
+  expect(g.keysBottom).toBeCloseTo(g.bandBottom, 0);
+  expect(g.keysTop).toBeGreaterThanOrEqual(g.bandTop - 1);
+  expect(g.keysBottom).toBeLessThanOrEqual(g.bandBottom + 1);
+  expect(g.keysHeight).toBeGreaterThan(0);
+  expect(g.keysTop).toBeLessThan(g.keysBottom);
 }
 
 function boxesIntersect(
@@ -926,31 +1009,9 @@ test("fullscreen with keyboard-open pins panel bottom to the visual viewport ban
   await expand.click();
   await expect(expand).toHaveAttribute("aria-pressed", "true");
 
-  const geometry = await page.evaluate(() => {
-    const panel = document.querySelector<HTMLElement>('[data-testid="task-terminal-panel"]');
-    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
-    if (!panel || !keys) return null;
-    const top = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
-    );
-    const height = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
-    );
-    const panelBox = panel.getBoundingClientRect();
-    const keysBox = keys.getBoundingClientRect();
-    return {
-      bandTop: top,
-      bandBottom: top + height,
-      panelTop: panelBox.top,
-      panelBottom: panelBox.bottom,
-      keysBottom: keysBox.bottom,
-    };
+  expectFlushToBand(await readBandFlushGeometry(page, '[data-testid="task-terminal-panel"]'), {
+    expanded: true,
   });
-
-  expect(geometry).not.toBeNull();
-  expect(geometry!.panelTop).toBeCloseTo(geometry!.bandTop, 0);
-  expect(geometry!.panelBottom).toBeCloseTo(geometry!.bandBottom, 0);
-  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
 });
 
 test("expand then keyboard-open still pins panel bottom to the visual viewport band", async ({
@@ -965,68 +1026,20 @@ test("expand then keyboard-open still pins panel bottom to the visual viewport b
   // Keyboard opens after fullscreen (tap-to-type path), not before expand.
   await simulateKeyboardBand(page);
 
-  const geometry = await page.evaluate(() => {
-    const panel = document.querySelector<HTMLElement>('[data-testid="task-terminal-panel"]');
-    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
-    if (!panel || !keys) return null;
-    const top = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
-    );
-    const height = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
-    );
-    const panelBox = panel.getBoundingClientRect();
-    const keysBox = keys.getBoundingClientRect();
-    return {
-      bandTop: top,
-      bandBottom: top + height,
-      panelTop: panelBox.top,
-      panelBottom: panelBox.bottom,
-      keysBottom: keysBox.bottom,
-      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
-      expanded: document.documentElement.classList.contains("terminal-expanded"),
-    };
+  expectFlushToBand(await readBandFlushGeometry(page, '[data-testid="task-terminal-panel"]'), {
+    expanded: true,
   });
-
-  expect(geometry).not.toBeNull();
-  expect(geometry!.keyboardOpen).toBe(true);
-  expect(geometry!.expanded).toBe(true);
-  expect(geometry!.panelTop).toBeCloseTo(geometry!.bandTop, 0);
-  expect(geometry!.panelBottom).toBeCloseTo(geometry!.bandBottom, 0);
-  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
 });
 
 test("inline keyboard-open pins task-detail to the visual viewport band", async ({ page }) => {
   await openTaskTerminal(page);
   await simulateKeyboardBand(page);
 
-  const geometry = await page.evaluate(() => {
-    const detail = document.querySelector<HTMLElement>(".task-detail");
-    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
-    if (!detail || !keys) return null;
-    const top = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
-    );
-    const height = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
-    );
-    const detailBox = detail.getBoundingClientRect();
-    const keysBox = keys.getBoundingClientRect();
-    return {
-      bandTop: top,
-      bandBottom: top + height,
-      detailTop: detailBox.top,
-      detailBottom: detailBox.bottom,
-      keysBottom: keysBox.bottom,
-      expanded: document.documentElement.classList.contains("terminal-expanded"),
-    };
-  });
+  expectFlushToBand(await readBandFlushGeometry(page, ".task-detail"), { expanded: false });
 
-  expect(geometry).not.toBeNull();
-  expect(geometry!.expanded).toBe(false);
-  expect(geometry!.detailTop).toBeCloseTo(geometry!.bandTop, 0);
-  expect(geometry!.detailBottom).toBeCloseTo(geometry!.bandBottom, 0);
-  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
+  const chrome = await chromeDisplayState(page);
+  expect(chrome.detailHeader).not.toBe("none");
+  expect(chrome.interactPanel).not.toBe("none");
 });
 
 test("exit fullscreen while keyboard-open pins inline task-detail to the band", async ({
@@ -1041,35 +1054,40 @@ test("exit fullscreen while keyboard-open pins inline task-detail to the band", 
   await expand.click();
   await expect(expand).toHaveAttribute("aria-pressed", "false");
 
-  const geometry = await page.evaluate(() => {
-    const detail = document.querySelector<HTMLElement>(".task-detail");
-    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
-    if (!detail || !keys) return null;
-    const top = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
-    );
-    const height = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
-    );
-    const detailBox = detail.getBoundingClientRect();
-    const keysBox = keys.getBoundingClientRect();
-    return {
-      bandTop: top,
-      bandBottom: top + height,
-      detailTop: detailBox.top,
-      detailBottom: detailBox.bottom,
-      keysBottom: keysBox.bottom,
-      keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
-      expanded: document.documentElement.classList.contains("terminal-expanded"),
-    };
-  });
+  expectFlushToBand(await readBandFlushGeometry(page, ".task-detail"), { expanded: false });
+});
 
-  expect(geometry).not.toBeNull();
-  expect(geometry!.keyboardOpen).toBe(true);
-  expect(geometry!.expanded).toBe(false);
-  expect(geometry!.detailTop).toBeCloseTo(geometry!.bandTop, 0);
-  expect(geometry!.detailBottom).toBeCloseTo(geometry!.bandBottom, 0);
-  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
+test("keyboard-open pin tracks live visual-viewport band CSS updates", async ({ page }) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page, { top: 40, height: 460 });
+  expectFlushToBand(await readBandFlushGeometry(page, ".task-detail"), { expanded: false });
+
+  await simulateKeyboardBand(page, { top: 72, height: 390 });
+  const after = await readBandFlushGeometry(page, ".task-detail");
+  expectFlushToBand(after, { expanded: false });
+  expect(after!.bandTop).toBe(72);
+  expect(after!.bandHeight).toBe(390);
+  expect(after!.pinnedTop).toBeCloseTo(72, 0);
+  expect(after!.pinnedHeight).toBeCloseTo(390, 0);
+});
+
+test("keyboard close then reopen still pins inline task-detail flush to the band", async ({
+  page,
+}) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page);
+  expectFlushToBand(await readBandFlushGeometry(page, ".task-detail"), { expanded: false });
+
+  await clearKeyboardBand(page);
+  const cleared = await page.evaluate(() => ({
+    keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+    detailPosition: getComputedStyle(document.querySelector(".task-detail")!).position,
+  }));
+  expect(cleared.keyboardOpen).toBe(false);
+  expect(cleared.detailPosition).not.toBe("fixed");
+
+  await simulateKeyboardBand(page, { top: 48, height: 420 });
+  expectFlushToBand(await readBandFlushGeometry(page, ".task-detail"), { expanded: false });
 });
 
 test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({ page }) => {
@@ -1086,11 +1104,7 @@ test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({
   expect(hidden.detailHeader).not.toBe("none");
   expect(hidden.interactPanel).not.toBe("none");
 
-  await page.evaluate(() => {
-    document.documentElement.classList.remove("keyboard-open");
-    document.documentElement.style.removeProperty("--app-height");
-    document.documentElement.style.removeProperty("--app-top");
-  });
+  await clearKeyboardBand(page);
   const restored = await chromeDisplayState(page);
   expect(restored.cockpit).not.toBe("none");
   expect(restored.bottomNav).not.toBe("none");
@@ -1970,20 +1984,95 @@ test("selection Copy sits beside the fullscreen expand control", async ({ page }
   const geometry = await page.evaluate(() => {
     const copyEl = document.querySelector<HTMLElement>('[data-testid="terminal-copy-overlay"]');
     const expandEl = document.querySelector<HTMLElement>(".terminal-expand-corner");
-    if (!copyEl || !expandEl) return null;
+    const wrap = document.querySelector<HTMLElement>(
+      '[data-testid="terminal-interaction-surface"]',
+    );
+    const corner = document.querySelector<HTMLElement>(".terminal-corner-actions");
+    const panel = document.querySelector<HTMLElement>('[data-testid="task-terminal-panel"]');
+    if (!copyEl || !expandEl || !wrap || !corner || !panel) return null;
     const copyBox = copyEl.getBoundingClientRect();
     const expandBox = expandEl.getBoundingClientRect();
+    const panelBox = panel.getBoundingClientRect();
     return {
+      sharedParent: copyEl.parentElement === corner && expandEl.parentElement === corner,
+      copyInsideScrollWrap: wrap.contains(copyEl),
+      expandInsideScrollWrap: wrap.contains(expandEl),
       copyRight: copyBox.right,
       copyTop: copyBox.top,
+      copyBottom: copyBox.bottom,
+      copyWidth: copyBox.width,
+      copyHeight: copyBox.height,
       expandLeft: expandBox.left,
       expandTop: expandBox.top,
+      expandRight: expandBox.right,
+      expandHeight: expandBox.height,
+      panelTop: panelBox.top,
+      panelRight: panelBox.right,
+      gap: expandBox.left - copyBox.right,
     };
   });
 
   expect(geometry).not.toBeNull();
+  expect(geometry!.sharedParent).toBe(true);
+  expect(geometry!.copyInsideScrollWrap).toBe(false);
+  expect(geometry!.expandInsideScrollWrap).toBe(false);
   expect(geometry!.copyRight).toBeLessThanOrEqual(geometry!.expandLeft + 1);
-  expect(Math.abs(geometry!.copyTop - geometry!.expandTop)).toBeLessThanOrEqual(8);
+  expect(geometry!.gap).toBeGreaterThanOrEqual(0);
+  expect(geometry!.gap).toBeLessThanOrEqual(12);
+  expect(Math.abs(geometry!.copyTop - geometry!.expandTop)).toBeLessThanOrEqual(4);
+  expect(geometry!.copyTop).toBeGreaterThanOrEqual(geometry!.panelTop);
+  expect(geometry!.copyTop).toBeLessThanOrEqual(geometry!.panelTop + 16);
+  expect(geometry!.expandRight).toBeLessThanOrEqual(geometry!.panelRight + 1);
+  expect(geometry!.copyWidth).toBeGreaterThanOrEqual(44);
+  expect(geometry!.copyHeight).toBeGreaterThanOrEqual(44);
+  expect(geometry!.expandHeight).toBeGreaterThanOrEqual(44);
+});
+
+test("selection Copy stays pinned beside expand after scrolling the interaction wrap", async ({
+  page,
+}) => {
+  await openTaskTerminalWithCopySpy(page);
+  await emitLatestTerminalOutput(page, [
+    `${COPY_SELECTION_TEXT}\r\n`,
+    ...Array.from({ length: 80 }, (_, i) => `scroll-line-${i}\r\n`),
+  ]);
+  await programTerminalSelection(page, COPY_SELECTION_TEXT);
+
+  const copy = terminalPanel(page).getByTestId("terminal-copy-overlay");
+  await expect(copy).toBeVisible();
+
+  const before = await copy.boundingBox();
+  expect(before).not.toBeNull();
+
+  await terminalInteractionSurface(page).evaluate((el) => {
+    el.scrollTop = el.scrollHeight;
+  });
+
+  const after = await page.evaluate(() => {
+    const copyEl = document.querySelector<HTMLElement>('[data-testid="terminal-copy-overlay"]');
+    const expandEl = document.querySelector<HTMLElement>(".terminal-expand-corner");
+    const wrap = document.querySelector<HTMLElement>(
+      '[data-testid="terminal-interaction-surface"]',
+    );
+    if (!copyEl || !expandEl || !wrap) return null;
+    const copyBox = copyEl.getBoundingClientRect();
+    const expandBox = expandEl.getBoundingClientRect();
+    return {
+      scrollTop: wrap.scrollTop,
+      copyTop: copyBox.top,
+      copyRight: copyBox.right,
+      expandLeft: expandBox.left,
+      expandTop: expandBox.top,
+      visible: getComputedStyle(copyEl).display !== "none" && copyBox.height > 0,
+    };
+  });
+
+  expect(after).not.toBeNull();
+  expect(after!.scrollTop).toBeGreaterThan(0);
+  expect(after!.visible).toBe(true);
+  expect(after!.copyTop).toBeCloseTo(before!.y, 0);
+  expect(after!.copyRight).toBeLessThanOrEqual(after!.expandLeft + 1);
+  expect(Math.abs(after!.copyTop - after!.expandTop)).toBeLessThanOrEqual(4);
 });
 
 test("Copy writes selected text to clipboard and shows Copied notice", async ({ page }) => {

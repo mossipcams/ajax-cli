@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
 import taskTerminalSource from "./TaskTerminal.svelte?raw";
 
+const BAND_BOTTOM_CALC =
+  /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top,\s*0px\)\s*-\s*var\(--app-height,\s*100lvh\)\s*\)\s*\)/;
+
+function extractBlock(source: string, startPattern: RegExp, endPattern: RegExp): string {
+  const start = source.search(startPattern);
+  if (start < 0) return "";
+  const from = source.slice(start);
+  const end = from.search(endPattern);
+  return end < 0 ? from : from.slice(0, end);
+}
+
 describe("TaskTerminal iOS keyboard geometry", () => {
   it("anchors the xterm helper textarea to the host bottom for iOS keyboard placement", () => {
     const textareaCss =
@@ -42,11 +53,20 @@ describe("TaskTerminal iOS keyboard geometry", () => {
 
   it("re-fits through the expand settle window with discrete intent", () => {
     expect(taskTerminalSource).toMatch(/const EXPAND_REWRAP_MS\s*=\s*280/);
-    expect(taskTerminalSource).toMatch(/schedulePostLayoutRef\?\.\(true\)/);
-    expect(taskTerminalSource).toMatch(
+    const settleBody =
+      taskTerminalSource.match(
+        /const scheduleBandSettle\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n  \};/,
+      )?.[1] ?? "";
+
+    expect(settleBody).toMatch(/cancelExpandSettle\s*\(\s*\)/);
+    expect(settleBody).toMatch(/requestAnimationFrame[\s\S]*?requestAnimationFrame/);
+    expect(settleBody).toMatch(
       /setTimeout\([\s\S]*?schedulePostLayoutRef\?\.\(true\)[\s\S]*?EXPAND_REWRAP_MS/,
     );
-    expect(taskTerminalSource).toMatch(/requestAnimationFrame[\s\S]*?requestAnimationFrame/);
+    const discreteCalls = settleBody.match(/schedulePostLayoutRef\?\.\(true\)/g) ?? [];
+    expect(discreteCalls).toHaveLength(4);
+    expect(settleBody).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
+    expect(settleBody).not.toMatch(/schedulePostLayoutRef\?\.\(\s*\)/);
   });
 
   it("pins bottom controls so hotkeys stay above the keyboard band", () => {
@@ -61,29 +81,41 @@ describe("TaskTerminal iOS keyboard geometry", () => {
   });
 
   it("settles the band on any keyboard-open class edge (inline or fullscreen)", () => {
-    expect(taskTerminalSource).toMatch(/MutationObserver/);
-    expect(taskTerminalSource).toMatch(/const scheduleBandSettle\s*=/);
-    expect(taskTerminalSource).toMatch(
-      /nowOpen\s*===\s*wasKeyboardOpen[\s\S]*?scheduleBandSettle\(\)/,
+    const observerBody = extractBlock(
+      taskTerminalSource,
+      /const keyboardClassObserver\s*=\s*new MutationObserver/,
+      /\n    keyboardClassObserver\.observe/,
     );
-    expect(taskTerminalSource).not.toMatch(
-      /nowOpen\s*&&\s*!wasKeyboardOpen[\s\S]*?EXPANDED_CLASS/,
+
+    expect(observerBody).toMatch(/MutationObserver/);
+    expect(observerBody).toMatch(/nowOpen\s*===\s*wasKeyboardOpen/);
+    expect(observerBody).toMatch(/resetDocumentScroll\s*\(\s*\)/);
+    expect(observerBody).toMatch(/scheduleBandSettle\s*\(\s*\)/);
+    expect(observerBody).not.toMatch(/EXPANDED_CLASS/);
+    expect(observerBody).not.toMatch(/nowOpen\s*&&\s*!wasKeyboardOpen/);
+    expect(taskTerminalSource).toMatch(
+      /keyboardClassObserver\.observe\(\s*document\.documentElement[\s\S]*?attributeFilter:\s*\[["']class["']\]/,
     );
   });
 
   it("settles the band on expand enter, expand exit, and tap-focus", () => {
-    expect(taskTerminalSource).toMatch(
-      /const toggleExpanded\s*=\s*\(\)\s*=>\s*\{[\s\S]*?scheduleBandSettle\(\)[\s\S]*?scheduleBandSettle\(\)/,
-    );
-    expect(taskTerminalSource).not.toMatch(
-      /schedulePostLayoutRef\?\.\(false\)/,
-    );
+    const toggleBody =
+      taskTerminalSource.match(/const toggleExpanded\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n  \};/)?.[1] ??
+      "";
+
+    expect(toggleBody).toMatch(/if\s*\(\s*!entering\s*\)\s*\{[\s\S]*?scheduleBandSettle\s*\(\s*\)[\s\S]*?return/);
+    expect(toggleBody).toMatch(/scheduleBandSettle\s*\(\s*\)\s*;\s*$/);
+    expect(toggleBody.match(/scheduleBandSettle\s*\(\s*\)/g)?.length).toBe(2);
+    expect(toggleBody).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
+    expect(taskTerminalSource).not.toMatch(/schedulePostLayoutRef\?\.\(false\)/);
+
     const onInteractionClick =
       taskTerminalSource.match(
         /const onInteractionClick\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n    \};/,
       )?.[1] ?? "";
-    expect(onInteractionClick).toMatch(/scheduleBandSettle\(\)/);
+    expect(onInteractionClick).toMatch(/scheduleBandSettle\s*\(\s*\)/);
     expect(onInteractionClick).not.toMatch(/EXPANDED_CLASS/);
+    expect(onInteractionClick).not.toMatch(/terminal-expanded/);
   });
 
   it("pins expanded panel with top and bottom to the live visual-viewport band", () => {
@@ -92,23 +124,34 @@ describe("TaskTerminal iOS keyboard geometry", () => {
         /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([\s\S]*?)\n    \}/,
       )?.[1] ?? "";
 
-    expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
-    expect(expandedRule).toMatch(/bottom:\s*max\([\s\S]*?calc\(/);
+    expect(expandedRule).toMatch(/top:\s*var\(--app-top,\s*var\(--app-band-top,\s*0px\)\)/);
+    expect(expandedRule).toMatch(BAND_BOTTOM_CALC);
     expect(expandedRule).toMatch(/height:\s*auto/);
+    expect(expandedRule).toMatch(/max-height:\s*none/);
+    expect(expandedRule).not.toMatch(/height:\s*var\(--app-/);
   });
 
   it("shows Copy beside expand on the panel, not centered in the scroll wrap", () => {
-    expect(taskTerminalSource).toMatch(/class="terminal-corner-actions"/);
-    expect(taskTerminalSource).toMatch(/data-testid="terminal-copy-overlay"/);
-    expect(taskTerminalSource).toMatch(
-      /terminal-corner-actions[\s\S]*?terminal-copy-overlay[\s\S]*?terminal-expand-corner/,
+    const cornerMarkup = extractBlock(
+      taskTerminalSource,
+      /class="terminal-corner-actions"/,
+      /<\/div>\s*<div\s+class="terminal-status"/,
     );
 
-    const interactionWrapMarkup =
-      taskTerminalSource.match(
-        /class="terminal-interaction-wrap"[\s\S]*?<\/div>\s*\{#if copyNotice\}/,
-      )?.[0] ?? "";
-    expect(interactionWrapMarkup).not.toMatch(/terminal-copy-overlay/);
+    expect(cornerMarkup).toMatch(/data-testid="terminal-copy-overlay"/);
+    expect(cornerMarkup).toMatch(/terminal-copy-overlay[\s\S]*?terminal-expand-corner/);
+    expect(cornerMarkup.indexOf("terminal-copy-overlay")).toBeLessThan(
+      cornerMarkup.indexOf("terminal-expand-corner"),
+    );
+
+    const interactionOpen = taskTerminalSource.indexOf('class="terminal-interaction-wrap"');
+    const interactionClose = taskTerminalSource.indexOf("{#if copyNotice}");
+    expect(interactionOpen).toBeGreaterThan(-1);
+    expect(interactionClose).toBeGreaterThan(interactionOpen);
+    const interactionMarkup = taskTerminalSource.slice(interactionOpen, interactionClose);
+    expect(interactionMarkup).not.toMatch(/terminal-copy-overlay/);
+    expect(interactionMarkup).not.toMatch(/terminal-expand-corner/);
+    expect(interactionMarkup).not.toMatch(/copyNotice/);
 
     const cornerCss =
       taskTerminalSource.match(/\.terminal-corner-actions\s*\{([^}]*)\}/)?.[1] ?? "";
@@ -116,10 +159,14 @@ describe("TaskTerminal iOS keyboard geometry", () => {
     expect(cornerCss).toMatch(/top:\s*6px/);
     expect(cornerCss).toMatch(/right:\s*6px/);
     expect(cornerCss).toMatch(/display:\s*flex/);
+    expect(cornerCss).toMatch(/z-index:\s*8/);
 
     const overlayCss =
       taskTerminalSource.match(/\.terminal-copy-overlay\s*\{([^}]*)\}/)?.[1] ?? "";
+    expect(overlayCss).not.toMatch(/position:\s*absolute/);
     expect(overlayCss).not.toMatch(/left:\s*50%/);
     expect(overlayCss).not.toMatch(/top:\s*50%/);
+    expect(overlayCss).toMatch(/min-width:\s*44px/);
+    expect(overlayCss).toMatch(/min-height:\s*44px/);
   });
 });
