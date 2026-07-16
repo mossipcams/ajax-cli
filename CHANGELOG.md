@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.6](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.5...ajax-cli-v0.47.6) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** rebuild terminal browser bundle ([#548](https://github.com/mossipcams/ajax-cli/issues/548)) ([f9bcbdd](https://github.com/mossipcams/ajax-cli/commit/f9bcbddbc5f4c84dbcd0dde2d0e309174a2196ca))
+
 ## [0.47.5](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.4...ajax-cli-v0.47.5) (2026-07-16)
 
 
