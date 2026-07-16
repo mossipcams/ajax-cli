@@ -609,7 +609,14 @@
     };
 
     refitController = createRefitController({
-      fit: fitLocal,
+      // Re-check the ambient guards at frame time, not just when the refit
+      // was requested: a fit that lands mid-selection resizes the grid,
+      // clears the selection, and unmounts the Copy overlay under the tap.
+      fit: () => {
+        if (isKeyboardOpen()) return;
+        if ((term?.getSelection() ?? "").length > 0) return;
+        fitLocal();
+      },
       readSize: () => {
         if (!term) return null;
         return { cols: term.cols, rows: term.rows };

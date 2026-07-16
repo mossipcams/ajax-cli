@@ -567,6 +567,17 @@ Codex critique invocations exited 1 because local
 `model_reasoning_effort = "max"` is unsupported by the current API; a
 per-invocation `xhigh` override succeeded without changing user configuration.
 
+CI follow-up (2026-07-16, PR #555): the Web job failed three mobile-webkit
+Copy/selection cases that pass locally — on slower CI WebKit a queued ambient
+refit executed mid-selection because the controller's `fit` dep lost the old
+frame-time keyboard/selection re-checks (the entry checks in
+`scheduleDebounced` run at request time, not frame time), so the fit resized
+the grid, cleared the selection, and unmounted the Copy overlay under the
+tap. Fix: wrap the `fit` dep with the same `isKeyboardOpen()` +
+live-selection guards the legacy rAF callback had (parent-applied, smaller
+than a work order). Local re-run: Copy grep 9/9, burst 3/3, full suite 65
+passed with one unrelated WebKit teardown-hang flake that passes 3/3 focused.
+
 **Final status (2026-07-16): COMPLETE.** All eleven tasks done on top of
 origin/main `0877e70`. Delegation rounds: GLM ×3 (Tasks 2, 6, 9), MiniMax ×3
 (Tasks 3, 5, 11), Cursor ×3 (Tasks 4, 7, 8), Codex critiques ×3 (one BLOCK
