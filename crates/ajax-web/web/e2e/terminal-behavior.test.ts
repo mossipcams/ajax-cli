@@ -576,34 +576,153 @@ test("printable, control, and navigation keys produce ordered PTY input", async 
     ]);
 });
 
-test("held terminal back sends repeated left-arrow frames until release", async ({ page }) => {
-  await openTaskTerminal(page);
+const BACK_LEFT = "\x1b[D";
 
+async function dispatchBackPointerEvent(
+  back: import("@playwright/test").Locator,
+  type: "pointerdown" | "pointerup" | "pointercancel" | "lostpointercapture",
+  opts: { pointerId?: number; isPrimary?: boolean } = {},
+) {
+  await back.evaluate(
+    (el, args) => {
+      // Synthetic PointerEvents are not active; soft-patch capture for this dispatch.
+      const proto = HTMLElement.prototype;
+      const original = proto.setPointerCapture;
+      proto.setPointerCapture = function (this: HTMLElement, id: number) {
+        try {
+          original.call(this, id);
+        } catch {
+          /* inactive synthetic pointer */
+        }
+      };
+      try {
+        el.dispatchEvent(
+          new PointerEvent(args.type, {
+            bubbles: true,
+            cancelable: true,
+            pointerId: args.pointerId,
+            pointerType: "touch",
+            isPrimary: args.isPrimary,
+            button: 0,
+            buttons: args.type === "pointerdown" ? 1 : 0,
+          }),
+        );
+      } finally {
+        proto.setPointerCapture = original;
+      }
+    },
+    {
+      type,
+      pointerId: opts.pointerId ?? 1,
+      isPrimary: opts.isPrimary ?? true,
+    },
+  );
+}
+
+async function settleNoNewFrames(
+  page: import("@playwright/test").Page,
+  expectedCount: number,
+) {
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  await expect.poll(async () => inputFrameCount(page)).toBe(expectedCount);
+}
+
+/** Run stop, then assert no frames arrive after the stop call returns. */
+async function assertStopHaltsFrames(
+  page: import("@playwright/test").Page,
+  stop: () => Promise<void>,
+) {
+  await stop();
+  await settleNoNewFrames(page, await inputFrameCount(page));
+}
+
+async function holdBackUntilRepeat(
+  page: import("@playwright/test").Page,
+  back: import("@playwright/test").Locator,
+  pointerId: number,
+) {
   const baseline = await inputFrameCount(page);
-  const back = terminalToolbar(page).getByRole("button", { name: "←" });
-  const box = await back.boundingBox();
-  if (!box) throw new Error("← toolbar button box missing");
-  const x = box.x + box.width / 2;
-  const y = box.y + box.height / 2;
-
-  await page.mouse.move(x, y);
-  await page.mouse.down();
+  await dispatchBackPointerEvent(back, "pointerdown", { pointerId });
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
   await new Promise((resolve) => setTimeout(resolve, 550));
-  await page.mouse.up();
   await expect
     .poll(async () => (await inputFrameCount(page)) - baseline)
     .toBeGreaterThanOrEqual(2);
-  const heldFrames = (await terminalInputFrames(page)).slice(baseline);
-  expect(heldFrames.every((frame) => frame.data === "\x1b[D")).toBe(true);
-  const heldCount = heldFrames.length;
+  const held = (await terminalInputFrames(page)).slice(baseline);
+  expect(held.every((frame) => frame.data === BACK_LEFT)).toBe(true);
+  return baseline;
+}
 
-  await new Promise((resolve) => setTimeout(resolve, 200));
-  await expect.poll(async () => inputFrameCount(page)).toBe(baseline + heldCount);
+test("held terminal back sends repeated left-arrow frames until release", async ({ page }) => {
+  await openTaskTerminal(page);
+  const back = terminalToolbar(page).getByRole("button", { name: "←" });
 
+  // 1–3: immediate frame, hold repeats, pointerup stops; click adds none; Enter adds one
+  let baseline = await holdBackUntilRepeat(page, back, 1);
+  expect((await terminalInputFrames(page)).slice(baseline)[0]?.data).toBe(BACK_LEFT);
+  await assertStopHaltsFrames(page, () =>
+    dispatchBackPointerEvent(back, "pointerup", { pointerId: 1 }),
+  );
+  let heldCount = (await inputFrameCount(page)) - baseline;
+  await back.evaluate((el) => {
+    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+  });
+  await settleNoNewFrames(page, baseline + heldCount);
   await back.focus();
   await page.keyboard.press("Enter");
   await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(heldCount + 1);
-  expect((await terminalInputFrames(page)).at(-1)?.data).toBe("\x1b[D");
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
+
+  // 4a/4b: pointercancel and lostpointercapture stop repeat
+  await holdBackUntilRepeat(page, back, 2);
+  await assertStopHaltsFrames(page, () =>
+    dispatchBackPointerEvent(back, "pointercancel", { pointerId: 2 }),
+  );
+  await holdBackUntilRepeat(page, back, 3);
+  await assertStopHaltsFrames(page, () =>
+    dispatchBackPointerEvent(back, "lostpointercapture", { pointerId: 3 }),
+  );
+
+  // 5a/5b: visibility hidden and window blur stop an active repeat
+  await holdBackUntilRepeat(page, back, 4);
+  await assertStopHaltsFrames(page, () =>
+    page.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "hidden",
+      });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }),
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+  });
+  await holdBackUntilRepeat(page, back, 5);
+  await assertStopHaltsFrames(page, () =>
+    page.evaluate(() => window.dispatchEvent(new Event("blur"))),
+  );
+
+  // 6: non-primary cannot start; concurrent second primary cannot replace
+  baseline = await inputFrameCount(page);
+  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 6, isPrimary: false });
+  await settleNoNewFrames(page, baseline);
+  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 7 });
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 8 });
+  expect((await inputFrameCount(page)) - baseline).toBe(1);
+  await new Promise((resolve) => setTimeout(resolve, 550));
+  await expect
+    .poll(async () => (await inputFrameCount(page)) - baseline)
+    .toBeGreaterThanOrEqual(2);
+  expect(
+    (await terminalInputFrames(page)).slice(baseline).every((frame) => frame.data === BACK_LEFT),
+  ).toBe(true);
+  await assertStopHaltsFrames(page, () =>
+    dispatchBackPointerEvent(back, "pointerup", { pointerId: 7 }),
+  );
 });
 
 test("repeated printable browser events produce exact cardinality", async ({ page }) => {
@@ -1494,6 +1613,65 @@ test("keyboard activation does not reuse pointer focus ownership", async ({ page
       }),
     )
     .toBe(false);
+});
+
+test("terminal Space input preserves scroll and keyboard-band geometry", async ({ page }) => {
+  await openTaskTerminal(page);
+  await emitLatestTerminalOutput(page, [scrollbackChunk(0, 200)]);
+  await scrollInteractionSurfaceAway(page);
+  await page.evaluate(() => {
+    const ta = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+    if (!(ta instanceof HTMLTextAreaElement)) throw new Error("textarea missing");
+    ta.focus({ preventScroll: true });
+  });
+  await simulateKeyboardBand(page);
+  await new Promise((r) => setTimeout(r, 400));
+
+  const read = () =>
+    page.evaluate(() => {
+      const host = document.querySelector(
+        "[data-testid='task-terminal-panel'] .terminal-host",
+      ) as (HTMLElement & { __xterm?: { buffer: { active: { viewportY: number } } } }) | null;
+      const wrap = document.querySelector(
+        "[data-testid='terminal-interaction-surface']",
+      ) as HTMLElement | null;
+      const detail = document.querySelector(".task-detail")?.getBoundingClientRect();
+      const panel = document
+        .querySelector("[data-testid='task-terminal-panel']")
+        ?.getBoundingClientRect();
+      const ta = document.querySelector(".terminal-host textarea.xterm-helper-textarea");
+      return {
+        wrapScrollTop: wrap?.scrollTop ?? -1,
+        viewportY: host?.__xterm?.buffer.active.viewportY ?? -1,
+        detailTop: detail?.top ?? -1,
+        detailHeight: detail?.height ?? -1,
+        panelTop: panel?.top ?? -1,
+        panelHeight: panel?.height ?? -1,
+        focused: ta === document.activeElement,
+        keyboardOpen: document.documentElement.classList.contains("keyboard-open"),
+      };
+    });
+
+  const baseline = await inputFrameCount(page);
+  const before = await read();
+  expect(before.focused).toBe(true);
+  expect(before.keyboardOpen).toBe(true);
+  expect(before.wrapScrollTop).toBeGreaterThan(0);
+
+  await page.keyboard.press("Space");
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(" ");
+  await new Promise((r) => setTimeout(r, 400));
+
+  const after = await read();
+  expect(after.wrapScrollTop).toBe(before.wrapScrollTop);
+  expect(after.viewportY).toBe(before.viewportY);
+  expect(Math.abs(after.detailTop - before.detailTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.detailHeight - before.detailHeight)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.panelTop - before.panelTop)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.panelHeight - before.panelHeight)).toBeLessThanOrEqual(1);
+  expect(after.focused).toBe(true);
+  expect(after.keyboardOpen).toBe(true);
 });
 
 test("Paste preserves prior terminal focus when another control owns focus", async ({ page }) => {
