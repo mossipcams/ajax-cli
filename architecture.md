@@ -494,7 +494,7 @@ lifecycle rules, registry truth, runtime reconciliation, Git/tmux
 interpretation, substrate evidence, operation outcomes, or action policy.
 
 Web Cockpit is a first-class browser operator surface that is dashboard-first,
-with an authenticated raw Ghostty/tmux terminal bridge for existing Ajax task tmux
+with an authenticated raw xterm.js/tmux terminal bridge for existing Ajax task tmux
 sessions. Native Cockpit and Web Cockpit consume shared Cockpit projections and
 task-operation contracts; neither surface owns task truth. The browser
 experience should lead with task state, required decisions, and next actions,
@@ -535,8 +535,7 @@ substrate interpretation. Route handlers are thin adapters that delegate to the
 existing Ajax backend/core operation boundaries.
 
 Browser files live under `crates/ajax-web/web`. The install slice owns serving
-the HTML shell, client JavaScript, stylesheet, and Ghostty terminal WASM asset
-from that directory.
+the HTML shell, client JavaScript, and stylesheet from that directory.
 `ajax-web::runtime` owns HTTP transport wiring, local TLS setup, and shell asset
 delivery.
 `ajax-web::adapters::browser_session` owns browser-session token persistence,
@@ -586,9 +585,9 @@ endpoints, WebSocket/SSE endpoints, or any future `/api/*` endpoint.
 
 Browser storage is intentionally limited. The browser shell must not use
 IndexedDB, background sync, local task queues, offline mutation replay, or
-cached operational/API data. Ghostty's terminal WASM is the only approved
-browser WASM runtime asset; the shell must not add Yew, Trunk, or a large
-frontend architecture unless the project explicitly adopts those elsewhere.
+cached operational/API data. No browser WASM runtime asset is currently shipped;
+the shell must not add Yew, Trunk, or a large frontend architecture unless the
+project explicitly adopts those elsewhere.
 
 Stable and dev runtime profiles remain separated by the host-native
 `ajax-cli web` process and explicit runtime context. Stable uses the stable
@@ -692,11 +691,23 @@ supported browser task-control APIs.
 `TaskDetail.svelte` mounts one `TaskTerminal.svelte` surface per task route.
 The component uses xterm.js for rendering and `terminalConnection.ts` for the
 WebSocket lifecycle contract; general viewport helpers remain in `viewport.ts`.
-`crates/ajax-web/web/TERMINAL.md` records frontend ownership. Permanent
-acceptance coverage in `crates/ajax-web/web/e2e/terminal-behavior.test.ts`
-(`mobile-webkit`) is green. The Rust PTY/WebSocket backend
-(`/api/tasks/{handle}/terminal` route, `ajax-web::slices::terminal`,
-`ajax-web::adapters::terminal_pty`) is unchanged.
+`crates/ajax-web/web/TERMINAL.md` records frontend ownership. The Rust
+PTY/WebSocket backend (`/api/tasks/{handle}/terminal` route,
+`ajax-web::slices::terminal`, `ajax-web::adapters::terminal_pty`) is unchanged.
+
+Frontend ownership:
+
+- `TaskTerminal.svelte`: lifecycle, DOM, accessibility, composition.
+- `terminalConnection.ts`: WebSocket lifecycle/transport.
+- `viewport.ts`: document viewport and keyboard truth.
+- `terminalGeometry.ts`: pure grid/scale/row/font persistence math.
+- `terminalRefit.ts`: frame coalescing, two-frame settling, 100 ms
+  PTY debounce, dimension dedupe, and disposal.
+- PTY adapter ownership is unchanged.
+
+Both modules exist and are wired into `TaskTerminal.svelte`, and the
+mobile-WebKit terminal behavior suite, including the repeated same-dimension
+viewport-burst case, passes as of 2026-07-16.
 
 ### `ajax-web::adapters::terminal_pty`
 
@@ -715,14 +726,32 @@ shutdown, and process-level startup by composing `ajax-web::slices::*` with
 `ajax-web::adapters::*`. If `ajax-cli` starts Web Cockpit, the CLI launcher
 passes resolved runtime context to `ajax-web` explicitly.
 
-Post-startup Web Cockpit routes snapshot registry state under a short mutex hold,
-run external tmux/git probes outside the lock, then merge deltas back under the
-lock. `/api/cockpit` refresh follows this pattern so lightweight routes such as
-`/api/health` and task detail reads stay responsive during slow substrate work.
-Task-terminal WebSocket upgrades read the registered task evidence needed to
-build an attach plan, then the PTY/tmux bridge runs outside the shared-state
-lock. Mutating task operations remain serialized per task through the operation
-coordinator.
+Post-startup Web Cockpit routes snapshot registry state under a short mutex
+hold, run external tmux/git probes outside the lock, then merge deltas back
+under the lock. `/api/cockpit` refresh follows this pattern so lightweight
+routes such as `/api/health` and task detail reads stay responsive during
+slow substrate work. Task-terminal WebSocket upgrades read the registered
+task evidence needed to build an attach plan, then the PTY/tmux bridge runs
+outside the shared-state lock.
+
+Runtime coordination contract (implemented):
+
+- One `tokio::sync::Mutex<()>` process-local async control lane serializes
+  refresh, notify, action, and start context replacement.
+- Shared `std::sync::Mutex` guards are held only to clone or replace
+  in-memory state, never across commands, persistence, probes, or `.await`.
+- The CLI bridge and SQLite optimistic revision/merge remain the cross-process
+  concurrency authority; the web runtime owns no second merge policy.
+- `OperationCoordinator` intentionally admits only one mutation at a time for
+  the single-operator / whole-context-snapshot design. Per-task mutation
+  concurrency is deferred until task-granular commit semantics exist and
+  measurement justifies it.
+- Lightweight health/static/detail reads and PTY work remain outside the
+  control lane after short snapshot reads.
+
+The control lane (`control_lane`) is acquired by the cockpit refresh path and,
+after operation admission, by the action and task-start handlers, pinned by two
+runtime concurrency tests.
 
 ### Post-startup runtime refresh
 
@@ -748,6 +777,10 @@ while incompatible same-task changes surface an explicit conflict instead of
 last-writer-wins overwrite. SQLite mtime remains only a reload optimization.
 CLI entry points load through `TrackedContext` so native saves participate in
 the same merge contract as Web Cockpit.
+
+The CLI bridge and SQLite optimistic revision/merge are the cross-process
+concurrency authority. The web runtime owns no second merge policy; it
+delegates commit/reload through the same revision-checked path.
 
 Native Cockpit's interactive loop shares the same reload-on-mtime and
 save-on-operator-action contract Web Cockpit uses. Each cockpit refresh checks
@@ -787,6 +820,11 @@ invalidate that window. Terminal bridge cleanup and substrate probes are
 bounded so browser disconnects, pane probes, or slow external commands do not
 starve lightweight routes. Supervisor cancellation terminates and awaits the
 child process before reporting completion, with a bounded wait.
+
+The process-local `OperationCoordinator` is an intentional single-operator
+ceiling: only one mutation may be in flight at a time, and per-task mutation
+concurrency is outside this alignment and deferred until task-granular
+commit semantics exist and measurement justifies it.
 
 ## Cockpit Architecture
 

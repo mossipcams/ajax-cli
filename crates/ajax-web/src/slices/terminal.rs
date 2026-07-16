@@ -2,12 +2,7 @@
 
 use ajax_core::{commands::CommandContext, registry::Registry};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TerminalAttachPlan {
-    pub qualified_handle: String,
-    pub tmux_session: String,
-    pub task_window: String,
-}
+pub use crate::adapters::terminal_pty::TerminalAttachPlan;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalRouteError {
