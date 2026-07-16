@@ -578,47 +578,6 @@ test("printable, control, and navigation keys produce ordered PTY input", async 
 
 const BACK_LEFT = "\x1b[D";
 
-async function dispatchBackPointerEvent(
-  back: import("@playwright/test").Locator,
-  type: "pointerdown" | "pointerup" | "pointercancel" | "lostpointercapture",
-  opts: { pointerId?: number; isPrimary?: boolean } = {},
-) {
-  await back.evaluate(
-    (el, args) => {
-      // Synthetic PointerEvents are not active; soft-patch capture for this dispatch.
-      const proto = HTMLElement.prototype;
-      const original = proto.setPointerCapture;
-      proto.setPointerCapture = function (this: HTMLElement, id: number) {
-        try {
-          original.call(this, id);
-        } catch {
-          /* inactive synthetic pointer */
-        }
-      };
-      try {
-        el.dispatchEvent(
-          new PointerEvent(args.type, {
-            bubbles: true,
-            cancelable: true,
-            pointerId: args.pointerId,
-            pointerType: "touch",
-            isPrimary: args.isPrimary,
-            button: 0,
-            buttons: args.type === "pointerdown" ? 1 : 0,
-          }),
-        );
-      } finally {
-        proto.setPointerCapture = original;
-      }
-    },
-    {
-      type,
-      pointerId: opts.pointerId ?? 1,
-      isPrimary: opts.isPrimary ?? true,
-    },
-  );
-}
-
 async function settleNoNewFrames(
   page: import("@playwright/test").Page,
   expectedCount: number,
@@ -627,102 +586,20 @@ async function settleNoNewFrames(
   await expect.poll(async () => inputFrameCount(page)).toBe(expectedCount);
 }
 
-/** Run stop, then assert no frames arrive after the stop call returns. */
-async function assertStopHaltsFrames(
-  page: import("@playwright/test").Page,
-  stop: () => Promise<void>,
-) {
-  await stop();
-  await settleNoNewFrames(page, await inputFrameCount(page));
-}
-
-async function holdBackUntilRepeat(
-  page: import("@playwright/test").Page,
-  back: import("@playwright/test").Locator,
-  pointerId: number,
-) {
-  const baseline = await inputFrameCount(page);
-  await dispatchBackPointerEvent(back, "pointerdown", { pointerId });
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
-  await new Promise((resolve) => setTimeout(resolve, 550));
-  await expect
-    .poll(async () => (await inputFrameCount(page)) - baseline)
-    .toBeGreaterThanOrEqual(2);
-  const held = (await terminalInputFrames(page)).slice(baseline);
-  expect(held.every((frame) => frame.data === BACK_LEFT)).toBe(true);
-  return baseline;
-}
-
-test("held terminal back sends repeated left-arrow frames until release", async ({ page }) => {
+test("held terminal back sends one left-arrow frame per activation", async ({ page }) => {
   await openTaskTerminal(page);
   const back = terminalToolbar(page).getByRole("button", { name: "←" });
+  const baseline = await inputFrameCount(page);
 
-  // 1–3: immediate frame, hold repeats, pointerup stops; click adds none; Enter adds one
-  let baseline = await holdBackUntilRepeat(page, back, 1);
-  expect((await terminalInputFrames(page)).slice(baseline)[0]?.data).toBe(BACK_LEFT);
-  await assertStopHaltsFrames(page, () =>
-    dispatchBackPointerEvent(back, "pointerup", { pointerId: 1 }),
-  );
-  let heldCount = (await inputFrameCount(page)) - baseline;
-  await back.evaluate((el) => {
-    el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
-  });
-  await settleNoNewFrames(page, baseline + heldCount);
+  await back.click({ delay: 550 });
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
+  expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
+  await settleNoNewFrames(page, baseline + 1);
+
   await back.focus();
   await page.keyboard.press("Enter");
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(heldCount + 1);
+  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(2);
   expect((await terminalInputFrames(page)).at(-1)?.data).toBe(BACK_LEFT);
-
-  // 4a/4b: pointercancel and lostpointercapture stop repeat
-  await holdBackUntilRepeat(page, back, 2);
-  await assertStopHaltsFrames(page, () =>
-    dispatchBackPointerEvent(back, "pointercancel", { pointerId: 2 }),
-  );
-  await holdBackUntilRepeat(page, back, 3);
-  await assertStopHaltsFrames(page, () =>
-    dispatchBackPointerEvent(back, "lostpointercapture", { pointerId: 3 }),
-  );
-
-  // 5a/5b: visibility hidden and window blur stop an active repeat
-  await holdBackUntilRepeat(page, back, 4);
-  await assertStopHaltsFrames(page, () =>
-    page.evaluate(() => {
-      Object.defineProperty(document, "visibilityState", {
-        configurable: true,
-        get: () => "hidden",
-      });
-      document.dispatchEvent(new Event("visibilitychange"));
-    }),
-  );
-  await page.evaluate(() => {
-    Object.defineProperty(document, "visibilityState", {
-      configurable: true,
-      get: () => "visible",
-    });
-  });
-  await holdBackUntilRepeat(page, back, 5);
-  await assertStopHaltsFrames(page, () =>
-    page.evaluate(() => window.dispatchEvent(new Event("blur"))),
-  );
-
-  // 6: non-primary cannot start; concurrent second primary cannot replace
-  baseline = await inputFrameCount(page);
-  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 6, isPrimary: false });
-  await settleNoNewFrames(page, baseline);
-  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 7 });
-  await expect.poll(async () => (await inputFrameCount(page)) - baseline).toBe(1);
-  await dispatchBackPointerEvent(back, "pointerdown", { pointerId: 8 });
-  expect((await inputFrameCount(page)) - baseline).toBe(1);
-  await new Promise((resolve) => setTimeout(resolve, 550));
-  await expect
-    .poll(async () => (await inputFrameCount(page)) - baseline)
-    .toBeGreaterThanOrEqual(2);
-  expect(
-    (await terminalInputFrames(page)).slice(baseline).every((frame) => frame.data === BACK_LEFT),
-  ).toBe(true);
-  await assertStopHaltsFrames(page, () =>
-    dispatchBackPointerEvent(back, "pointerup", { pointerId: 7 }),
-  );
 });
 
 test("repeated printable browser events produce exact cardinality", async ({ page }) => {
