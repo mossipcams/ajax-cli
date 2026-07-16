@@ -398,8 +398,30 @@ header .bar h1 {
 
 @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
   [data-testid="route-scroll"]:has([data-outlet="task"]) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     padding-left: 0;
     padding-right: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) > [data-outlet="task"] {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .task-detail {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  [data-testid="route-scroll"]:has([data-outlet="task"]) .terminal-panel:not(.is-expanded) {
+    flex: 1 1 0%;
+    min-height: 0;
   }
 
   [data-testid="route-scroll"] {

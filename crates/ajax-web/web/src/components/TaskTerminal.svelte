@@ -526,10 +526,15 @@
       if (isKeyboardOpen() && !discreteIntent) {
         return;
       }
+      // term.resize clears selection; skip ambient fits while Copy/selection is live.
+      if (!discreteIntent && (term?.getSelection() ?? "").length > 0) {
+        return;
+      }
       if (fitFrame) cancelAnimationFrame(fitFrame);
       fitFrame = requestAnimationFrame(() => {
         fitFrame = 0;
         if (!isActive() || (isKeyboardOpen() && !discreteIntent)) return;
+        if (!discreteIntent && (term?.getSelection() ?? "").length > 0) return;
         fitLocal();
         if (resizeWithFit) sendResizeNow(discreteIntent);
       });
@@ -1359,22 +1364,44 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+    /* Fill leftover task height with a definite flex basis so host height:100%
+       resolves (height:auto flex basis was content-sized and raced with fit). */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: min(38vh, 300px);
+      flex: 1 1 0%;
+      min-height: 0;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
       height: 100%;
+      min-height: 0;
+    }
+
+    :global([data-testid="terminal-bottom-controls"]) {
+      flex: none;
+      width: 100%;
+    }
+
+    .terminal-keys {
+      width: 100%;
+      padding-bottom: max(2px, env(safe-area-inset-bottom));
+    }
+
+    .terminal-keys .terminal-key {
+      flex: 1 1 0;
+      min-width: 0;
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: auto;
-      flex: 1 1 auto;
+      flex: 1 1 0%;
       min-height: 0;
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) :global([data-testid="terminal-bottom-controls"]) {
       flex: none;
+    }
+
+    :global(html.keyboard-open) .terminal-keys {
+      padding-bottom: 6px;
     }
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {

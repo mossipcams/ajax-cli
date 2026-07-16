@@ -2,35 +2,36 @@
 
 ## Scope
 
-When tapping the terminal (not fullscreen), the hotkey bar must sit flush
-above the iOS keyboard — same geometry as fullscreen. Header/status stay
-visible above the terminal.
+Fix mobile task terminal layout:
+- Hotkey bar keys distribute proportionally across full width.
+- Terminal fills space between status chrome and bottom nav (no dead band on new tasks).
+- Keyboard-open band keeps hotkeys flush above keyboard.
 
-## Root cause
+## Non-goals
 
-Fullscreen pins `.terminal-panel.is-expanded` to `--app-band-top` /
-`--app-band-height`, so keys at the panel bottom sit on the visual-viewport
-bottom (above the keyboard).
-
-Inline + `keyboard-open` only tried flex-fill inside `route-scroll`. The
-`section[data-outlet=task]` / height chain does not reliably stretch the
-panel to the band bottom, so keys float mid-page or sit under the keyboard.
-
-## Fix
-
-When `html.keyboard-open` on mobile, pin `.task-detail` itself to the app
-band (same top/height as fullscreen). Header + one-row status stay
-`flex: none` at the top; terminal panel `flex: 1`; keys remain at the
-bottom of that column = above the keyboard.
+- Desktop terminal height rules.
+- PTY protocol / FitAddon min-col math.
+- Wterm / Ghostty paths.
 
 ## Delegation
 
-`Delegation decision: not delegated because smaller than the work order —
-targeted CSS geometry already diagnosed; iterating on open PR #518.`
+`Delegation decision: not delegated — focused CSS flex-chain + hotbar distribution; parent implements with TDD.`
 
 ## Checklist
 
-- [ ] CSS: keyboard-open `.task-detail` fixed to app band
-- [ ] Terminal panel fills remaining; keys flex-none at bottom
-- [ ] Test contract + focused verify
-- [ ] Push to PR #518
+- [x] Test: mobile task route flex-fill contract (no 38vh cap)
+- [x] Test: hotbar keys flex-grow + keyboard-open safe-area pad
+- [x] CSS: task route / task-detail / terminal-panel flex chain
+- [x] TaskTerminal: flex-fill interaction wrap + proportional keys
+- [x] TaskTerminal: debounced discrete refit on resize while keyboard-open
+- [x] Validation: focused vitest + build
+
+## Validation
+
+```bash
+cd crates/ajax-web/web && npx vitest run src/components/TaskTerminal.test.ts src/components/App.test.ts
+# 45 passed
+
+npm run web:build
+# built in ~895ms
+```
