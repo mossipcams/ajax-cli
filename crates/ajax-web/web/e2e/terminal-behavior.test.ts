@@ -929,6 +929,9 @@ type BandFlushGeometry = {
   pinnedBottom: number;
   pinnedHeight: number;
   pinnedPosition: string;
+  pinnedComputedTop: number;
+  pinnedComputedHeight: number;
+  pinnedComputedBottom: string;
   keysTop: number;
   keysBottom: number;
   keysHeight: number;
@@ -952,6 +955,7 @@ async function readBandFlushGeometry(
     );
     const pinnedBox = pinned.getBoundingClientRect();
     const keysBox = keys.getBoundingClientRect();
+    const pinnedStyle = getComputedStyle(pinned);
     return {
       bandTop: top,
       bandBottom: top + height,
@@ -959,7 +963,10 @@ async function readBandFlushGeometry(
       pinnedTop: pinnedBox.top,
       pinnedBottom: pinnedBox.bottom,
       pinnedHeight: pinnedBox.height,
-      pinnedPosition: getComputedStyle(pinned).position,
+      pinnedPosition: pinnedStyle.position,
+      pinnedComputedTop: Number.parseFloat(pinnedStyle.top) || 0,
+      pinnedComputedHeight: Number.parseFloat(pinnedStyle.height) || 0,
+      pinnedComputedBottom: pinnedStyle.bottom,
       keysTop: keysBox.top,
       keysBottom: keysBox.bottom,
       keysHeight: keysBox.height,
@@ -978,10 +985,16 @@ function expectFlushToBand(
   expect(g.keyboardOpen).toBe(true);
   expect(g.expanded).toBe(options.expanded);
   expect(g.pinnedPosition).toBe(options.position ?? "fixed");
+  // Height-based pin: resolved top/height track --app-* (flush above keyboard).
+  expect(g.pinnedComputedTop).toBeCloseTo(g.bandTop, 0);
+  expect(g.pinnedComputedHeight).toBeCloseTo(g.bandHeight, 0);
+  expect(Math.abs(g.pinnedComputedHeight - g.bandHeight)).toBeLessThanOrEqual(1);
   expect(g.pinnedTop).toBeCloseTo(g.bandTop, 0);
   expect(g.pinnedBottom).toBeCloseTo(g.bandBottom, 0);
   expect(g.pinnedHeight).toBeCloseTo(g.bandHeight, 0);
+  // Hotkeys flush to the band bottom (right above the keyboard).
   expect(g.keysBottom).toBeCloseTo(g.bandBottom, 0);
+  expect(Math.abs(g.keysBottom - g.pinnedBottom)).toBeLessThanOrEqual(1);
   expect(g.keysTop).toBeGreaterThanOrEqual(g.bandTop - 1);
   expect(g.keysBottom).toBeLessThanOrEqual(g.bandBottom + 1);
   expect(g.keysHeight).toBeGreaterThan(0);
@@ -1072,6 +1085,33 @@ test("inline keyboard-open pins task-detail to the visual viewport band", async 
   const chrome = await chromeDisplayState(page);
   expect(chrome.detailHeader).not.toBe("none");
   expect(chrome.interactPanel).not.toBe("none");
+});
+
+test("keyboard band CSS uses height pin and forbids 100lvh bottom math", async ({ page }) => {
+  await openTaskTerminal(page);
+
+  const contract = await page.evaluate(() => {
+    const texts = Array.from(document.styleSheets).flatMap((sheet) => {
+      try {
+        return Array.from(sheet.cssRules).map((rule) => rule.cssText);
+      } catch {
+        return [] as string[];
+      }
+    });
+    const joined = texts.join("\n");
+    return {
+      hasLvhBottom: /bottom:\s*max\(\s*0px,\s*calc\(\s*100lvh\s*-\s*var\(--app-top/.test(joined),
+      taskDetailHeightPin:
+        /keyboard-open:not\(\.terminal-expanded\)[\s\S]*?\.task-detail[\s\S]*?height:\s*var\(--app-height/.test(
+          joined,
+        ) ||
+        /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail/.test(joined),
+      appHeightVarInUse: /height:\s*var\(--app-height/.test(joined),
+    };
+  });
+
+  expect(contract.hasLvhBottom).toBe(false);
+  expect(contract.appHeightVarInUse).toBe(true);
 });
 
 test("exit fullscreen while keyboard-open pins inline task-detail to the band", async ({
