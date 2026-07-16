@@ -920,16 +920,23 @@ fn smoke_cockpit_reattaches_after_interrupted_attach_client() {
         output.status,
         output.stdout
     );
+    let eintr = "tmux: EINTR service interrupted call";
+    let attached = "attached ajax-web-fix-login";
+    let eintr_at = output.stdout.find(eintr).unwrap_or_else(|| {
+        panic!(
+            "first attach should expose interrupted call:\n{}",
+            output.stdout
+        )
+    });
+    let attached_at = output.stdout.find(attached).unwrap_or_else(|| {
+        panic!(
+            "second attach should keep the operator inside the task session:\n{}",
+            output.stdout
+        )
+    });
     assert!(
-        output
-            .stdout
-            .contains("tmux: EINTR service interrupted call"),
-        "first attach should expose the interrupted call output:\n{}",
-        output.stdout
-    );
-    assert!(
-        output.stdout.contains("attached ajax-web-fix-login"),
-        "second attach should keep the operator inside the task session:\n{}",
+        eintr_at < attached_at,
+        "EINTR notice should precede successful attach:\n{}",
         output.stdout
     );
 
@@ -1337,16 +1344,23 @@ fn smoke_rooted_orphan_recovery_stays_scoped_to_its_repo() {
     });
 
     let tasks = assert_json(&sandbox.ajax(["tasks", "--json"]), "ajax tasks --json");
-    let handles = tasks["tasks"]
+    let mut handles = tasks["tasks"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|task| task["qualified_handle"].as_str().unwrap_or_default())
+        .map(|task| {
+            task["qualified_handle"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+        })
         .collect::<Vec<_>>();
+    handles.sort();
 
-    assert!(handles.contains(&"web/fix-login"));
-    assert!(handles.contains(&"api/ghost-task"));
-    assert!(!handles.contains(&"web/ghost-task"));
+    assert_eq!(
+        handles,
+        vec!["api/ghost-task".to_string(), "web/fix-login".to_string(),]
+    );
 }
 
 #[test]

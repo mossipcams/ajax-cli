@@ -278,6 +278,122 @@ fn row_text_finder<'a>(buffer: &'a ratatui::buffer::Buffer) -> impl Fn(u16) -> S
     move |y: u16| (0..width).map(|x| buffer[(x, y)].symbol()).collect()
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedTaskRow {
+    handle: String,
+    status: String,
+    action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedInboxRow {
+    repo: String,
+    task_id: String,
+    reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedProjectRow {
+    name: String,
+    subtitle: String,
+}
+
+fn parse_task_row(row: &str) -> Option<ParsedTaskRow> {
+    let trimmed = row.trim();
+    let slash = trimmed.find('/')?;
+    let handle_start = trimmed[..slash]
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !matches!(c, 'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_'))
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(0);
+    let rest = trimmed[handle_start..].trim_start();
+    let mut parts = rest.splitn(3, '|');
+    let handle = parts.next()?.trim().to_string();
+    if !handle.contains('/') {
+        return None;
+    }
+    let status = parts.next()?.trim().to_string();
+    let action_raw = parts.next()?.trim().to_string();
+    let action = action_raw
+        .split_whitespace()
+        .next()
+        .unwrap_or(action_raw.as_str())
+        .to_string();
+    Some(ParsedTaskRow {
+        handle,
+        status,
+        action,
+    })
+}
+
+fn parse_inbox_row(row: &str) -> Option<ParsedInboxRow> {
+    let trimmed = row.trim();
+    let bang = trimmed.find('!')?;
+    let after = trimmed[bang + 1..].trim_start();
+    let mut parts = after.splitn(3, '|');
+    let repo = parts.next()?.trim().to_string();
+    let task_id = parts.next()?.trim().to_string();
+    let reason = parts.next()?.trim().to_string();
+    if repo.is_empty() || task_id.is_empty() || reason.is_empty() {
+        return None;
+    }
+    Some(ParsedInboxRow {
+        repo,
+        task_id,
+        reason,
+    })
+}
+
+fn parse_project_row(row: &str) -> Option<ParsedProjectRow> {
+    let trimmed = row.trim();
+    let pipe = trimmed.find('|')?;
+    let name = trimmed[..pipe].split_whitespace().next_back()?.to_string();
+    let subtitle = trimmed[pipe + 1..].trim().to_string();
+    Some(ParsedProjectRow { name, subtitle })
+}
+
+fn buffer_rows(buffer: &ratatui::buffer::Buffer) -> Vec<String> {
+    let row_text = row_text_finder(buffer);
+    (0..buffer.area.height).map(row_text).collect()
+}
+
+fn find_buffer_row(
+    buffer: &ratatui::buffer::Buffer,
+    predicate: impl Fn(&str) -> bool,
+) -> Option<String> {
+    buffer_rows(buffer).into_iter().find(|row| predicate(row))
+}
+
+fn section_header_row(buffer: &ratatui::buffer::Buffer, section: &str) -> Option<String> {
+    find_buffer_row(buffer, |row| {
+        let trimmed = row.trim();
+        trimmed.starts_with("-- ") && trimmed.contains(section)
+    })
+}
+
+fn status_bar_line(buffer: &ratatui::buffer::Buffer) -> String {
+    let y = buffer.area.height.saturating_sub(1);
+    row_text_finder(buffer)(y)
+}
+
+fn task_rows_from_buffer(buffer: &ratatui::buffer::Buffer) -> Vec<ParsedTaskRow> {
+    buffer_rows(buffer)
+        .iter()
+        .filter_map(|row| parse_task_row(row))
+        .collect()
+}
+
+#[allow(dead_code)]
+fn task_rows_from_content(content: &str, width: u16) -> Vec<ParsedTaskRow> {
+    content
+        .as_bytes()
+        .chunks(width as usize)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+        .filter_map(parse_task_row)
+        .collect()
+}
+
 fn render_buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
@@ -289,19 +405,18 @@ fn render_buffer(width: u16, height: u16, app: &App) -> ratatui::buffer::Buffer 
 fn task_row_separates_columns_with_pipe() {
     let app = app_in_project_view_with_task_count(1);
     let buffer = render_buffer(80, 20, &app);
-    let row_text = row_text_finder(&buffer);
 
-    let task_row = (0..buffer.area.height)
-        .map(&row_text)
-        .find(|t| t.contains("web/task-0"))
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/task-0")
         .expect("task row should render");
-    assert!(
-        task_row.contains("web/task-0|"),
-        "task row should follow handle directly with '|' separator (no surrounding space): {task_row:?}"
-    );
-    assert!(
-        task_row.contains("|Resume"),
-        "task row should precede action label directly with '|': {task_row:?}"
+    assert_eq!(
+        parsed,
+        ParsedTaskRow {
+            handle: "web/task-0".to_string(),
+            status: "Idle - Idle".to_string(),
+            action: "Resume".to_string(),
+        }
     );
 }
 
@@ -417,12 +532,15 @@ fn inbox_section_header_styled_as_attention() {
 #[test]
 fn top_level_status_bar_does_not_advertise_nested_back_action() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+    let buffer = render_buffer(80, 30, &app);
+    let status_bar = status_bar_line(&buffer);
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("q quit"));
-    assert!(!content.contains("esc/h back"));
-    assert!(!content.contains("esc/h erase/back"));
+    assert_eq!(
+        status_bar.trim_end(),
+        " up/down select   enter open   ^T new task   ? help   q quit"
+    );
+    assert_eq!(status_bar.find("esc/h back"), None);
+    assert_eq!(status_bar.find("esc/h erase/back"), None);
 }
 
 #[test]
@@ -456,8 +574,17 @@ fn cockpit_text_renderer_does_not_show_review_lane() {
 
     // Only the lane header is forbidden; task titles may legitimately
     // contain the word "review".
-    assert!(!content.contains("Review:"));
-    assert!(content.contains("web/fix-login"));
+    assert!(
+        !content.lines().any(|line| line.starts_with("Review:")),
+        "{content}"
+    );
+    assert_eq!(
+        content
+            .lines()
+            .find(|line| line.starts_with("web/fix-login"))
+            .map(str::to_string),
+        Some("web/fix-login\tWaiting - Waiting\tFix login".to_string())
+    );
 }
 
 #[test]
@@ -468,11 +595,19 @@ fn task_rows_render_live_status_when_present() {
     let mut app = App::new(sample_repos(), tasks, InboxResponse { items: vec![] });
     app.activate_selected();
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("web/fix-login"));
-    assert!(content.contains("waiting for approval"));
-    assert!(!content.contains("Active"));
+    let buffer = render_buffer(80, 30, &app);
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("task row should render");
+    assert_eq!(
+        parsed,
+        ParsedTaskRow {
+            handle: "web/fix-login".to_string(),
+            status: "Waiting - waiting for approval".to_string(),
+            action: "Resume".to_string(),
+        }
+    );
 }
 
 #[test]
@@ -624,10 +759,25 @@ fn cockpit_row_uses_canonical_status_instead_of_annotation_label() {
 
     let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-    assert!(content.contains("Waiting - Waiting"), "{content}");
-    assert!(!content.contains("blocked"), "{content}");
-    assert!(!content.contains("needs input"), "{content}");
-    assert!(!content.contains("LiveStatus"), "{content}");
+    assert_eq!(
+        content
+            .lines()
+            .find(|line| line.starts_with("web/fix-login"))
+            .map(str::to_string),
+        Some("web/fix-login\tWaiting - Waiting\tFix login".to_string()),
+        "{content}"
+    );
+    for forbidden in ["blocked", "needs input", "LiveStatus"] {
+        assert_eq!(
+            content
+                .lines()
+                .map(|line| line.find(forbidden))
+                .filter(Option::is_some)
+                .count(),
+            0,
+            "unexpected {forbidden:?} in {content}"
+        );
+    }
 }
 
 #[test]
@@ -638,11 +788,23 @@ fn cockpit_row_renders_probe_failure_status_verbatim() {
 
     let content = render_cockpit(&sample_repos(), &tasks, &InboxResponse { items: vec![] });
 
-    assert!(
-        content.contains("status unavailable: tmux server unavailable"),
+    assert_eq!(
+        content
+            .lines()
+            .find(|line| line.starts_with("web/fix-login"))
+            .map(str::to_string),
+        Some(
+            "web/fix-login\tError - status unavailable: tmux server unavailable\tFix login"
+                .to_string()
+        ),
         "{content}"
     );
-    assert!(!content.contains("unknown"), "{content}");
+    assert!(
+        content
+            .lines()
+            .all(|line| !line.split_whitespace().any(|word| word == "unknown")),
+        "{content}"
+    );
 }
 
 #[rstest]
@@ -666,10 +828,12 @@ fn inbox_section_renders_labeled_header_with_count() {
             .collect(),
     };
     let app = App::new(sample_repos(), sample_tasks(), inbox);
+    let buffer = render_buffer(80, 30, &app);
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("-- inbox (3) --"), "{content}");
+    assert_eq!(
+        section_header_row(&buffer, "inbox").map(|row| row.trim().to_string()),
+        Some("-- inbox (3) --".to_string())
+    );
 }
 
 #[test]
@@ -695,11 +859,19 @@ fn task_row_renders_primary_action_label_and_chrome() {
         }
     }
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("web/fix-login"), "handle: {content}");
-    assert!(content.contains("review ready"), "status label: {content}");
-    assert!(content.contains("Review"), "action label: {content}");
+    let buffer = render_buffer(80, 30, &app);
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("task row should render");
+    assert_eq!(
+        parsed,
+        ParsedTaskRow {
+            handle: "web/fix-login".to_string(),
+            status: "Waiting - review ready".to_string(),
+            action: "Review".to_string(),
+        }
+    );
 }
 
 #[test]
@@ -757,11 +929,19 @@ fn cockpit_header_summarizes_review_and_cleanup_pressure() {
     let mut repos = sample_repos();
     repos.repos[0].cleanable_tasks = 1;
     let app = App::new(repos, sample_tasks(), sample_inbox());
+    let buffer = render_buffer(80, 30, &app);
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("1 review"));
-    assert!(content.contains("1 clean"));
+    let project = parse_project_row(
+        &find_buffer_row(&buffer, |row| {
+            row.contains("web|") && row.contains("active") && row.contains("review")
+        })
+        .expect("project row should render"),
+    )
+    .expect("project row should parse");
+    assert_eq!(
+        project.subtitle,
+        "1 active - 1 needs you - 1 review - 1 clean"
+    );
 }
 
 #[test]
@@ -769,10 +949,22 @@ fn project_rows_summarize_operator_work_by_project() {
     let mut repos = sample_repos();
     repos.repos[0].cleanable_tasks = 1;
     let app = App::new(repos, sample_tasks(), sample_inbox());
+    let buffer = render_buffer(80, 30, &app);
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("1 active - 1 needs you - 1 review - 1 clean"));
+    let project = parse_project_row(
+        &find_buffer_row(&buffer, |row| {
+            row.contains("web|") && row.contains("active") && row.contains("review")
+        })
+        .expect("project row should render"),
+    )
+    .expect("project row should parse");
+    assert_eq!(
+        project,
+        ParsedProjectRow {
+            name: "web".to_string(),
+            subtitle: "1 active - 1 needs you - 1 review - 1 clean".to_string(),
+        }
+    );
 }
 
 #[rstest]
@@ -788,10 +980,7 @@ fn project_subtitle_pluralizes_attention_count(#[case] attention: u32, #[case] e
         cleanable_tasks: 0,
     };
     let subtitle = project_subtitle(&repo);
-    assert!(
-        subtitle.contains(expected),
-        "subtitle {subtitle:?} should contain {expected:?}"
-    );
+    assert_eq!(subtitle, expected);
 }
 
 #[test]
@@ -806,18 +995,33 @@ fn inbox_row_uses_two_column_repo_task_layout() {
         }],
     };
     let app = App::new(sample_repos(), Vec::<TaskCard>::new(), inbox);
+    let buffer = render_buffer(120, 30, &app);
 
-    let content = render_to_string(120, 30, &app);
-
-    assert!(content.contains("autosnooze"), "repo column: {content}");
-    assert!(content.contains("open-deps"), "task-id column: {content}");
-    assert!(
-        !content.contains("autosnooze/open-deps"),
-        "repo and task-id should render as separate columns: {content}"
+    let inbox_row =
+        find_buffer_row(&buffer, |row| row.contains('!')).expect("inbox row should render");
+    assert_eq!(
+        parse_inbox_row(&inbox_row),
+        Some(ParsedInboxRow {
+            repo: "autosnooze".to_string(),
+            task_id: "open-deps".to_string(),
+            reason: "needs input".to_string(),
+        })
     );
-    assert!(
-        !content.contains("Resume"),
-        "right-side action chrome should not render on inbox rows: {content}"
+    assert_eq!(
+        buffer_rows(&buffer).iter().find(|row| row
+            .split_whitespace()
+            .any(|word| word == "autosnooze/open-deps")),
+        None,
+        "repo and task-id should render as separate columns"
+    );
+    assert_eq!(
+        buffer_rows(&buffer).iter().find(|row| {
+            let trimmed = row.trim();
+            trimmed.split_whitespace().any(|word| word == "Resume")
+                && trimmed.split_whitespace().any(|word| word == "!")
+        }),
+        None,
+        "right-side action chrome should not render on inbox rows"
     );
 }
 
@@ -841,12 +1045,14 @@ fn header_shows_repo_count_right_aligned() {
         .map(|x| buffer[(x, 0)].symbol())
         .collect();
 
-    assert!(
-        row0.contains("Ajax"),
+    assert_eq!(
+        row0.split_whitespace().next(),
+        Some("Ajax"),
         "row 0 keeps the breadcrumb: {row0:?}"
     );
-    assert!(
-        row0.trim_end().ends_with("2 repos"),
+    assert_eq!(
+        row0.split_whitespace().rev().take(2).collect::<Vec<_>>(),
+        vec!["repos", "2"],
         "repo count should sit at the right edge of the header: {row0:?}"
     );
 }
@@ -854,14 +1060,17 @@ fn header_shows_repo_count_right_aligned() {
 #[test]
 fn projects_view_omits_attention_banner_when_inbox_visible() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
+    let buffer = render_buffer(120, 30, &app);
 
-    let content = render_to_string(120, 30, &app);
-
-    // The legacy banner rendered " ! <handle>: <reason>" above the feed.
-    // With the labeled "-- inbox (n) --" section, the banner is redundant.
     assert!(
-        !content.contains("fix-login: needs_input"),
-        "attention banner should be gone: {content}"
+        !buffer_rows(&buffer)
+            .iter()
+            .any(|row| row.trim() == "! fix-login: needs_input"),
+        "attention banner should be gone"
+    );
+    assert_eq!(
+        section_header_row(&buffer, "inbox").map(|row| row.trim().to_string()),
+        Some("-- inbox (1) --".to_string())
     );
 }
 
@@ -885,10 +1094,12 @@ fn refresh_snapshot_updates_live_status_and_preserves_selection() {
     });
 
     assert_eq!(app.selected, selected_before);
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("web/fix-login"));
-    assert!(content.contains("waiting for approval"));
-    assert!(!content.contains("Active"));
+    let buffer = render_buffer(80, 30, &app);
+    let row = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("fix-login row should render");
+    assert_eq!(row.status, "Waiting - waiting for approval");
 }
 
 #[test]
@@ -913,15 +1124,13 @@ fn cockpit_render_uses_single_cell_symbols() {
 #[test]
 fn cockpit_brand_does_not_render_in_header() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let backend = TestBackend::new(80, 30);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let buffer = render_buffer(80, 30, &app);
+    let header = row_text_finder(&buffer)(0);
 
-    terminal.draw(|f| render_ui(f, &app)).unwrap();
-
-    let buffer = terminal.backend().buffer();
-    let screen: String = buffer.content().iter().map(|c| c.symbol()).collect();
-    assert!(
-        !screen.contains("[AJAX]"),
+    assert_eq!(header.split_whitespace().next(), Some("Ajax"));
+    assert_eq!(
+        header.find("[AJAX]"),
+        None,
         "brand marker should no longer render"
     );
 }
@@ -970,16 +1179,24 @@ fn cockpit_render_uses_orange_yellow_palette() {
         .iter()
         .map(|cell| cell.fg)
         .collect::<Vec<_>>();
-    assert!(colors.contains(&primary_accent()));
-    assert!(colors.contains(&secondary_accent()));
+    assert_eq!(
+        colors
+            .iter()
+            .copied()
+            .filter(|color| *color == primary_accent() || *color == secondary_accent())
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        2
+    );
     for bad_color in [
         Color::LightCyan,
         Color::LightGreen,
         Color::LightBlue,
         Color::LightMagenta,
     ] {
-        assert!(
-            !colors.contains(&bad_color),
+        assert_eq!(
+            colors.iter().filter(|&&c| c == bad_color).count(),
+            0,
             "cockpit palette should not render old accent color {bad_color:?}"
         );
     }
@@ -1658,10 +1875,17 @@ fn cockpit_renders_backend_snapshot() {
     let tasks = sample_tasks();
     let inbox = sample_inbox();
     let rendered = render_cockpit(&repos, &tasks, &inbox);
-    assert!(rendered.contains("Ajax Cockpit"));
-    assert!(rendered.contains("Repos: 1"));
-    assert!(!rendered.contains("Review:"));
-    assert!(rendered.contains("web/fix-login: needs_input -> resume"));
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert_eq!(lines[0], "Ajax Cockpit");
+    assert_eq!(lines[1], "Repos: 1");
+    assert_eq!(lines[3], "Task Statuses");
+    assert_eq!(lines[4], "web/fix-login\tWaiting - Waiting\tFix login");
+    assert_eq!(lines[5], "Inbox");
+    assert_eq!(lines[6], "web/fix-login: needs_input -> resume");
+    assert!(
+        !lines.iter().any(|line| line.starts_with("Review:")),
+        "{rendered}"
+    );
 }
 
 #[test]
@@ -1724,13 +1948,22 @@ fn main_page_renders_task_statuses_without_opening_project() {
         sample_tasks(),
         InboxResponse { items: vec![] },
     );
+    let buffer = render_buffer(80, 30, &app);
 
-    let content = render_to_string(80, 30, &app);
-
-    assert!(content.contains("web/fix-login"));
-    assert!(content.contains("Waiting - Waiting"));
-    assert!(!content.contains("blocked"));
-    assert!(!content.contains("> web"));
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("task row should render");
+    assert_eq!(
+        parsed,
+        ParsedTaskRow {
+            handle: "web/fix-login".to_string(),
+            status: "Waiting - Waiting".to_string(),
+            action: "Resume".to_string(),
+        }
+    );
+    assert!(matches!(app.view, AppView::Projects));
+    assert!(row_text_finder(&buffer)(0).trim_start().starts_with("Ajax"));
 }
 
 #[test]
@@ -1872,10 +2105,21 @@ fn activating_project_opens_project_workflow() {
     app.select_next();
     assert!(app.activate_selected().is_none());
 
-    let content = render_to_string(80, 30, &app);
-    // Header now shows a breadcrumb instead of a "Project: web" title.
-    assert!(content.contains("> web"));
-    assert!(content.contains("web/fix-login"));
+    assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web"]
+    );
+    assert_eq!(
+        task_rows_from_buffer(&buffer)
+            .into_iter()
+            .map(|row| row.handle)
+            .collect::<Vec<_>>(),
+        vec!["web/fix-login".to_string()]
+    );
 }
 
 #[test]
@@ -1883,9 +2127,8 @@ fn top_level_back_stays_in_cockpit() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
     assert!(!app.go_back());
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("Ajax"));
-    assert!(content.contains("web"));
+    assert!(matches!(app.view, AppView::Projects));
+    assert_eq!(app.selected, 0);
 }
 
 #[test]
@@ -1897,9 +2140,8 @@ fn top_level_backspace_stays_in_cockpit() {
         KeyModifiers::NONE
     ));
     assert!(!app.go_back());
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("Ajax"));
-    assert!(content.contains("web"));
+    assert!(matches!(app.view, AppView::Projects));
+    assert_eq!(app.selected, 0);
 }
 
 #[test]
@@ -1914,9 +2156,8 @@ fn top_level_back_variants_stay_in_cockpit() {
 
         assert!(crate::navigation::is_back_key_event(code, modifiers));
         assert!(!app.go_back());
-        let content = render_to_string(80, 30, &app);
-        assert!(content.contains("Ajax"));
-        assert!(content.contains("web"));
+        assert!(matches!(app.view, AppView::Projects));
+        assert_eq!(app.selected, 0);
     }
 }
 
@@ -1927,8 +2168,9 @@ fn nested_back_returns_to_parent_without_exit() {
     app.activate_selected();
 
     assert!(app.go_back());
-    let content = render_to_string(80, 30, &app);
-    assert!(!content.contains("> web"));
+    assert!(matches!(app.view, AppView::Projects));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(row_text_finder(&buffer)(0).find("> web"), None);
 }
 
 #[test]
@@ -1942,8 +2184,9 @@ fn nested_backspace_returns_to_parent_without_exit() {
         KeyModifiers::NONE
     ));
     assert!(app.go_back());
-    let content = render_to_string(80, 30, &app);
-    assert!(!content.contains("> web"));
+    assert!(matches!(app.view, AppView::Projects));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(row_text_finder(&buffer)(0).find("> web"), None);
 }
 
 #[test]
@@ -1997,13 +2240,25 @@ fn delete_is_not_a_cockpit_navigation_key() {
         KeyCode::Delete,
         KeyModifiers::NONE
     ));
-    assert!(before.contains("> web"));
+    let before_buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&before_buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web"]
+    );
 
     let after = render_to_string(80, 30, &app);
     assert_eq!(before, after);
     assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
     assert_eq!(app.selected, selected_before);
-    assert!(after.contains("> web"));
+    let after_buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&after_buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web"]
+    );
 }
 
 #[test]
@@ -2018,8 +2273,15 @@ fn delete_on_top_level_is_ignored_by_navigation() {
 
     let after = render_to_string(80, 30, &app);
     assert_eq!(before, after);
-    assert!(after.contains("Ajax"));
-    assert!(after.contains("web"));
+    let buffer = render_buffer(80, 30, &app);
+    assert!(row_text_finder(&buffer)(0).trim_start().starts_with("Ajax"));
+    assert!(
+        app.selectables.iter().any(|selectable| matches!(
+            selectable,
+            SelectableKind::Project(summary) if summary.name == "web"
+        )),
+        "top-level view should still list the web project"
+    );
 }
 
 #[test]
@@ -2072,11 +2334,27 @@ fn delete_in_task_title_input_erases_without_closing_ajax() {
         "Delete should erase editable text without leaving task title input"
     );
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("> start"));
-    assert!(content.contains("Task name"));
-    assert!(content.contains("<type a task name>"));
-    assert!(!content.contains("Task name  x"));
+    let buffer = render_buffer(80, 30, &app);
+    assert!(matches!(
+        &app.view,
+        AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+    ));
+    let status_bar = status_bar_line(&buffer);
+    assert_eq!(
+        status_bar.trim_end(),
+        " up/down select   enter create   ? help   esc/h erase/back   q quit"
+    );
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web", ">", "start"]
+    );
+    let input_row = find_buffer_row(&buffer, |row| row.contains("Task name"))
+        .expect("new task input row should render")
+        .trim()
+        .to_string();
+    assert_eq!(input_row, "+ Task name  <type a task name>");
 }
 
 #[test]
@@ -2085,8 +2363,11 @@ fn nested_views_advertise_immediate_back_keys() {
     app.select_next();
     app.activate_selected();
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("esc/h back"));
+    let status_bar = status_bar_line(&render_buffer(80, 30, &app));
+    assert_eq!(
+        status_bar.trim_end(),
+        " up/down select   enter open   ^T new task   ? help   esc/h back   q quit"
+    );
 }
 
 #[test]
@@ -2094,23 +2375,45 @@ fn help_page_lists_cockpit_shortcuts() {
     let mut app = App::new(sample_repos(), sample_tasks(), sample_inbox());
 
     app.open_help();
+    assert!(matches!(app.view, AppView::Help { .. }));
 
-    let content = render_to_string(80, 30, &app);
-    for expected in [
-        "> help",
-        "Keyboard shortcuts",
-        "up/down",
-        "j/k",
-        "enter",
-        "?",
-        "esc/h/backspace",
-        "q",
-        "mouse scroll",
-        "mouse click",
-        "start input",
+    let buffer = render_buffer(80, 30, &app);
+    let rows: Vec<String> = buffer_rows(&buffer)
+        .iter()
+        .map(|row| row.trim().to_string())
+        .filter(|row| !row.is_empty())
+        .collect();
+    assert_eq!(
+        rows.iter().find(|row| row.ends_with("Keyboard shortcuts")),
+        Some(&"? Keyboard shortcuts".to_string())
+    );
+    for (key, label) in [
+        ("up/down", "select the previous or next row"),
+        ("j/k", "select the next or previous row"),
+        ("enter", "open or run the selected row"),
+        ("?", "show this help page"),
+        ("esc/h/backspace", "go back to the previous view"),
+        ("q", "quit the cockpit"),
+        ("mouse scroll", "move the selection"),
+        ("mouse click", "select a visible row"),
+        (
+            "start input",
+            "type a title; backspace erases before going back",
+        ),
     ] {
-        assert!(content.contains(expected), "missing {expected}");
+        let expected = format!(". {key:<18}{label}");
+        assert_eq!(
+            rows.iter().filter(|row| *row == &expected).count(),
+            1,
+            "missing help entry for {key:?}: {rows:?}"
+        );
     }
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "help"]
+    );
 }
 
 #[test]
@@ -2138,10 +2441,20 @@ fn help_back_returns_to_previous_view() {
     assert!(matches!(app.view, AppView::Help { .. }));
     assert!(app.go_back());
 
-    let content = render_to_string(80, 30, &app);
     assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
-    assert!(content.contains("> web"));
-    assert!(!content.contains("Keyboard shortcuts"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web"]
+    );
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .find(|row| row.trim().ends_with("Keyboard shortcuts")),
+        None
+    );
 }
 
 #[test]
@@ -2158,10 +2471,20 @@ fn help_escape_returns_to_previous_view() {
     );
 
     assert!(matches!(action, EventLoopAction::Continue));
-    let content = render_to_string(80, 30, &app);
     assert!(matches!(&app.view, AppView::Project { repo } if repo == "web"));
-    assert!(content.contains("> web"));
-    assert!(!content.contains("Keyboard shortcuts"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web"]
+    );
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .find(|row| row.trim().ends_with("Keyboard shortcuts")),
+        None
+    );
 }
 
 #[test]
@@ -2171,11 +2494,21 @@ fn project_view_lists_new_task_first_then_tasks() {
     app.select_next();
     app.activate_selected();
 
-    // Project view should be: [NewTask, inbox, task].
-    assert!(matches!(
-        app.selectables.first(),
-        Some(SelectableKind::NewTask { .. })
-    ));
+    // Project view should be: [NewTask, task].
+    assert_eq!(
+        app.selectables
+            .iter()
+            .map(|selectable| match selectable {
+                SelectableKind::NewTask { .. } => "new_task".to_string(),
+                SelectableKind::Task(task) => task.qualified_handle.clone(),
+                SelectableKind::Inbox(_) => "inbox".to_string(),
+                SelectableKind::Project(_) => "project".to_string(),
+                SelectableKind::TaskAction { .. } => "task_action".to_string(),
+                SelectableKind::Remediation { .. } => "remediation".to_string(),
+            })
+            .collect::<Vec<_>>(),
+        vec!["new_task".to_string(), "web/fix-login".to_string()]
+    );
     // No action wall — only one task-style row in the middle is dispatched
     // on Enter and that's a Task or Review (not a project-action verb).
     for s in &app.selectables {
@@ -2185,9 +2518,22 @@ fn project_view_lists_new_task_first_then_tasks() {
         );
     }
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("start a new task"));
-    assert!(!content.contains("reconcile"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        find_buffer_row(&buffer, |row| row.contains("start a new task"))
+            .map(|row| row.trim().to_string()),
+        Some(">+ start a new task".to_string()),
+        "new task row should render first in project view"
+    );
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .flat_map(|row| row.split_whitespace())
+            .filter(|word| *word == "reconcile")
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new(),
+        "project view must not advertise reconcile"
+    );
 }
 
 #[test]
@@ -2506,21 +2852,9 @@ fn rendering_module_exposes_status_palette() {
 #[test]
 fn rendering_module_exposes_screen_renderer() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let backend = TestBackend::new(80, 30);
-    let mut terminal = Terminal::new(backend).unwrap();
+    let buffer = render_buffer(80, 30, &app);
 
-    terminal
-        .draw(|frame| crate::rendering::render_ui(frame, &app))
-        .unwrap();
-
-    let content = terminal
-        .backend()
-        .buffer()
-        .content()
-        .iter()
-        .map(|cell| cell.symbol())
-        .collect::<String>();
-    assert!(content.contains("Ajax"));
+    assert!(row_text_finder(&buffer)(0).trim_start().starts_with("Ajax"));
 }
 
 #[test]
@@ -2595,8 +2929,20 @@ fn project_view_has_no_reconcile_action() {
         .selectables
         .iter()
         .all(|selectable| !matches!(selectable, SelectableKind::TaskAction { .. })));
-    assert!(render_to_string(80, 30, &app).contains("start a new task"));
-    assert!(!render_to_string(80, 30, &app).contains("reconcile"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        find_buffer_row(&buffer, |row| row.contains("start a new task"))
+            .map(|row| row.trim().to_string()),
+        Some(">+ start a new task".to_string())
+    );
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .flat_map(|row| row.split_whitespace())
+            .filter(|word| *word == "reconcile")
+            .collect::<Vec<_>>(),
+        Vec::<&str>::new()
+    );
 }
 
 #[test]
@@ -2663,11 +3009,30 @@ fn selected_project_only_shows_that_projects_tasks() {
     app.select_next();
     app.activate_selected();
 
-    let content = render_to_string(100, 50, &app);
-    assert!(content.contains("> api"));
-    assert!(content.contains("api/add-cache"));
-    assert!(!content.contains("web/fix-login"));
-    assert!(!content.contains("agent needs input"));
+    assert!(matches!(&app.view, AppView::Project { repo } if repo == "api"));
+    let buffer = render_buffer(100, 50, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "api"]
+    );
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "api/add-cache")
+        .expect("api task row should render");
+    assert_eq!(parsed.handle, "api/add-cache");
+    assert!(!task_rows_from_buffer(&buffer)
+        .iter()
+        .any(|row| row.handle == "web/fix-login"));
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .map(|row| row.find("agent needs input"))
+            .filter(Option::is_some)
+            .count(),
+        0
+    );
 }
 
 #[test]
@@ -2683,10 +3048,23 @@ fn project_new_task_row_opens_title_input() {
         Some(SelectableKind::NewTask { .. })
     ));
     assert!(app.activate_selected().is_none());
+    assert!(matches!(
+        &app.view,
+        AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+    ));
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("> start"));
-    assert!(content.contains("Task name"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0)
+            .split_whitespace()
+            .collect::<Vec<_>>(),
+        vec!["Ajax", ">", "web", ">", "start"]
+    );
+    let input_row = find_buffer_row(&buffer, |row| row.contains("Task name"))
+        .expect("task title input row should render")
+        .trim()
+        .to_string();
+    assert_eq!(input_row, "+ Task name  <type a task name>");
 }
 
 #[test]
@@ -2726,16 +3104,38 @@ fn new_task_title_backspace_edits_then_returns_to_main_menu() {
         ),
         "first backspace should edit the task title without leaving input"
     );
-    assert!(render_to_string(80, 30, &app).contains("Task name"));
+    assert!(matches!(
+        &app.view,
+        AppView::NewTaskInput { repo, title } if repo == "web" && title.is_empty()
+    ));
+    let title_buffer = render_buffer(80, 30, &app);
+    let input_row = find_buffer_row(&title_buffer, |row| row.contains("Task name"))
+        .expect("task title input row should render")
+        .trim()
+        .to_string();
+    assert_eq!(input_row, "+ Task name  <type a task name>");
     assert!(app.go_back());
     assert!(matches!(app.view, AppView::Projects));
     assert_eq!(app.selected, 0);
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("Ajax"));
-    assert!(content.contains("web"));
-    assert!(!content.contains("> web"));
-    assert!(!content.contains("> start"));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0).split_whitespace().next(),
+        Some("Ajax")
+    );
+    for y in 0..buffer.area.height {
+        let row = row_text_finder(&buffer)(y);
+        assert_eq!(
+            row.find("> web"),
+            None,
+            "unexpected project breadcrumb: {row:?}"
+        );
+        assert_eq!(
+            row.find("> start"),
+            None,
+            "unexpected new-task breadcrumb: {row:?}"
+        );
+    }
 }
 
 #[test]
@@ -2749,21 +3149,50 @@ fn escape_from_new_task_input_returns_to_ajax_main_menu() {
 
     assert!(app.go_home());
 
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("Ajax"));
-    assert!(content.contains("web"));
-    assert!(!content.contains("> web"));
-    assert!(!content.contains("> start"));
-    assert!(!content.contains("Task name"));
+    assert!(matches!(app.view, AppView::Projects));
+    let buffer = render_buffer(80, 30, &app);
+    assert_eq!(
+        row_text_finder(&buffer)(0).split_whitespace().next(),
+        Some("Ajax")
+    );
+    assert_eq!(row_text_finder(&buffer)(0).find("> web"), None);
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .filter(|row| row.contains("> start"))
+            .count(),
+        0
+    );
+    assert_eq!(
+        buffer_rows(&buffer)
+            .iter()
+            .filter(|row| row.contains("Task name"))
+            .count(),
+        0
+    );
 }
 
 #[test]
 fn feed_inbox_items_render_handle_reason_and_action() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let content = render_to_string(80, 30, &app);
-    assert!(content.contains("web/fix-login"));
-    assert!(content.contains("needs_input"));
-    assert!(content.contains("Resume"), "{content}");
+    let buffer = render_buffer(80, 30, &app);
+    let inbox_row = find_buffer_row(&buffer, |row| {
+        row.contains('!') && row.contains("fix-login")
+    })
+    .expect("inbox row should render");
+    assert_eq!(
+        parse_inbox_row(&inbox_row),
+        Some(ParsedInboxRow {
+            repo: "web".to_string(),
+            task_id: "fix-login".to_string(),
+            reason: "needs_input".to_string(),
+        })
+    );
+    let task = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("task row should still render for duplicate inbox handle");
+    assert_eq!(task.action, "Resume");
 }
 
 #[test]
@@ -2782,10 +3211,14 @@ fn waiting_for_input_inbox_items_use_yellow_chrome() {
 #[test]
 fn interactive_cockpit_renders_to_narrow_buffer() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let content = render_to_string(50, 24, &app);
-    assert!(content.contains("Ajax"));
-    // Unannotated task row in Projects view keeps its qualified handle.
-    assert!(content.contains("web/fix-login"));
+    let buffer = render_buffer(50, 24, &app);
+
+    assert!(row_text_finder(&buffer)(0).trim_start().starts_with("Ajax"));
+    let parsed = task_rows_from_buffer(&buffer)
+        .into_iter()
+        .find(|row| row.handle == "web/fix-login")
+        .expect("task row should render in narrow buffer");
+    assert_eq!(parsed.handle, "web/fix-login");
 }
 
 #[test]
@@ -3696,30 +4129,29 @@ fn view_change_with_no_pending_confirm_does_not_post_hint() {
 #[test]
 fn selected_row_renders_chevron_prefix() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let content = render_to_string(80, 30, &app);
-    let line = content
-        .as_bytes()
-        .chunks(80)
-        .map(|c| std::str::from_utf8(c).unwrap())
-        .find(|line| line.contains(" > ") && line.contains("fix-login"))
-        .expect("selected inbox feed row should be in the rendered output");
+    let buffer = render_buffer(80, 30, &app);
+    let inbox_row = find_buffer_row(&buffer, |row| {
+        row.contains('!') && row.contains("fix-login")
+    })
+    .expect("selected inbox feed row should be in the rendered output");
     assert!(
-        line.contains(" > "),
-        "selected row should be prefixed with chevron, got: {line:?}"
+        inbox_row.trim_start().starts_with('>'),
+        "selected row should be prefixed with chevron, got: {inbox_row:?}"
     );
 }
 
 #[test]
 fn feed_uses_named_section_headers_between_groups() {
     let app = App::new(sample_repos(), sample_tasks(), sample_inbox());
-    let content = render_to_string(80, 30, &app);
-    assert!(
-        content.contains("-- projects --"),
-        "expected projects section header in feed"
+    let buffer = render_buffer(80, 30, &app);
+
+    assert_eq!(
+        section_header_row(&buffer, "projects").map(|row| row.trim().to_string()),
+        Some("-- projects --".to_string())
     );
-    assert!(
-        content.contains("-- tasks --"),
-        "expected tasks section header in feed"
+    assert_eq!(
+        section_header_row(&buffer, "tasks").map(|row| row.trim().to_string()),
+        Some("-- tasks --".to_string())
     );
 }
 
