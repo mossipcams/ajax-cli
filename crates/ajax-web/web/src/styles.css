@@ -422,20 +422,15 @@ header .bar h1 {
      nested fixed panel is double-offset under the keyboard. */
   html.keyboard-open:not(.terminal-expanded) .task-detail {
     position: fixed;
-    /* Match expanded panel: pin both edges to the live band so mid keyboard
-       animation does not lag behind height-only sizing. */
+    /* Height from --app-top / --app-height (visualViewport). */
     top: var(--app-top, var(--app-band-top, 0px));
     left: 0;
     right: 0;
-    bottom: max(
-      0px,
-      calc(100lvh - var(--app-top, 0px) - var(--app-height, 100lvh))
-    );
     z-index: 40;
     display: flex;
     flex-direction: column;
-    height: auto;
-    max-height: none;
+    height: var(--app-height, var(--app-band-height, 100dvh));
+    max-height: var(--app-height, var(--app-band-height, 100dvh));
     min-height: 0;
     margin: 0;
     box-sizing: border-box;
