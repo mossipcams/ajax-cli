@@ -1652,7 +1652,9 @@ test("repeated same-dimension viewport burst then meaningful change deduplicates
   const countAfterBurst = (await terminalResizeFrames(page)).length;
   expect(countAfterBurst).toBe(countBeforeBurst);
 
-  await page.setViewportSize({ width: 360, height: 800 });
+  // Shrink height substantially so the flex-filled inline terminal recomputes
+  // a genuinely different logical grid (rows), not a dedupe-identical one.
+  await page.setViewportSize({ width: 360, height: 640 });
   await dispatchViewportEvents(page, ["resize", "visualViewport.resize"]);
 
   await expect

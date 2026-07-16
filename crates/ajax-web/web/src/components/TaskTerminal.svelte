@@ -1385,10 +1385,12 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Compact inline height so new tasks do not get a tall empty PTY band
-       between client output and the tmux status line. Keyboard-open flex-fills. */
+    /* Inline terminal flex-fills the task column so the details line sits at
+       the page bottom. Same flex model keyboard-open uses, so opening the
+       keyboard only shrinks the band instead of switching layouts. */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      height: min(38vh, 300px);
+      height: auto;
+      flex: 1 1 0%;
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
