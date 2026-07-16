@@ -2,6 +2,13 @@
 
 All notable Ajax CLI changes should be recorded here.
 
+## [0.47.4](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.3...ajax-cli-v0.47.4) (2026-07-16)
+
+
+### Bug Fixes
+
+* **web:** flush details line under hotbar and stop keyboard-transient layout teardown ([#544](https://github.com/mossipcams/ajax-cli/issues/544)) ([1b276af](https://github.com/mossipcams/ajax-cli/commit/1b276afbab7f566cd0cb6f5ad498cb5dc9f79147))
+
 ## [0.47.3](https://github.com/mossipcams/ajax-cli/compare/ajax-cli-v0.47.2...ajax-cli-v0.47.3) (2026-07-16)
 
 
