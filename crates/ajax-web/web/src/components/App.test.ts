@@ -138,7 +138,7 @@ describe("App shell", () => {
     );
   });
 
-  it("mobile task route flex-fills so the terminal can grow to the bottom nav", () => {
+  it("mobile task route keeps outlet flex without growing the closed-keyboard terminal panel", () => {
     const stylesSource = loadStylesSource();
     const mobileBlock =
       stylesSource.match(
@@ -154,8 +154,13 @@ describe("App shell", () => {
     expect(mobileBlock).toMatch(
       /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.task-detail\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
+    // Closed-keyboard: do not flex-grow the terminal panel (causes tall empty PTY rows).
+    expect(mobileBlock).not.toMatch(
+      /\[data-testid="route-scroll"\]:has\(\[data-outlet="task"\]\)\s+\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
+    );
+    // Keyboard-open still flex-fills the panel under the fixed task-detail band.
     expect(mobileBlock).toMatch(
-      /\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
+      /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.terminal-panel:not\(\.is-expanded\)\s*\{[^}]*flex:\s*1\s+1\s+0%/,
     );
   });
 

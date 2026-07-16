@@ -472,10 +472,17 @@
       termEl.style.height = "";
     };
 
-    // WebKit often leaves height:100% unresolved on flex items; pin the sticky
-    // host to the wrap's used pixel height so the entry meets the hotbar.
+    // Pin host height in px only when the wrap's height is flex-indefinite
+    // (keyboard-open / fullscreen). Capped inline uses CSS height:100%.
     const syncHostToWrap = () => {
       if (!hostEl || !interactionEl) return;
+      const needsPin =
+        document.documentElement.classList.contains("keyboard-open") ||
+        document.documentElement.classList.contains(EXPANDED_CLASS);
+      if (!needsPin) {
+        if (hostEl.style.height) hostEl.style.height = "";
+        return;
+      }
       const next = `${Math.max(0, interactionEl.clientHeight)}px`;
       if (hostEl.style.height !== next) hostEl.style.height = next;
     };
@@ -1378,15 +1385,14 @@
   }
 
   @media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
-    /* Wrap fills leftover task height. Host height is set in px from the wrap
-       clientHeight (see syncHostToWrap) — height:100% fails on WebKit flex items
-       and display:flex on the wrap broke sticky scroll / resize settle. */
+    /* Compact inline height so new tasks do not get a tall empty PTY band
+       between client output and the tmux status line. Keyboard-open flex-fills. */
     .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
-      flex: 1 1 0%;
-      min-height: 0;
+      height: min(38vh, 300px);
     }
 
     .terminal-panel:not(.is-expanded) .terminal-host {
+      height: 100%;
       min-height: 0;
     }
 
@@ -1409,6 +1415,7 @@
     }
 
     :global(html.keyboard-open) .terminal-panel:not(.is-expanded) .terminal-interaction-wrap {
+      height: auto;
       flex: 1 1 0%;
       min-height: 0;
     }
