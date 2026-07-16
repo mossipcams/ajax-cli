@@ -143,13 +143,13 @@ describe("App shell", () => {
     // Header/status stay visible under keyboard-open (flex:none), and must not
     // share a display:none rule with meta-details the way a loose regex can misread.
     expect(mobileBlock).toMatch(
-      /html\.keyboard-open\s+\.task-detail\s+\.detail-header,\s*html\.keyboard-open\s+\.task-detail\s+\.interact-panel\s*\{[^}]*flex:\s*none/,
+      /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.detail-header,\s*html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s+\.interact-panel\s*\{[^}]*flex:\s*none/,
     );
     expect(mobileBlock).not.toMatch(
-      /html\.keyboard-open\s+\.task-detail\s+\.detail-header[^{]*\{[^}]*display:\s*none/,
+      /html\.keyboard-open[^{]*\.task-detail\s+\.detail-header[^{]*\{[^}]*display:\s*none/,
     );
     expect(mobileBlock).not.toMatch(
-      /html\.keyboard-open\s+\.task-detail\s+\.interact-panel[^{]*\{[^}]*display:\s*none/,
+      /html\.keyboard-open[^{]*\.task-detail\s+\.interact-panel[^{]*\{[^}]*display:\s*none/,
     );
     expect(stylesSource).toMatch(
       /html\.terminal-expanded\s+\.task-detail\s+\.detail-header[\s\S]*?display:\s*none/,
@@ -176,8 +176,10 @@ describe("App shell", () => {
         /:global\(html\.terminal-expanded\)\s+\.terminal-panel\.is-expanded\s*\{([^}]*)\}/,
       )?.[1] ?? "";
 
-    expect(expandedRule).toMatch(/top:\s*var\(--app-band-top/);
-    expect(expandedRule).toMatch(/height:\s*var\(--app-band-height/);
+    expect(expandedRule).toMatch(/top:\s*var\(--app-top/);
+    expect(expandedRule).toMatch(/height:\s*var\(--app-height/);
+    expect(expandedRule).toMatch(/max-height:\s*var\(--app-height/);
+    expect(expandedRule).toMatch(/overflow:\s*hidden/);
     expect(expandedRule).not.toMatch(/padding:\s*env\(safe-area-inset-top\)/);
   });
 
@@ -203,11 +205,30 @@ describe("App shell", () => {
       )?.[1] ?? "";
 
     const taskDetailRule =
-      mobileBlock.match(/html\.keyboard-open\s+\.task-detail\s*\{([^}]*)\}/)?.[1] ?? "";
+      mobileBlock.match(
+        /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s*\{([^}]*)\}/,
+      )?.[1] ?? "";
 
     expect(taskDetailRule).toMatch(/position:\s*fixed/);
     expect(taskDetailRule).toMatch(/top:\s*var\(--app-band-top/);
     expect(taskDetailRule).toMatch(/height:\s*var\(--app-band-height/);
+  });
+
+  it("does not pin task-detail under keyboard-open while terminal is expanded", () => {
+    const stylesSource = loadStylesSource();
+    const mobileBlock =
+      stylesSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n\}/,
+      )?.[1] ?? "";
+
+    // Expanded panel owns the band; a fixed overflow parent would become the
+    // containing block on iOS and push the fullscreen terminal under the keyboard.
+    expect(mobileBlock).toMatch(
+      /html\.keyboard-open:not\(\.terminal-expanded\)\s+\.task-detail\s*\{/,
+    );
+    expect(mobileBlock).not.toMatch(
+      /html\.keyboard-open\s+\.task-detail\s*\{[^}]*position:\s*fixed/,
+    );
   });
 
   it("hides route-scroll scrollbar chrome so content keeps full width", () => {

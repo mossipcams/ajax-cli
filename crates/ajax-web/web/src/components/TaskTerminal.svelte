@@ -1350,17 +1350,20 @@
 
     :global(html.terminal-expanded) .terminal-panel.is-expanded {
       position: fixed;
-      top: var(--app-band-top, 0px);
+      /* Use html --app-* directly (not --app-band-* from .app-viewport) so the
+         fixed panel cannot fall back to 100dvh when aliases fail to inherit. */
+      top: var(--app-top, var(--app-band-top, 0px));
       right: 0;
       left: 0;
       z-index: 45;
       display: flex;
       flex-direction: column;
-      height: var(--app-band-height, 100dvh);
+      height: var(--app-height, var(--app-band-height, 100dvh));
+      max-height: var(--app-height, var(--app-band-height, 100dvh));
       min-height: 0;
-      max-height: none;
       margin-top: 0;
       box-sizing: border-box;
+      overflow: hidden;
       background: var(--paper);
       border-left: none;
       border-right: none;
@@ -1372,6 +1375,10 @@
       flex: 1 1 auto;
       min-height: 0;
       height: auto;
+    }
+
+    .terminal-panel.is-expanded :global([data-testid="terminal-bottom-controls"]) {
+      flex: none;
     }
 
     .terminal-panel.is-expanded .terminal-host {

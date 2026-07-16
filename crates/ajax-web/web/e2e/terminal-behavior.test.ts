@@ -918,6 +918,41 @@ test("fullscreen band keeps expand tappable under keyboard-open offset band", as
   await expect(expand).toHaveAttribute("aria-pressed", "false");
 });
 
+test("fullscreen with keyboard-open pins panel bottom to the visual viewport band", async ({ page }) => {
+  await openTaskTerminal(page);
+  await simulateKeyboardBand(page);
+
+  const expand = page.locator('[data-testid="task-terminal-panel"] .terminal-expand-corner');
+  await expand.click();
+  await expect(expand).toHaveAttribute("aria-pressed", "true");
+
+  const geometry = await page.evaluate(() => {
+    const panel = document.querySelector<HTMLElement>('[data-testid="task-terminal-panel"]');
+    const keys = document.querySelector<HTMLElement>('[data-testid="terminal-bottom-controls"]');
+    if (!panel || !keys) return null;
+    const top = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-top") || "0",
+    );
+    const height = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue("--app-height") || "0",
+    );
+    const panelBox = panel.getBoundingClientRect();
+    const keysBox = keys.getBoundingClientRect();
+    return {
+      bandTop: top,
+      bandBottom: top + height,
+      panelTop: panelBox.top,
+      panelBottom: panelBox.bottom,
+      keysBottom: keysBox.bottom,
+    };
+  });
+
+  expect(geometry).not.toBeNull();
+  expect(geometry!.panelTop).toBeCloseTo(geometry!.bandTop, 0);
+  expect(geometry!.panelBottom).toBeCloseTo(geometry!.bandBottom, 0);
+  expect(geometry!.keysBottom).toBeCloseTo(geometry!.bandBottom, 0);
+});
+
 test("keyboard-open hides cockpit chrome and bottom nav on task route", async ({ page }) => {
   await openTaskTerminal(page);
 
