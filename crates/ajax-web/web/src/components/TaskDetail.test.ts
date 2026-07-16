@@ -216,4 +216,25 @@ describe("TaskDetail projection surface", () => {
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?min-width:\s*0/);
     expect(mobileBlock).toMatch(/\.interact-summary[\s\S]*?text-overflow:\s*ellipsis/);
   });
+
+  it("compacts the mobile status panel and action buttons", () => {
+    const mobileBlock =
+      taskDetailSource.match(
+        /@media \(max-width: 767px\), \(pointer: coarse\) and \(max-height: 500px\)\s*\{([\s\S]*?)\n  \}/,
+      )?.[1] ?? "";
+
+    const interactPanelCss = [...mobileBlock.matchAll(/\.interact-panel\s*\{([^}]*)\}/g)]
+      .map((match) => match[1])
+      .join("\n");
+
+    expect(interactPanelCss).toMatch(/padding(?:-top)?:\s*[0-4]px/);
+    expect(interactPanelCss).toMatch(/margin-top:\s*[0-4]px/);
+    expect(interactPanelCss).toMatch(/min-height:\s*0/);
+    expect(mobileBlock).toMatch(
+      /\.interact-panel\s+:global\(\.action\)[\s\S]*?min-height:\s*(?:2[0-9]|3[0-2])px/,
+    );
+    expect(mobileBlock).toMatch(
+      /\.interact-panel\s+:global\(\.action\)[\s\S]*?padding:\s*[0-4]px/,
+    );
+  });
 });
